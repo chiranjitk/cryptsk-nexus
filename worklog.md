@@ -383,3 +383,52 @@ Stage Summary:
 - 0 active sessions (no subscribers connected via RADIUS yet — will populate when real NAS devices send accounting)
 - Commits: ad62796 (Phase 4 code), 78415a7 (URL fix)
 - Next: Phase 5 — Policy Engine (bandwidth/FUP/QoS data model + simulator)
+
+---
+Task ID: PHASE-5
+Agent: orchestrator (sandbox main)
+Task: Phase 5 — Policy Engine (models, compiler, API, UI, simulator)
+
+Work Log:
+- Added 3 Prisma models (Policy, PolicyVersion, PlanPolicyMapping) + 2 enums (PolicyType, PolicyStatus)
+  * Policy: config JSON holds bandwidth, fup, accessTime, dataTransfer, security, qos
+  * PolicyVersion: version history for rollback (unique [policyId, version])
+  * PlanPolicyMapping: Plan↔Policy link with priority
+  * Added policyMappings relation to Plan model
+- Created policy compiler (src/lib/policy-compiler.ts):
+  * compilePolicy() — translates config JSON → RADIUS check + reply items
+    - Bandwidth → Mikrotik-Rate-Limit (downM/upM + burst) or Ascend (vendor-neutral)
+    - FUP → warnings (enforced by Session Engine)
+    - AccessTime → Session-Timeout
+    - DataTransfer → Session-Data-Limit + warnings
+    - Security → Filter-Id, NAS-Filter-Id, Framed-Pool, DNS-Server
+    - QoS → priority attributes
+  * publishPolicyToRadius() — compile + sync to radgroupcheck/radgroupreply
+  * simulatePolicy() — compile + return without deploying
+  * Supports nasType: mikrotik, cisco, standard
+- Created 5 API routes (RBAC-protected):
+  * GET/POST /api/policies (list + create with auto policyCode POL-0001)
+  * GET/PATCH/DELETE /api/policies/[id] (auto version bump on config change)
+  * POST /api/policies/[id]/publish (compile + sync to RADIUS tables)
+  * POST /api/policies/[id]/simulate (preview RADIUS attributes)
+- Created UI panel (src/components/admin/policies-panel.tsx):
+  * Policy table (code, name, type icon, RADIUS group, version badge, precedence, mappings, status)
+  * Create/Edit dialog with JSON config editor + template presets per type
+  * Simulate dialog — shows compiled RADIUS attributes (check + reply items + warnings)
+  * Publish button — compiles + syncs to radgroupcheck/radgroupreply
+  * Status badges (draft/active/deprecated/archived)
+- Updated page.tsx (view=policies) + sidebar (Policy Engine > Simulator → /?view=policies)
+
+Deployed to VM:
+- 33 tables on PostgreSQL 18.6 (30 Phase 0-4 + 3 Phase 5)
+- Build succeeded, PM2 restarted, HTTP 200 from https://nexus.cryptsk.com
+- Both services online (cryptsk-gateway + cryptsk-session-engine)
+
+Stage Summary:
+- ✅ Policy Engine deployed — create, simulate, publish policies
+- ✅ Policy compiler translates JSON config → RADIUS attributes
+- ✅ Versioning (auto version bump on config change)
+- ✅ Simulator (preview before publish)
+- ✅ Publish syncs to radgroupcheck/radgroupreply (used by FreeRADIUS)
+- Commit: 6e7adb2
+- Next: Phase 6 — VPP Gateway (DPDK/VPP integration, if hardware available)
