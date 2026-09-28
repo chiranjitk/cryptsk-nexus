@@ -4,10 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Providers } from "@/components/providers";
-import { AppSidebar } from "@/components/layout/app-sidebar";
-import { AppHeader } from "@/components/layout/app-header";
-import { AppFooter } from "@/components/layout/app-footer";
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { AppShell } from "@/components/layout/app-shell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -59,18 +56,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <Providers>
-            <SidebarProvider>
-              <AppSidebar />
-              <SidebarInset>
-                <div className="flex min-h-screen flex-col">
-                  <AppHeader />
-                  <main className="flex-1 flex flex-col">
-                    {children}
-                  </main>
-                  <AppFooter />
-                </div>
-              </SidebarInset>
-            </SidebarProvider>
+            <AppShell>
+              {children}
+            </AppShell>
             <Toaster />
           </Providers>
         </ThemeProvider>
