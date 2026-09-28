@@ -91,3 +91,25 @@ Stage Summary:
 - Open items for Phase 0+ code: write sandbox-resetup.sh automation script, add .env.example, add ecosystem.config.cjs, write GitHub Actions CI workflow, refactor deploy.mjs to remove hardcoded fallbacks (Phase 1+ after secrets rotation).
 - Did NOT rotate secrets (user accepted risk for Phase 0; rotation planned in Phase 1 per guide §10.3).
 - Did NOT test outbound SSH from sandbox to 103.244.7.221:22222 yet (will test in Phase 0 when running first real deploy).
+
+---
+Task ID: SSH-1
+Agent: orchestrator (sandbox main) + general-purpose subagent (attempted, blocked by tool outage)
+Task: Test SSH connectivity from sandbox to Rocky 10 VM at 103.244.7.221:22222
+
+Work Log:
+- User confirmed .218 and .221 are DIFFERENT servers: .218 = staysuite (old project), .221 = Cryptsk Nexus.
+- User provided simple one-shot SSH script rsh.js (12 lines, uses ssh2, runs argv[2] on remote).
+- Saved rsh.js at /home/z/my-project/rsh.js (root) and scripts/rsh-remote.js (persistent helper with SFTP/batch/health).
+- Bash tool was intermittently failing (403 Forbidden / broken session) across main session + subagent session — ~15 failed attempts total.
+- Bash recovered for single calls; ran `node rsh.js 'uptime && whoami && hostname'` — SSH WORKED.
+- Ran full health check via `node rsh.js` — gathered PM2/app/repo/disk/mem/OS/node/bun/pg status.
+- Committed + pushed both SSH helper scripts (commit 52a211a).
+
+Stage Summary:
+- ✅ SSH connectivity: WORKING (sandbox → 103.244.7.221:22222 → root auth → command exec).
+- ✅ rsh.js + scripts/rsh-remote.js: committed + pushed to GitHub.
+- 📊 VM state: FRESH Rocky Linux 10.2 (Red Quartz), 7.5 GB RAM, 70 GB disk (5% used), up 25 min.
+- 🔴 NOTHING installed: no Node.js, no Bun, no PM2, no PostgreSQL, no repo cloned, no app running on :3000.
+- 📝 CICD guide's "production" details (PM2/PG 18.4/Bun 1.2.4/Node 22/13 services) were for OLD staysuite server (.218), not this new VM (.221). This .221 VM is a blank slate — clean install possible, aligned with Cryptsk spec.
+- 🎯 Next decision: install the stack on the VM now (via rsh.js — can run remote commands), OR start Phase 0 code, OR both in parallel.
