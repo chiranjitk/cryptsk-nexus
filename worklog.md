@@ -334,3 +334,52 @@ Stage Summary:
 - ✅ radius-sync service ready (syncs OSS/BSS → FreeRADIUS tables)
 - Commit: 3f1159e (Phase 3 code), eade2a8 (worklog)
 - Next: Phase 4 — Go Session Engine skeleton (in-memory authoritative live state)
+
+---
+Task ID: PHASE-4
+Agent: orchestrator (sandbox main)
+Task: Phase 4 — Session Engine (in-memory authoritative live session state)
+
+Work Log:
+- Created gateway/session-engine/ — Bun/TypeScript mini-service on port 3010:
+  * In-memory session store (Map<string, Session>)
+  * Polls PostgreSQL radacct every 5s for active sessions (acctstoptime IS NULL)
+  * Tracks: username, groupname, NAS IP, client IP, MAC, duration, octets
+  * REST API: /health, /sessions (list+filter+search+paginate), /sessions/:id,
+    /sessions/sync (force poll), /sessions/:id DELETE (CoA/Disconnect skeleton),
+    /stats (aggregate: active count, bytes, by-NAS, by-group)
+  * Session timeout: removes stopped sessions after 60s
+  * CORS enabled for cross-origin from Next.js app
+- Created src/app/api/sessions/route.ts — proxy API (RBAC-protected, calls localhost:3010)
+- Created src/components/admin/sessions-panel.tsx — live sessions UI:
+  * 4 stat cards (active count, download GB, upload GB, NAS count)
+  * Live sessions table (auto-refresh 5s, search by user/IP/MAC/group)
+  * Disconnect action dropdown (CoA/Disconnect skeleton)
+  * Sessions by NAS (progress bars)
+  * Sessions by Plan/Group (progress bars)
+- Created ecosystem.config.cjs — PM2 config for both services:
+  * cryptsk-gateway (Next.js, port 3000, cluster mode, 1G max mem)
+  * cryptsk-session-engine (Bun, port 3010, fork mode, 500M max mem)
+  * Both with env vars, log files, autorestart
+- Updated page.tsx — view=sessions added to switcher
+- Updated sidebar — Dashboard > Live Sessions → /?view=sessions
+- Fixed URL parsing bug (req.url includes full URL → use new URL().pathname)
+
+Deployed to VM:
+- Both services started via PM2 ecosystem
+- cryptsk-gateway: online, 81.4mb, PID 34290
+- cryptsk-session-engine: online, 11.9mb, PID 34423
+- /health endpoint: {"status":"ok","port":3010,"sessions":{"active":0,"total":0}}
+- /sessions endpoint: {"sessions":[],"total":0} (no active RADIUS sessions yet)
+- /stats endpoint: {"activeCount":0,"byNas":{},"byGroup":{}}
+- Poller running every 5s (lastPollAt tracked, pollErrors: 0)
+
+Stage Summary:
+- ✅ Session Engine running on port 3010 (in-memory authoritative live state)
+- ✅ PM2 ecosystem manages both Next.js + Session Engine
+- ✅ REST API working (health, sessions, stats)
+- ✅ Polls radacct table for session updates
+- ✅ UI panel ready at /?view=sessions
+- 0 active sessions (no subscribers connected via RADIUS yet — will populate when real NAS devices send accounting)
+- Commits: ad62796 (Phase 4 code), 78415a7 (URL fix)
+- Next: Phase 5 — Policy Engine (bandwidth/FUP/QoS data model + simulator)
