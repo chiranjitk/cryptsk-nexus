@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { ThemeProvider } from "@/components/theme-provider";
+import { AppSidebar } from "@/components/layout/app-sidebar";
+import { AppHeader } from "@/components/layout/app-header";
+import { AppFooter } from "@/components/layout/app-footer";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,24 +19,25 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: {
+    default: "CRYPTSK Nexus — ISP Platform",
+    template: "%s — CRYPTSK Nexus",
+  },
+  description:
+    "Enterprise OSS/BSS + Network Gateway platform for ISPs, telecom operators, and MSPs. One Platform. Every Connection. Complete Control.",
+  keywords: [
+    "CRYPTSK", "Nexus", "ISP", "OSS", "BSS", "RADIUS",
+    "FreeRADIUS", "VPP", "DPDK", "telecom", "broadband",
+  ],
+  authors: [{ name: "CRYPTSK PRIVATE LIMITED" }],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/logo.svg",
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "CRYPTSK Nexus",
+    description: "Enterprise ISP Platform — OSS/BSS + Network Gateway",
+    siteName: "CRYPTSK Nexus",
     type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
   },
 };
 
@@ -45,8 +51,26 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster />
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <SidebarProvider>
+            <AppSidebar />
+            <SidebarInset>
+              <div className="flex min-h-screen flex-col">
+                <AppHeader />
+                <main className="flex-1 flex flex-col">
+                  {children}
+                </main>
+                <AppFooter />
+              </div>
+            </SidebarInset>
+          </SidebarProvider>
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );
