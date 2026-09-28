@@ -137,3 +137,43 @@ Stage Summary:
 - ✅ VM stack: Node 22, Bun 1.4, PM2 7.0, PostgreSQL 18.6 (14 tables), FreeRADIUS 3.2.10, Caddy 2.10
 - ✅ Dashboard shows: stat cards, charts, system health, plan distribution
 - Next: Phase 1 — NextAuth + RBAC + audit + login page + user management
+
+---
+Task ID: PHASE-1
+Agent: orchestrator (sandbox main)
+Task: Phase 1 — Auth + RBAC + Audit + Login (deployed + verified)
+
+Work Log:
+- Created src/lib/auth.ts — NextAuth v4 config (Credentials provider, bcryptjs, JWT 8h sessions, login lockout 5 attempts → 15min)
+- Created src/lib/rbac.ts — RBAC middleware (requireAuth, requirePermission, hasPermission, hasRole, canClient)
+- Created src/lib/audit.ts — audit service (auditCreate, auditLogin, auditUpdate, auditDelete, auditConfigChange, getAuditEvents)
+- Created src/app/api/auth/[...nextauth]/route.ts — NextAuth API route
+- Created src/components/providers.tsx — SessionProvider wrapper
+- Created src/components/auth/login-card.tsx — CRYPTSK login form (animated gradient bg)
+- Created src/components/auth/auth-gate.tsx — AuthGate component
+- Created src/components/layout/app-shell.tsx — AppShell (wraps entire app in auth gate)
+- Created prisma/seed.ts — seed: 15 roles, 333 permissions, admin user, 9 settings, 11 modules
+- Updated src/app/layout.tsx — SessionProvider + AppShell
+- Updated src/app/page.tsx — removed inline AuthGate (now in AppShell)
+- Updated src/components/layout/app-header.tsx — user menu with logout + role badges
+
+Bug fixes during Phase 1:
+1. AppShell showing without login: sidebar/header/footer were OUTSIDE AuthGate → created AppShell component that wraps everything
+2. Login stuck in "Signing in…" state: router.refresh() didn't update useSession() → changed to window.location.href = "/" (force reload)
+3. Session cookie not persisting: secure=true (NODE_ENV=production) but app served over HTTP → changed to secure = NEXTAUTH_URL.startsWith('https') ?? false
+
+Deployed + verified with agent-browser:
+- Login flow: enter admin@cryptsk.com / Admin@2026 → click Sign In → dashboard shows
+- User menu: shows "Super Administrator" name + role badges + email
+- Logout: click Sign out → redirect to login card
+- Cookies confirmed: cryptsk_session (JWT), next-auth.csrf-token, next-auth.callback-url
+
+Stage Summary:
+- ✅ Phase 1 auth fully working end-to-end on prod (http://103.244.7.221:3000)
+- ✅ 15 roles + 333 permissions seeded in PostgreSQL 18.6
+- ✅ Admin user: admin@cryptsk.com / Admin@2026
+- ✅ Login card shows ONLY when unauthenticated (no sidebar behind it)
+- ✅ Dashboard shows after login with user menu + logout in header
+- ✅ Session persists across page reloads
+- ✅ Audit events created on login (login + login_failed actions)
+- Commits: 59cad9d (Phase 1 code), dc22db3 (AppShell fix), ea06ed6 (page reload fix), 65ac677 (cookie secure fix), 66776b4 (header user menu)
