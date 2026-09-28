@@ -10,6 +10,7 @@ import { ProductsPanel } from "@/components/admin/products-panel";
 import { NasPanel } from "@/components/admin/nas-panel";
 import { RadiusAcctPanel } from "@/components/admin/radius-acct-panel";
 import { RadiusPostAuthPanel } from "@/components/admin/radius-postauth-panel";
+import { SessionsPanel } from "@/components/admin/sessions-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -151,6 +152,7 @@ export default function DashboardPage() {
   if (view === "nas") return <NasPanel />;
   if (view === "radius-acct") return <RadiusAcctPanel />;
   if (view === "radius-postauth") return <RadiusPostAuthPanel />;
+  if (view === "sessions") return <SessionsPanel />;
 
   // Default: dashboard
   return (

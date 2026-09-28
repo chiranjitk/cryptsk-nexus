@@ -24,7 +24,7 @@ type NavItem = {
 };
 
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  { label: "Core", items: [{ title: "Dashboard", icon: LayoutDashboard, children: [{ title: "Overview" }, { title: "Live Sessions" }, { title: "System Health" }] }] },
+  { label: "Core", items: [{ title: "Dashboard", icon: LayoutDashboard, children: [{ title: "Overview" }, { title: "Live Sessions", href: "/?view=sessions" }, { title: "System Health" }] }] },
   { label: "Customer Plane", items: [
     { title: "Customers & Services", icon: Users, children: [{ title: "Customers / Subscribers", href: "/?view=customers" }, { title: "Customer 360°" }, { title: "Products & Packages", href: "/?view=products" }, { title: "Provisioning" }] },
     { title: "Organization & Scope", icon: Building2, badge: "LIC", children: [{ title: "Tenants" }, { title: "Organizations" }, { title: "Branches / Sites" }, { title: "Scope Manager" }] },

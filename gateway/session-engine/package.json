@@ -1,0 +1,17 @@
+{
+  "name": "cryptsk-session-engine",
+  "version": "1.0.0",
+  "description": "CRYPTSK Nexus — Go Session Engine (TypeScript/Bun implementation). In-memory authoritative live session state per spec 02_GATEWAY §10.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "bun-types": "^1.3.4"
+  }
+}
