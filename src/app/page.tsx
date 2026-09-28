@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { UsersPanel } from "@/components/admin/users-panel";
 import { AuditPanel } from "@/components/admin/audit-panel";
 import { RolesPanel } from "@/components/admin/roles-panel";
+import { CustomersPanel } from "@/components/admin/customers-panel";
+import { ProductsPanel } from "@/components/admin/products-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -141,6 +143,8 @@ export default function DashboardPage() {
   if (view === "users") return <UsersPanel />;
   if (view === "audit") return <AuditPanel />;
   if (view === "roles") return <RolesPanel />;
+  if (view === "customers") return <CustomersPanel />;
+  if (view === "products") return <ProductsPanel />;
 
   // Default: dashboard
   return (
