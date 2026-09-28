@@ -177,3 +177,38 @@ Stage Summary:
 - ✅ Session persists across page reloads
 - ✅ Audit events created on login (login + login_failed actions)
 - Commits: 59cad9d (Phase 1 code), dc22db3 (AppShell fix), ea06ed6 (page reload fix), 65ac677 (cookie secure fix), 66776b4 (header user menu)
+
+---
+Task ID: PHASE-1-ADMIN
+Agent: orchestrator (sandbox main)
+Task: Phase 1 admin panels — Users, Audit, Roles + view switcher
+
+Work Log:
+- Created 4 API routes (all RBAC-protected):
+  * /api/users (GET list, POST create with bcrypt)
+  * /api/users/[id] (GET, PATCH update+roles, DELETE)
+  * /api/audit (GET list with filters: action/result/resource/date)
+  * /api/roles (GET list with permissions grouped by resource)
+- Created 3 admin UI panels:
+  * src/components/admin/users-panel.tsx — user table + create/edit dialog with role assignment
+  * src/components/admin/audit-panel.tsx — audit log with filters + pagination
+  * src/components/admin/roles-panel.tsx — 15 role cards with permission matrix
+- Updated src/app/page.tsx — view switcher using useSearchParams(?view= param)
+- Updated src/components/layout/app-sidebar.tsx — admin links now point to ?view=users/audit/roles
+- Updated src/components/providers.tsx — added QueryClientProvider (TanStack Query)
+- Deployed + verified with agent-browser:
+  * Login → dashboard (default view)
+  * /?view=users → User Management panel (Add User button, search, table)
+  * /?view=audit → Audit Log panel (6 events, filters, pagination)
+  * /?view=roles → Roles & Permissions panel (15 roles, permission matrix)
+  * All panels show logged-in user in header (SA Super Administrator)
+
+Stage Summary:
+- ✅ Phase 1 admin panels fully functional on prod
+- ✅ View switcher pattern works (/?view=users, /?view=audit, /?view=roles)
+- ✅ RBAC protection on all API routes (requirePermission)
+- ✅ TanStack Query for data fetching + mutations
+- ✅ Audit events auto-created on user CRUD (create/update/delete)
+- ✅ 6 audit events already logged (from login attempts)
+- Commit: a2cc836
+- Next: Phase 2 — Customer/Subscriber/Product/Package models + UI
