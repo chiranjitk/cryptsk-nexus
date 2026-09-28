@@ -707,6 +707,7 @@ model Plan {
   product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   subscribers     Subscriber[]
   subscriptions   Subscription[]
+  policyMappings  PlanPolicyMapping[]
 
   @@index([productId])
   @@index([status])
@@ -943,4 +944,108 @@ model Nas {
   @@index([type])
   @@index([isActive])
   @@map("nas")
+}
+
+// ============================================================
+// PHASE 5 — Policy Engine
+// Per: docs/architecture/02_GATEWAY §29-32, 06_DB §5
+// Owns policy definitions, translates to RADIUS attributes,
+// supports versioning + precedence + conflict resolution + simulator.
+// ============================================================
+
+enum PolicyType {
+  bandwidth
+  fup
+  access_time
+  data_transfer
+  security
+  qos
+  auth
+  content_filter
+  combined
+}
+
+enum PolicyStatus {
+  draft
+  active
+  deprecated
+  archived
+}
+
+/// Phase 5 — Policy definition (bandwidth, FUP, access time, etc.)
+/// Config is a JSON string holding all policy parameters.
+/// Per spec 02_GATEWAY §29: policies are versioned, have precedence,
+/// and are compiled to RADIUS attributes for the NAS.
+model Policy {
+  id              String       @id @default(cuid())
+  policyCode      String       @unique  // POL-BW-50-FUP100
+  name            String
+  description     String?
+  type            PolicyType   @default(combined)
+  status          PolicyStatus @default(draft)
+  version         Int          @default(1)
+  precedence      Int          @default(0)  // higher wins on conflict
+  // Config JSON — holds all parameters:
+  // {
+  //   "bandwidth": { "downloadKbps": 50000, "uploadKbps": 25000, "burstDownloadKbps": 60000, "burstUploadKbps": 30000, "burstTimeSec": 8 },
+  //   "fup": { "thresholdGb": 100, "postFupDownloadKbps": 10000, "postFupUploadKbps": 5000 },
+  //   "accessTime": { "startTime": "09:00", "endTime": "21:00", "daysOfWeek": ["mon","tue",...], "sessionTimeoutSec": 28800 },
+  //   "dataTransfer": { "dailyLimitGb": 5, "monthlyLimitGb": 100 },
+  //   "security": { "filterId": "BB-50-SAFE", "nasFilterId": "restrict-social" },
+  //   "qos": { "priority": 6, "queueType": "priority" }
+  // }
+  config          String       @default("{}")  // JSON string
+  // RADIUS group this policy maps to (when published, syncs to radgroupcheck)
+  radiusGroupName String?      // if set, overrides the Product's radiusGroupName
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  publishedAt     DateTime?
+  publishedBy     String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  versions        PolicyVersion[]
+  planMappings    PlanPolicyMapping[]
+
+  @@index([type])
+  @@index([status])
+  @@index([radiusGroupName])
+  @@index([precedence])
+  @@map("policies")
+}
+
+/// Phase 5 — Policy version history (for rollback)
+model PolicyVersion {
+  id              String       @id @default(cuid())
+  policyId        String
+  version         Int
+  config          String       // JSON snapshot at this version
+  changeLog       String?      // what changed
+  publishedAt     DateTime     @default(now())
+  publishedBy     String?
+
+  policy          Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, version])
+  @@index([policyId])
+  @@map("policy_versions")
+}
+
+/// Phase 5 — Plan → Policy mapping (which policies apply to which plans)
+model PlanPolicyMapping {
+  id              String       @id @default(cuid())
+  planId          String
+  policyId        String
+  priority        Int          @default(1)  // lower = higher priority
+  isActive        Boolean      @default(true)
+
+  plan            Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  policy          Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, policyId])
+  @@index([planId])
+  @@index([policyId])
+  @@map("plan_policy_mappings")
 }

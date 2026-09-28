@@ -30,7 +30,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     { title: "Organization & Scope", icon: Building2, badge: "LIC", children: [{ title: "Tenants" }, { title: "Organizations" }, { title: "Branches / Sites" }, { title: "Scope Manager" }] },
   ] },
   { label: "Policy & Access", items: [
-    { title: "Policy Engine", icon: Shield, children: [{ title: "Surfing Quota" }, { title: "Access Time" }, { title: "Bandwidth" }, { title: "Data Transfer" }, { title: "FUP" }, { title: "App & Content" }, { title: "Security Profiles" }, { title: "Access / Auth" }, { title: "Simulator" }, { title: "Audit" }] },
+    { title: "Policy Engine", icon: Shield, children: [{ title: "Surfing Quota" }, { title: "Access Time" }, { title: "Bandwidth" }, { title: "Data Transfer" }, { title: "FUP" }, { title: "App & Content" }, { title: "Security Profiles" }, { title: "Access / Auth" }, { title: "Simulator", href: "/?view=policies" }, { title: "Audit" }] },
     { title: "Access & AAA", icon: KeyRound, children: [
       { title: "NAS Devices", href: "/?view=nas" },
       { title: "Authentication", href: "/?view=radius-postauth" },
