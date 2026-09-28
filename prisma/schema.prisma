@@ -1,13 +1,16 @@
 // ============================================================
-// CRYPTSK Nexus — Prisma Schema (Phase 0 + Phase 1)
+// CRYPTSK Nexus — Prisma Schema (Phase 0 + Phase 1 + Phase 2)
 // ============================================================
 // Per: docs/architecture/06_DATABASE_DATA_MODEL_SPECIFICATION.md
 //      docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
 //      docs/architecture/12_IMPLEMENTATION_PHASE_ROADMAP.md
 //
 // Provider: SQLite (dev per ADR-041) — prod switches to PostgreSQL (ADR-004)
-// Models: User, Role, Permission, UserRole, RolePermission,
-//        AuditEvent, SystemSetting, Module, FeatureFlag, ApiKey,
+// Phase 0: Foundation models (SchemaMeta, SystemSetting, Module, FeatureFlag)
+// Phase 1: Identity + RBAC (User, Role, Permission, AuditEvent, ApiKey, etc.)
+// Phase 2: Customer / Subscriber / Product / Plan / Subscription
+//          (RADIUS Users = Subscribers, RADIUS Groups = Plans — single source)
+// ============================================================
 //        Notification, Session (optional, for NextAuth DB sessions)
 // ============================================================
 
@@ -405,4 +408,366 @@ model SchemaMeta {
   updatedAt       DateTime         @updatedAt
 
   @@map("schema_meta")
+}
+
+// ============================================================
+// PHASE 2 — Customer / Subscriber / Product / Plan / Subscription
+// Per: docs/architecture/06_DATABASE_DATA_MODEL_SPECIFICATION.md §5
+// Design rule: RADIUS Users = Subscribers, RADIUS Groups = Plans
+// (single source of truth — syncs to FreeRADIUS tables in Phase 3)
+// ============================================================
+
+enum CustomerType {
+  individual
+  business
+  government
+  reseller
+  lco
+}
+
+enum CustomerStatus {
+  active
+  inactive
+  suspended
+  blacklisted
+  prospect
+}
+
+enum SubscriberStatus {
+  active
+  inactive
+  suspended
+  terminated
+  pending_activation
+  expired
+}
+
+enum ProductType {
+  broadband
+  voip
+  iptv
+  addon
+  hardware
+  service
+}
+
+enum ProductStatus {
+  active
+  inactive
+  deprecated
+  draft
+}
+
+enum PlanBillingCycle {
+  monthly
+  quarterly
+  half_yearly
+  yearly
+  one_time
+  usage_based
+}
+
+enum PlanStatus {
+  active
+  inactive
+  deprecated
+}
+
+enum SubscriptionStatus {
+  pending_activation
+  active
+  suspended
+  terminated
+  expired
+  pending_termination
+}
+
+enum ServiceState {
+  provisioned
+  activated
+  suspended
+  resumed
+  terminated
+  expired
+}
+
+enum AddressType {
+  billing
+  installation
+  correspondence
+  permanent
+}
+
+enum ContactType {
+  phone
+  email
+  mobile
+  whatsapp
+  emergency
+}
+
+/// Phase 2 — Customer (business entity — company or individual)
+/// Per spec 06_DB §5: Customer/Subscriber/Service bounded context
+model Customer {
+  id              String         @id @default(cuid())
+  customerCode    String         @unique  // human-readable: CUST-0001
+  type            CustomerType   @default(individual)
+  status          CustomerStatus @default(active)
+  // Individual fields
+  firstName       String?
+  lastName        String?
+  // Business fields
+  companyName     String?
+  gstin           String?  // GST number (India)
+  pan             String?  // PAN (India)
+  // Common
+  displayName     String   // computed: "Acme Corp" or "John Doe"
+  email           String?  @unique
+  phone           String?
+  whatsappNumber  String?
+  // Metadata
+  KundaliId       String?  // KYC reference
+  kycVerified     Boolean  @default(false)
+  notes           String?  // free text notes
+  tags            String?  // JSON array of tags
+  // Relations
+  contacts        Contact[]
+  addresses       Address[]
+  subscribers     Subscriber[]
+  subscriptions   Subscription[]
+  // Audit
+  createdBy       String?  // userId
+  updatedBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([email])
+  @@index([customerCode])
+  @@map("customers")
+}
+
+/// Phase 2 — Subscriber (the actual internet user — RADIUS user)
+/// Per spec: RADIUS Users = Subscribers (single source of truth)
+/// Syncs to FreeRADIUS radcheck table in Phase 3
+model Subscriber {
+  id              String           @id @default(cuid())
+  customerId      String           // parent Customer
+  subscriberCode  String           @unique  // SUB-0001
+  // RADIUS credentials (sync to radcheck in Phase 3)
+  radiusUsername  String           @unique  // RADIUS username
+  radiusPasswordHash String        @default("")  // bcrypt hash (sync to radcheck)
+  // Service info
+  status          SubscriberStatus @default(pending_activation)
+  planId          String?  // current plan → RADIUS group
+  nasId           String?  // which NAS authenticates this subscriber
+  // Identity
+  fullName        String?
+  email           String?
+  mobile          String?
+  // Service dates
+  activatedAt     DateTime?
+  suspendedAt     DateTime?
+  terminatedAt    DateTime?
+  expiresAt       DateTime?  // plan expiry
+  // Location
+  installationAddressId String?  // link to Address
+  // Technical
+  staticIp        String?  // assigned static IP (if any)
+  vlanId          Int?
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan            Plan             @relation(fields: [planId], references: [id], onDelete: SetNull)
+  subscriptions  Subscription[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([radiusUsername])
+  @@index([planId])
+  @@map("subscribers")
+}
+
+/// Phase 2 — Contact (multiple contact methods per Customer)
+model Contact {
+  id              String         @id @default(cuid())
+  customerId      String
+  type            ContactType
+  value           String         // phone number, email, etc.
+  label           String?  // "Home", "Work", "Emergency"
+  isPrimary       Boolean        @default(false)
+  optOut          Boolean        @default(false)  // marketing opt-out
+  verifiedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, type, value])
+  @@index([customerId])
+  @@map("contacts")
+}
+
+/// Phase 2 — Address (billing, installation, correspondence)
+model Address {
+  id              String         @id @default(cuid())
+  customerId      String
+  type            AddressType
+  line1           String
+  line2           String?
+  city            String
+  state           String?
+  postalCode      String?
+  country         String         @default("India")
+  landmark        String?
+  geoLat          Float?
+  geoLng          Float?
+  isPrimary       Boolean         @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([type])
+  @@map("addresses")
+}
+
+/// Phase 2 — Product (what you sell — broadband plan, addon, hardware)
+/// Per spec: RADIUS Groups = Products/Plans (single source of truth)
+/// Syncs to FreeRADIUS radgroupcheck/radgroupreply in Phase 3
+model Product {
+  id              String         @id @default(cuid())
+  productCode     String         @unique  // PROD-BB-50
+  name            String         // "Broadband 50Mbps"
+  description     String?
+  type            ProductType   @default(broadband)
+  status          ProductStatus  @default(draft)
+  // Bandwidth profile
+  downloadSpeed   Int?  // kbps (50000 = 50Mbps)
+  uploadSpeed     Int?  // kbps
+  // Data transfer
+  dataLimitGb     Float?  // null = unlimited
+  fupDataLimitGb  Float?  // FUP threshold
+  fupDownloadSpeed Int?  // post-FUP speed (kbps)
+  // RADIUS mapping (sync to radgroupcheck in Phase 3)
+  radiusGroupName String?  @unique  // e.g. "BB-50Mbps" → RADIUS group
+  // Features
+  features        String?  // JSON array of features
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  plans           Plan[]
+
+  @@index([type])
+  @@index([status])
+  @@index([radiusGroupName])
+  @@index([productCode])
+  @@map("products")
+}
+
+/// Phase 2 — Plan (pricing/billing cycle for a Product)
+/// Per spec: RADIUS Groups = Plans (single source of truth)
+model Plan {
+  id              String           @id @default(cuid())
+  planCode        String           @unique  // PLAN-BB50-M
+  productId       String
+  name            String  // "50Mbps Monthly"
+  billingCycle    PlanBillingCycle @default(monthly)
+  status          PlanStatus       @default(active)
+  // Pricing
+  basePrice       Float    // base amount
+  currency        String   @default("INR")
+  taxRate         Float    @default(18.0)  // GST % (India)
+  setupFee        Float     @default(0)
+  // Discounts
+  discountPercent Float    @default(0)
+  // RADIUS group (sync to radgroupcheck/radgroupreply)
+  radiusGroupName String?   // overrides product's radiusGroupName if set
+  // Terms
+  contractMonths  Int?  // min contract period
+  dataLimitGb     Float?  // per billing cycle
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  subscribers     Subscriber[]
+  subscriptions   Subscription[]
+
+  @@index([productId])
+  @@index([status])
+  @@index([billingCycle])
+  @@index([radiusGroupName])
+  @@map("plans")
+}
+
+/// Phase 2 — Subscription (Customer → Plan binding with lifecycle)
+model Subscription {
+  id              String             @id @default(cuid())
+  subscriptionCode String            @unique  // SUB-2026-0001
+  customerId      String
+  subscriberId    String?  // link to Subscriber (RADIUS user)
+  planId          String
+  status          SubscriptionStatus @default(pending_activation)
+  // Billing
+  basePrice       Float     // snapshot of plan price at time of subscription
+  currency        String    @default("INR")
+  // Dates
+  startDate       DateTime?
+  endDate         DateTime?  // contract end
+  nextBillingDate DateTime?
+  suspendedAt     DateTime?
+  terminatedAt    DateTime?
+  // Metadata
+  notes           String?
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Relations
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriber      Subscriber?        @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+  plan            Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  lifecycleEvents ServiceLifecycle[]
+
+  @@index([customerId])
+  @@index([subscriberId])
+  @@index([planId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/// Phase 2 — ServiceLifecycle (track state transitions: provision→activate→suspend→terminate)
+model ServiceLifecycle {
+  id              String        @id @default(cuid())
+  subscriptionId  String
+  state           ServiceState
+  previousState   ServiceState?
+  reason          String?  // "Payment overdue", "Customer request", "FUP exceeded"
+  changedBy        String?  // userId
+  changedAt        DateTime      @default(now())
+  metadata         String?  // JSON: additional context
+
+  subscription     Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([state])
+  @@index([changedAt])
+  @@map("service_lifecycle")
 }

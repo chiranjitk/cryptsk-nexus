@@ -26,12 +26,18 @@ type NavItem = {
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   { label: "Core", items: [{ title: "Dashboard", icon: LayoutDashboard, children: [{ title: "Overview" }, { title: "Live Sessions" }, { title: "System Health" }] }] },
   { label: "Customer Plane", items: [
-    { title: "Customers & Services", icon: Users, children: [{ title: "Customers / Subscribers" }, { title: "Customer 360°" }, { title: "Products & Packages" }, { title: "Provisioning" }] },
+    { title: "Customers & Services", icon: Users, children: [{ title: "Customers / Subscribers", href: "/?view=customers" }, { title: "Customer 360°" }, { title: "Products & Packages", href: "/?view=products" }, { title: "Provisioning" }] },
     { title: "Organization & Scope", icon: Building2, badge: "LIC", children: [{ title: "Tenants" }, { title: "Organizations" }, { title: "Branches / Sites" }, { title: "Scope Manager" }] },
   ] },
   { label: "Policy & Access", items: [
     { title: "Policy Engine", icon: Shield, children: [{ title: "Surfing Quota" }, { title: "Access Time" }, { title: "Bandwidth" }, { title: "Data Transfer" }, { title: "FUP" }, { title: "App & Content" }, { title: "Security Profiles" }, { title: "Access / Auth" }, { title: "Simulator" }, { title: "Audit" }] },
-    { title: "Access & AAA", icon: KeyRound, children: [{ title: "NAS Devices" }, { title: "RADIUS Users" }, { title: "RADIUS Groups" }, { title: "Authentication" }, { title: "Accounting" }, { title: "CoA / Disconnect" }, { title: "Auth Logs" }] },
+    { title: "Access & AAA", icon: KeyRound, children: [
+      { title: "NAS Devices" },
+      { title: "Authentication" },
+      { title: "Accounting" },
+      { title: "CoA / Disconnect" },
+      { title: "Auth Logs" },
+    ] },
   ] },
   { label: "Network & Security", items: [
     { title: "Network & Gateway", icon: Network, children: [{ title: "Gateways" }, { title: "Interfaces" }, { title: "VLAN / VRF" }, { title: "IPAM" }, { title: "Routing" }, { title: "Multi-WAN" }, { title: "DHCP" }, { title: "DNS" }, { title: "PPPoE" }, { title: "Captive Portal" }] },

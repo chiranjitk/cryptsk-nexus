@@ -93,7 +93,7 @@
 | PostgreSQL | 18.4 (`cryptsknexus` DB) |
 | DB URL | `postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus` |
 | Exposed port | 3000 |
-| Public URL | `http://103.244.7.221:3000` |
+| Public URL | `https://nexus.cryptsk.com` |
 
 ### 2.4 Default admin login
 
@@ -331,7 +331,7 @@ pm2 status
 ### 7.3 Verify from sandbox via agent-browser
 
 ```bash
-agent-browser open http://103.244.7.221:3000
+agent-browser open https://nexus.cryptsk.com
 agent-browser snapshot
 ```
 
@@ -613,7 +613,7 @@ tail -50 worklog.md
 ### Verify deployment
 ```bash
 # From sandbox via agent-browser:
-agent-browser open http://103.244.7.221:3000
+agent-browser open https://nexus.cryptsk.com
 agent-browser snapshot
 # Or via curl on prod:
 curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
@@ -638,7 +638,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
 ## 📝 Notes
 
 - **Sandbox is ephemeral** — push to GitHub before declaring any work done (§3).
-- **Test on production** using `http://103.244.7.221:3000` via agent-browser.
+- **Test on production** using `https://nexus.cryptsk.com` via agent-browser.
 - **PM2** manages the Next.js plane; **systemd** will manage the gateway plane (Phase 3+).
 - **PostgreSQL** on prod has the full dataset; sandbox uses SQLite for local dev.
 - **Deploy script** handles the full pipeline automatically — prefer it over manual steps.
