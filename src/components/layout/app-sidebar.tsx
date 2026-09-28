@@ -19,7 +19,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 type NavItem = {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
-  children?: { title: string }[];
+  children?: { title: string; href?: string }[];
   badge?: string;
 };
 
@@ -46,7 +46,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     { title: "Reports & Analytics", icon: BarChart3, children: [{ title: "Revenue" }, { title: "Subscriber Growth" }, { title: "Usage" }, { title: "Churn" }, { title: "ARPU" }] },
     { title: "Sales, Partners & Engagement", icon: Handshake, children: [{ title: "Leads" }, { title: "Campaigns" }, { title: "LCO / Partners" }, { title: "Commissions" }, { title: "WhatsApp" }, { title: "SMS" }, { title: "Email" }, { title: "Notifications" }] },
     { title: "AI & Intelligence", icon: Brain, children: [{ title: "AI Advisor" }, { title: "AI Diagnosis" }, { title: "Churn Prediction" }, { title: "Revenue Forecast" }, { title: "Plan Recommendations" }, { title: "Competitor Intel" }] },
-    { title: "Administration", icon: Settings, children: [{ title: "Users" }, { title: "Roles & Permissions" }, { title: "Modules" }, { title: "Feature Flags" }, { title: "API Keys" }, { title: "System Settings" }, { title: "Audit Log" }] },
+    { title: "Administration", icon: Settings, children: [{ title: "Users", href: "/?view=users" }, { title: "Roles & Permissions", href: "/?view=roles" }, { title: "Modules" }, { title: "Feature Flags" }, { title: "API Keys" }, { title: "System Settings" }, { title: "Audit Log", href: "/?view=audit" }] },
   ] },
 ];
 
@@ -98,7 +98,7 @@ export function AppSidebar() {
                             {item.children.map((child) => (
                               <SidebarMenuSubItem key={child.title}>
                                 <SidebarMenuSubButton asChild>
-                                  <Link href="/"><span>{child.title}</span></Link>
+                                  <Link href={child.href || "/"}><span>{child.title}</span></Link>
                                 </SidebarMenuSubButton>
                               </SidebarMenuSubItem>
                             ))}

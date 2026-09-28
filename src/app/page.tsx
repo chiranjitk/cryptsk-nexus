@@ -1,6 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
+import { UsersPanel } from "@/components/admin/users-panel";
+import { AuditPanel } from "@/components/admin/audit-panel";
+import { RolesPanel } from "@/components/admin/roles-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -130,6 +134,15 @@ const quickActions = [
 ];
 
 export default function DashboardPage() {
+  const searchParams = useSearchParams();
+  const view = searchParams.get("view");
+
+  // View switcher — renders admin panels based on ?view= param
+  if (view === "users") return <UsersPanel />;
+  if (view === "audit") return <AuditPanel />;
+  if (view === "roles") return <RolesPanel />;
+
+  // Default: dashboard
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6 cryptsk-fade-in">
       {/* ── Hero header ── */}
