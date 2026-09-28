@@ -31,8 +31,12 @@ export function LoginCard() {
     if (result?.error) {
       setError("Invalid email or password");
       setLoading(false);
-    } else if (result?.ok) {
-      router.refresh();
+    } else if (result?.ok || result?.url) {
+      // Force a full page reload so SessionProvider picks up the new cookie
+      window.location.href = "/";
+    } else {
+      setError("Login failed. Please try again.");
+      setLoading(false);
     }
   }
 
