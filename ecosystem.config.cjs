@@ -47,5 +47,23 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      name: "cryptsk-vpp-adapter",
+      script: "bun",
+      args: "index.ts",
+      cwd: "/opt/cryptsk-nexus/gateway/vpp/vpp-adapter",
+      env: {
+        DATABASE_URL: "postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus",
+        NODE_ENV: "production",
+      },
+      max_memory_restart: "500M",
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      out_file: "/root/.pm2/logs/cryptsk-vpp-adapter-out.log",
+      error_file: "/root/.pm2/logs/cryptsk-vpp-adapter-error.log",
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

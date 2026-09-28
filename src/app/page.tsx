@@ -12,6 +12,7 @@ import { RadiusAcctPanel } from "@/components/admin/radius-acct-panel";
 import { RadiusPostAuthPanel } from "@/components/admin/radius-postauth-panel";
 import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { PoliciesPanel } from "@/components/admin/policies-panel";
+import { VppPanel } from "@/components/admin/vpp-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -155,6 +156,7 @@ export default function DashboardPage() {
   if (view === "radius-postauth") return <RadiusPostAuthPanel />;
   if (view === "sessions") return <SessionsPanel />;
   if (view === "policies") return <PoliciesPanel />;
+  if (view === "vpp") return <VppPanel />;
 
   // Default: dashboard
   return (

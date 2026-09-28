@@ -1,0 +1,16 @@
+{
+  "name": "cryptsk-vpp-adapter",
+  "version": "1.0.0",
+  "description": "CRYPTSK Nexus — VPP config generator + dataplane adapter (TypeScript/Bun dev implementation). Per spec 02_GATEWAY §90, ADR-008 (GoVPP binary API, never vppctl).",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  }
+}
