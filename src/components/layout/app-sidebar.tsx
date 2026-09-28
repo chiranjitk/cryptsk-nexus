@@ -32,11 +32,11 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   { label: "Policy & Access", items: [
     { title: "Policy Engine", icon: Shield, children: [{ title: "Surfing Quota" }, { title: "Access Time" }, { title: "Bandwidth" }, { title: "Data Transfer" }, { title: "FUP" }, { title: "App & Content" }, { title: "Security Profiles" }, { title: "Access / Auth" }, { title: "Simulator" }, { title: "Audit" }] },
     { title: "Access & AAA", icon: KeyRound, children: [
-      { title: "NAS Devices" },
-      { title: "Authentication" },
-      { title: "Accounting" },
+      { title: "NAS Devices", href: "/?view=nas" },
+      { title: "Authentication", href: "/?view=radius-postauth" },
+      { title: "Accounting", href: "/?view=radius-acct" },
       { title: "CoA / Disconnect" },
-      { title: "Auth Logs" },
+      { title: "Auth Logs", href: "/?view=radius-postauth" },
     ] },
   ] },
   { label: "Network & Security", items: [

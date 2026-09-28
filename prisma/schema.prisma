@@ -771,3 +771,176 @@ model ServiceLifecycle {
   @@index([changedAt])
   @@map("service_lifecycle")
 }
+
+// ============================================================
+// PHASE 3 — FreeRADIUS Integration
+// Per: docs/architecture/06_DATABASE §12, 02_GATEWAY §90
+// Standard FreeRADIUS 3.2.x schema + Cryptsk extended columns
+// Tables: radcheck, radreply, radusergroup, radgroupcheck,
+//         radgroupreply, radacct, radpostauth, nas
+// Sync: Subscribers → radcheck/radusergroup, Products → radgroupcheck/radgroupreply
+// ============================================================
+
+/// FreeRADIUS radcheck — per-user authentication attributes
+/// Synced from Subscriber.radiusUsername + radiusPasswordHash
+model RadCheck {
+  id            Int      @id @default(autoincrement())
+  username      String   // = Subscriber.radiusUsername
+  attribute     String   // "Cleartext-Password", "Auth-Type", etc.
+  op            String   @default(":=") // ":=", "==", "+=", etc.
+  value         String   // password hash or attribute value
+  // Cryptsc extended
+  subscriberId  String?  // link to Subscriber for traceability
+
+  @@index([username])
+  @@index([subscriberId])
+  @@map("radcheck")
+}
+
+/// FreeRADIUS radreply — per-user authorization reply attributes
+model RadReply {
+  id            Int      @id @default(autoincrement())
+  username      String
+  attribute     String   // "Framed-IP-Address", "Session-Timeout", etc.
+  op            String   @default(":=")
+  value         String
+  subscriberId  String?
+
+  @@index([username])
+  @@map("radreply")
+}
+
+/// FreeRADIUS radusergroup — user-to-group mapping
+/// Synced from Subscriber → Plan.radiusGroupName
+model RadUserGroup {
+  id            Int      @id @default(autoincrement())
+  username      String   // = Subscriber.radiusUsername
+  groupname     String   // = Plan.radiusGroupName (or Product.radiusGroupName)
+  priority      Int      @default(1)
+  subscriberId  String?
+
+  @@index([username])
+  @@index([groupname])
+  @@map("radusergroup")
+}
+
+/// FreeRADIUS radgroupcheck — per-group check attributes
+/// Synced from Product (bandwidth, FUP, session limits)
+model RadGroupCheck {
+  id            Int      @id @default(autoincrement())
+  groupname     String   // = Product.radiusGroupName
+  attribute     String   // "Mikrotik-Rate-Limit", "Session-Timeout", etc.
+  op            String   @default(":=")
+  value         String   // "50M/25M" or "86400" etc.
+  productId     String?
+
+  @@index([groupname])
+  @@map("radgroupcheck")
+}
+
+/// FreeRADIUS radgroupreply — per-group reply attributes
+/// Synced from Product (IP pool, DNS, etc.)
+model RadGroupReply {
+  id            Int      @id @default(autoincrement())
+  groupname     String
+  attribute     String   // "Framed-IP-Address", "DNS-Server", etc.
+  op            String   @default(":=")
+  value         String
+  productId     String?
+
+  @@index([groupname])
+  @@map("radgroupreply")
+}
+
+/// FreeRADIUS radacct — accounting records (session data)
+/// Written by FreeRADIUS accounting module (read-only from OSS/BSS perspective)
+model RadAcct {
+  radacctid           BigInt   @id @default(autoincrement())
+  acctsessionid       String   @default("")
+  acctuniqueid        String   @unique @default("")
+  username            String?  @default("")
+  groupname           String?  @default("")
+  realm               String?  @default("")
+  nasipaddress        String   @default("")
+  nasportid           String?  @default("")
+  nasporttype         String?  @default("")
+  acctstarttime       DateTime?
+  acctupdatetime      DateTime?
+  acctstoptime        DateTime?
+  acctinterval        BigInt?  // seconds since last update
+  acctsessiontime     BigInt?  // session duration in seconds
+  acctauthentic      String?  @default("")
+  connectinfo_start   String?  @default("")
+  connectinfo_stop    String?  @default("")
+  acctinputoctets     BigInt?  // bytes received from user
+  acctoutputoctets    BigInt?  // bytes sent to user
+  calledstationid     String?  @default("")
+  callingstationid    String?  @default("")
+  acctterminatecause   String?  @default("")
+  servicetype         String?  @default("")
+  framedprotocol      String?  @default("")
+  framedipaddress     String   @default("")
+  framedipv6address   String   @default("")
+  framedipv6prefix    String   @default("")
+  framedinterfaceid   String   @default("")
+  delegatedipv6prefix String   @default("")
+  // Cryptsk extended columns per spec 06_DB §12
+  subscriberId        String?
+  planId              String?
+  areaId              String?
+
+  @@index([username])
+  @@index([groupname])
+  @@index([nasipaddress])
+  @@index([acctstarttime])
+  @@index([acctstoptime])
+  @@index([framedipaddress])
+  @@index([subscriberId])
+  @@map("radacct")
+}
+
+/// FreeRADIUS radpostauth — post-authentication log (success + failure)
+/// Written by FreeRADIUS post-auth module
+model RadPostAuth {
+  id            BigInt   @id @default(autoincrement())
+  username      String
+  pass         String?  @default("")  // password attempted (may be empty for security)
+  reply         String?  // "Access-Accept", "Access-Reject", etc.
+  authdate      DateTime @default(now())
+  // Cryptsk extended
+  nasipaddress  String?
+  nasportid     String?
+  callingstationid String?  // MAC address
+  subscriberId  String?
+
+  @@index([username])
+  @@index([authdate])
+  @@index([reply])
+  @@map("radpostauth")
+}
+
+/// FreeRADIUS NAS — Network Access Server device list
+/// Read by FreeRADIUS clients.conf module (or sql module)
+model Nas {
+  id            Int      @id @default(autoincrement())
+  nasname       String   @unique  // IP address or hostname
+  shortname     String?  // friendly name
+  type          String   @default("other")  // "cisco", "mikrotik", "pppoe", etc.
+  ports         Int?
+  secret        String   // RADIUS shared secret (encrypted at rest — Phase 3+)
+  server        String?  // virtual server name
+  community     String?  // SNMP community (legacy)
+  description   String?  // human-readable
+  // Cryptsk extended
+  areaId        String?  // which area/site this NAS serves
+  isActive      Boolean  @default(true)
+  lastSeenAt    DateTime?  // last RADIUS request received
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([nasname])
+  @@index([type])
+  @@index([isActive])
+  @@map("nas")
+}

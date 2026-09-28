@@ -7,6 +7,9 @@ import { AuditPanel } from "@/components/admin/audit-panel";
 import { RolesPanel } from "@/components/admin/roles-panel";
 import { CustomersPanel } from "@/components/admin/customers-panel";
 import { ProductsPanel } from "@/components/admin/products-panel";
+import { NasPanel } from "@/components/admin/nas-panel";
+import { RadiusAcctPanel } from "@/components/admin/radius-acct-panel";
+import { RadiusPostAuthPanel } from "@/components/admin/radius-postauth-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -145,6 +148,9 @@ export default function DashboardPage() {
   if (view === "roles") return <RolesPanel />;
   if (view === "customers") return <CustomersPanel />;
   if (view === "products") return <ProductsPanel />;
+  if (view === "nas") return <NasPanel />;
+  if (view === "radius-acct") return <RadiusAcctPanel />;
+  if (view === "radius-postauth") return <RadiusPostAuthPanel />;
 
   // Default: dashboard
   return (
