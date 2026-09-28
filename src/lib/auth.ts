@@ -123,7 +123,9 @@ export const authOptions: NextAuthOptions = {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
-        secure: process.env.NODE_ENV === "production",
+        // Secure only when HTTPS is configured (Caddy TLS in Phase 1+)
+        // For now: HTTP on prod VM, so secure=false
+        secure: process.env.NEXTAUTH_URL?.startsWith("https") ?? false,
       },
     },
   },
