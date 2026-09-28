@@ -1,32 +1,408 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// ============================================================
+// CRYPTSK Nexus — Prisma Schema (Phase 0 + Phase 1)
+// ============================================================
+// Per: docs/architecture/06_DATABASE_DATA_MODEL_SPECIFICATION.md
+//      docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
+//      docs/architecture/12_IMPLEMENTATION_PHASE_ROADMAP.md
+//
+// Provider: SQLite (dev per ADR-041) — prod switches to PostgreSQL (ADR-004)
+// Models: User, Role, Permission, UserRole, RolePermission,
+//        AuditEvent, SystemSetting, Module, FeatureFlag, ApiKey,
+//        Notification, Session (optional, for NextAuth DB sessions)
+// ============================================================
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
+  // DEV: sqlite (DATABASE_URL="file:./db/cryptsk.db")
+  // PROD: change to "postgresql" (DATABASE_URL="postgresql://cryptsknexus:...@localhost:5432/cryptsknexus")
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============================================================
+// ENUMS — per spec 04_FEATURE §9.3 (99 enums total, Phase 0+1 subset)
+// ============================================================
+
+enum PermissionAction {
+  read
+  list
+  create
+  update
+  delete
+  approve
+  execute
+  export
+  manage
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+enum ModuleStatus {
+  active
+  inactive
+  maintenance
+  error
+  not_installed
+}
+
+enum FeatureFlagType {
+  boolean
+  string
+  number
+  json
+}
+
+enum NotificationType {
+  info
+  success
+  warning
+  error
+  system
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+  login
+  logout
+  login_failed
+  export
+  approve
+  execute
+  config_change
+  permission_change
+  role_change
+  module_toggle
+  feature_flag_toggle
+}
+
+enum ApiKeyStatus {
+  active
+  revoked
+  expired
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+  locked
+  pending
+}
+
+// ============================================================
+// MODELS
+// ============================================================
+
+/// Phase 1 — User identity (admin/staff users, not subscribers yet)
+/// Per spec 08_SEC §6: bcryptjs passwords, HMAC-SHA256 session tokens
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  username        String       @unique
+  name            String?
+  passwordHash    String
+  status          UserStatus   @default(active)
+  mfaSecret       String?      // TOTP secret (encrypted at rest — Phase 1+)
+  mfaEnabled      Boolean      @default(false)
+  lastLoginAt     DateTime?
+  lastLoginIp     String?
+  lastLoginAgent  String?      // User-Agent string
+  loginAttempts   Int          @default(0) // for rate limiting / lockout
+  lockedUntil     DateTime?
+  failedLoginAt   DateTime?
+  passwordChangedAt DateTime?
+  forcePasswordChange Boolean   @default(false)
+  avatarUrl       String?
+  timezone        String       @default("Asia/Kolkata")
+  locale          String       @default("en")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  roles           UserRole[]
+  auditEvents     AuditEvent[]
+  apiKeys         ApiKey[]
+  notifications   Notification[]
+  sessions        Session[]
+  settings        UserSetting[]
+
+  @@index([status])
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+/// Phase 1 — RBAC role (e.g. "Super Admin", "NOC Operator", "Billing Manager")
+/// Per spec 08_SEC §8: 15 roles defined (Super Admin, Platform Admin, NOC Operator,
+/// Network Engineer, AAA Operator, Billing Manager, Finance Operator, Support Lead,
+/// Support Agent, Field/Technician, Sales/Collection Agent, Reseller/Partner,
+/// Read-only Auditor, Scope Administrator, LCO/Partner Operator)
+model Role {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  slug            String           @unique
+  description     String?
+  isSystem        Boolean          @default(false) // system roles can't be deleted
+  isBreakGlass    Boolean          @default(false) // super-admin role per 08_SEC §10
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  users           UserRole[]
+  permissions     RolePermission[]
+
+  @@index([slug])
+  @@map("roles")
+}
+
+/// Phase 1 — Permission (resource + action, e.g. "subscriber.read")
+/// Per spec 08_SEC §7: Permission verbs: read, list, create, update, delete,
+/// approve, execute, export, manage
+model Permission {
+  id              String           @id @default(cuid())
+  resource        String           // e.g. "subscriber", "session", "billing.invoice"
+  action          PermissionAction // e.g. read, create, delete, manage
+  description     String?
+  isSystem        Boolean          @default(true) // system permissions seeded, not deleted
+  createdAt       DateTime         @default(now())
+
+  // Relations
+  roles           RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
+}
+
+/// Phase 1 — User ↔ Role join (many-to-many)
+model UserRole {
+  id              String           @id @default(cuid())
+  userId          String
+  roleId          String
+  assignedAt      DateTime         @default(now())
+  assignedBy      String?          // userId of admin who assigned
+  expiresAt       DateTime?        // for temporary role grants
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+/// Phase 1 — Role ↔ Permission join (many-to-many)
+model RolePermission {
+  id              String           @id @default(cuid())
+  roleId          String
+  permissionId    String
+  createdAt       DateTime         @default(now())
+
+  role            Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission      Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// Phase 1 — Audit event log (IMMUTABLE per spec 08_SEC §24)
+/// Per spec: userId, action, resource, resourceId, before, after, ip, userAgent, timestamp
+model AuditEvent {
+  id              String           @id @default(cuid())
+  userId          String?          // null for system/anonymous actions
+  action          AuditAction
+  resource        String           // e.g. "user", "role", "module", "system_setting"
+  resourceId      String?          // ID of affected entity
+  resourceName    String?          // human-readable name of affected entity
+  before          String?          // JSON string of state before change
+  after           String?          // JSON string of state after change
+  ipAddress       String?
+  userAgent       String?
+  sessionId       String?          // session token (HMAC hash) for traceability
+  result          String           @default("success") // success | failure | denied
+  errorMessage    String?
+  metadata        String?          // JSON string of additional context
+  createdAt       DateTime         @default(now())
+
+  // Relations
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([resourceId])
+  @@index([createdAt])
+  @@index([result])
+  @@map("audit_events")
+}
+
+/// Phase 0 — System settings (key-value config store)
+/// Per spec: key, value, type, category, description
+model SystemSetting {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  value           String           // stored as string, typed via `type`
+  type            FeatureFlagType  @default(string) // boolean/string/number/json
+  category        String           @default("general") // general/security/billing/network/ai
+  description     String?
+  isPublic        Boolean          @default(false) // visible to non-admin users?
+  isSensitive     Boolean          @default(false) // mask in UI (API keys, secrets)
+  updatedAt       DateTime         @updatedAt
+  updatedBy       String?
+
+  @@index([category])
+  @@index([key])
+  @@map("system_settings")
+}
+
+/// Phase 1 — Module manager (per spec 04_FEATURE §5.8: module registry)
+/// Tracks which modules are installed/enabled (AAA, Billing, Network, AI, etc.)
+model Module {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  slug            String           @unique
+  description     String?
+  version         String           @default("1.0.0")
+  status          ModuleStatus     @default(not_installed)
+  isLicensed      Boolean          @default(false)
+  isRequired      Boolean          @default(false) // can't be disabled
+  config         String?          // JSON string of module config
+  installedAt     DateTime?
+  enabledAt       DateTime?
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  featureFlags    FeatureFlag[]
+
+  @@index([slug])
+  @@index([status])
+  @@map("modules")
+}
+
+/// Phase 1 — Feature flags (per spec 04_FEATURE §5.8)
+model FeatureFlag {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  name            String
+  description     String?
+  type            FeatureFlagType  @default(boolean)
+  value           String           @default("false") // stored as string, parsed by type
+  isEnabled       Boolean          @default(false)
+  moduleSlug      String?          // associated module
+  isSystem        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  module          Module?          @relation(fields: [moduleSlug], references: [slug], onDelete: SetNull)
+
+  @@index([key])
+  @@index([moduleSlug])
+  @@map("feature_flags")
+}
+
+/// Phase 1 — API keys (for service-to-service auth + external integrations)
+/// Per spec 08_SEC §6: signed service-identity tokens, short-lived credentials
+model ApiKey {
+  id              String           @id @default(cuid())
+  name            String
+  key             String           @unique // the actual API key (hashed)
+  keyPrefix       String           // first 8 chars for identification (e.g. "cryptsk-")
+  userId          String?
+  scopes          String           @default("[]") // JSON array of permission slugs
+  status          ApiKeyStatus     @default(active)
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+  lastUsedIp      String?
+  createdAt       DateTime         @default(now())
+  revokedAt       DateTime?
+  revokedBy       String?
+
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([key])
+  @@index([keyPrefix])
+  @@index([userId])
+  @@index([status])
+  @@map("api_keys")
+}
+
+/// Phase 1 — Notifications (in-app notifications for users)
+model Notification {
+  id              String           @id @default(cuid())
+  userId          String
+  type            NotificationType  @default(info)
+  title           String
+  message         String
+  data            String?           // JSON string of additional data
+  isRead          Boolean           @default(false)
+  readAt          DateTime?
+  actionUrl       String?           // URL to navigate to when clicked
+  actionLabel     String?           // label for the action button
+  createdAt       DateTime         @default(now())
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+/// Phase 0 — User-specific settings (per-user preferences)
+model UserSetting {
+  id              String           @id @default(cuid())
+  userId          String
+  key             String
+  value           String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_settings")
+}
+
+/// Phase 1 — Optional DB session store (for NextAuth database strategy)
+/// Per spec 08_SEC §6: HMAC-SHA256 session tokens, secure cookies
+/// If using JWT strategy (default), this model is unused but kept for future
+model Session {
+  id              String           @id @default(cuid())
+  sessionToken    String           @unique
+  userId          String
+  expires         DateTime
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@index([expires])
+  @@map("sessions")
+}
+
+/// Phase 0 — Schema metadata (track migration state)
+model SchemaMeta {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  value           String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@map("schema_meta")
 }
