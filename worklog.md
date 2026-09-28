@@ -287,3 +287,50 @@ Stage Summary:
 - ✅ RADIUS auth log viewer (radpostauth)
 - Next: configure FreeRADIUS sql module to use PostgreSQL, start radiusd, test auth flow
 - Commit: 3f1159e
+
+---
+Task ID: PHASE-3-RADIUS
+Agent: orchestrator (sandbox main)
+Task: Phase 3 — FreeRADIUS integration + AAA pipeline verification
+
+Work Log:
+- Added 8 FreeRADIUS Prisma models (radcheck, radreply, radusergroup, radgroupcheck, radgroupreply, radacct, radpostauth, nas) — 30 tables total on PostgreSQL 18.6
+- Created radius-sync service (src/lib/radius-sync.ts) — syncs Subscribers→radcheck/radusergroup, Products→radgroupcheck/radgroupreply, NAS→nas table
+- Created 3 API routes (/api/nas, /api/radius/acct, /api/radius/postauth) — RBAC-protected
+- Created 3 UI panels (nas-panel, radius-acct-panel, radius-postauth-panel)
+- Updated sidebar AAA links + page.tsx view switcher (3 new views)
+
+FreeRADIUS Configuration (on VM 103.244.7.221):
+- Installed freeradius-postgresql package (rlm_sql_postgresql.so driver)
+- Configured /etc/raddb/mods-available/sql for PostgreSQL:
+  * dialect = "postgresql"
+  * driver = "rlm_sql_postgresql"
+  * sql_user_name = "%{User-Name}"
+  * Table definitions (radcheck, radreply, radusergroup, radgroupcheck, radgroupreply, radacct, radpostauth, nas)
+  * $INCLUDE queries.conf (PostgreSQL-specific queries)
+  * client_table = "nas", group_attribute = "Group", delete_passwords = yes
+- Enabled sql module (symlink to mods-enabled/)
+- Uncommented sql in default site authorize + accounting sections
+- Configured clients.conf (using default localhost client with secret "testing123")
+- Fixed issues:
+  * rlm_sql_null → rlm_sql_postgresql (driver not set initially)
+  * Missing freeradius-postgresql package (conflict with PG18 resolved with --allowerasing)
+  * Missing sql_user_name, client_table, group_attribute variables
+  * Duplicate client (localhost + cryptsk-test at same IP)
+
+AUTHENTICATION TEST — SUCCESS:
+- Inserted test user into radcheck: username=testuser, attribute=Cleartext-Password, op=:=, value=testpass123
+- Sent RADIUS Access-Request: echo "User-Name=testuser, User-Password=testpass123" | radclient 127.0.0.1:1812 auth testing123
+- Result: Received Access-Accept ✓
+- radpostauth log shows: 2 Access-Reject (wrong attribute name) + 1 Access-Accept ✓
+- Auth events visible in UI at https://nexus.cryptsk.com/?view=radius-postauth
+
+Stage Summary:
+- ✅ FreeRADIUS 3.2.10 running + active on VM
+- ✅ FreeRADIUS connects to PostgreSQL 18.6 via rlm_sql_postgresql
+- ✅ PAP authentication works (Cleartext-Password comparison)
+- ✅ radcheck, radpostauth tables working (created by Prisma, used by FreeRADIUS)
+- ✅ Auth log visible in UI panel (3 events: 2 rejects + 1 accept)
+- ✅ radius-sync service ready (syncs OSS/BSS → FreeRADIUS tables)
+- Commit: 3f1159e (Phase 3 code), eade2a8 (worklog)
+- Next: Phase 4 — Go Session Engine skeleton (in-memory authoritative live state)
