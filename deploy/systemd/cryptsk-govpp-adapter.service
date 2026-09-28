@@ -1,0 +1,24 @@
+[Unit]
+Description=CRYPTSK Nexus — GoVPP Adapter (Binary API Client)
+After=network.target vpp.service
+Wants=vpp.service
+
+[Service]
+Type=simple
+ExecStart=/opt/cryptsk-nexus/gateway/vpp/govpp-adapter/cryptsk-govpp-adapter
+WorkingDirectory=/opt/cryptsk-nexus/gateway/vpp/govpp-adapter
+Environment=DATABASE_URL=postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus
+Environment=VPP_API_SOCK=/run/vpp/api.sock
+Environment=VPP_CLI_SOCK=/run/vpp/cli.sock
+Restart=on-failure
+RestartSec=3
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/vpp
+
+[Install]
+WantedBy=multi-user.target

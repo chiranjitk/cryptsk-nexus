@@ -1,0 +1,33 @@
+[Unit]
+Description=CRYPTSK Nexus — VPP Dataplane (DPDK)
+After=network.target postgresql-18.service
+Requires=postgresql-18.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vpp -c /etc/vpp/startup.conf
+ExecStartPre=/sbin/sysctl -w vm.nr_hugepages=1024
+ExecStartPre=/bin/mkdir -p /run/vpp /var/log/vpp
+ExecStartPre=/bin/chown root:root /run/vpp /var/log/vpp
+Restart=on-failure
+RestartSec=5
+LimitMEMLOCK=infinity
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# VPP needs access to:
+# - /dev/hugepages (DPDK)
+# - /dev/uio0 or /dev/vfio (NIC binding)
+# - /proc/cpuinfo
+# - /sys/devices/ (NIC PCI config)
+DeviceAllow=/dev/uio0 rw
+DeviceAllow=/dev/vfio/vfio rw
+DeviceAllow=/dev/hugepages rw
+ReadWritePaths=/run/vpp /var/log/vpp
+
+[Install]
+WantedBy=multi-user.target

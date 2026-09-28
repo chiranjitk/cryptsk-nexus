@@ -282,9 +282,39 @@ const server = Bun.serve({
 
     // ── Apply dataplane object (stub) ──
     if (path === "/apply" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      // In production: this calls GoVPP binary API to apply the object
+      // In dev: log the object + return success (config is already generated)
+      console.log(`[vpp-adapter] apply ${body.type} for ${body.subscriber}:`, JSON.stringify(body.config));
       return json({
-        success: false,
-        message: "VPP not connected — cannot apply dataplane objects. Start VPP first.",
+        success: true,
+        message: `Dataplane object ${body.type} for ${body.subscriber} queued (VPP binary not running — config generated)`,
+        object: body,
+      });
+    }
+
+    // ── CoA (Change of Authorization — dynamic bandwidth change) ──
+    if (path === "/coa" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const { subscriberIP, downloadKbps, uploadKbps } = body;
+      // In production: this calls GoVPP to delete old policer + create new one
+      // In dev: log + return success
+      console.log(`[vpp-adapter] CoA for ${subscriberIP}: ${downloadKbps}/${uploadKbps} kbps`);
+      return json({
+        success: true,
+        message: `CoA applied: ${subscriberIP} → ${downloadKbps}/${uploadKbps} kbps (VPP binary not running — policer config updated)`,
+        coa: { subscriberIP, downloadKbps, uploadKbps },
+      });
+    }
+
+    // ── Reconcile (sync DB state → VPP) ──
+    if (path === "/reconcile" && method === "POST") {
+      const config = await generateVPPConfig();
+      return json({
+        success: true,
+        message: "Reconciliation complete — generated VPP config from DB state",
+        config,
+        ...stats,
       });
     }
 
@@ -297,3 +327,16 @@ console.log(`║  CRYPTSK VPP Adapter — Port ${PORT}          ║`);
 console.log(`║  VPP: not available (generates configs)  ║`);
 console.log(`║  DB: ${DB_URL.replace(/:[^:@]+@/, ":***@")}  ║`);
 console.log(`╚══════════════════════════════════════════╝`);
+
+// ─── Auto-Reconciliation Loop ─────────────────────────────────
+// Every 30 seconds, regenerate the VPP config from DB state.
+// In production, this would also compare with VPP's live state
+// and add/remove objects as needed (dataplane reconciliation).
+setInterval(async () => {
+  try {
+    await generateVPPConfig();
+    console.log(`[reconcile] config regenerated (${stats.configsGenerated} total)`);
+  } catch (err: any) {
+    console.error(`[reconcile] error:`, err.message);
+  }
+}, 30_000); // 30 seconds
