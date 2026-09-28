@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { AuthGate } from "@/components/auth/auth-gate";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -131,6 +132,7 @@ const quickActions = [
 
 export default function DashboardPage() {
   return (
+    <AuthGate>
     <div className="flex flex-col gap-6 p-4 md:p-6 cryptsk-fade-in">
       {/* ── Hero header ── */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -469,5 +471,6 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
     </div>
+    </AuthGate>
   );
 }
