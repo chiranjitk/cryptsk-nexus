@@ -540,3 +540,38 @@ Stage Summary:
 - VPP binary not installed (DPDK hardware needed for prod, software mode for dev later)
 - Commit: 6e72a6c
 - Next: Phase 7 (Billing) or Phase 9 (AI)
+
+---
+Task ID: PHASE-7 + VPP-BUILD
+Agent: orchestrator (sandbox main)
+Task: Phase 7 Billing & Finance + VPP compile from source
+
+Phase 7 — Billing & Finance:
+- 7 Prisma models (Invoice, InvoiceLine, Payment, Voucher, Wallet,
+  WalletTransaction, TaxRate) + 5 enums (InvoiceStatus, PaymentMethod,
+  PaymentStatus, VoucherStatus, WalletTxnType)
+- 40 tables total on PostgreSQL 18.6 (33 Phase 0-5 + 7 Phase 7)
+- API routes: /api/invoices (list+create), /api/invoices/[id] (detail),
+  /api/payments (list+create with auto invoice status update)
+- UI panel: billing-panel.tsx — 4 stat cards (issued/collected/
+  outstanding/overdue), invoices+payments tab switcher, create invoice
+  dialog with auto-calc (subtotal→discount→tax→total), record payment
+  dialog with auto-fill balance, status badges (paid/partial/overdue)
+- Deployed: HTTP 200, all 3 PM2 services running
+- Commit: 543aba4
+
+VPP Build from Source (in progress):
+- Installed Go 1.26.7 on VM ✅
+- Installed all VPP build deps: glibc-static, apr-devel, check, check-devel,
+  selinux-policy-devel, ninja-build, ccache, libpcap-devel, nasm, subunit,
+  python3-devel, python3-ply, python3-virtualenv, llvm, clang, chrpath, xmlto
+- Started 'make install-dep && make build' in background on VM
+- VPP source: github.com/FDio/vpp, tag v23.06, at /opt/vpp
+- Build log: /var/log/vpp-fullbuild.log
+- Expected time: 30-40 minutes (install-dep + make build)
+- Software mode: af_packet (no DPDK hardware needed)
+
+Stage Summary:
+- ✅ Phase 7 Billing deployed (40 tables, invoices/payments UI)
+- 🔄 VPP compiling from source in background (PID running)
+- Next: Check VPP build result → start VPP in software mode → test with GoVPP
