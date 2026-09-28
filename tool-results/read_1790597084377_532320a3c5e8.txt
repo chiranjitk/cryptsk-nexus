@@ -1,0 +1,452 @@
+   901→
+   902→#### SNMP Manager (`/snmp-manager`) — `snmp-manager-page.tsx`
+   903→SNMP manager — device list with interface table (description/type/speed/MAC/admin/oper/in/out counters), custom OID table, custom SNMP values.
+   904→- **APIs:** `/api/snmp-manager`.
+   905→
+   906→#### RADIUS Proxy (`/radius-proxy`) — `radius-proxy-page.tsx`
+   907→RADIUS proxy configuration — 2 tabs: Realms (CRUD proxy realms, strip-realm, server list, status) and Servers (CRUD proxy servers with host/auth-port/acct-port/type/priority, test-connection).
+   908→- **APIs:** `/api/radius-proxy/realms` (CRUD), `/api/radius-proxy/servers` (CRUD), `/api/radius-proxy/servers/{id}/test`.
+   909→
+   910→#### RADIUS Attributes (`/radius-attributes`) — `radius-attributes-page.tsx`
+   911→RADIUS dictionary & per-user attribute editor — 2 tabs: Attribute Definitions (CRUD dictionary attrs with type/op) and User Attributes (assign/bulk-assign custom attrs to subscribers).
+   912→- **APIs:** `/api/radius-attributes/definitions` (CRUD), `/api/radius-attributes/user-attributes` (CRUD/bulk), `/api/subscribers`.
+   913→
+   914→#### Enterprise Auth (`/enterprise-auth`) — `enterprise-auth-page.tsx`
+   915→Enterprise subscriber directory — CRUD enterprise auth accounts (corporate customers with custom auth), delete.
+   916→- **APIs:** `/api/enterprise-auth` (CRUD).
+   917→
+   918→#### WiFi Offload (`/wifi-offload`) — `wifi-offload-page.tsx`
+   919→WiFi offload & Diameter peer management — sessions list (disconnect), Diameter peers (CRUD), policies, events log (clear-all).
+   920→- **APIs:** `/api/wifi-offload` (CRUD), `/api/wifi-offload/proxy`.
+   921→
+   922→#### Hotspot (`/hotspot`) — `hotspot-page.tsx`
+   923→Hotspot management with dashboard tab — locations CRUD, hotspot plans CRUD (bulk create), live users (disconnect), data history per user, revenue reports, analytics, export.
+   924→- **APIs:** `/api/hotspot`, `/api/hotspot/analytics`, `/api/hotspot/dashboard`, `/api/hotspot/data-history`, `/api/hotspot/export`, `/api/hotspot/revenue`, `/api/hotspot/users/{id}`, `/api/vouchers`.
+   925→
+   926→#### Tech Performance (`/technician-performance`) — `technician-performance-page.tsx`
+   927→Technician performance dashboard — leaderboard, performance metrics, dispatch actions per technician.
+   928→- **APIs:** `/api/technicians/leaderboard`, `/api/technicians/performance`, `/api/technicians/dispatch`, `/api/complaints/{id}`.
+   929→
+   930→#### Walk-in / Temporary Access — optional canonical capability
+   931→Temporary access for hospitality, hotspot, campus, guest, event, or other short-lived access models. Supports identity/PIN/voucher issuance, validity window, session limits, package/policy assignment, payment linkage where enabled, and usage history. This capability reuses the core Customer/Service, Policy, Session, and Billing engines.
+   932→
+   933→#### CoA Tracking (`/coa-tracking`) — `coa-events-page.tsx`
+   934→RADIUS Change-of-Authorization event log — per-event subscriber, type, status, plan-change, BW %, triggered-by, error.
+   935→- **APIs:** `/api/coa-events`.
+   936→
+   937→## 7.7 OPERATIONS (billing, complaints, field work, CRM)
+   938→
+   939→#### Billing (`/billing`) — `billing-page.tsx`
+   940→Billing/invoice workflow — invoice table (invoice #, subscriber, period, amount, balance, status, due date), line items, payment history per invoice.
+   941→- **APIs:** `/api/billing`, `/api/billing/{id}`, `/api/billing/export`, `/api/invoices`, `/api/subscribers`.
+   942→
+   943→#### Invoices (`/invoices`) — `invoices-page.tsx`
+   944→Invoice management — bulk-generate, recurring templates, credit notes, cancel, delete, export-all, tax settings, invoice format settings, printable invoice view (Subscriber info, Plan details, Billing period, Line items, Amount breakdown, Payment history).
+   945→- **APIs:** `/api/invoices` (CRUD), `/api/invoices/{id}/credit-note`, `/api/invoices/bulk-generate`, `/api/invoices/export-all`, `/api/invoices/recurring-templates`, `/api/settings/invoice-format`, `/api/settings/tax`, `/api/areas`, `/api/plans`, `/api/subscribers`.
+   946→
+   947→#### Payments (`/payments`) — `payments-page.tsx`
+   948→Payment recording — table with verify, refund, delete, export, per-payment detail dialog (subscriber, plan, ISP info). Adjusts subscriber balance.
+   949→- **APIs:** `/api/payments` (CRUD), `/api/payments/{id}`, `/api/payments/{id}/refund`, `/api/payments/export`, `/api/subscribers`, `/api/subscribers/{id}/balance`.
+   950→
+   951→#### Vouchers (`/vouchers`) — `vouchers-page.tsx`
+   952→Voucher management — generate batches from templates, voucher cards (printable), templates CRUD, usage history, stats, import. Plan & subscriber link.
+   953→- **APIs:** `/api/vouchers` (CRUD), `/api/vouchers/{id}`, `/api/vouchers/generate`, `/api/vouchers/import`, `/api/vouchers/stats`, `/api/vouchers/templates` (CRUD), `/api/vouchers/usage-history`, `/api/plans`, `/api/subscribers`.
+   954→
+   955→#### Complaints (`/complaints`) — `complaints-page.tsx`
+   956→Complaint/ticket system — complaint analytics, complaint table with priority/status, new complaint dialog, complaint detail (description, resolution notes, comments, auto-assign), bulk-close, export. Subscriber/area/technician link.
+   957→- **APIs:** `/api/complaints` (CRUD), `/api/complaints/{id}/auto-assign`, `/api/complaints/{id}/comments`, `/api/complaints/analytics`, `/api/complaints/bulk-close`, `/api/complaints/export`, `/api/audit-log/entity/Complaint`, `/api/areas`, `/api/subscribers`, `/api/technicians`, `/api/settings/isp-profile`.
+   958→
+   959→#### Technicians (`/technicians`) — `technicians-page.tsx`
+   960→Technician CRM — list with skills/managed-areas, weekly schedule & calendar (with day-detail showing complaints/installations), attendance/leave, SLA tracking, dispatch (complaint or installation), compensation & bank-details editors, status changes, bulk actions, export, analytics.
+   961→- **APIs:** `/api/technicians` (CRUD), `/api/technicians/{id}/analytics`, `/api/technicians/attendance`, `/api/technicians/bulk`, `/api/technicians/calendar`, `/api/technicians/export`, `/api/technicians/leave`, `/api/technicians/sla`, `/api/areas`, `/api/complaints`, `/api/installations`, `/api/subscribers`.
+   962→
+   963→#### Agents (`/agents`) — `agents-page.tsx`
+   964→Sales agent / collection agent CRM — CRUD agents, analytics, follow-ups, commission payouts, reconciliation, create-login (agent portal), import/export.
+   965→- **APIs:** `/api/agents` (CRUD), `/api/agents/analytics`, `/api/agents/create-login`, `/api/agents/export`, `/api/agents/followups`, `/api/agents/import`, `/api/agents/payouts`, `/api/agents/reconciliation`, `/api/areas`, `/api/subscribers`.
+   966→
+   967→#### Installations (`/installations`) — `installations-page.tsx`
+   968→Installation job management — list of installation jobs, auto-assign technician, daily report, customer feedback, timeline view. Links equipment, areas, subscribers, technicians.
+   969→- **APIs:** `/api/installations` (CRUD), `/api/installations/auto-assign`, `/api/installations/daily-report`, `/api/installations/feedback`, `/api/installations/timeline`, `/api/areas`, `/api/equipment`, `/api/subscribers`, `/api/technicians`.
+   970→
+   971→#### Inventory (`/inventory`) — `inventory-page.tsx`
+   972→Equipment/inventory module — stock items CRUD, bulk, stock transfers, vendors CRUD, analytics.
+   973→- **APIs:** `/api/inventory` (CRUD/bulk), `/api/stock-transfers`, `/api/vendors` (CRUD), `/api/equipment/analytics`, `/api/audit-log/entity/Equipment`.
+   974→
+   975→#### Equipment (`/equipment`) — `equipment-page.tsx`
+   976→Equipment & inventory master with 11 tabs: Equipment, Purchase Orders, Vendors, Warehouses, Returns, Repairs, Stock, plus analytics tabs Category/Condition/Monthly/Location.
+   977→- **Sub-tabs (`src/components/pages/tabs/`):**
+   978→  - **warehouses-tab.tsx** — Warehouse CRUD → `/api/warehouses`
+   979→  - **returns-tab.tsx** — Returns table → `/api/equipment/returns`
+   980→  - **repairs-tab.tsx** — Repairs table → `/api/equipment/repairs`
+   981→  - **stock-tab.tsx** — Stock adjustments + history → `/api/equipment/adjustments`, `/api/equipment/adjustments/history`
+   982→  - **qos-tab.tsx** — QoS rule CRUD → `/api/bandwidth/qos`
+   983→  - **throttling-tab.tsx** — Throttle rule CRUD → `/api/bandwidth/throttle`
+   984→  - **thresholds-tab.tsx** — Bandwidth alert rule CRUD → `/api/bandwidth/thresholds`
+   985→
+   986→#### Incidents (`/incidents`) — `incidents-page.tsx`
+   987→Incident management — list with filters/assignment, create incident, auto-detect from alerts, merge duplicates, schedule maintenance, add updates, resolve, root-cause-analysis, escalate, assign, view affected subscribers, export.
+   988→- **APIs:** `/api/incidents`, `/api/incidents/export`.
+   989→
+   990→#### Leads (`/leads`) — `leads-page.tsx`
+   991→Lead/prospect CRM — list with status pipeline, Add/Edit/Delete lead, lead detail view, upcoming follow-ups card, lost-reason breakdown card.
+   992→- **APIs:** `/api/leads`.
+   993→
+   994→#### Reseller (`/reseller`) — `reseller-page.tsx`
+   995→Reseller & franchise management — reseller table (Reseller/Area/Status/Credit/Commission), commission ledger (Reseller/Month/Subscribers/Revenue/Rate/Commission/Status), plan-pricing table (Plan/Base Price/Reseller Price/Margin). Mark-commission-paid, bulk-assign plans, Add/Edit/Delete reseller.
+   996→- **APIs:** `/api/reseller`.
+   997→
+   998→#### Service Contracts / AMC (`/service-contracts`) — optional capability
+   999→Managed-service contract and AMC/SLA entitlement management. Supports contract scope, service coverage, entitlement level, start/end dates, renewal, SLA commitments, support coverage, linked customer/service/assets, and renewal alerts.
+  1000→- **Logical API:** `/api/v1/service-contracts`.
+  1001→
+  1002→#### Action History (`/action-history`) — `action-history-page.tsx`
+  1003→Audit-able action history — table (Timestamp/Subscriber/Action/Entity/Performed By/Reversible/Actions) with reverse-action buttons.
+  1004→- **APIs:** `/api/action-history`.
+  1005→
+  1006→#### Announcements (`/announcements`) — `announcements-page.tsx`
+  1007→Platform announcements — CRUD announcement cards with title/body, dismiss tracking.
+  1008→- **APIs:** `/api/announcements` (CRUD), `/api/announcements/dismiss`.
+  1009→
+  1010→## 7.8 FINANCE
+  1011→
+  1012→#### Reports (`/reports`) — `reports-page.tsx`
+  1013→Custom report builder — predefined report templates (subscriber usage, monthly revenue, device inventory) + custom report runner. Results table (Subscriber/Plan/Area/Connection/Download GB/Upload GB/Total GB/Avg Session, Monthly Revenue/Collected/Invoices/Collection %, Device/Type).
+  1014→- **APIs:** `/api/reports`, `/api/reports/custom`.
+  1015→
+  1016→#### Revenue Reports (`/revenue-reports`) — `revenue-reports-page.tsx`
+  1017→Comprehensive revenue reporting — daily revenue table, agent-wise revenue chart, agent breakdown table, invoice aging chart, growth summary table, churn revenue impact trend, forecast summary, expense records, monthly TDS trend, KPI targets, TDS-TCS report.
+  1018→- **APIs:** `/api/reports/revenue`, `/api/reports/kpi-targets`, `/api/reports/tds-tcs`, `/api/expenses`.
+  1019→
+  1020→#### Revenue Forecast (`/revenue-forecast`) — `revenue-forecast-page.tsx`
+  1021→AI revenue forecast & cashflow — category breakdown table (Category/Subscribers/MRR/% Share), forecast chart, cashflow projection.
+  1022→- **APIs:** `/api/revenue/forecast`, `/api/revenue/cashflow`.
+  1023→
+  1024→#### Collection (`/collection`) — `collection-page.tsx`
+  1025→Collection management — collection summary, targets, receipt generation, reconcile, disputes, refunds. Links invoices, payments, subscribers.
+  1026→- **APIs:** `/api/collection`, `/api/collection/receipt`, `/api/collection/reconcile`, `/api/collection/summary`, `/api/collection/targets`, `/api/disputes`, `/api/invoices`, `/api/payments`, `/api/payments/{id}/refund`, `/api/subscribers`.
+  1027→
+  1028→#### Due Recovery (`/due-recovery`) — `due-recovery-page.tsx`
+  1029→Overdue invoice recovery — overdue invoices table, payment plans, installment schedules, dispute history, SLA dashboard, export. Actions: payment promise, assign recovery agent, write-off, reactivate subscriber, schedule reminder, bulk reminder, record payment, suspend subscriber.
+  1030→- **APIs:** `/api/due-recovery`, `/api/due-recovery/sla-dashboard`, `/api/due-recovery/sla-export`, `/api/agents`, `/api/areas`, `/api/invoices`, `/api/subscribers`.
+  1031→
+  1032→#### GST/Tax (`/gst-tax`) — `gst-tax-page.tsx`
+  1033→Indian GST/Tax management — monthly tax collection, breakdown, tax payable, quarterly breakdown, FY GSTR-9 summary, TDS section summary, TDS/TCS entries, invoice-level GST audit, reverse-charge invoices, composite scheme, HSN/SAC codes. TDS/TCS entry CRUD, HSN CRUD.
+  1034→- **APIs:** `/api/gst`, `/api/gst/audit`, `/api/gst/composite`, `/api/gst/gstr9`, `/api/gst/reverse-charge`, `/api/gst/tds-tcs`, `/api/settings/isp-profile`.
+  1035→
+  1036→#### Referral (`/referral`) — `referral-page.tsx`
+  1037→Referral + loyalty hub with 5 tabs: Referral Program, Loyalty Points, Campaigns, Rewards, Analytics. Configure tier thresholds, create/edit/delete rewards, manual points adjustment, enroll subscribers.
+  1038→- **APIs:** `/api/referral`.
+  1039→
+  1040→#### Loyalty Gamification (`/loyalty-gamification`) — `loyalty-gamification-page.tsx`
+  1041→Loyalty gamification — badges, enhanced loyalty engine, tier management.
+  1042→- **APIs:** `/api/loyalty/badges`, `/api/loyalty/enhanced`, `/api/loyalty/tiers`.
+  1043→
+  1044→#### Charge Override (`/charge-override`) — `charge-overrides-page.tsx`
+  1045→Per-subscriber custom charge overrides — create/edit/cancel overrides on top of plan pricing.
+  1046→- **APIs:** `/api/charge-overrides` (CRUD), `/api/subscribers`.
+  1047→
+  1048→#### Cyclic Billing (`/cyclic-billing`) — `cyclic-billing-page.tsx`
+  1049→Cyclic billing cycles & milestones — define cycles (Threshold/Speed Down/Speed Up/Priority/Description), milestones, plan link.
+  1050→- **APIs:** `/api/cyclic-billing/cycles`, `/api/cyclic-billing/milestones`, `/api/plans`.
+  1051→
+  1052→#### Grace Periods (`/grace-periods`) — `grace-periods-page.tsx`
+  1053→Subscriber grace-period management — table (Subscriber/Grace Days/Type/Suspension Date/Expiry/Reason/Status) with cancel action.
+  1054→- **APIs:** `/api/grace-periods`.
+  1055→
+  1056→#### Add-on Services (`/add-on-services`) — `add-on-services-page.tsx`
+  1057→Add-on service catalog & subscriptions — CRUD add-on services, subscribe/unsubscribe subscribers, view active subscriptions.
+  1058→- **APIs:** `/api/add-on-services` (CRUD), `/api/add-on-services/subscribe`, `/api/add-on-services/subscriptions` (CRUD), `/api/subscribers`.
+  1059→
+  1060→#### Top-Ups (`/top-ups`) — `top-ups-page.tsx`
+  1061→Top-up product management with 2 tabs: Products (CRUD data top-up products) and Purchase History.
+  1062→- **APIs:** `/api/top-ups`.
+  1063→
+  1064→#### Smart Collections (`/smart-collections`) — `smart-collections-page.tsx`
+  1065→AI-driven smart collections — analytics, schedule, smart collection queue (Subscriber/Channel/Best Time), area-wise recovery stats (Outstanding/Recovered/Recovery Rate/Avg Days/Subscribers), top overdue subscribers with phone/plan/area/days-overdue/invoices.
+  1066→- **APIs:** `/api/collections/analytics`, `/api/collections/schedule`, `/api/collections/smart`.
+  1067→
+  1068→#### Revenue Leakage (`/revenue-leakage`) — `revenue-leakage-page.tsx`
+  1069→Revenue leakage detection — leakage categories, invoice aging buckets, monthly aging trend, area-wise aging, anomaly flags, monthly adjustment trend, top-10 largest adjustments, financial adjustments table.
+  1070→- **APIs:** `/api/revenue/leakage`, `/api/revenue/aging-enhanced`, `/api/revenue/audit`.
+  1071→
+  1072→#### Compliance & SLA (`/compliance-sla`) — `compliance-sla-page.tsx`
+  1073→SLA & compliance dashboard — priority-wise compliance, monthly compliance trend, resolution time by priority, P95 resolution time, escalation tracking, compliance checklist, tax compliance summary, KYC verification status, data retention & audit coverage.
+  1074→- **APIs:** `/api/compliance/sla`, `/api/compliance/regulatory`, `/api/compliance/audit-report`.
+  1075→
+  1076→#### Reseller Intelligence (`/reseller-intelligence`) — `reseller-analytics-page.tsx`
+  1077→Reseller analytics hub — performance dashboard, commission comparison (simple vs tiered), payout history, risk assessment, credit-limit adjustment.
+  1078→- **APIs:** `/api/resellers/analytics`, `/api/resellers/commission-engine`, `/api/resellers/credit`.
+  1079→
+  1080→#### Data Export (`/data-export`) — `data-export-page.tsx`
+  1081→Data export module — export subscribers, invoices, payments, complaints in CSV/Excel.
+  1082→- **APIs:** `/api/export/subscribers`, `/api/export/invoices`, `/api/export/payments`, `/api/export/complaints`.
+  1083→
+  1084→## 7.9 AI INTELLIGENCE
+  1085→
+  1086→#### AI Advisor (`/ai-advisor`) — `ai-advisor-page.tsx`
+  1087→AI advisory chat — ask business questions, get markdown-rendered recommendations (supports h1/h2/h3 headings).
+  1088→- **APIs:** `/api/ai/advisor`.
+  1089→
+  1090→#### AI Diagnosis (`/ai-diagnosis`) — `ai-diagnosis-page.tsx`
+  1091→AI-powered network/subscriber diagnosis — diagnose issues, baselines, link to subscribers & complaints.
+  1092→- **APIs:** `/api/ai/diagnose`, `/api/ai/diagnosis/baselines`, `/api/complaints`, `/api/subscribers`.
+  1093→
+  1094→#### Churn Alerts (`/churn-alerts`) — `churn-alerts-page.tsx`
+  1095→Churn alert center — alerts list, communications log, tracking, workflows. Subscriber detail & action dialog (with capitalized action name).
+  1096→- **APIs:** `/api/churn-alerts`, `/api/churn-alerts/communications`, `/api/churn-alerts/tracking`, `/api/churn-alerts/workflows`.
+  1097→
+  1098→#### Churn Prediction (`/churn-prediction`) — `churn-prediction-page.tsx`
+  1099→ML churn prediction — analytics, predict endpoint, retention recommendations.
+  1100→- **APIs:** `/api/churn/analytics`, `/api/churn/predict`, `/api/churn/retention`.
+  1101→
+  1102→#### Competitor Intel (`/competitor-intel`) — `competitor-intel-page.tsx`
+  1103→Competitor intelligence — CRUD competitor plans, win/loss reports, AI-driven insights.
+  1104→- **APIs:** `/api/competitors` (CRUD), `/api/competitors/win-loss`, `/api/ai`.
+  1105→
+  1106→#### Competitor Analysis (`/competitor-analysis`) — `competitor-analysis-page.tsx`
+  1107→Competitor analytics — market share, pricing intelligence, comparison, win/loss analysis.
+  1108→- **APIs:** `/api/competitors/comparison`, `/api/competitors/market-share`, `/api/competitors/pricing-intelligence`, `/api/competitors/win-loss`.
+  1109→
+  1110→#### WhatsApp Bot (`/whatsapp-bot`) — `whatsapp-bot-page.tsx`
+  1111→WhatsApp business bot — 10 tabs: Config, Templates, Commands, Quick Replies, Conversations, Schedule, Analytics, Business, Webhooks, Logs. CRUD templates/commands/quick-replies, broadcast, schedule, view conversations, webhook config, log viewer.
+  1112→- **APIs:** `/api/whatsapp/analytics`, `/api/whatsapp/broadcast`, `/api/whatsapp/commands` (CRUD), `/api/whatsapp/config`, `/api/whatsapp/conversations`, `/api/whatsapp/logs`, `/api/whatsapp/quick-replies` (CRUD), `/api/whatsapp/schedule`, `/api/whatsapp/templates` (CRUD), `/api/whatsapp/webhook`, `/api/whatsapp/webhooks`, `/api/subscribers`.
+  1113→
+  1114→## 7.10 SETTINGS
+  1115→
+  1116→#### ISP Profile (`/isp-profile`) — `isp-profile-page.tsx`
+  1117→ISP company profile editor — company name, contact, GST, logo, bank details, invoice format defaults.
+  1118→- **APIs:** `/api/settings/isp-profile`.
+  1119→
+  1120→#### Admin Users (`/admin-users`) — `users-page.tsx`
+  1121→Admin user management — CRUD users, bulk import/bulk action, change password, reset user password, view sessions & activity, impersonate, terminate sessions, permissions matrix, export.
+  1122→- **APIs:** `/api/users` (CRUD), `/api/users/{id}/activity`, `/api/users/{id}/impersonate`, `/api/users/{id}/sessions`, `/api/users/bulk`, `/api/users/bulk-import`, `/api/users/change-password`, `/api/users/export`, `/api/users/permissions`, `/api/areas`, `/api/auth/logout`.
+  1123→
+  1124→#### Areas (`/areas`) — `areas-page.tsx`
+  1125→Area/zone management — CRUD areas, reorder, bulk-import CSV, area details dialog. Links agents & technicians.
+  1126→- **APIs:** `/api/areas` (CRUD), `/api/areas/bulk-import`, `/api/areas/reorder`, `/api/agents`, `/api/technicians`.
+  1127→
+  1128→#### Equipment (`/equipment`) — `equipment-page.tsx`
+  1129→*(same file as Inventory under OPERATIONS — 11 tabs covering equipment, POs, vendors, warehouses, returns, repairs, stock, plus 4 analytics tabs).*
+  1130→
+  1131→#### Promotions (`/promotions`) — `promotions-page.tsx`
+  1132→Promotional campaign management — CRUD promotions, toggle status, promotion details dialog.
+  1133→- **APIs:** `/api/promotions` (CRUD), `/api/promotions/{id}/toggle-status`.
+  1134→
+  1135→#### Notifications (`/notifications`) — `notifications-page.tsx`
+  1136→Notification center — 3 tabs: History (sent notifications), Rules (CRUD notification rules), Analytics. Retry-failed, send, delete.
+  1137→- **APIs:** `/api/notifications` (CRUD), `/api/notifications/{id}/retry`, `/api/notifications/analytics`, `/api/notifications/retry-failed`, `/api/notifications/send`, `/api/notification-rules` (CRUD), `/api/subscribers`.
+  1138→
+  1139→#### API Keys (`/api-keys`) — `api-keys-page.tsx`
+  1140→API key management — list/create/revoke keys, scopes, regenerate, extend expiry, webhook test.
+  1141→- **APIs:** `/api/api-keys` (CRUD + PUT), `/api/api-keys/{id}` (DELETE/PUT), `/api/api-keys/webhook/test`.
+  1142→
+  1143→#### Audit Log (`/audit-log`) — `audit-log-page.tsx`
+  1144→Audit log with 3 tabs: Activity Log, Anomalies, Compliance — multi-select delete.
+  1145→- **APIs:** `/api/audit-log`, `/api/settings`.
+  1146→
+  1147→#### Backup (`/backup`) — `backup-page.tsx`
+  1148→Backup & restore — create backup, restore, export data, delete backup (local + cloud), full-DB restore danger zone, environment settings.
+  1149→- **APIs:** `/api/backup`, `/api/backup/{id}/download`, `/api/backup/{id}/verify`, `/api/settings/environment`.
+  1150→
+  1151→#### Integrations (`/integrations`) — `integrations-page.tsx`
+  1152→Third-party integrations with 4 tabs: Payment Gateways, Communication, Webhooks, Transactions — add/configure gateways/channels, webhook endpoints, test integration, view API call logs & transactions.
+  1153→- **APIs:** `/api/integrations`, `/api/integrations/logs`, `/api/integrations/test`, `/api/integrations/transactions`, `/api/webhooks`.
+  1154→
+  1155→#### Knowledge Base (`/knowledge-base`) — `knowledge-base-page.tsx`
+  1156→KB / FAQ manager — categories, articles, FAQs, version history, preview, import article.
+  1157→- **APIs:** `/api/knowledge-base`.
+  1158→
+  1159→#### Module Manager (`/module-manager`) — `module-manager-page.tsx`
+  1160→Feature-flag / module toggle manager — enable/disable platform modules.
+  1161→- **APIs:** `/api/modules`.
+  1162→
+  1163→## 7.11 SELFCARE PORTAL (`/selfcare/*` — `src/components/pages/selfcare/`)
+  1164→
+  1165→Standalone subscriber portal shell (no AppShell sidebar) — subscriber login form (service username + password), top status bar, mobile menu, 9-item left nav.
+  1166→
+  1167→#### Selfcare Layout (`selfcare-layout.tsx`)
+  1168→9-item left nav: Dashboard, My Usage, Billing, Support, My Profile, Service Status, Payments, Speed History, Plan Comparison. Lazy-loads sub-pages.
+  1169→- **APIs:** `/api/subscriber-auth/login` (via `useSubscriberAuthStore`).
+  1170→
+  1171→#### Selfcare Dashboard (`selfcare-dashboard.tsx`)
+  1172→Subscriber dashboard — service health, usage meter, speed history chart, service status, recent invoices, recent payments, recent complaints, password-change widget.
+  1173→- **APIs:** `/api/selfcare/service-health`, `/api/selfcare/speed-history`, `/api/selfcare/usage-meter`, `/api/subscriber-auth/complaints`, `/api/subscriber-auth/invoices`, `/api/subscriber-auth/password`, `/api/subscriber-auth/payments`, `/api/subscriber-auth/service-status`, `/api/subscriber-auth/usage`.
+  1174→
+  1175→#### Selfcare Usage (`selfcare-usage.tsx`)
+  1176→Subscriber data-usage view — current cycle usage vs quota, plan info, complaints quick-link.
+  1177→- **APIs:** `/api/subscriber-auth/usage`, `/api/subscriber-auth/plans`, `/api/subscriber-auth/complaints`.
+  1178→
+  1179→#### Selfcare Billing (`selfcare-billing.tsx`)
+  1180→Subscriber billing — invoice list & payment history.
+  1181→- **APIs:** `/api/subscriber-auth/invoices`, `/api/subscriber-auth/payments`.
+  1182→
+  1183→#### Selfcare Support (`selfcare-support.tsx`)
+  1184→Subscriber support — file/view complaints.
+  1185→- **APIs:** `/api/subscriber-auth/complaints`.
+  1186→
+  1187→#### Selfcare Profile (`selfcare-profile.tsx`)
+  1188→Subscriber profile editor — update contact info, change password.
+  1189→- **APIs:** `/api/subscriber-auth/me`, `/api/subscriber-auth/password`, `/api/subscriber-auth/profile`.
+  1190→
+  1191→#### Selfcare Services (`selfcare-services.tsx`)
+  1192→Service-status page — check current RADIUS/service status, run a speed test, file a complaint.
+  1193→- **APIs:** `/api/subscriber-auth/service-status`, `/api/subscriber-auth/speed-test`, `/api/subscriber-auth/complaints`.
+  1194→
+  1195→#### Selfcare Payments (`selfcare-payments.tsx`)
+  1196→Make a payment — list outstanding invoices, create payment order via gateway integration, view past payments.
+  1197→- **APIs:** `/api/payments/create-order`, `/api/subscriber-auth/invoices`, `/api/subscriber-auth/payments`, `/api/integrations`.
+  1198→
+  1199→#### Selfcare Speed History (`selfcare-speed-history.tsx`)
+  1200→Subscriber speed-test history — daily speed trend chart.
+  1201→- **APIs:** `/api/selfcare/speed-history`.
+  1202→
+  1203→#### Selfcare Plan Compare (`selfcare-plan-compare.tsx`)
+  1204→Plan comparison — compare subscriber's current plan with alternatives side-by-side.
+  1205→- **APIs:** `/api/selfcare/plan-compare`.
+  1206→
+  1207→## 7.12 ORPHAN / HIDDEN AAA PAGES (exist in `page-loaders.ts` but NOT in nav-config)
+  1208→
+  1209→#### Aaa Users (`aaa-users-page.tsx`)
+  1210→RADIUS user table — Username/Subscriber/Group/Status/Type/Plan-Speed/RADIUS-enabled toggle/actions; per-user attribute table (Attribute/Op/Value ×4).
+  1211→- **APIs:** `/api/aaa/users` (GET/POST/PUT/DELETE), `/api/radius-groups`, `/api/subscribers`.
+  1212→
+  1213→#### Aaa Sessions (`aaa-sessions-page.tsx`)
+  1214→Active RADIUS session table — Username/Framed IP/MAC/NAS/Group/Duration (sortable)/Status.
+  1215→- **APIs:** `/api/aaa/active-sessions`.
+  1216→
+  1217→#### Aaa Groups (`aaa-groups-page.tsx`)
+  1218→RADIUS group manager — Group Name/Description/Users count/Check Attrs/Reply Attrs/Speed/Priority/actions; attribute editor tables; user list per group.
+  1219→- **APIs:** `/api/aaa/groups` (CRUD), `/api/aaa/groups/{id}`.
+  1220→
+  1221→#### Aaa Radius (`aaa-radius-page.tsx`)
+  1222→Combined RADIUS admin — RADIUS users (provision/edit/import/export/toggle-enabled), RADIUS groups (add/edit/delete), RADIUS sessions, RADIUS accounting, RADIUS settings; subscriber search for radiusEnabled=false.
+  1223→- **APIs:** `/api/radius-users` (CRUD + export/import/toggle-enabled), `/api/radius-groups` (CRUD), `/api/radius-sessions`, `/api/radius-accounting`, `/api/radius-settings`, `/api/settings/isp-profile`, `/api/subscribers`.
+  1224→
+  1225→#### Session Engine (`session-engine-page.tsx`)
+  1226→Internal session engine admin — sessions list, NAS config, per-session policy enforcement.
+  1227→- **APIs:** `/api/session-engine`, `/api/session-engine/nas-config`, `/api/session-engine/policy/{id}`, `/api/session-engine/sessions` (CRUD), `/api/plans`.
+  1228→
+  1229→---
+  1230→
+  1231→
+  1232→# 8. BACKEND FUNCTIONAL CAPABILITY CATALOGUE
+  1233→
+  1234→## 8.1 API Route Catalog (134 groups · 501 route.ts files · ~88% require auth)
+  1235→
+  1236→**Auth model:** `requireAuth(req)` from `src/lib/api-auth.ts` — cookie `cryptsk_session` (HMAC-SHA256) + Bearer-token fallback, active-account check. Public routes: login/logout, `/api/auth/me`, subscriber self-care login, `test-toast`, `files`, `reports`, some polling endpoints.
+  1237→
+  1238→### A. Subscribers & CRM
+  1239→| Group | Methods (root) | Sub-routes |
+  1240→|-------|----------------|------------|
+  1241→| `/subscribers` | GET, POST | `[id]`, `[id]/360`, `[id]/balance`, `bulk`, `expiring`, `export`, `online-count`, `stats` |
+  1242→| `/subscriber-auth` | (dir) | `login`, `logout`, `me`, `profile`, `password`, `plans`, `invoices`, `payments`, `complaints`, `usage`, `speed-test`, `service-status` |
+  1243→| `/areas` | GET, POST, PUT | `[id]`, `bulk-import`, `reorder` |
+  1244→| `/area-budgets` | GET, POST | — |
+  1245→| `/subnets` | GET | — |
+  1246→| `/leads` | GET, POST | `[id]` |
+  1247→| `/referral` | GET, POST | — |
+  1248→| `/selfcare` | (dir) | `plan-compare`, `service-health`, `speed-history`, `usage-meter` |
+  1249→| `/churn` | (dir) | `analytics`, `predict`, `retention` |
+  1250→| `/churn-alerts` | GET, POST | `communications`, `tracking`, `workflows` |
+  1251→
+  1252→### B. Billing & Finance
+  1253→| Group | Methods (root) | Sub-routes |
+  1254→|-------|----------------|------------|
+  1255→| `/billing` | GET, POST | `[id]`, `export` |
+  1256→| `/invoices` | GET, POST | `[id]`, `[id]/credit-note`, `[id]/credit-notes`, `bulk-generate`, `export`, `export-all`, `recurring-templates` |
+  1257→| `/payments` | GET, POST | `[id]`, `[id]/refund`, `create-order`, `export`, `recent`, `revenue-by-mode` |
+  1258→| `/top-ups` | GET, POST | — |
+  1259→| `/promotions` | GET, POST | `[id]`, `[id]/toggle-status` |
+  1260→| `/charge-overrides` | GET, POST | `[id]` |
+  1261→| `/collection` | GET, POST | `disputes`, `receipt`, `reconcile`, `refund`, `summary`, `targets` |
+  1262→| `/collections` | (dir) | `analytics`, `schedule`, `smart` |
+  1263→| `/due-recovery` | GET, POST | `legal-notice`, `payment-plan`, `sla-dashboard`, `sla-export` |
+  1264→| `/grace-periods` | GET, POST | — |
+  1265→| `/cyclic-billing` | GET, POST | — |
+  1266→| `/revenue` | (dir) | `aging-enhanced`, `audit`, `cashflow`, `forecast`, `leakage` |
+  1267→| `/gst` | GET, POST | `audit`, `composite`, `gstr9`, `reverse-charge`, `tds-tcs` |
+  1268→| `/expenses` | GET, POST | — |
+  1269→| `/reports` | (none) | `custom`, `expenses`, `kpi-targets`, `revenue`, `tds-tcs` |
+  1270→| `/agents` | GET, POST | `[id]`, `analytics`, `create-login`, `export`, `followups`, `import`, `payouts`, `reconciliation` |
+  1271→| `/resellers` | (dir) | `analytics`, `commission-engine`, `credit` |
+  1272→| `/reseller` | GET, POST | — |
+  1273→| `/loyalty` | (dir) | `badges`, `enhanced`, `tiers` |
+  1274→
+  1275→### C. Plans, Vouchers, Provisioning
+  1276→| Group | Methods (root) | Sub-routes |
+  1277→|-------|----------------|------------|
+  1278→| `/plans` | GET, POST | `[id]`, `analytics`, `migrate`, `optimization`, `performance`, `recommend`, `reorder` |
+  1279→| `/vouchers` | GET, POST | `[id]`, `bulk`, `generate`, `import`, `stats`, `templates`, `templates/[id]`, `usage-history` |
+  1280→| `/add-on-services` | GET, POST | `subscribe`, `subscriptions`, `subscriptions/[id]` |
+  1281→| `/provisioning` | GET, POST | — |
+  1282→| `/batch-provisioning` | (dir) | `jobs`, `templates`, `templates/[id]` |
+  1283→
+  1284→### D. Support, Complaints, Notifications
+  1285→| Group | Methods (root) | Sub-routes |
+  1286→|-------|----------------|------------|
+  1287→| `/complaints` | GET, POST | `[id]`, `[id]/auto-assign`, `[id]/comments`, `analytics`, `bulk-close`, `export`, `open-count` |
+  1288→| `/technicians` | GET, POST | `[id]`, `[id]/analytics`, `attendance`, `bulk`, `calendar`, `dispatch`, `export`, `leaderboard`, `leave`, `performance`, `sla` |
+  1289→| `/installations` | GET, POST | `[id]`, `auto-assign`, `daily-report`, `feedback`, `timeline` |
+  1290→| `/sla` | (dir) | `monitor` |
+  1291→| `/knowledge-base` | GET, POST | — |
+  1292→| `/announcements` | GET, POST | `[id]`, `dismiss` |
+  1293→| `/incidents` | GET, POST | `export` |
+  1294→| `/notifications` | GET, POST | `[id]`, `[id]/retry`, `analytics`, `mark-all-read`, `retry-failed`, `send`, `unread-count` |
+  1295→| `/notification-rules` | GET, POST, PUT, DELETE | `[id]` |
+  1296→| `/activity-feed` | GET | — |
+  1297→| `/action-history` | GET, POST | — |
+  1298→| `/audit-log` | GET, POST, DELETE | `entity`, `entity/[entityType]`, `stats` |
+  1299→
+  1300→### E. RADIUS / AAA
+  1301→| Group | Methods (root) | Sub-routes |
+  1302→|-------|----------------|------------|
+  1303→| `/aaa` | (dir) | `active-sessions`, `auth-log`, `groups`, `groups/[groupname]`, `session-history`, `users`, `users/[username]` |
+  1304→| `/radius` | (dir) | `sessions`, `users`, `users/[id]` |
+  1305→| `/radius-attributes` | GET, POST | `definitions`, `definitions/[id]`, `user-attributes`, `user-attributes/[id]`, `user-attributes/bulk` |
+  1306→| `/radius-groups` | GET, POST, PUT, DELETE | — |
+  1307→| `/radius-proxy` | GET, POST | `realms`, `realms/[id]`, `servers`, `servers/[id]` |
+  1308→| `/radius-sessions` | GET, POST | — |
+  1309→| `/radius-settings` | GET, PUT | — |
+  1310→| `/radius-users` | GET, POST | `[id]`, `export`, `import`, `toggle-enabled` |
+  1311→| `/radius-accounting` | GET | — |
+  1312→| `/nas-clients` | GET, POST, PUT, DELETE | `[id]`, `test-connection`, `vendors` |
+  1313→| `/nas-client-config` | GET, POST | — |
+  1314→| `/freeradius` | GET | `sync-status` |
+  1315→| `/coa-events` | GET, POST | — |
+  1316→| `/sessions` | GET, POST | `disconnect`, `export` |
+  1317→| `/session-engine` | GET, POST | `nas-config`, `policy`, `policy/[subscriberId]`, `sessions`, `sessions/[id]` |
+  1318→| `/enterprise-auth` | GET, POST | `[id]`, `[id]/sessions`, `[id]/test-ldap`, `[id]/users` |
+  1319→| `/pppoe` | GET, POST, PUT, DELETE | — |
+  1320→| `/hotspot` | GET, POST | `analytics`, `dashboard`, `data-history`, `export`, `revenue`, `users`, `users/[id]`, `users/[id]/history` |
+  1321→| `/captive-portal` | GET, POST | `[id]`, `ads`, `ads/[id]`, `analytics`, `events`, `mac-whitelist`, `rules`, `rules/[id]`, `schedules`, `schedules/[id]`, `sessions`, `sessions/[id]`, `sessions/disconnect-all`, `subnet-mapping`, `voucher-pools`, `voucher-pools/[id]` |
+  1322→
+  1323→### F. Network / Gateway
+  1324→| Group | Methods (root) | Sub-routes |
+  1325→|-------|----------------|------------|
+  1326→| `/devices` | GET, POST | `[id]`, `bulk`, `config-history`, `export`, `import`, `test-connection`, `tree` |
+  1327→| `/network` | (dir) | `devices`, `health-enhanced`, `health-history`, `predictive`, `status`, `usage-summary` |
+  1328→| `/system-health` | GET | — |
+  1329→| `/system-monitor` | GET | — |
+  1330→| `/system` | (dir) | `alerts-summary`, `health` |
+  1331→| `/bandwidth` | GET | `compare`, `consumers`, `export`, `interfaces`, `qos`, `thresholds`, `throttle` |
+  1332→| `/bandwidth-mgmt` | GET, POST, PUT, DELETE | — |
+  1333→| `/bw-reports` | GET, POST, DELETE | — |
+  1334→| `/qos-monitor` | GET | — |
+  1335→| `/qos` | (catch-all `[...slug]`) | — |
+  1336→| `/multiwan` | GET, POST | `export` |
+  1337→| `/uptime-monitor` | GET, POST | — |
+  1338→| `/latency-monitor` | GET | — |
+  1339→| `/traffic-analytics` | GET | — |
+  1340→| `/speed-test` | GET, POST | — |
+  1341→| `/ddos` | GET, POST, PUT, DELETE | — |
+  1342→| `/firewall` | GET, POST, PUT, DELETE | — |
+  1343→| `/ips` | GET | `alerts`, `block-rules`, `block-rules/[id]`, `block-rules/unblock`, `nftables`, `nftables/init`, `rules`, `rules/[id]`, `stats`, `threat-scores` |
+  1344→| `/ndpi` | GET | `apps`, `catalog`, `categories`, `rules`, `rules/[id]`, `stats`, `subscribers` |
+  1345→| `/dhcp` | GET, POST, PUT, DELETE | — |
+  1346→| `/dhcpv6` | (dir) | `pools`, `prefix-delegation`, `reservations`, `stats`, `subnets` |
+  1347→| `/dns` | GET, POST, PUT, DELETE | — |
+  1348→| `/ipam` | GET, POST | `assign-subscriber`, `assignment-history`, `auto-fill`, `cgnat`, `conflict-check`, `dhcp-sync`, `export`, `import`, `radius-pools`, `snapshots`, `trends` |
+  1349→| `/ip-mac-history` | GET, POST | — |
+  1350→| `/interfaces` | GET, POST, PUT, DELETE | — |
+
+[showing lines 901-1350 of 2397; use offset=1351 with limit to continue reading]

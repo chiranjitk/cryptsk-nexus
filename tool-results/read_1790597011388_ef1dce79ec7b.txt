@@ -1,0 +1,2002 @@
+     1→# Enterprise Gateway --- AAA, Session Engine & Dataplane Architecture
+     2→
+     3→**Document status:** LOCKED GATEWAY / AAA / SESSION BASELINE
+     4→
+     5→## 1. Objective
+     6→
+     7→Build a new-generation enterprise/ISP/hospitality gateway platform
+     8→capable of:
+     9→
+    10→-   100,000 concurrent subscriber/device sessions as the architectural
+    11→    target
+    12→-   50 Gbps-class dataplane target, subject to certified
+    13→    hardware/NIC/packet-size testing
+    14→-   50,000 concurrent sessions as the initial certified deployment
+    15→    profile
+    16→-   RADIUS AAA
+    17→-   PPPoE / DHCP / captive portal / IP-based subscriber access
+    18→-   Authentication and authorization
+    19→-   Accounting
+    20→-   Subscriber session management
+    21→-   IP address pools
+    22→-   Bandwidth management
+    23→-   QoS
+    24→-   NAT
+    25→-   ACL/firewall
+    26→-   Application policy integration
+    27→-   CoA / Disconnect
+    28→-   Session monitoring
+    29→-   Subscriber statistics
+    30→-   Policy enforcement through VPP
+    31→-   PostgreSQL-based configuration and accounting
+    32→-   High availability
+    33→-   Graceful recovery after service restart
+    34→-   API-driven management
+    35→-   No shell-script dependency in the dataplane
+    36→
+    37→------------------------------------------------------------------------
+    38→
+    39→# 2. Fundamental Architecture Decision
+    40→
+    41→Do NOT build the new system as:
+    42→
+    43→``` text
+    44→RADIUS
+    45→   ↓
+    46→shell script
+    47→   ↓
+    48→nftables
+    49→   ↓
+    50→tc
+    51→   ↓
+    52→packet enforcement
+    53→```
+    54→
+    55→Do NOT make FreeRADIUS responsible for maintaining the complete live
+    56→subscriber state.
+    57→
+    58→The new architecture is:
+    59→
+    60→``` text
+    61→                         MANAGEMENT PLANE
+    62→                               │
+    63→                         REST / gRPC API
+    64→                               │
+    65→                               ▼
+    66→                       ┌───────────────┐
+    67→                       │ Policy Engine │
+    68→                       └───────┬───────┘
+    69→                               │
+    70→              ┌────────────────┼────────────────┐
+    71→              │                │                │
+    72→              ▼                ▼                ▼
+    73→        AAA Service      Session Engine    IPAM/Pool Engine
+    74→              │                │                │
+    75→              ▼                ▼                ▼
+    76→        FreeRADIUS        Live Sessions      PostgreSQL
+    77→              │                │
+    78→              │                ▼
+    79→              │          VPP Adapter
+    80→              │                │
+    81→              └────────────────┤
+    82→                               ▼
+    83→                         VPP / DPDK
+    84→                               │
+    85→                         Physical NIC
+    86→                               │
+    87→                         Subscriber traffic
+    88→```
+    89→
+    90→The responsibilities MUST remain separated.
+    91→
+    92→------------------------------------------------------------------------
+    93→
+    94→# 3. Component Responsibilities
+    95→
+    96→## 3.1 FreeRADIUS
+    97→
+    98→FreeRADIUS is responsible for:
+    99→
+   100→-   RADIUS Access-Request
+   101→-   Authentication
+   102→-   Authorization
+   103→-   Access-Accept
+   104→-   Access-Reject
+   105→-   Accounting-Start
+   106→-   Accounting-Interim
+   107→-   Accounting-Stop
+   108→-   CoA
+   109→-   Disconnect
+   110→-   RADIUS client/NAS authentication
+   111→-   RADIUS attributes
+   112→-   LDAP/AD integration
+   113→-   SQL-backed subscriber authorization
+   114→-   authentication policies
+   115→-   RADIUS dictionaries
+   116→-   EAP where required
+   117→-   PAP/CHAP/MS-CHAP/EAP methods as required
+   118→-   proxying when required
+   119→
+   120→FreeRADIUS MUST NOT:
+   121→
+   122→-   manipulate VPP for every packet
+   123→-   execute shell scripts for every subscriber login
+   124→-   execute nftables commands
+   125→-   execute tc commands
+   126→-   maintain large subscriber policy state inside unlang
+   127→-   perform expensive SQL queries for every packet
+   128→-   become the authoritative source of live dataplane state
+   129→
+   130→------------------------------------------------------------------------
+   131→
+   132→# 4. Session Engine
+   133→
+   134→The Session Engine is the core new component.
+   135→
+   136→It owns the authoritative live subscriber/session state.
+   137→
+   138→Example:
+   139→
+   140→``` text
+   141→Session ID
+   142→Username
+   143→Subscriber ID
+   144→NAS ID
+   145→Access protocol
+   146→IPv4
+   147→IPv6
+   148→MAC
+   149→VLAN
+   150→Interface
+   151→VRF
+   152→Authentication time
+   153→Last accounting update
+   154→Session state
+   155→Policy ID
+   156→Bandwidth profile
+   157→QoS profile
+   158→ACL profile
+   159→NAT profile
+   160→IP pool
+   161→Accounting state
+   162→Data counters
+   163→Packet counters
+   164→Idle timeout
+   165→Session timeout
+   166→Device information
+   167→```
+   168→
+   169→The Session Engine MUST be independent from FreeRADIUS.
+   170→
+   171→------------------------------------------------------------------------
+   172→
+   173→# 5. Why Session Engine Must Be Separate
+   174→
+   175→RADIUS is a request/response AAA protocol.
+   176→
+   177→A subscriber session may remain online for:
+   178→
+   179→-   minutes
+   180→-   hours
+   181→-   days
+   182→-   weeks
+   183→
+   184→The RADIUS Access-Accept is only the authentication decision.
+   185→
+   186→Therefore:
+   187→
+   188→``` text
+   189→RADIUS request
+   190→      ↓
+   191→Authentication decision
+   192→      ↓
+   193→Access-Accept
+   194→      ↓
+   195→Session Engine creates live session
+   196→      ↓
+   197→VPP enforces policy
+   198→```
+   199→
+   200→The session continues even when there is no RADIUS packet.
+   201→
+   202→------------------------------------------------------------------------
+   203→
+   204→# 6. Session State Model
+   205→
+   206→Every live session MUST have a unique internal `session_id`.
+   207→
+   208→Recommended structure:
+   209→
+   210→``` text
+   211→session_id
+   212→subscriber_id
+   213→username
+   214→nas_id
+   215→nas_port
+   216→access_type
+   217→mac_address
+   218→ipv4_address
+   219→ipv6_prefix
+   220→vlan_id
+   221→vrf_id
+   222→policy_id
+   223→bandwidth_profile_id
+   224→acl_profile_id
+   225→nat_profile_id
+   226→session_start
+   227→last_seen
+   228→last_accounting_update
+   229→session_timeout
+   230→idle_timeout
+   231→input_octets
+   232→output_octets
+   233→input_packets
+   234→output_packets
+   235→state
+   236→```
+   237→
+   238→Session states:
+   239→
+   240→``` text
+   241→AUTHENTICATING
+   242→AUTHENTICATED
+   243→ACTIVE
+   244→COA_PENDING
+   245→DISCONNECT_PENDING
+   246→DISCONNECTED
+   247→EXPIRED
+   248→STALE
+   249→RECOVERING
+   250→```
+   251→
+   252→------------------------------------------------------------------------
+   253→
+   254→# 7. Session Lifecycle
+   255→
+   256→## 7.1 Login
+   257→
+   258→``` text
+   259→Subscriber
+   260→    ↓
+   261→NAS
+   262→    ↓
+   263→RADIUS Access-Request
+   264→    ↓
+   265→FreeRADIUS
+   266→    ↓
+   267→Authentication
+   268→    ↓
+   269→Authorization
+   270→    ↓
+   271→Access-Accept
+   272→    ↓
+   273→Session Engine
+   274→    ↓
+   275→Create session
+   276→    ↓
+   277→Allocate IP
+   278→    ↓
+   279→Resolve subscriber policy
+   280→    ↓
+   281→Generate dataplane policy
+   282→    ↓
+   283→VPP Adapter
+   284→    ↓
+   285→VPP
+   286→    ↓
+   287→Subscriber becomes ACTIVE
+   288→```
+   289→
+   290→------------------------------------------------------------------------
+   291→
+   292→# 8. Login Must Be Transactional
+   293→
+   294→Do NOT mark the subscriber ACTIVE before dataplane programming succeeds.
+   295→
+   296→Correct sequence:
+   297→
+   298→``` text
+   299→1. Authenticate
+   300→2. Authorize
+   301→3. Allocate IP
+   302→4. Create session
+   303→5. Program VPP
+   304→6. Verify VPP programming
+   305→7. Mark ACTIVE
+   306→8. Start accounting
+   307→```
+   308→
+   309→If VPP programming fails:
+   310→
+   311→``` text
+   312→Authentication successful
+   313→        ↓
+   314→VPP programming failed
+   315→        ↓
+   316→Session NOT ACTIVE
+   317→        ↓
+   318→Return controlled failure
+   319→```
+   320→
+   321→Do not create "ghost sessions".
+   322→
+   323→------------------------------------------------------------------------
+   324→
+   325→# 9. Logout
+   326→
+   327→Logout may originate from:
+   328→
+   329→-   NAS Accounting-Stop
+   330→-   RADIUS Disconnect
+   331→-   CoA
+   332→-   session timeout
+   333→-   idle timeout
+   334→-   administrative disconnect
+   335→-   duplicate login policy
+   336→-   IP conflict
+   337→-   NAS failure recovery
+   338→-   system policy
+   339→-   subscriber suspension
+   340→-   account expiry
+   341→
+   342→Flow:
+   343→
+   344→``` text
+   345→Logout Event
+   346→     ↓
+   347→Session Engine
+   348→     ↓
+   349→Locate session
+   350→     ↓
+   351→Mark DISCONNECTING
+   352→     ↓
+   353→Remove VPP policy/state
+   354→     ↓
+   355→Release IP
+   356→     ↓
+   357→Close accounting state
+   358→     ↓
+   359→Persist final session record
+   360→     ↓
+   361→Mark DISCONNECTED
+   362→```
+   363→
+   364→Operations MUST be idempotent.
+   365→
+   366→Calling logout twice must not corrupt state.
+   367→
+   368→------------------------------------------------------------------------
+   369→
+   370→# 10. FreeRADIUS ↔ Session Engine
+   371→
+   372→Do not tightly couple FreeRADIUS configuration to application internals.
+   373→
+   374→Use an adapter:
+   375→
+   376→``` text
+   377→FreeRADIUS
+   378→     │
+   379→     │ RADIUS events
+   380→     ▼
+   381→AAA Adapter
+   382→     │
+   383→     ▼
+   384→Session Engine API
+   385→```
+   386→
+   387→The adapter can use:
+   388→
+   389→-   local UNIX socket
+   390→-   localhost gRPC
+   391→-   REST for management operations
+   392→-   message queue for asynchronous events
+   393→
+   394→For high-frequency internal events, prefer:
+   395→
+   396→``` text
+   397→gRPC / Unix socket / internal message bus
+   398→```
+   399→
+   400→over REST.
+   401→
+   402→REST should primarily be the management interface.
+   403→
+   404→------------------------------------------------------------------------
+   405→
+   406→# 11. FreeRADIUS Authentication Path
+   407→
+   408→Recommended:
+   409→
+   410→``` text
+   411→Access-Request
+   412→      ↓
+   413→Identify NAS
+   414→      ↓
+   415→Normalize attributes
+   416→      ↓
+   417→Identify subscriber
+   418→      ↓
+   419→Authentication
+   420→      ↓
+   421→Authorization lookup
+   422→      ↓
+   423→Subscriber profile
+   424→      ↓
+   425→Return RADIUS attributes
+   426→```
+   427→
+   428→Avoid unnecessarily querying PostgreSQL multiple times.
+   429→
+   430→One authentication request should ideally retrieve the required
+   431→authorization information efficiently.
+   432→
+   433→------------------------------------------------------------------------
+   434→
+   435→# 12. Subscriber Policy Model
+   436→
+   437→Do not store complete policy configuration directly in `radreply`.
+   438→
+   439→Instead:
+   440→
+   441→``` text
+   442→Subscriber
+   443→    ↓
+   444→Subscriber Profile
+   445→    ↓
+   446→Service Plan
+   447→    ↓
+   448→Policy Set
+   449→    ├── Bandwidth
+   450→    ├── QoS
+   451→    ├── ACL
+   452→    ├── NAT
+   453→    ├── Application Policy
+   454→    ├── DNS Policy
+   455→    ├── IPv4 Pool
+   456→    ├── IPv6 Pool
+   457→    └── Session Limits
+   458→```
+   459→
+   460→FreeRADIUS should return a compact policy identifier where possible.
+   461→
+   462→Example:
+   463→
+   464→``` text
+   465→Subscriber = user123
+   466→
+   467→Service-Profile = GOLD-100M
+   468→Policy-ID = 10023
+   469→IP-Pool = HOTEL-GUEST
+   470→```
+   471→
+   472→The Session Engine then resolves:
+   473→
+   474→``` text
+   475→Policy-ID 10023
+   476→      ↓
+   477→Bandwidth = 100 Mbps
+   478→QoS = GOLD
+   479→ACL = GUEST-INTERNET
+   480→NAT = PUBLIC-POOL-01
+   481→DPI = STANDARD
+   482→```
+   483→
+   484→------------------------------------------------------------------------
+   485→
+   486→# 13. PostgreSQL Responsibilities
+   487→
+   488→PostgreSQL is the durable source of configuration, identity,
+   489→accounting-history, audit, and recovery metadata.
+   490→
+   491→It is NOT the authoritative real-time store for packet-path state or the
+   492→sole source of truth for live session ownership.
+   493→
+   494→Live session state is authoritative in the Session Engine; PostgreSQL
+   495→provides durable configuration/history and recovery persistence.
+   496→
+   497→Use PostgreSQL for:
+   498→
+   499→-   subscribers
+   500→-   credentials
+   501→-   subscriber profiles
+   502→-   service plans
+   503→-   policies
+   504→-   NAS definitions
+   505→-   IP pools
+   506→-   VLANs
+   507→-   gateway configuration
+   508→-   accounting history
+   509→-   session history
+   510→-   audit logs
+   511→-   administrator data
+   512→-   configuration
+   513→-   billing information
+   514→
+   515→Do NOT use PostgreSQL as the packet-path state store.
+   516→
+   517→------------------------------------------------------------------------
+   518→
+   519→# 14. Live Session Storage
+   520→
+   521→Live sessions should primarily exist in memory inside the Session
+   522→Engine.
+   523→
+   524→Example:
+   525→
+   526→``` text
+   527→Session Engine
+   528→      │
+   529→      ├── HashMap / concurrent map
+   530→      ├── IP → Session index
+   531→      ├── MAC → Session index
+   532→      ├── Username → Session index
+   533→      ├── Session-ID → Session index
+   534→      └── NAS → session index
+   535→```
+   536→
+   537→Optional Redis can be used for:
+   538→
+   539→-   HA coordination
+   540→-   distributed locks
+   541→-   temporary state
+   542→-   event distribution
+   543→-   shared cache
+   544→
+   545→But Redis should not automatically become the packet-path database.
+   546→
+   547→------------------------------------------------------------------------
+   548→
+   549→# 15. 100,000 Session Architectural Target
+   550→
+   551→The platform MUST be architected for 100,000 concurrent sessions from
+   552→day one.
+   553→
+   554→The first production/certification profile may be 50,000 sessions, but
+   555→the software architecture must not contain a 50k-specific ceiling.
+   556→
+   557→100,000 concurrent sessions is not itself a difficult memory problem.
+   558→The real scalability dimensions are:
+   559→
+   560→The real scalability dimensions are:
+   561→
+   562→``` text
+   563→Concurrent sessions
+   564→+
+   565→Authentication requests/sec
+   566→+
+   567→Accounting packets/sec
+   568→+
+   569→CoA/sec
+   570→+
+   571→Disconnect/sec
+   572→+
+   573→New sessions/sec
+   574→+
+   575→Database writes/sec
+   576→+
+   577→VPP policy operations/sec
+   578→+
+   579→NAT flows
+   580→+
+   581→Packets/sec
+   582→+
+   583→Bandwidth
+   584→```
+   585→
+   586→The architecture MUST therefore define capacity independently for each
+   587→dimension.
+   588→
+   589→------------------------------------------------------------------------
+   590→
+   591→# 16. Example Accounting Load
+   592→
+   593→For 100,000 active sessions:
+   594→
+   595→With 5-minute interim updates:
+   596→
+   597→``` text
+   598→100,000 / 300
+   599→≈ 333 accounting updates/sec
+   600→```
+   601→
+   602→With 1-minute interim updates:
+   603→
+   604→``` text
+   605→100,000 / 60
+   606→≈ 1,667 accounting updates/sec
+   607→```
+   608→
+   609→Therefore, do NOT blindly configure 60-second SQL accounting updates for
+   610→every deployment.
+   611→
+   612→Make the accounting interval configurable.
+   613→
+   614→Recommended defaults:
+   615→
+   616→``` text
+   617→Interim update:
+   618→300 seconds
+   619→
+   620→High-accuracy mode:
+   621→60–120 seconds
+   622→
+   623→Low-load mode:
+   624→300–600 seconds
+   625→```
+   626→
+   627→The final choice must depend on billing/audit requirements.
+   628→
+   629→------------------------------------------------------------------------
+   630→
+   631→# 17. Accounting Architecture
+   632→
+   633→Do not force every Accounting-Interim packet directly into a large
+   634→PostgreSQL transaction if unnecessary.
+   635→
+   636→Recommended:
+   637→
+   638→``` text
+   639→NAS
+   640→ ↓
+   641→FreeRADIUS
+   642→ ↓
+   643→Accounting Processor
+   644→ ↓
+   645→Event Queue
+   646→ ↓
+   647→Accounting Writer
+   648→ ↓
+   649→PostgreSQL
+   650→```
+   651→
+   652→For high-load installations:
+   653→
+   654→``` text
+   655→RADIUS
+   656→ ↓
+   657→fast acknowledgement
+   658→ ↓
+   659→buffer/event queue
+   660→ ↓
+   661→batch DB writer
+   662→```
+   663→
+   664→FreeRADIUS documentation explicitly describes buffered accounting as a
+   665→way to decouple busy RADIUS processing from slower SQL writes.
+   666→
+   667→------------------------------------------------------------------------
+   668→
+   669→# 18. Accounting Tables
+   670→
+   671→Do not allow `radacct` to grow indefinitely as one unpartitioned table.
+   672→
+   673→Use time partitioning.
+   674→
+   675→Example:
+   676→
+   677→``` text
+   678→radacct
+   679→ ├── 2026_09
+   680→ ├── 2026_10
+   681→ ├── 2026_11
+   682→ └── ...
+   683→```
+   684→
+   685→Indexes should be designed around actual queries.
+   686→
+   687→Important lookup dimensions:
+   688→
+   689→``` text
+   690→session_id
+   691→acct_session_id
+   692→username
+   693→subscriber_id
+   694→nas_id
+   695→framed_ip
+   696→mac
+   697→start_time
+   698→stop_time
+   699→```
+   700→
+   701→Do not create unnecessary indexes because every additional index
+   702→increases write cost.
+   703→
+   704→------------------------------------------------------------------------
+   705→
+   706→# 19. Authentication Cache
+   707→
+   708→Authentication can use multiple levels:
+   709→
+   710→``` text
+   711→L1:
+   712→Session Engine / local cache
+   713→
+   714→L2:
+   715→Redis optional
+   716→
+   717→L3:
+   718→PostgreSQL / LDAP / AD
+   719→
+   720→L4:
+   721→External authentication backend
+   722→```
+   723→
+   724→However, credentials and security-sensitive data must not be cached
+   725→indiscriminately.
+   726→
+   727→Cache authorization/profile data more aggressively than passwords.
+   728→
+   729→Example:
+   730→
+   731→``` text
+   732→Subscriber
+   733→   ↓
+   734→Profile cache
+   735→   ↓
+   736→Service plan
+   737→   ↓
+   738→Policy ID
+   739→```
+   740→
+   741→------------------------------------------------------------------------
+   742→
+   743→# 20. FreeRADIUS Threading
+   744→
+   745→FreeRADIUS uses a thread pool.
+   746→
+   747→The configuration must be tuned based on:
+   748→
+   749→-   CPU cores
+   750→-   request rate
+   751→-   authentication backend latency
+   752→-   SQL latency
+   753→-   LDAP latency
+   754→-   EAP workload
+   755→-   accounting load
+   756→
+   757→Do not simply configure hundreds of threads because there are 100,000
+   758→sessions.
+   759→
+   760→100,000 sessions ≠ 100,000 FreeRADIUS threads.
+   761→
+   762→Thread count must be derived from request rate, backend latency,
+   763→protocol mix, CPU, and measured queueing behavior.
+   764→
+   765→A session is not a FreeRADIUS worker.
+   766→
+   767→------------------------------------------------------------------------
+   768→
+   769→# 21. FreeRADIUS Request Processing Rule
+   770→
+   771→Fast path:
+   772→
+   773→``` text
+   774→RADIUS
+   775→ ↓
+   776→minimal parsing
+   777→ ↓
+   778→cache/profile lookup
+   779→ ↓
+   780→authentication
+   781→ ↓
+   782→authorization
+   783→ ↓
+   784→response
+   785→```
+   786→
+   787→Avoid:
+   788→
+   789→``` text
+   790→RADIUS
+   791→ ↓
+   792→10 SQL queries
+   793→ ↓
+   794→external script
+   795→ ↓
+   796→LDAP
+   797→ ↓
+   798→shell command
+   799→ ↓
+   800→another SQL query
+   801→ ↓
+   802→nftables
+   803→ ↓
+   804→tc
+   805→ ↓
+   806→response
+   807→```
+   808→
+   809→The second architecture will eventually become a bottleneck.
+   810→
+   811→------------------------------------------------------------------------
+   812→
+   813→# 22. NAS Manager
+   814→
+   815→The Session Engine should include a NAS Manager.
+   816→
+   817→NAS object:
+   818→
+   819→``` text
+   820→NAS ID
+   821→NAS Name
+   822→NAS IP
+   823→NAS IPv6
+   824→NAS Type
+   825→Shared Secret
+   826→Vendor
+   827→RADIUS Authentication Port
+   828→RADIUS Accounting Port
+   829→CoA Port
+   830→Disconnect Port
+   831→Status
+   832→Location
+   833→Description
+   834→```
+   835→
+   836→Supported NAS categories:
+   837→
+   838→``` text
+   839→PPPoE NAS
+   840→DHCP Gateway
+   841→Wi-Fi Controller
+   842→Access Point
+   843→VPN Gateway
+   844→Captive Portal
+   845→Enterprise Switch
+   846→802.1X
+   847→Custom NAS
+   848→```
+   849→
+   850→------------------------------------------------------------------------
+   851→
+   852→# 23. NAS Health
+   853→
+   854→Track:
+   855→
+   856→``` text
+   857→NAS status
+   858→Last Access-Request
+   859→Last Accounting-Request
+   860→Last Accounting-Start
+   861→Last Accounting-Stop
+   862→Last response
+   863→Packet loss
+   864→Authentication latency
+   865→Accounting latency
+   866→Active sessions
+   867→```
+   868→
+   869→Health states:
+   870→
+   871→``` text
+   872→UP
+   873→DEGRADED
+   874→DOWN
+   875→UNKNOWN
+   876→```
+   877→
+   878→------------------------------------------------------------------------
+   879→
+   880→# 24. CoA / Disconnect
+   881→
+   882→Implement a dedicated Dynamic Authorization subsystem.
+   883→
+   884→Supported operations:
+   885→
+   886→``` text
+   887→Disconnect-Request
+   888→CoA-Request
+   889→```
+   890→
+   891→Typical use:
+   892→
+   893→``` text
+   894→Change bandwidth
+   895→Change policy
+   896→Change VLAN
+   897→Change IP profile
+   898→Suspend user
+   899→Resume user
+   900→Force logout
+   901→Change service plan
+   902→```
+   903→
+   904→Flow:
+   905→
+   906→``` text
+   907→Management API
+   908→      ↓
+   909→Policy Engine
+   910→      ↓
+   911→Session Engine
+   912→      ↓
+   913→NAS CoA/Disconnect
+   914→```
+   915→
+   916→If the gateway itself is the NAS:
+   917→
+   918→``` text
+   919→Session Engine
+   920→      ↓
+   921→VPP Adapter
+   922→```
+   923→
+   924→Do not unnecessarily send CoA through an external NAS when the local
+   925→dataplane can be updated directly.
+   926→
+   927→------------------------------------------------------------------------
+   928→
+   929→# 25. Local Gateway Mode
+   930→
+   931→When the product itself is the NAS/gateway:
+   932→
+   933→``` text
+   934→FreeRADIUS
+   935→     ↓
+   936→Session Engine
+   937→     ↓
+   938→VPP Adapter
+   939→     ↓
+   940→VPP
+   941→```
+   942→
+   943→The Session Engine is authoritative for local sessions.
+   944→
+   945→RADIUS remains the AAA protocol interface.
+   946→
+   947→------------------------------------------------------------------------
+   948→
+   949→# 26. External NAS Mode
+   950→
+   951→When the product is only the AAA server:
+   952→
+   953→``` text
+   954→External NAS
+   955→     ↓
+   956→FreeRADIUS
+   957→     ↓
+   958→Session Engine
+   959→     ↓
+   960→Accounting Database
+   961→```
+   962→
+   963→VPP is not required for external NAS sessions.
+   964→
+   965→This makes the AAA engine reusable.
+   966→
+   967→------------------------------------------------------------------------
+   968→
+   969→# 27. Dataplane Architecture
+   970→
+   971→Replace:
+   972→
+   973→``` text
+   974→nftables
+   975→tc
+   976→qdisc
+   977→tc filter
+   978→iptables
+   979→```
+   980→
+   981→with:
+   982→
+   983→``` text
+   984→DPDK
+   985→ ↓
+   986→VPP
+   987→ ├── L2
+   988→ ├── L3
+   989→ ├── Routing
+   990→ ├── ACL
+   991→ ├── NAT
+   992→ ├── QoS
+   993→ ├── Policers
+   994→ ├── Classification
+   995→ ├── VLAN
+   996→ ├── VRF
+   997→ ├── Tunnel
+   998→ └── Interface management
+   999→```
+  1000→
+  1001→VPP provides NAT44 functionality and an ACL framework, including
+  1002→stateful/stateless ACL capabilities.
+  1003→
+  1004→------------------------------------------------------------------------
+  1005→
+  1006→# 28. VPP Adapter
+  1007→
+  1008→Do NOT allow the Session Engine to call `vppctl` shell commands.
+  1009→
+  1010→Bad:
+  1011→
+  1012→``` text
+  1013→Java
+  1014→ ↓
+  1015→exec()
+  1016→ ↓
+  1017→vppctl
+  1018→```
+  1019→
+  1020→Good:
+  1021→
+  1022→``` text
+  1023→Session Engine
+  1024→      ↓
+  1025→VPP Adapter
+  1026→      ↓
+  1027→VPP Binary API
+  1028→      ↓
+  1029→VPP
+  1030→```
+  1031→
+  1032→The VPP adapter should be a dedicated service/library.
+  1033→
+  1034→Possible implementation:
+  1035→
+  1036→``` text
+  1037→Go
+  1038→ ↓
+  1039→GoVPP
+  1040→ ↓
+  1041→VPP API
+  1042→```
+  1043→
+  1044→or another officially supported VPP API binding.
+  1045→
+  1046→------------------------------------------------------------------------
+  1047→
+  1048→# 29. VPP Policy Objects
+  1049→
+  1050→Represent policies as objects:
+  1051→
+  1052→``` text
+  1053→VPP Policy
+  1054→ ├── ACL
+  1055→ ├── Policer
+  1056→ ├── QoS
+  1057→ ├── NAT
+  1058→ ├── VRF
+  1059→ └── Classification
+  1060→```
+  1061→
+  1062→Example:
+  1063→
+  1064→``` text
+  1065→Policy ID: 10023
+  1066→
+  1067→ACL:
+  1068→    INTERNET_ONLY
+  1069→
+  1070→Bandwidth:
+  1071→    100 Mbps
+  1072→
+  1073→QoS:
+  1074→    GOLD
+  1075→
+  1076→NAT:
+  1077→    PUBLIC_POOL_01
+  1078→
+  1079→DNS:
+  1080→    DEFAULT
+  1081→
+  1082→Application:
+  1083→    STANDARD
+  1084→```
+  1085→
+  1086→------------------------------------------------------------------------
+  1087→
+  1088→# 30. Subscriber → VPP Mapping
+  1089→
+  1090→Example:
+  1091→
+  1092→``` text
+  1093→Subscriber:
+  1094→    user1001
+  1095→
+  1096→Session:
+  1097→    S-987654
+  1098→
+  1099→IP:
+  1100→    10.20.30.40
+  1101→
+  1102→Policy:
+  1103→    GOLD-100M
+  1104→
+  1105→VPP:
+  1106→    subscriber mapping
+  1107→        ↓
+  1108→    ACL 100
+  1109→        ↓
+  1110→    Policer 100
+  1111→        ↓
+  1112→    NAT pool 10
+  1113→```
+  1114→
+  1115→The Session Engine maintains the logical mapping.
+  1116→
+  1117→VPP maintains packet-path state.
+  1118→
+  1119→------------------------------------------------------------------------
+  1120→
+  1121→# 31. Bandwidth Control
+  1122→
+  1123→Do not reproduce Linux `tc qdisc` literally.
+  1124→
+  1125→Use VPP QoS/policer mechanisms.
+  1126→
+  1127→Conceptually:
+  1128→
+  1129→``` text
+  1130→Subscriber
+  1131→    ↓
+  1132→Policy
+  1133→    ↓
+  1134→Policer / QoS
+  1135→    ↓
+  1136→VPP
+  1137→```
+  1138→
+  1139→Examples:
+  1140→
+  1141→``` text
+  1142→10 Mbps
+  1143→25 Mbps
+  1144→50 Mbps
+  1145→100 Mbps
+  1146→500 Mbps
+  1147→1 Gbps
+  1148→```
+  1149→
+  1150→Profiles should be reusable.
+  1151→
+  1152→Do not create a completely independent configuration object for every
+  1153→packet.
+  1154→
+  1155→------------------------------------------------------------------------
+  1156→
+  1157→# 32. ACL Architecture
+  1158→
+  1159→Use reusable ACL profiles.
+  1160→
+  1161→Example:
+  1162→
+  1163→``` text
+  1164→ACL-GUEST
+  1165→ACL-HOTEL
+  1166→ACL-STAFF
+  1167→ACL-ISP-BASIC
+  1168→ACL-ISP-PREMIUM
+  1169→ACL-BLOCKED
+  1170→ACL-ADMIN
+  1171→```
+  1172→
+  1173→Subscriber:
+  1174→
+  1175→``` text
+  1176→subscriber
+  1177→    ↓
+  1178→ACL profile
+  1179→```
+  1180→
+  1181→Do not create thousands of duplicate ACL definitions when a shared ACL
+  1182→can be reused.
+  1183→
+  1184→------------------------------------------------------------------------
+  1185→
+  1186→# 33. NAT Architecture
+  1187→
+  1188→VPP handles NAT.
+  1189→
+  1190→Session Engine should know:
+  1191→
+  1192→``` text
+  1193→NAT profile
+  1194→NAT pool
+  1195→subscriber mapping
+  1196→```
+  1197→
+  1198→VPP owns:
+  1199→
+  1200→``` text
+  1201→translation state
+  1202→flow state
+  1203→port allocation
+  1204→NAT processing
+  1205→```
+  1206→
+  1207→Session Engine owns the business relationship:
+  1208→
+  1209→``` text
+  1210→subscriber → NAT profile
+  1211→```
+  1212→
+  1213→------------------------------------------------------------------------
+  1214→
+  1215→# 34. NAT Logging
+  1216→
+  1217→For enterprise/ISP environments, NAT logging is critical.
+  1218→
+  1219→Design:
+  1220→
+  1221→``` text
+  1222→VPP NAT events
+  1223→       ↓
+  1224→NAT Event Collector
+  1225→       ↓
+  1226→Buffered pipeline
+  1227→       ↓
+  1228→Compressed/partitioned storage
+  1229→```
+  1230→
+  1231→Do NOT perform synchronous PostgreSQL writes for every translated
+  1232→packet.
+  1233→
+  1234→Log events such as:
+  1235→
+  1236→``` text
+  1237→timestamp
+  1238→subscriber IP
+  1239→public IP
+  1240→port range / port
+  1241→protocol
+  1242→session ID
+  1243→NAT pool
+  1244→event type
+  1245→```
+  1246→
+  1247→For high-volume environments, design a dedicated NAT logging pipeline.
+  1248→
+  1249→------------------------------------------------------------------------
+  1250→
+  1251→# 35. DPI / Application Filtering
+  1252→
+  1253→Do not put DPI inside FreeRADIUS.
+  1254→
+  1255→Architecture:
+  1256→
+  1257→``` text
+  1258→VPP
+  1259→ ↓
+  1260→flow/classification
+  1261→ ↓
+  1262→DPI Engine
+  1263→ ↓
+  1264→Application classification
+  1265→ ↓
+  1266→Policy Engine
+  1267→ ↓
+  1268→VPP policy
+  1269→```
+  1270→
+  1271→Possible DPI engine:
+  1272→
+  1273→``` text
+  1274→nDPI
+  1275→```
+  1276→
+  1277→The DPI engine should classify traffic.
+  1278→
+  1279→The Policy Engine should decide what action to take.
+  1280→
+  1281→VPP should enforce the action.
+  1282→
+  1283→------------------------------------------------------------------------
+  1284→
+  1285→# 35A. WEB BROWSING / HTTP LOGGING
+  1286→
+  1287→The gateway platform may provide an explicit Web Browsing / HTTP Logs capability for traffic where the deployment and protocol visibility make the required fields technically available.
+  1288→
+  1289→The canonical distinction is:
+  1290→
+  1291→```text
+  1292→NAT Logs
+  1293→  = private/source ↔ translated/public address and port traceability
+  1294→
+  1295→Web Browsing / HTTP Logs
+  1296→  = HTTP request/browsing metadata where visible and permitted
+  1297→
+  1298→DPI / Application Awareness
+  1299→  = protocol/application classification and usage intelligence
+  1300→```
+  1301→
+  1302→For encrypted HTTPS traffic, the product MUST NOT claim visibility into URL paths or payload content unless an explicitly approved inspection/decryption architecture provides that visibility. Standard deployments may record available metadata such as timestamp, source/session identity, destination address, host/domain metadata where available, method/status for visible HTTP traffic, and correlation identifiers.
+  1303→
+  1304→Retention, privacy, access control, and export behavior MUST follow the security and observability specifications.
+  1305→
+  1306→# 36. DNS Policy
+  1307→
+  1308→DNS filtering should be separated from AAA.
+  1309→
+  1310→Architecture:
+  1311→
+  1312→``` text
+  1313→Subscriber
+  1314→ ↓
+  1315→DNS request
+  1316→ ↓
+  1317→DNS Policy Engine
+  1318→ ↓
+  1319→Allowed / blocked
+  1320→```
+  1321→
+  1322→The Session Engine only associates:
+  1323→
+  1324→``` text
+  1325→subscriber → DNS policy
+  1326→```
+  1327→
+  1328→------------------------------------------------------------------------
+  1329→
+  1330→# 37. Session Identity
+  1331→
+  1332→Do not depend only on MAC address.
+  1333→
+  1334→Session identity should support:
+  1335→
+  1336→``` text
+  1337→Session ID
+  1338→Username
+  1339→MAC
+  1340→IPv4
+  1341→IPv6
+  1342→NAS-Port
+  1343→VLAN
+  1344→Circuit-ID
+  1345→Remote-ID
+  1346→PPPoE session
+  1347→DHCP client identifier
+  1348→Calling-Station-ID
+  1349→```
+  1350→
+  1351→Different access methods use different identifiers.
+  1352→
+  1353→------------------------------------------------------------------------
+  1354→
+  1355→# 38. Duplicate Login Detection
+  1356→
+  1357→Implement configurable policies:
+  1358→
+  1359→``` text
+  1360→ALLOW_MULTIPLE
+  1361→DENY_NEW
+  1362→DISCONNECT_OLD
+  1363→LIMIT_N
+  1364→```
+  1365→
+  1366→Example:
+  1367→
+  1368→``` text
+  1369→User = john
+  1370→Simultaneous sessions = 2
+  1371→
+  1372→Session 1 → active
+  1373→Session 2 → active
+  1374→Session 3 → reject
+  1375→```
+  1376→
+  1377→For `DISCONNECT_OLD`:
+  1378→
+  1379→``` text
+  1380→new login
+  1381→   ↓
+  1382→find old session
+  1383→   ↓
+  1384→disconnect old
+  1385→   ↓
+  1386→create new session
+  1387→```
+  1388→
+  1389→------------------------------------------------------------------------
+  1390→
+  1391→# 39. Stale Session Recovery
+  1392→
+  1393→Never rely exclusively on Accounting-Stop.
+  1394→
+  1395→NAS devices can:
+  1396→
+  1397→-   reboot
+  1398→-   lose connectivity
+  1399→-   crash
+  1400→-   lose RADIUS connectivity
+  1401→-   lose accounting packets
+  1402→
+  1403→Implement:
+  1404→
+  1405→``` text
+  1406→Accounting-Stop
+  1407→+
+  1408→Interim-Update
+  1409→+
+  1410→Session timeout
+  1411→+
+  1412→NAS health
+  1413→+
+  1414→stale-session detector
+  1415→```
+  1416→
+  1417→Session Engine should periodically identify sessions whose accounting
+  1418→state has expired.
+  1419→
+  1420→------------------------------------------------------------------------
+  1421→
+  1422→# 40. Session Reconciliation
+  1423→
+  1424→After gateway restart:
+  1425→
+  1426→``` text
+  1427→VPP state
+  1428→     +
+  1429→Session database
+  1430→     +
+  1431→RADIUS accounting
+  1432→     +
+  1433→NAS state
+  1434→```
+  1435→
+  1436→must be reconciled.
+  1437→
+  1438→Do not assume:
+  1439→
+  1440→``` text
+  1441→process restarted = all users disconnected
+  1442→```
+  1443→
+  1444→Design recovery states:
+  1445→
+  1446→``` text
+  1447→RECOVERING
+  1448→     ↓
+  1449→Reconcile
+  1450→     ↓
+  1451→ACTIVE
+  1452→```
+  1453→
+  1454→or:
+  1455→
+  1456→``` text
+  1457→STALE
+  1458→     ↓
+  1459→Cleanup
+  1460→```
+  1461→
+  1462→------------------------------------------------------------------------
+  1463→
+  1464→# 41. VPP Restart Recovery
+  1465→
+  1466→If VPP crashes/restarts:
+  1467→
+  1468→``` text
+  1469→VPP restart
+  1470→    ↓
+  1471→Session Engine detects VPP reconnect
+  1472→    ↓
+  1473→Load active session snapshot
+  1474→    ↓
+  1475→Rebuild VPP policies
+  1476→    ↓
+  1477→Rebuild required NAT/policy state
+  1478→    ↓
+  1479→Verify
+  1480→    ↓
+  1481→Resume
+  1482→```
+  1483→
+  1484→The Session Engine must therefore maintain enough information to
+  1485→reconstruct dataplane state.
+  1486→
+  1487→This is one of the most important architectural requirements.
+  1488→
+  1489→------------------------------------------------------------------------
+  1490→
+  1491→# 42. Session Snapshot
+  1492→
+  1493→Maintain a recoverable snapshot containing:
+  1494→
+  1495→``` text
+  1496→session_id
+  1497→subscriber_id
+  1498→username
+  1499→ip
+  1500→mac
+  1501→vlan
+  1502→vrf
+  1503→policy_id
+  1504→acl_id
+  1505→qos_id
+  1506→nat_id
+  1507→start_time
+  1508→timeout
+  1509→```
+  1510→
+  1511→Do not depend on VPP as the permanent source of subscriber
+  1512→configuration.
+  1513→
+  1514→------------------------------------------------------------------------
+  1515→
+  1516→# 43. High Availability
+  1517→
+  1518→HA MUST be separated into clearly defined service levels:
+  1519→
+  1520→1.  Control-plane HA
+  1521→2.  Session/state HA
+  1522→3.  Stateful dataplane/NAT HA
+  1523→
+  1524→The product must not advertise "stateful HA" merely because PostgreSQL
+  1525→and management services are replicated.
+  1526→
+  1527→For enterprise deployments:
+  1528→
+  1529→``` text
+  1530→                 ┌──────────────┐
+  1531→                 │ PostgreSQL HA│
+  1532→                 └──────┬───────┘
+  1533→                        │
+  1534→             ┌──────────┴──────────┐
+  1535→             │                     │
+  1536→       Gateway Node A        Gateway Node B
+  1537→             │                     │
+  1538→        VPP + Session          VPP + Session
+  1539→             │                     │
+  1540→             └──────────┬──────────┘
+  1541→                        │
+  1542→                     Network
+  1543→```
+  1544→
+  1545→HA design should distinguish:
+  1546→
+  1547→### Control-plane HA
+  1548→
+  1549→Easy to replicate:
+  1550→
+  1551→-   configuration
+  1552→-   policies
+  1553→-   subscribers
+  1554→-   NAS
+  1555→-   accounting
+  1556→
+  1557→### Dataplane/session HA
+  1558→
+  1559→Much harder:
+  1560→
+  1561→-   active NAT state
+  1562→-   active flows
+  1563→-   subscriber state
+  1564→-   packet counters
+  1565→
+  1566→Do not claim stateful HA until actual state replication is implemented
+  1567→and tested.
+  1568→
+  1569→------------------------------------------------------------------------
+  1570→
+  1571→# 44. Database Architecture
+  1572→
+  1573→Recommended:
+  1574→
+  1575→``` text
+  1576→PostgreSQL
+  1577→     │
+  1578→     ├── configuration
+  1579→     ├── subscribers
+  1580→     ├── policies
+  1581→     ├── NAS
+  1582→     ├── IP pools
+  1583→     ├── accounting
+  1584→     ├── audit
+  1585→     └── historical sessions
+  1586→```
+  1587→
+  1588→Use connection pooling.
+  1589→
+  1590→Do not allow every microservice to create unlimited PostgreSQL
+  1591→connections.
+  1592→
+  1593→------------------------------------------------------------------------
+  1594→
+  1595→# 45. Database Connection Strategy
+  1596→
+  1597→Example logical limits:
+  1598→
+  1599→``` text
+  1600→Session Engine
+  1601→    ↓
+  1602→10–30 pooled connections
+  1603→
+  1604→AAA
+  1605→    ↓
+  1606→10–30 pooled connections
+  1607→
+  1608→Accounting Writer
+  1609→    ↓
+  1610→10–30 pooled connections
+  1611→```
+  1612→
+  1613→Actual numbers must be tuned from workload.
+  1614→
+  1615→The important rule:
+  1616→
+  1617→``` text
+  1618→50k sessions ≠ 50k database connections
+  1619→```
+  1620→
+  1621→------------------------------------------------------------------------
+  1622→
+  1623→# 46. IPAM
+  1624→
+  1625→Create a dedicated IPAM module.
+  1626→
+  1627→For 100k-scale operation, IPAM MUST use an in-memory allocation
+  1628→structure plus durable recovery state. PostgreSQL transactions may be
+  1629→used for authoritative persistence and conflict prevention, but IP
+  1630→allocation must not require a full SQL round-trip for every subscriber
+  1631→when the system is under high login churn.
+  1632→
+  1633→Responsibilities:
+  1634→
+  1635→``` text
+  1636→Pool creation
+  1637→Pool deletion
+  1638→Pool status
+  1639→Free IP count
+  1640→Allocated IP count
+  1641→Reservation
+  1642→Static IP
+  1643→Dynamic IP
+  1644→Lease
+  1645→Expiration
+  1646→Subscriber mapping
+  1647→```
+  1648→
+  1649→For very high-concurrency allocation, use transactional allocation.
+  1650→
+  1651→Avoid:
+  1652→
+  1653→``` text
+  1654→SELECT free IP
+  1655→↓
+  1656→application waits
+  1657→↓
+  1658→UPDATE IP
+  1659→```
+  1660→
+  1661→because concurrent workers can collide.
+  1662→
+  1663→Use atomic/transactional allocation.
+  1664→
+  1665→------------------------------------------------------------------------
+  1666→
+  1667→# 47. IP Pool Model
+  1668→
+  1669→``` text
+  1670→IP Pool
+  1671→ ├── pool_id
+  1672→ ├── name
+  1673→ ├── network
+  1674→ ├── gateway
+  1675→ ├── VLAN
+  1676→ ├── VRF
+  1677→ ├── allocation mode
+  1678→ ├── static/dynamic
+  1679→ └── address range
+  1680→```
+  1681→
+  1682→Allocation:
+  1683→
+  1684→``` text
+  1685→subscriber
+  1686→    ↓
+  1687→service profile
+  1688→    ↓
+  1689→IP pool
+  1690→    ↓
+  1691→IPAM
+  1692→    ↓
+  1693→IP address
+  1694→```
+  1695→
+  1696→------------------------------------------------------------------------
+  1697→
+  1698→# 48. IPAM Performance
+  1699→
+  1700→If SQL-based IP allocation is used, use proper transactional allocation
+  1701→and avoid lock contention.
+  1702→
+  1703→The FreeRADIUS project specifically documents
+  1704→`SELECT ... FOR UPDATE SKIP LOCKED` and stored procedures as mechanisms
+  1705→for high-concurrency SQL IP allocation.
+  1706→
+  1707→For a very high-throughput gateway, however, the preferred architecture
+  1708→is:
+  1709→
+  1710→``` text
+  1711→IPAM service
+  1712→     ↓
+  1713→in-memory free-address structures
+  1714→     ↓
+  1715→durable state asynchronously persisted
+  1716→```
+  1717→
+  1718→while retaining transactional recovery semantics.
+  1719→
+  1720→------------------------------------------------------------------------
+  1721→
+  1722→# 49. API Architecture
+  1723→
+  1724→Management API:
+  1725→
+  1726→``` text
+  1727→/api/v1/subscribers
+  1728→/api/v1/sessions
+  1729→/api/v1/nas
+  1730→/api/v1/policies
+  1731→/api/v1/service-plans
+  1732→/api/v1/ip-pools
+  1733→/api/v1/vpp
+  1734→/api/v1/accounting
+  1735→/api/v1/monitoring
+  1736→```
+  1737→
+  1738→Session APIs:
+  1739→
+  1740→``` text
+  1741→GET    /sessions
+  1742→GET    /sessions/{id}
+  1743→POST   /sessions/{id}/disconnect
+  1744→POST   /sessions/{id}/coa
+  1745→GET    /subscribers/{id}/sessions
+  1746→```
+  1747→
+  1748→------------------------------------------------------------------------
+  1749→
+  1750→# 50. Event Architecture
+  1751→
+  1752→Use events internally.
+  1753→
+  1754→Examples:
+  1755→
+  1756→``` text
+  1757→SESSION_CREATED
+  1758→SESSION_AUTHENTICATED
+  1759→SESSION_ACTIVE
+  1760→SESSION_UPDATED
+  1761→SESSION_COA
+  1762→SESSION_DISCONNECT_REQUESTED
+  1763→SESSION_DISCONNECTED
+  1764→SESSION_EXPIRED
+  1765→SESSION_STALE
+  1766→VPP_PROGRAMMED
+  1767→VPP_PROGRAM_FAILED
+  1768→NAS_UP
+  1769→NAS_DOWN
+  1770→IP_ALLOCATED
+  1771→IP_RELEASED
+  1772→```
+  1773→
+  1774→This makes the system easier to scale.
+  1775→
+  1776→------------------------------------------------------------------------
+  1777→
+  1778→# 51. Avoid Synchronous Chains
+  1779→
+  1780→Bad:
+  1781→
+  1782→``` text
+  1783→RADIUS
+  1784→ ↓
+  1785→Session Engine
+  1786→ ↓
+  1787→PostgreSQL
+  1788→ ↓
+  1789→IPAM
+  1790→ ↓
+  1791→VPP
+  1792→ ↓
+  1793→DPI
+  1794→ ↓
+  1795→PostgreSQL
+  1796→ ↓
+  1797→RADIUS response
+  1798→```
+  1799→
+  1800→Every dependency increases authentication latency.
+  1801→
+  1802→Better:
+  1803→
+  1804→``` text
+  1805→RADIUS
+  1806→ ↓
+  1807→AAA decision
+  1808→ ↓
+  1809→Session Engine
+  1810→ ↓
+  1811→minimum synchronous provisioning
+  1812→ ↓
+  1813→Access-Accept
+  1814→```
+  1815→
+  1816→Then:
+  1817→
+  1818→``` text
+  1819→events
+  1820→ ↓
+  1821→policy/VPP/accounting workers
+  1822→```
+  1823→
+  1824→with carefully defined transactional boundaries.
+  1825→
+  1826→------------------------------------------------------------------------
+  1827→
+  1828→# 52. Authentication Latency
+  1829→
+  1830→Define explicit SLA targets.
+  1831→
+  1832→For example:
+  1833→
+  1834→``` text
+  1835→P50 < 20 ms
+  1836→P95 < 50 ms
+  1837→P99 < 100 ms
+  1838→```
+  1839→
+  1840→These are engineering targets, not guaranteed values.
+  1841→
+  1842→Measure:
+  1843→
+  1844→``` text
+  1845→RADIUS receive
+  1846→ ↓
+  1847→authentication
+  1848→ ↓
+  1849→authorization
+  1850→ ↓
+  1851→DB
+  1852→ ↓
+  1853→response
+  1854→```
+  1855→
+  1856→Do not optimize only average latency.
+  1857→
+  1858→------------------------------------------------------------------------
+  1859→
+  1860→# 53. Capacity Model --- 100k Architecture / 50k Certification
+  1861→
+  1862→Define capacity using:
+  1863→
+  1864→``` text
+  1865→C1 = concurrent sessions
+  1866→C2 = authentication requests/sec
+  1867→C3 = accounting packets/sec
+  1868→C4 = CoA/sec
+  1869→C5 = disconnect/sec
+  1870→C6 = NAT flows
+  1871→C7 = packets/sec
+  1872→C8 = throughput
+  1873→```
+  1874→
+  1875→Example product target:
+  1876→
+  1877→``` text
+  1878→Concurrent sessions:
+  1879→100,000 architectural target
+  1880→50,000 initial certified profile
+  1881→
+  1882→Authentication burst:
+  1883→1,000 requests/sec
+  1884→
+  1885→Accounting:
+  1886→1,000+ packets/sec
+  1887→
+  1888→CoA:
+  1889→100+ operations/sec
+  1890→
+  1891→Disconnect:
+  1892→100+ operations/sec
+  1893→
+  1894→Throughput:
+  1895→50 Gbps
+  1896→
+  1897→NAT:
+  1898→product-defined concurrent flows
+  1899→
+  1900→Packet rate:
+  1901→hardware-dependent
+  1902→```
+  1903→
+  1904→Do not assume these numbers are automatically achieved. They are
+  1905→capacity targets that must become acceptance tests.
+  1906→
+  1907→------------------------------------------------------------------------
+  1908→
+  1909→# 54. DPDK Architecture
+  1910→
+  1911→DPDK owns:
+  1912→
+  1913→``` text
+  1914→NIC packet I/O
+  1915→DMA
+  1916→RX/TX queues
+  1917→mbufs
+  1918→poll-mode drivers
+  1919→RSS
+  1920→queue distribution
+  1921→```
+  1922→
+  1923→VPP owns:
+  1924→
+  1925→``` text
+  1926→packet processing graph
+  1927→routing
+  1928→forwarding
+  1929→ACL
+  1930→NAT
+  1931→QoS
+  1932→policing
+  1933→classification
+  1934→interfaces
+  1935→tunnels
+  1936→```
+  1937→
+  1938→------------------------------------------------------------------------
+  1939→
+  1940→# 55. CPU Architecture
+  1941→
+  1942→Reserve CPU resources.
+  1943→
+  1944→Conceptually:
+  1945→
+  1946→``` text
+  1947→CPU
+  1948→├── VPP workers
+  1949→├── DPDK RX/TX
+  1950→├── IRQ / system
+  1951→├── Session Engine
+  1952→├── FreeRADIUS
+  1953→├── PostgreSQL
+  1954→└── Management
+  1955→```
+  1956→
+  1957→Do not allow PostgreSQL or Java workloads to compete freely with VPP
+  1958→worker cores.
+  1959→
+  1960→------------------------------------------------------------------------
+  1961→
+  1962→# 56. NUMA
+  1963→
+  1964→For multi-socket hardware:
+  1965→
+  1966→``` text
+  1967→NUMA 0
+  1968→ ├── NIC 0
+  1969→ ├── VPP workers
+  1970→ └── memory
+  1971→
+  1972→NUMA 1
+  1973→ ├── NIC 1
+  1974→ ├── VPP workers
+  1975→ └── memory
+  1976→```
+  1977→
+  1978→Keep:
+  1979→
+  1980→``` text
+  1981→NIC
+  1982→+
+  1983→RX/TX queues
+  1984→+
+  1985→VPP workers
+  1986→+
+  1987→packet memory
+  1988→```
+  1989→
+  1990→on the appropriate NUMA node wherever possible.
+  1991→
+  1992→DPDK documentation specifically emphasizes NUMA-local memory and
+  1993→queue/core locality for performance.
+  1994→
+  1995→------------------------------------------------------------------------
+  1996→
+  1997→# 57. RSS / Multi-Queue
+  1998→
+  1999→Use NIC RSS to distribute flows.
+  2000→
+
+[showing lines 1-2000 of 3584; use offset=2001 with limit to continue reading]

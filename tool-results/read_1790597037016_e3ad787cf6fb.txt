@@ -1,0 +1,1180 @@
+     1→# CRYPTSK NEXUS — API & INTERFACE CONTRACT
+     2→## Product-wide application API, gateway control API, events, idempotency, and compatibility specification
+     3→
+     4→**Status:** LOCKED API / INTERFACE BASELINE
+     5→**Authority:** Subordinate to `00_MASTER_PRODUCT_ARCHITECTURE.md`; functionally grounded in `04_PRODUCT_FEATURE_CATALOGUE.md` and the AAA/gateway design in `02_ENTERPRISE_GATEWAY_ARCHITECTURE.md`.
+     6→
+     7→---
+     8→
+     9→# 1. PURPOSE
+    10→
+    11→This document defines the interface contract between the Cryptsk UI, management/application services, gateway control components, AAA, Session Engine, integrations, workers, and durable storage.
+    12→
+    13→The objective is not to reproduce the legacy `501 route.ts` files one-for-one. The objective is to preserve the complete product capability surface while creating stable, versioned, typed, observable, secure interfaces.
+    14→
+    15→The API architecture MUST support:
+    16→
+    17→- the full feature catalogue;
+    18→- the three deployment modes;
+    19→- 100,000 concurrent live sessions;
+    20→- management-plane horizontal scaling;
+    21→- gateway control-plane recovery;
+    22→- asynchronous work where latency-sensitive operations must not block;
+    23→- strong validation and authorization;
+    24→- idempotent operational commands;
+    25→- auditability;
+    26→- backward-compatible evolution;
+    27→- clear distinction between configuration, commands, queries, and events.
+    28→
+    29→The API layer is a control interface. It is never the packet-processing path.
+    30→
+    31→---
+    32→
+    33→# 2. INTERFACE AUTHORITY
+    34→
+    35→Use this precedence when defining or changing an interface:
+    36→
+    37→1. `00_MASTER_PRODUCT_ARCHITECTURE.md`
+    38→2. `01_OSS_BSS_ARCHITECTURE.md`
+    39→3. `02_ENTERPRISE_GATEWAY_ARCHITECTURE.md`
+    40→4. `04_PRODUCT_FEATURE_CATALOGUE.md`
+    41→5. this document
+    42→6. implementation details
+    43→
+    44→Implementation MUST NOT create an interface that contradicts a higher authority.
+    45→
+    46→If a requirement cannot be represented cleanly within these contracts, create an ADR before implementation.
+    47→
+    48→---
+    49→
+    50→# 3. INTERFACE TAXONOMY
+    51→
+    52→Cryptsk uses four interface classes.
+    53→
+    54→## 3.1 External management API
+    55→
+    56→Used by:
+    57→
+    58→- Next.js/React management UI
+    59→- self-care UI
+    60→- approved automation clients
+    61→- customer integrations
+    62→- reporting/export clients
+    63→
+    64→Preferred style:
+    65→
+    66→- HTTPS
+    67→- REST/JSON for public management contracts
+    68→- explicit API versioning
+    69→- typed request/response schemas
+    70→
+    71→## 3.2 Internal synchronous service interface
+    72→
+    73→Used when a synchronous decision is required between trusted internal components.
+    74→
+    75→Examples:
+    76→
+    77→- Management API → domain service
+    78→- Policy Engine → Session Engine
+    79→- Session Engine → VPP Adapter
+    80→- gateway controller → VPP control component
+    81→
+    82→The implementation MAY use gRPC or another strongly typed RPC mechanism, but the domain contract MUST remain transport-independent.
+    83→
+    84→## 3.3 Asynchronous event interface
+    85→
+    86→Used for:
+    87→
+    88→- accounting ingestion
+    89→- notifications
+    90→- audit consumers
+    91→- analytics
+    92→- reporting pipelines
+    93→- AI consumers
+    94→- integration delivery
+    95→- long-running jobs
+    96→- lifecycle propagation
+    97→
+    98→Events MUST be versioned schemas, not arbitrary internal JSON objects.
+    99→
+   100→## 3.4 Gateway command interface
+   101→
+   102→Used by trusted control-plane components to request dataplane changes.
+   103→
+   104→Examples:
+   105→
+   106→- create subscriber dataplane state
+   107→- update bandwidth profile
+   108→- attach/detach ACL
+   109→- allocate/release address
+   110→- apply NAT policy
+   111→- remove session state
+   112→- reconcile VPP objects
+   113→
+   114→The gateway command path uses VPP Binary API / GoVPP or an approved adapter. `vppctl` is not the normal runtime provisioning API.
+   115→
+   116→---
+   117→
+   118→# 4. API DESIGN PRINCIPLES
+   119→
+   120→Every production API MUST be:
+   121→
+   122→- authenticated;
+   123→- authorized;
+   124→- validated;
+   125→- observable;
+   126→- documented;
+   127→- deterministic for the same valid input where applicable;
+   128→- explicit about partial failure;
+   129→- safe to retry where the operation may be retried;
+   130→- protected against unbounded resource consumption.
+   131→
+   132→APIs MUST NOT expose database implementation details as their primary contract.
+   133→
+   134→Do not expose:
+   135→
+   136→- raw Prisma model names as the only interface definition;
+   137→- direct SQL endpoints;
+   138→- filesystem paths;
+   139→- internal secrets;
+   140→- VPP object handles without a stable domain abstraction;
+   141→- internal service credentials;
+   142→- raw password hashes.
+   143→
+   144→---
+   145→
+   146→# 5. URL / RESOURCE CONVENTION
+   147→
+   148→Management API base:
+   149→
+   150→```text
+   151→/api/v1
+   152→```
+   153→
+   154→Future incompatible contract versions use `/api/v2`, not silent behavior changes under `/api/v1`.
+   155→
+   156→Resource naming uses plural nouns:
+   157→
+   158→```text
+   159→/api/v1/subscribers
+   160→/api/v1/plans
+   161→/api/v1/invoices
+   162→/api/v1/payments
+   163→/api/v1/nas
+   164→/api/v1/sessions
+   165→/api/v1/policies
+   166→/api/v1/devices
+   167→/api/v1/alerts
+   168→```
+   169→
+   170→Subresources are used only where ownership is clear:
+   171→
+   172→```text
+   173→/api/v1/subscribers/{subscriber_id}/services
+   174→/api/v1/subscribers/{subscriber_id}/sessions
+   175→/api/v1/invoices/{invoice_id}/lines
+   176→/api/v1/nas/{nas_id}/health
+   177→```
+   178→
+   179→Action endpoints are reserved for real commands rather than CRUD disguised as verbs:
+   180→
+   181→```text
+   182→POST /api/v1/sessions/{id}:disconnect
+   183→POST /api/v1/sessions/{id}:reconcile
+   184→POST /api/v1/invoices:bulk-generate
+   185→POST /api/v1/payments/{id}:refund
+   186→```
+   187→
+   188→---
+   189→
+   190→# 6. STANDARD HTTP SEMANTICS
+   191→
+   192→| Method | Meaning | Typical use |
+   193→|---|---|---|
+   194→| GET | Read | list/detail/report query |
+   195→| POST | Create / command | create resource or initiate operation |
+   196→| PUT | Replace | full deterministic replacement |
+   197→| PATCH | Partial update | targeted mutable fields |
+   198→| DELETE | Retire/remove | deletion where safe and meaningful |
+   199→
+   200→Mutation endpoints MUST state whether the operation is:
+   201→
+   202→- transactional;
+   203→- asynchronous;
+   204→- eventually consistent;
+   205→- idempotent;
+   206→- reversible;
+   207→- auditable.
+   208→
+   209→---
+   210→
+   211→# 7. COMMON REQUEST HEADERS
+   212→
+   213→Recommended:
+   214→
+   215→```text
+   216→Authorization: Bearer <token>
+   217→Content-Type: application/json
+   218→Accept: application/json
+   219→X-Correlation-ID: <uuid>
+   220→Idempotency-Key: <unique-value>
+   221→If-Match: <etag>             # where optimistic concurrency is applicable
+   222→```
+   223→
+   224→`X-Correlation-ID` is created at the edge if absent and propagated through all internal calls, logs, traces, jobs, and events.
+   225→
+   226→`Idempotency-Key` is REQUIRED for externally retriable financial and operational commands where duplicate execution could cause damage.
+   227→
+   228→---
+   229→
+   230→# 8. STANDARD RESPONSE ENVELOPE
+   231→
+   232→Successful single-resource response:
+   233→
+   234→```json
+   235→{
+   236→  "data": {},
+   237→  "meta": {
+   238→    "request_id": "...",
+   239→    "api_version": "v1"
+   240→  }
+   241→}
+   242→```
+   243→
+   244→Collection response:
+   245→
+   246→```json
+   247→{
+   248→  "data": [],
+   249→  "meta": {
+   250→    "request_id": "...",
+   251→    "api_version": "v1",
+   252→    "page": 1,
+   253→    "page_size": 50,
+   254→    "total": 1234,
+   255→    "has_next": true
+   256→  }
+   257→}
+   258→```
+   259→
+   260→Asynchronous command:
+   261→
+   262→```json
+   263→{
+   264→  "data": {
+   265→    "operation_id": "op_...",
+   266→    "status": "accepted"
+   267→  },
+   268→  "meta": {
+   269→    "request_id": "...",
+   270→    "api_version": "v1"
+   271→  }
+   272→}
+   273→```
+   274→
+   275→---
+   276→
+   277→# 9. STANDARD ERROR CONTRACT
+   278→
+   279→```json
+   280→{
+   281→  "error": {
+   282→    "code": "SUBSCRIBER_PLAN_INVALID",
+   283→    "message": "The selected plan cannot be assigned to this subscriber.",
+   284→    "details": [
+   285→      {
+   286→        "field": "plan_id",
+   287→        "reason": "plan_disabled"
+   288→      }
+   289→    ],
+   290→    "retryable": false,
+   291→    "request_id": "..."
+   292→  }
+   293→}
+   294→```
+   295→
+   296→Do not expose stack traces, SQL errors, file paths, secrets, or internal topology to clients.
+   297→
+   298→Required classes:
+   299→
+   300→- `VALIDATION_ERROR`
+   301→- `AUTHENTICATION_REQUIRED`
+   302→- `FORBIDDEN`
+   303→- `NOT_FOUND`
+   304→- `CONFLICT`
+   305→- `PRECONDITION_FAILED`
+   306→- `RATE_LIMITED`
+   307→- `DEPENDENCY_UNAVAILABLE`
+   308→- `TIMEOUT`
+   309→- `INTERNAL_ERROR`
+   310→- domain-specific stable error codes.
+   311→
+   312→---
+   313→
+   314→# 10. PAGINATION / FILTERING / SORTING
+   315→
+   316→Default collection behavior MUST be bounded.
+   317→
+   318→No endpoint may return an unbounded subscriber, session, accounting, log, or audit collection.
+   319→
+   320→Preferred query contract:
+   321→
+   322→```text
+   323→?page=1&page_size=50
+   324→?sort=-created_at,name
+   325→?status=ACTIVE
+   326→?area_id=...
+   327→?search=...
+   328→?from=...
+   329→?to=...
+   330→```
+   331→
+   332→Maximum page size MUST be enforced by the server.
+   333→
+   334→Large exports use asynchronous jobs rather than forcing the browser to hold millions of rows.
+   335→
+   336→---
+   337→
+   338→# 11. QUERY VS COMMAND RULE
+   339→
+   340→The API MUST distinguish read-heavy queries from state-changing commands.
+   341→
+   342→Example:
+   343→
+   344→```text
+   345→GET  /api/v1/sessions
+   346→POST /api/v1/sessions/{id}:disconnect
+   347→```
+   348→
+   349→A GET request MUST NOT perform a hidden state mutation.
+   350→
+   351→An endpoint that merely "refreshes" cached telemetry MUST still define whether it triggers an expensive operation.
+   352→
+   353→---
+   354→
+   355→# 12. DOMAIN API SURFACE
+   356→
+   357→The following logical resource families cover the feature catalogue.
+   358→
+   359→## 12.1 Identity / Administration
+   360→
+   361→- users
+   362→- roles
+   363→- permissions
+   364→- API keys
+   365→- sessions
+   366→- module/feature registry
+   367→- licenses
+   368→- audit events
+   369→- system configuration
+   370→- backups
+   371→- integration credentials references
+   372→
+   373→## 12.2 Subscriber / CRM
+   374→
+   375→- customers/organizations
+   376→- organization/scope nodes (when enabled)
+   377→- subscribers
+   378→- subscriber services
+   379→- plans
+   380→- add-ons
+   381→- organization/scope records (when enabled)
+   382→- leads
+   383→- referrals
+   384→- loyalty
+   385→- subscriber profile / 360 view
+   386→- batch provisioning
+   387→
+   388→## 12.3 Billing / Finance
+   389→
+   390→- billing accounts
+   391→- invoices
+   392→- invoice lines
+   393→- credit notes
+   394→- recurring templates
+   395→- payments
+   396→- refunds
+   397→- top-ups
+   398→- promotions
+   399→- charge overrides
+   400→- collection
+   401→- disputes
+   402→- due recovery
+   403→- tax
+   404→- expenses
+   405→- agents / commissions
+   406→- reseller settlement
+   407→- reports
+   408→
+   409→## 12.4 AAA / Access
+   410→
+   411→- NAS clients
+   412→- AAA users
+   413→- AAA groups
+   414→- RADIUS attributes
+   415→- proxy realms/servers
+   416→- enterprise authentication profiles
+   417→- RADIUS settings
+   418→- authentication history
+   419→- accounting records
+   420→- CoA events
+   421→- disconnect operations
+   422→
+   423→## 12.5 Session / Access Runtime
+   424→
+   425→- active sessions
+   426→- session history
+   427→- session events
+   428→- data usage
+   429→- IP assignments
+   430→- session diagnostics
+   431→- duplicate-login state
+   432→
+   433→## 12.6 Network / Gateway
+   434→
+   435→- devices
+   436→- interfaces
+   437→- VLANs
+   438→- subnets
+   439→- IPAM
+   440→- routes
+   441→- WAN links
+   442→- failover
+   443→- DHCP
+   444→- DHCPv6
+   445→- DNS
+   446→- PPPoE
+   447→- captive portal
+   448→- hotspot
+   449→- NAT / CGNAT configuration
+   450→- firewall / ACL policy
+   451→- QoS / bandwidth policy
+   452→- DPI/application policy
+   453→- DDoS / security policy
+   454→- VPN
+   455→- gateway status
+   456→
+   457→## 12.7 Traffic Traceability / Observability
+   458→
+   459→- NAT / CGNAT logs
+   460→- Web Browsing / HTTP Logs
+   461→- syslog records
+   462→- diagnostic captures
+   463→- traffic analytics queries
+   464→
+   465→Web-browsing log APIs MUST distinguish visible HTTP request metadata from encrypted HTTPS traffic that does not expose URL paths/payloads without an approved inspection architecture.
+   466→
+   467→## 12.8 Operations
+   468→
+   469→- complaints
+   470→- tickets
+   471→- technicians
+   472→- installations
+   473→- inventory
+   474→- equipment
+   475→- warehouses
+   476→- repairs
+   477→- returns
+   478→- incidents
+   479→- maintenance windows
+   480→- knowledge base
+   481→- announcements
+   482→- notifications
+   483→
+   484→## 12.9 Monitoring / Reporting
+   485→
+   486→- health
+   487→- alerts
+   488→- latency
+   489→- uptime
+   490→- bandwidth
+   491→- traffic analytics
+   492→- system metrics
+   493→- syslog
+   494→- diagnostic jobs
+   495→- exports
+   496→- report definitions
+   497→- report runs
+   498→
+   499→## 12.10 AI / Intelligence
+   500→
+   501→- advisor insights
+   502→- diagnosis findings
+   503→- churn scores
+   504→- retention recommendations
+   505→- plan recommendations
+   506→- revenue forecasts
+   507→- competitor intelligence
+   508→- collection recommendations
+   509→
+   510→AI endpoints are advisory unless an explicitly authorized action command exists.
+   511→
+   512→---
+   513→
+   514→# 13. SUBSCRIBER LIFECYCLE API
+   515→
+   516→A subscriber workflow is not a single POST.
+   517→
+   518→Canonical lifecycle:
+   519→
+   520→```text
+   521→Create customer
+   522→  ↓
+   523→Create subscriber
+   524→  ↓
+   525→Create service/subscription
+   526→  ↓
+   527→Attach plan
+   528→  ↓
+   529→Resolve access profile
+   530→  ↓
+   531→Allocate/prepare network resources
+   532→  ↓
+   533→Provision AAA identity
+   534→  ↓
+   535→Activate service
+   536→  ↓
+   537→Observe authentication/session
+   538→  ↓
+   539→Bill/account
+   540→  ↓
+   541→Suspend/modify/terminate
+   542→```
+   543→
+   544→The API MUST return resource state accurately. It must not report `ACTIVE` while required provisioning failed.
+   545→
+   546→---
+   547→
+   548→# 14. PLAN → POLICY API
+   549→
+   550→Plans are business objects. Gateway policies are enforcement objects.
+   551→
+   552→The API flow is:
+   553→
+   554→```text
+   555→Plan
+   556→ → Service Policy
+   557→ → Network Policy
+   558→ → Compiled Policy Version
+   559→ → Gateway Apply
+   560→```
+   561→
+   562→A plan update MUST create or identify a versioned effective policy. Existing sessions follow the configured policy change semantics:
+   563→
+   564→- immediate CoA/apply;
+   565→- next login;
+   566→- scheduled effective time;
+   567→- manual rollout.
+   568→
+   569→This rule must be explicit per policy type.
+   570→
+   571→---
+   572→
+   573→# 15. SESSION COMMAND CONTRACT
+   574→
+   575→Example:
+   576→
+   577→```http
+   578→POST /api/v1/sessions/sess_123:disconnect
+   579→Idempotency-Key: 0c0...
+   580→```
+   581→
+   582→```json
+   583→{
+   584→  "reason": "ADMIN_REQUEST",
+   585→  "revoke_service": false
+   586→}
+   587→```
+   588→
+   589→Response:
+   590→
+   591→```json
+   592→{
+   593→  "data": {
+   594→    "operation_id": "op_123",
+   595→    "session_id": "sess_123",
+   596→    "status": "ACCEPTED"
+   597→  }
+   598→}
+   599→```
+   600→
+   601→The Session Engine emits lifecycle events and the UI observes the resulting state.
+   602→
+   603→A successful API request to initiate disconnect is not the same as a completed disconnect.
+   604→
+   605→---
+   606→
+   607→# 16. SESSION STATE QUERY CONTRACT
+   608→
+   609→Active-session responses SHOULD expose stable business fields and normalized runtime status:
+   610→
+   611→```json
+   612→{
+   613→  "id": "sess_...",
+   614→  "subscriber_id": "sub_...",
+   615→  "username": "user@example",
+   616→  "access_type": "PPPOE",
+   617→  "nas_id": "nas_...",
+   618→  "ip": "203.0.113.10",
+   619→  "mac": "00:11:22:33:44:55",
+   620→  "policy_id": "policy_...",
+   621→  "policy_version": 17,
+   622→  "state": "ACTIVE",
+   623→  "started_at": "...",
+   624→  "last_accounting_at": "...",
+   625→  "bytes_up": 123,
+   626→  "bytes_down": 456
+   627→}
+   628→```
+   629→
+   630→Raw VPP object identifiers remain internal unless they are useful operational identifiers explicitly exposed by the gateway API.
+   631→
+   632→---
+   633→
+   634→# 17. ACCOUNTING API
+   635→
+   636→Accounting ingestion must tolerate:
+   637→
+   638→- duplicates;
+   639→- delayed records;
+   640→- out-of-order records;
+   641→- interim updates;
+   642→- NAS restarts;
+   643→- session reconnects;
+   644→- missing stop events;
+   645→- counter resets;
+   646→- clock skew.
+   647→
+   648→Never treat a single NAS packet as the complete accounting truth without reconciliation rules.
+   649→
+   650→Canonical objects:
+   651→
+   652→- accounting event;
+   653→- session counter sample;
+   654→- normalized session usage;
+   655→- final session record.
+   656→
+   657→Accounting ingestion SHOULD be append-oriented, with deterministic aggregation and dedupe keys.
+   658→
+   659→---
+   660→
+   661→# 18. IDEMPOTENCY
+   662→
+   663→Operations requiring idempotency include:
+   664→
+   665→- subscriber provisioning;
+   666→- service activation;
+   667→- plan migration;
+   668→- invoice generation;
+   669→- payment creation;
+   670→- refunds;
+   671→- gateway session create;
+   672→- gateway session delete;
+   673→- policy apply;
+   674→- IP assignment;
+   675→- notification sending where duplicate delivery is harmful;
+   676→- integration webhooks;
+   677→- backup jobs;
+   678→- batch jobs.
+   679→
+   680→Idempotency records MUST have an explicit retention policy.
+   681→
+   682→The implementation MUST distinguish:
+   683→
+   684→```text
+   685→same key + same request → same result
+   686→same key + different request → conflict
+   687→```
+   688→
+   689→---
+   690→
+   691→# 19. CONCURRENCY / VERSIONING
+   692→
+   693→Mutable business resources SHOULD support optimistic concurrency where concurrent edits are possible.
+   694→
+   695→Use either:
+   696→
+   697→- numeric version;
+   698→- entity revision;
+   699→- ETag/If-Match;
+   700→- deterministic update timestamp with server-side compare.
+   701→
+   702→The API must not silently overwrite a newer policy or billing document because two operators edited the same screen.
+   703→
+   704→---
+   705→
+   706→# 20. LONG-RUNNING OPERATIONS
+   707→
+   708→Use an operation resource for:
+   709→
+   710→- mass provisioning;
+   711→- bulk invoice generation;
+   712→- report generation;
+   713→- exports;
+   714→- data imports;
+   715→- device discovery;
+   716→- diagnostics;
+   717→- backup/restore;
+   718→- large reconciliation;
+   719→- gateway rebuild/reconcile.
+   720→
+   721→Pattern:
+   722→
+   723→```text
+   724→POST /resource:command
+   725→        ↓
+   726→202 Accepted
+   727→        ↓
+   728→operation_id
+   729→        ↓
+   730→GET /operations/{id}
+   731→```
+   732→
+   733→Optional websocket/SSE streaming may provide progress but MUST NOT be the only way to observe job state.
+   734→
+   735→---
+   736→
+   737→# 21. EVENT CONTRACT
+   738→
+   739→Events use a common envelope:
+   740→
+   741→```json
+   742→{
+   743→  "event_id": "evt_...",
+   744→  "event_type": "session.activated",
+   745→  "event_version": 1,
+   746→  "occurred_at": "2026-09-28T10:00:00Z",
+   747→  "producer": "session-engine",
+   748→  "tenant_id": "tenant_...",
+   749→  "correlation_id": "req_...",
+   750→  "causation_id": "evt_...",
+   751→  "entity_type": "session",
+   752→  "entity_id": "sess_...",
+   753→  "payload": {}
+   754→}
+   755→```
+   756→
+   757→Every event MUST be traceable to a causal request or system action where one exists.
+   758→
+   759→---
+   760→
+   761→# 22. CORE EVENT CATALOGUE
+   762→
+   763→## Subscriber events
+   764→
+   765→- `subscriber.created`
+   766→- `subscriber.updated`
+   767→- `subscriber.suspended`
+   768→- `subscriber.reactivated`
+   769→- `subscriber.terminated`
+   770→
+   771→## Service events
+   772→
+   773→- `service.provisioning_started`
+   774→- `service.provisioned`
+   775→- `service.provisioning_failed`
+   776→- `service.activated`
+   777→- `service.suspended`
+   778→- `service.terminated`
+   779→
+   780→## Session events
+   781→
+   782→- `session.requested`
+   783→- `session.authenticated`
+   784→- `session.provisioning_started`
+   785→- `session.activated`
+   786→- `session.policy_changed`
+   787→- `session.coa_requested`
+   788→- `session.disconnected`
+   789→- `session.expired`
+   790→- `session.recovered`
+   791→- `session.reconciliation_failed`
+   792→
+   793→## Accounting events
+   794→
+   795→- `accounting.start_received`
+   796→- `accounting.interim_received`
+   797→- `accounting.stop_received`
+   798→- `accounting.reconciled`
+   799→
+   800→## Billing events
+   801→
+   802→- `invoice.generated`
+   803→- `invoice.overdue`
+   804→- `payment.received`
+   805→- `payment.refunded`
+   806→- `subscriber.billing_status_changed`
+   807→
+   808→## Network events
+   809→
+   810→- `device.online`
+   811→- `device.offline`
+   812→- `gateway.degraded`
+   813→- `gateway.recovered`
+   814→- `policy.compilation_failed`
+   815→- `policy.apply_failed`
+   816→- `ip.allocated`
+   817→- `ip.released`
+   818→
+   819→---
+   820→
+   821→# 23. OUTBOX / DELIVERY RULE
+   822→
+   823→Any durable business transaction that also needs event publication MUST use an atomic outbox pattern or an equivalent transactionally reliable mechanism.
+   824→
+   825→Do not do:
+   826→
+   827→```text
+   828→DB commit
+   829→→ hope event send succeeds
+   830→```
+   831→
+   832→Preferred:
+   833→
+   834→```text
+   835→DB transaction
+   836→  ├─ business state
+   837→  └─ outbox event
+   838→       ↓
+   839→commit
+   840→       ↓
+   841→outbox dispatcher
+   842→       ↓
+   843→event transport
+   844→       ↓
+   845→consumer
+   846→```
+   847→
+   848→Consumers MUST be idempotent.
+   849→
+   850→The actual broker technology is an implementation choice recorded in an ADR; domain contracts do not depend on a specific broker.
+   851→
+   852→---
+   853→
+   854→# 24. GATEWAY CONTROL CONTRACT
+   855→
+   856→The policy/control layer MUST express intent, not CLI syntax.
+   857→
+   858→Example logical request:
+   859→
+   860→```json
+   861→{
+   862→  "session_id": "sess_123",
+   863→  "policy_version": 42,
+   864→  "access": {
+   865→    "ipv4": "203.0.113.10",
+   866→    "vrf": "internet",
+   867→    "vlan": 120
+   868→  },
+   869→  "qos": {
+   870→    "profile": "plan-100m"
+   871→  },
+   872→  "acl": {
+   873→    "profile": "subscriber-default"
+   874→  },
+   875→  "nat": {
+   876→    "profile": "cgnat-default"
+   877→  }
+   878→}
+   879→```
+   880→
+   881→The VPP Adapter translates this to VPP object operations.
+   882→
+   883→The API/UI MUST NOT contain VPP-specific command-building logic.
+   884→
+   885→---
+   886→
+   887→# 25. VPP OPERATION RESULT
+   888→
+   889→Every gateway mutation returns a structured result internally:
+   890→
+   891→```text
+   892→command_id
+   893→session_id / object_id
+   894→requested_version
+   895→applied_version
+   896→status
+   897→retries
+   898→error_code
+   899→error_message
+   900→vpp_context
+   901→applied_at
+   902→```
+   903→
+   904→A control-plane success is not accepted until the requested VPP object state has reached the required acknowledgement state.
+   905→
+   906→---
+   907→
+   908→# 26. RECONCILIATION CONTRACT
+   909→
+   910→The Session Engine maintains the desired state; the VPP Adapter observes and reconciles actual state.
+   911→
+   912→State comparison:
+   913→
+   914→```text
+   915→Desired Session State
+   916→       vs
+   917→Actual Dataplane State
+   918→```
+   919→
+   920→Outcomes:
+   921→
+   922→- `IN_SYNC`
+   923→- `MISSING_ACTUAL`
+   924→- `STALE_ACTUAL`
+   925→- `MISMATCHED_POLICY`
+   926→- `UNKNOWN_ACTUAL`
+   927→- `RECONCILE_REQUIRED`
+   928→
+   929→Reconciliation is idempotent.
+   930→
+   931→---
+   932→
+   933→# 27. DEPLOYMENT-MODE API BEHAVIOR
+   934→
+   935→## AAA-only
+   936→
+   937→Available:
+   938→
+   939→- subscriber/account APIs
+   940→- plans
+   941→- AAA/NAS
+   942→- authentication
+   943→- accounting
+   944→- session visibility from external NAS
+   945→- CoA/disconnect
+   946→- billing/reporting
+   947→
+   948→Gateway-native dataplane control is disabled or read-only where no local gateway exists.
+   949→
+   950→## Gateway-only
+   951→
+   952→Available:
+   953→
+   954→- gateway/device configuration
+   955→- local access authentication
+   956→- sessions
+   957→- policies
+   958→- IPAM
+   959→- DHCP/DNS/PPPoE/captive access where enabled
+   960→- NAT/QoS/ACL/DPI
+   961→- monitoring
+   962→
+   963→RADIUS proxy/AAA integrations are optional.
+   964→
+   965→## Multi-mode
+   966→
+   967→The full contract is available. External NAS AAA and local gateway control coexist under the same Session Engine domain.
+   968→
+   969→---
+   970→
+   971→# 28. AUTHORIZATION ENFORCEMENT
+   972→
+   973→Every API operation maps to a permission such as:
+   974→
+   975→```text
+   976→subscriber.read
+   977→subscriber.write
+   978→billing.invoice.generate
+   979→billing.payment.refund
+   980→session.read
+   981→session.disconnect
+   982→policy.read
+   983→policy.write
+   984→network.device.manage
+   985→audit.read
+   986→admin.role.manage
+   987→```
+   988→
+   989→Permissions are evaluated server-side.
+   990→
+   991→UI visibility is not authorization.
+   992→
+   993→Sensitive commands require explicit permissions and produce audit events.
+   994→
+   995→---
+   996→
+   997→# 29. RATE LIMITING / RESOURCE PROTECTION
+   998→
+   999→Apply bounded controls by class:
+  1000→
+  1001→| Interface | Control |
+  1002→|---|---|
+  1003→| Login | IP/user/device throttling |
+  1004→| Public APIs | tenant/user/IP rate limits |
+  1005→| Search | minimum query constraints |
+  1006→| Export | concurrency/job limits |
+  1007→| Diagnostics | concurrency + cooldown |
+  1008→| Device polling | scheduler bounds |
+  1009→| Gateway commands | bounded queue + dedupe |
+  1010→| Batch provisioning | job concurrency |
+  1011→| AI | token/cost/request budgets |
+  1012→| Webhooks | per-provider retry limits |
+  1013→
+  1014→Do not let a UI refresh create an unbounded downstream polling storm.
+  1015→
+  1016→---
+  1017→
+  1018→# 30. WEBHOOK CONTRACT
+  1019→
+  1020→Outbound webhooks MUST support:
+  1021→
+  1022→- signed payloads;
+  1023→- event type;
+  1024→- event ID;
+  1025→- timestamp;
+  1026→- retry count;
+  1027→- delivery status;
+  1028→- exponential backoff;
+  1029→- dead-letter state;
+  1030→- replay where authorized;
+  1031→- secret rotation.
+  1032→
+  1033→Inbound webhooks MUST validate authenticity before processing.
+  1034→
+  1035→---
+  1036→
+  1037→# 31. FILE / EXPORT API
+  1038→
+  1039→Exports are jobs, not arbitrary file streaming from primary tables for large datasets.
+  1040→
+  1041→```text
+  1042→POST /api/v1/exports
+  1043→GET  /api/v1/exports/{id}
+  1044→GET  /api/v1/exports/{id}/download
+  1045→```
+  1046→
+  1047→Export generation must apply the caller's authorization scope to the source query.
+  1048→
+  1049→Never create an export that bypasses RBAC.
+  1050→
+  1051→---
+  1052→
+  1053→# 32. REPORTING API
+  1054→
+  1055→Report definitions are separated from report executions.
+  1056→
+  1057→```text
+  1058→GET  /api/v1/reports
+  1059→POST /api/v1/report-runs
+  1060→GET  /api/v1/report-runs/{id}
+  1061→```
+  1062→
+  1063→Large reports use read models, aggregates, or controlled analytical queries rather than blocking runtime transactional paths.
+  1064→
+  1065→---
+  1066→
+  1067→# 33. COMPATIBILITY WITH LEGACY ROUTES
+  1068→
+  1069→The old API surface in the feature sheet is a capability reference.
+  1070→
+  1071→Migration options:
+  1072→
+  1073→1. direct adapter preserving existing path temporarily;
+  1074→2. API gateway compatibility rewrite;
+  1075→3. UI migration to new canonical API;
+  1076→4. deprecation window with telemetry;
+  1077→5. removal only after dependent clients are migrated.
+  1078→
+  1079→Do not silently remove a legacy capability if external consumers may depend on it.
+  1080→
+  1081→---
+  1082→
+  1083→# 34. SCHEMA / CONTRACT GOVERNANCE
+  1084→
+  1085→All externally consumed contracts MUST be represented in a machine-readable schema, preferably OpenAPI for REST and protobuf for RPC where used.
+  1086→
+  1087→CI MUST validate:
+  1088→
+  1089→- schema syntax;
+  1090→- request/response compatibility;
+  1091→- enum changes;
+  1092→- required field changes;
+  1093→- authentication metadata;
+  1094→- error contract;
+  1095→- generated client drift.
+  1096→
+  1097→Breaking changes require a new API version or an approved migration strategy.
+  1098→
+  1099→---
+  1100→
+  1101→# 35. API TESTING CONTRACT
+  1102→
+  1103→Every critical mutation must have:
+  1104→
+  1105→- happy path;
+  1106→- invalid input;
+  1107→- unauthorized;
+  1108→- forbidden;
+  1109→- duplicate request;
+  1110→- concurrent request;
+  1111→- dependency failure;
+  1112→- timeout;
+  1113→- retry;
+  1114→- recovery/reconciliation where relevant;
+  1115→- audit verification.
+  1116→
+  1117→Gateway command APIs additionally test:
+  1118→
+  1119→- VPP unavailable;
+  1120→- VPP reconnect;
+  1121→- stale session epoch;
+  1122→- duplicate command;
+  1123→- partial object creation;
+  1124→- reconciliation.
+  1125→
+  1126→---
+  1127→
+  1128→# 36. NON-NEGOTIABLE RULES
+  1129→
+  1130→1. API code must not become packet forwarding code.
+  1131→2. UI code must not contain gateway enforcement logic.
+  1132→3. Database writes do not imply dataplane success.
+  1133→4. Access-Accept does not imply session `ACTIVE`.
+  1134→5. Events are contracts, not ad-hoc strings.
+  1135→6. Consumers must be idempotent.
+  1136→7. Large work must be bounded and observable.
+  1137→8. Permissions are enforced server-side.
+  1138→9. Financial commands must be auditable and retry-safe.
+  1139→10. No endpoint may create unbounded load on PostgreSQL, VPP, or external providers.
+  1140→
+  1141→---
+  1142→
+  1143→# 37. IMPLEMENTATION EXIT CRITERIA
+  1144→
+  1145→The API layer is architecturally complete only when:
+  1146→
+  1147→- all feature domains in `04_PRODUCT_FEATURE_CATALOGUE.md` have an owner;
+  1148→- every production UI action has a defined command/query;
+  1149→- every critical command has idempotency semantics;
+  1150→- event schemas exist for major lifecycle transitions;
+  1151→- authorization is mapped to permissions;
+  1152→- audit requirements are mapped;
+  1153→- large work uses operations/jobs;
+  1154→- gateway control is fully separated from UI/API code;
+  1155→- API contract tests run in CI;
+  1156→- error and correlation contracts are consistent;
+  1157→- deployment-mode capability differences are explicit.
+  1158→
+  1159→---
+  1160→
+  1161→# 38. FINAL API PRINCIPLE
+  1162→
+  1163→```text
+  1164→UI
+  1165→ ↓
+  1166→Stable API Contract
+  1167→ ↓
+  1168→Domain Service / Command Handler
+  1169→ ↓
+  1170→Transactional State Change
+  1171→ ↓
+  1172→Outbox/Event / Runtime Command
+  1173→ ↓
+  1174→Session / Policy / Integration Workers
+  1175→ ↓
+  1176→VPP / External Systems
+  1177→```
+  1178→
+  1179→The interface layer coordinates the product. It does not become the product's hidden runtime.
+  1180→

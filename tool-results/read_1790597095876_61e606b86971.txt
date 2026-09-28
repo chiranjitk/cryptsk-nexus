@@ -1,0 +1,302 @@
+   451→- **Notification type borders (3px left):** bill `#F59E0B` · payment `#16A34A` · usage `#0D9488` · outage `#DC2626` · plan `#7C3AED` · welcome `#2563EB`.
+   452→- **SLA dots:** met `#16A34A` · at-risk `#D97706` · breached `#DC2626` · escalated `#EA580C`.
+   453→- **Live dots:** `.live-dot` (green, `cryptsk-pulse-dot`) · `.live-dot-red` · `.status-dot-online/warning` (with `status-ring` animation).
+   454→- **Login page (signature SaaS look):** `.login-glass-card` (blur 32px saturate 1.6, multi-layer red-tinted shadows, lifts -3px on hover) · `.login-animated-border` (rotating conic gradient, 6s) · `.login-scanlines` (CRT effect via repeating 2px gradient + `mix-blend-mode: overlay`) · `.login-input-enhanced:focus` (multi-layer red box-shadow) · `.login-float-up` particles.
+   455→
+   456→## 5.15 Dark Mode
+   457→
+   458→- **Library:** `next-themes ^0.4.6`, class-based (`attribute="class"`), `defaultTheme="light"`, `enableSystem`, `disableTransitionOnChange`.
+   459→- **FOUC prevention:** `html:not(.dark):not(.light) body { visibility: hidden; }` — hides body until next-themes resolves.
+   460→- **Toggle:** Header button (Sun↔Moon cross-fade) · User menu item · `⌘⇧D` shortcut.
+   461→- **What changes:** background white→navy · cards white→slate-800 · primary `#DC2626`→`#EF4444` · text slate-800→slate-100 · borders slate-200→slate-700 · sidebar `#0F172A`→`#020617` · scrollbar thumb slate→red · selection red-tinted · NProgress red→bright-red · chart palette 600-shade→400-500-shade. **Sidebar stays dark in both.**
+   462→
+   463→## 5.16 Designer Replication Checklist
+   464→
+   465→1. Load `Geist` + `Geist_Mono` via next/font/google; apply on `<body>` with `antialiased`.
+   466→2. Tailwind v4 + shadcn/ui (new-york, neutral base, cssVariables, lucide).
+   467→3. Paste the 26 CSS variable theme tokens (`:root` + `.dark`) from §2.1/§2.2.
+   468→4. Set `--radius: 0.625rem` + radius scale (sm=-4px, md=-2px, lg=0.625rem, xl=+4px).
+   469→5. Configure next-themes (`attribute="class"`, `defaultTheme="light"`, `enableSystem`, `disableTransitionOnChange`).
+   470→6. Add FOUC guard.
+   471→7. Sidebar: dark-navy `bg-sidebar` always, 16rem/3rem/18rem widths, active = 3px red left border + `bg-accent` tint + red icon + `font-semibold`.
+   472→8. Header: sticky `h-14`, `bg-background/80 backdrop-blur-md`, `border-b border-border/50`.
+   473→9. Footer: `h-10`, `bg-background/60 backdrop-blur-sm`, `mt-auto`.
+   474→10. Cards: `rounded-xl` (14px), `border`, `shadow-sm`, `py-6 px-6`, `flex flex-col gap-6`. Apply `.card-hover-pollish`.
+   475→11. Scrollbars: 6px global / 4px sidebar, slate thumb → red on hover.
+   476→12. Selection + focus rings: red-tinted.
+   477→13. NProgress: 3px red top bar with glow, no spinner.
+   478→14. Charts: use `--chart-1`..`--chart-5`, primary stroke `#DC2626` light / `#EF4444` dark.
+   479→15. Icons: lucide-react. `CircleDot` for brand.
+   480→16. Login: dark navy bg, `.login-glass-card`, `.login-animated-border`, `.login-logo-glow`, `.login-float-up` particles, `.login-scanlines`.
+   481→
+   482→---
+   483→
+   484→
+   485→## UI/UX Preservation Authority
+   486→
+   487→`CRYPTSK-FINAL-FEATURE-SHEET(1).md` is the authoritative source for the product visual identity and Dashboard experience. The new implementation may change internal technology, component structure, or runtime implementation, but MUST preserve the source-defined visual behavior, interaction patterns, responsive layout, theme behavior, dashboard widget coverage, status indicators, refresh behavior, loading/error states, and dashboard information hierarchy unless a later product-design decision explicitly supersedes them.
+   488→
+   489→**Mandatory preservation areas from the source feature sheet:**
+   490→- Complete Design System and color-token specification (§2 of the source).
+   491→- Layout shell, sidebar, header, footer, cards, typography, dark mode, animations, micro-interactions, scrollbars, focus/selection states, login visual treatment, and designer replication checklist.
+   492→- Dashboard overall layout, header controls, quick actions, welcome banner, quick stats, widget grid, status bar, responsive behavior, widget loading/error/empty states, auto-refresh cadence, manual refresh, and visual status semantics.
+   493→- All **40 dashboard widgets** and their documented metrics, visualization patterns, semantic colors, API/data requirements, and refresh intervals.
+   494→- Reusable dashboard visual primitives such as gauges, sparklines, bars, status dots, tooltips, skeletons, and widget-card patterns.
+   495→
+   496→Architecture changes MUST NOT be interpreted as permission to simplify, remove, or redesign these source-defined UX requirements without an explicit product-design change.
+   497→# 6. DASHBOARD — FUNCTIONAL & VISUAL SPECIFICATION
+   498→
+   499→> **Source:** `src/components/pages/dashboard-page.tsx` (~2,894 lines) + `src/components/dashboard/dashboard-status-bar.tsx`. **40 widgets** + a fixed bottom status bar. The user explicitly loves this — preserve every detail.
+   500→
+   501→## 6.1 Dashboard Overall Layout
+   502→
+   503→**Top-level container:** `<div className="space-y-6 page-enter">` — vertical stack, 1.5rem gap, entrance fade.
+   504→
+   505→**Header row:**
+   506→- **Left:** `text-2xl font-bold text-gradient-red` greeting ("Good morning/afternoon/evening") + subtitle "Here's your ISP operations overview." + small `CalendarClock` line with weekday/date/time.
+   507→- **Right (button group, wraps):**
+   508→  1. `Select` Date range dropdown (150px) — **7d / 30d / 90d / this_month / last_month** (drives `/api/dashboard?range=`)
+   509→  2. `Download Report` button (CSV export of all KPIs, complaints, payments, overdue invoices, top customers, renewals)
+   510→  3. Outline icon button with `RefreshCw` (spin while `isRefetching`) — `queryClient.invalidateQueries`
+   511→  4. `Bell` popover with red badge showing `urgentItems.total` — lists critical complaints (red), overdue invoices (amber), device warnings (orange), SLA breaches (red)
+   512→  5. `<span className="live-dot" />` + green "Live" pill
+   513→
+   514→**Quick action strip (below header):** Four outline buttons:
+   515→- `Generate Invoices` — red border/text
+   516→- `Add Subscriber` — green border/text
+   517→- `Raise Complaint` — amber border/text
+   518→- `Collect Payment` — purple border/text
+   519→
+   520→All use `btn-press btn-shine` utility classes.
+   521→
+   522→**Welcome Banner (dismissible, per-day localStorage `dashboard-welcome-dismissed`):**
+   523→- `gradient-border-red rounded-xl` outer, white Card inside with two soft decorative radial gradients (red top-right, teal bottom-left)
+   524→- Left: vertical red gradient bar + greeting ("Good Morning, {userName}!") + rotating "tip of the day" (7 tips cycled by weekday)
+   525→- Right: date + 3 icon-only quick-actions (UserPlus/Wallet/AlertTriangle) with tooltips + dismiss `X`
+   526→
+   527→**Quick Stats Banner (4-up grid):** `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3` — 4 cards with `linear-gradient(135deg, rgba(16,185,129,0.08)…)` bg and emerald icon tiles: Total Subscribers · Active Connections · Monthly Revenue (MRR) · Collection Today % (color: emerald ≥80% / amber ≥50% / red).
+   528→
+   529→**Stats Summary Bar (5-up grid):** `grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3` — 5 compact cards with gradient icon tiles (`from-red-400 to-red-500`, `from-emerald-400 to-green-500`, `from-amber-400 to-yellow-500`, `from-orange-400 to-red-500`, `from-teal-400 to-emerald-500`): Subscribers · Active · Revenue · Complaints · Uptime.
+   530→
+   531→**Then the vertical widget stack (in order):**
+   532→1. `<SystemAlertBanner />` (global banner)
+   533→2. `<GettingStartedPanel />` (onboarding)
+   534→3. `<DashboardQuickActionsWidget />` (6 shortcuts)
+   535→4. `<NotificationSummaryWidget />`
+   536→5. `<LiveActivityFeedWidget />`
+   537→6. `<PerformanceMetricsWidget />`
+   538→7. `<QuickActionsWidget />`
+   539→8. **Primary StatCard row** — `grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4` — 6 gradient StatCards: Total Subscribers (red) · Revenue This Month (blue) · Active Connections (purple) · Open Complaints (amber) · Collection Today (teal) · Network Uptime (emerald). Each: `border-0 shadow-lg hover:shadow-2xl hover:scale-[1.03] hover:-translate-y-1 card-glow stat-card-lift animate-card-enter`.
+   540→9. **Secondary 4-up row** — `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4` — ARPU · Churn Rate · CAC · MRR Growth with `border-l-4` colored left border (red/teal/green/amber) + `card-hover-lift animate-slide-up`.
+   541→10. **AI Insight card** (full width) — `border-2 border-red-500/20` with Bot icon, displays `data.aiInsight`.
+   542→11. **Charts row 1** — `grid grid-cols-1 lg:grid-cols-2 gap-6` — AreaChart (Monthly Revenue) + BarChart (Plan Distribution). PIE_COLORS palette: `#DC2626, #16A34A, #D97706, #7C3AED, #EC4899, #14B8A6, #2563EB, #F43F5E, #84CC16, #06B6D4…`
+   543→12. **Charts row 2** — Bandwidth Usage AreaChart + Complaints Trend LineChart.
+   544→13. **Composed SLA/ticket widget** — full-width card with 4 priority mini-cards.
+   545→14. **Widget grid A** — `grid grid-cols-1 lg:grid-cols-4 gap-6` — IspHealthScore · NetworkHealthEnhanced · BandwidthTrends · TopAreas.
+   546→15. **Widget grid B** — `lg:grid-cols-2` — AreaDistribution · ConnectionType.
+   547→16. **Widget grid C** — `lg:grid-cols-2` — RevenuePaymentMode · RevenueBreakdown.
+   548→17. **Widget grid D** — `lg:grid-cols-2` — TopSubscribers · PlanComparison.
+   549→18. `<CollectionPerformanceWidget />` (full-width composed chart).
+   550→19. **Widget grid E** — ComplaintsAnalytics · PlanPerformance.
+   551→20. `<RecentPaymentsTimelineWidget />` (full-width timeline).
+   552→21. **Widget grid F** — ExpiringSubscriptions · OverduePayments.
+   553→22. **Widget grid G** — RetentionChurn · InvoiceAging.
+   554→23. **Widget grid H** — ChurnRisk · ChurnPrediction.
+   555→24. **Widget grid I** — PaymentAnalytics · SubscriberLifecycle.
+   556→25. `<TechnicianPerformanceWidget />` + `<SubscriberAnalyticsWidget />` (full width).
+   557→26. **Widget grid J** — SystemOverview · SystemPerformance.
+   558→27. `<PlanRecommendationWidget />` (full-width).
+   559→28. **Widget grid K** — `grid-cols-2 md:grid-cols-4` — ResponseTime · CollectionTarget · RadiusSyncStatus · RecentSignups.
+   560→29. **Widget grid L** — RevenueForecast + forecast card.
+   561→30. **Recent Complaints / Overdue Invoices / Upcoming Renewals / Top Customers / SLA Breaches / Device Health** — full-width stat cards + data tables (inline in dashboard-page.tsx).
+   562→31. **System Alerts strip** — `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` — 3 alert cards (Warning amber, Critical red with pulsing dot, Info sky) with `border-l-4`.
+   563→32. **Footer timestamp** — centered "Data updated {time} · Range: {rangeLabel}" with live-dot.
+   564→33. **`<DashboardStatusBar />`** — fixed bottom strip.
+   565→
+   566→## 6.2 Dashboard Status Bar (fixed bottom)
+   567→
+   568→`fixed bottom-0 left-0 right-0 z-50 h-10`, dark backdrop `rgba(15,23,42,0.95)` + `backdrop-blur(12px)`, 1px gradient top-border `linear-gradient(90deg, transparent, #DC2626 30%, #DC2626 70%, transparent)`.
+   569→
+   570→Three regions (text 12px, slate-400 default):
+   571→- **Left** — 3 indicator dots with icons: Database (green/amber/red), API latency in ms (animated dots), Network Uptime % (color by threshold).
+   572→- **Center** — compact quick stats: `Total Devices · Online · Complaints · Overdue · MRR ₹X` (each value colored teal/emerald/amber/red, separated by `·`).
+   573→- **Right** — keyboard shortcut hints (`⌘K Search · ⌘1 Dashboard · ⌘2 Subscribers` on lg+) + `Clock` + "Updated HH:MM".
+   574→
+   575→**APIs:** `/api/system/health` + `/api/dashboard/stats`, polled every 60s.
+   576→
+   577→## 6.3 Widget Catalog (40 widgets)
+   578→
+   579→> **Universal widget pattern:** `<Card className="border shadow-sm rounded-xl animate-card-enter hover:shadow-md transition-all duration-200">` with header pattern:
+   580→> ```
+   581→> <CardHeader className="pb-3">
+   582→>   <div className="flex items-center justify-between">
+   583→>     <CardTitle className="text-base font-semibold flex items-center gap-2">
+   584→>       <div className="p-1.5 rounded-lg bg-gradient-to-br from-{color}-400 to-{color}-500 text-white shadow-sm">
+   585→>         <Icon className="h-3.5 w-3.5" />
+   586→>       </div>
+   587→>       {Title}
+   588→>       {optional <Badge> with count}
+   589→>     </CardTitle>
+   590→>     <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+   591→>       <RefreshCw className={cn("h-3.5 w-3.5", isRefetching && "animate-spin")} />
+   592→>     </Button>
+   593→>   </div>
+   594→> </CardHeader>
+   595→> ```
+   596→> The icon tile is **always** a 2-stop gradient `from-{color}-400 to-{color}-500/600` with `text-white`. Hover border-color shifts to match accent. Critical-state widgets get `ring-2 ring-red-500/30`.
+   597→
+   598→### Revenue / Finance Widgets
+   599→
+   600→| # | Widget | Metrics | Viz | Colors | API | Refresh |
+   601→|---|--------|---------|-----|--------|-----|---------|
+   602→| 1 | **Revenue Overview** | MRR, revenue this month, ARPU, revenue by connection type (FTTH/Cable/Wireless/Leased) | KPI hero + 4 horizontal progress bars | Red `#DC2626`, emerald trend; hero `bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-950/20` | `/api/dashboard/stats` + `/api/dashboard?range=30d` | 60s |
+   603→| 2 | **Revenue Forecast** | Current MRR, projected 90d MRR, ARR, growth rate, outstanding receivables, historical MRR | KPI hero + 3 stat tiles + Recharts AreaChart (mini 120px) | `THEME_RED=#DC2626`, `THEME_GREEN=#16A34A`; area fill `mrrMiniGrad` red 25%→2% | `/api/revenue/forecast` | 120s |
+   604→| 3 | **Revenue by Payment Mode** | Total revenue/payments, breakdown by Cash/UPI/Online/Bank Transfer/Cheque/Wallet | Donut (Recharts PieChart innerRadius 55% outerRadius 85%) + legend | CASH=#DC2626, UPI=#0D9488, ONLINE=#D97706, BANK_TRANSFER=#059669, CHEQUE=#F43F5E, WALLET=#EA580C | `/api/payments/revenue-by-mode` | 120s |
+   605→| 4 | **Collection Performance** | Daily collected vs target (30d), total collected, avg daily, best day, achievement %, days met target | Recharts ComposedChart (Bars + Line): green bars when met target, red when below + dashed amber target Line | Bar gradients `collectionGreenGrad` (emerald) / `collectionRedGrad` (red), target line `#D97706` | `/api/dashboard/collection-performance` | 120s |
+   606→| 5 | **Monthly Collection Target** | Month collected vs target, % complete, days remaining, daily avg needed, today's collection, status | Hero KPI + horizontal progress bar + 4 stat tiles | Status-driven: emerald (on_track), amber (behind), red (critically_behind); icon `from-rose-400 to-red-500` | `/api/dashboard/collection-target` | 120s |
+   607→| 6 | **Invoice Aging** | Total outstanding, DSO, collection efficiency, aging buckets (0-30/31-60/61-90/90+), top overdue | 3-up KPI + horizontal stacked bar + Recharts vertical BarChart + top-overdue list | Current=#14B8A6, 31-60=#D97706, 61-90=#DC2626, 90+=#991B1B; icon `from-red-400 to-rose-500` | `/api/dashboard/invoice-aging` | 120s |
+   608→| 7 | **Payment Analytics** | Today/month collection progress, mode breakdown, overdue, avg payment, this week, collection rate, top collectors | 2 CollectionBars + horizontal stacked mode bar + 2×2 stat tiles + top collectors | MODE_COLORS: UPI=#0D9488, CASH=#10B981, ONLINE=#F59E0B, BANK_TRANSFER=#DC2626, CHEQUE=#78716C, WALLET=#D97706 | `/api/dashboard/payment-analytics` | 120s |
+   609→| 8 | **Overdue Payments** | Total overdue, list with days-overdue, balance, plan, due date | Summary bar + cards with `border-l-[3px]` color-coded by age | >30d red, ≥15d amber, <15d yellow; icon red | `/api/invoices?status=OVERDUE&limit=10` | 120s |
+   610→| 9 | **Top Revenue Subscribers** | Top 5 by total paid, rank, plan, payment count, last payment | Ranked list with medal-style top-3 | 1st gold #F59E0B, 2nd silver #94A3B8, 3rd bronze #B45309; icon rose | `/api/dashboard/top-subscribers` | 120s |
+   611→| 10 | **Recent Payments** | Recent payments with subscriber, amount, mode, status, timestamp; today/month/avg | Vertical timeline list + 3-up summary | Per-mode colors; status dots; icon `from-red-500 to-rose-600` | `/api/payments/recent` | **30s** |
+   612→| 11 | **Plan Comparison** | Per-plan subscriber count, total revenue, avg revenue/sub, % of total | Horizontal bar list (8 colors) + totals | BAR_COLORS: red, teal, amber, emerald, rose, emerald-dark, orange, pink; icon emerald | `/api/dashboard/plan-comparison` | 120s |
+   613→| 12 | **Plan Performance** | Most popular plan, top revenue plan, avg plan price, top 8 plans by subscribers, category breakdown | 3-up highlight cards + horizontal bars + category grid | BAR_COLORS (8); category styles: FTTH emerald, WIRELESS amber, CABLE teal, LEASED_LINE red, HOTSPOT orange, COMBO rose | `/api/plans/performance` | 120s |
+   614→| 13 | **Smart Plan Recommendations** | Total opportunities, savings count, upgrade count, monthly savings potential, top 5 opportunities | 3-up summary tiles + opportunities list with type badges | Save=emerald, Upgrade=amber, Better Value=teal, Better Fit=rose; icon `from-amber-400 to-amber-500` | `/api/plans/recommend` | 120s |
+   615→
+   616→### Subscribers / Churn Widgets
+   617→
+   618→| # | Widget | Metrics | Viz | Colors | API | Refresh |
+   619→|---|--------|---------|-----|--------|-----|---------|
+   620→| 14 | **Subscriber Growth** | New subscribers, avg daily, growth trend %, churn indicator, monthly additions | **Hand-rolled inline SVG AreaChart** (500×200) with glow filter, hover crosshair, data-point circles, SVG tooltip | `#DC2626` line/area (gradient `growthGradient` red 35%→8%→0); range buttons `bg-red-600` active | `/api/dashboard?range={7d\|30d\|90d}` | on range change |
+   621→| 15 | **Subscriber Analytics** | Funnel (active/trial/suspended/disconnected/pending), connection type breakdown, ARPU, MRR, growth rate, plan distribution | Funnel bars + 2-up stat tiles + Recharts donut PieChart (120×120) center label | FUNNEL_COLORS: trial amber, active green, suspended red, disconnected gray, pending teal; CONNECTION_COLORS: FTTH emerald, WIRELESS amber, CABLE red, LEASED_LINE teal, ETHERNET orange | `/api/dashboard/subscriber-analytics` | 120s |
+   622→| 16 | **Subscriber Lifecycle** | Lifecycle stages funnel, connection type breakdown, top plans, recently churned, avg lifetime days | Vertical funnel rows + 4-up connection cards + top plans list + churned cards | CONN_TYPE_CONFIG: FTTH #10B981, CABLE #F59E0B, WIRELESS #0D9488, LEASED_LINE #DC2626, ETHERNET #78716C; icon amber | `/api/dashboard/subscriber-lifecycle` | 120s |
+   623→| 17 | **Subscriber Retention** | Retention rate (circular gauge), churn rate, revenue at risk, subscriber flow (New/Active/At Risk/Churned), at-risk table, churn by connection type | **Inline SVG circular RetentionRing** (64×64) + FlowSegments + mini-bars + at-risk table | Retention: ≥95 #10B981, ≥85 #F59E0B, else #DC2626; flow: New emerald, Active teal, At Risk amber, Churned red | `/api/dashboard/retention` | 120s |
+   624→| 18 | **Churn Risk Alerts** | Total at-risk by level (HIGH/MEDIUM/LOW), per-subscriber risk reasons | Summary bar with 3 colored dots + risk cards `border-l-[3px]` | HIGH=red, MEDIUM=amber, LOW=teal; pulsing red dot when high>0 | `/api/dashboard/churn-risk` | 120s |
+   625→| 19 | **Churn Prediction** | High-risk count, revenue at risk, risk distribution (Critical/High/Medium/Low) | 2-up summary + horizontal risk-distribution bars | Critical red-600, High red-400, Medium amber-500, Low teal-500; pulsing dot when totalAtRisk>0 | `/api/churn/analytics` | 120s |
+   626→| 20 | **Expiring Subscriptions** | Subscribers with expiring plans (next 7d), days-left, plan, area, price | Summary bar + cards `border-l-[3px]` color by urgency | ≤2d red, ≤5d amber, else emerald; icon amber | `/api/subscribers/expiring` | 120s |
+   627→| 21 | **Recent Sign-ups** | Last 5 new subscribers with avatar, plan, area, created date, status | Vertical list with colored initial-avatars + status badges | Status: ACTIVE emerald, TRIAL amber, PENDING teal, SUSPENDED red, DISCONNECTED gray; avatar colors hashed from name (6-color palette) | `/api/subscribers?page=1&limit=5&sortBy=createdAt&sortOrder=desc` | 60s |
+   628→| 22 | **Top Revenue Areas** | Top 5 areas by revenue, % of total, total bar | Horizontal bars with color-coded gradients | BAR_COLORS: red, teal, amber, emerald, rose (each `from-X-500 to-X-600`) | (prop-driven from parent) | n/a |
+   629→| 23 | **Area Distribution** | Per-area: total/active subscribers, revenue, complaints; summary totals | 3-up summary + scrollable area rows with `bg-gradient-to-r` bars | 8-color palette (red/teal/amber/emerald/rose/purple/orange/cyan); "Top Area" badge red | `/api/dashboard/area-distribution` | 120s |
+   630→| 24 | **Connection Types** | Subscriber distribution by FTTH/Wireless/Cable/Leased Line/Ethernet | Recharts donut PieChart (max 200×200) with center "Total subscribers" label + legend | TYPE_COLORS: FTTH #0D9488, WIRELESS #D97706, CABLE #DC2626, LEASED_LINE #059669, ETHERNET #F43F5E | `/api/dashboard/connection-types` | 60s |
+   631→| 25 | **SLA Compliance** | Overall compliance %, avg resolution time, breach count, per-priority compliance (P1–P4) | **Inline SVG circular ComplianceRing** (140×140) + priority rows with mini-bars | Compliance: ≥95 #16A34A, ≥80 #D97706, else #DC2626; priority: P1 #DC2626, P2 #EA580C, P3 #D97706, P4 #16A34A | `/api/sla/monitor` | 60s |
+   632→
+   633→### Network / Operations Widgets
+   634→
+   635→| # | Widget | Metrics | Viz | Colors | API | Refresh |
+   636→|---|--------|---------|-----|--------|-----|---------|
+   637→| 26 | **Network Status** | Network segment status (Core/Distribution/Last Mile) with traffic-light dots, uptime %, active subscribers, online devices, open complaints by priority | 3-up segment cards with StatusDots + **inline SVG CircularProgress** (72×72) + device indicators + priority badges | Status: green/yellow/red; uptime emerald≥99.5% / amber≥99% / red; P1 red, P2 orange, P3 yellow, P4 green | `/api/network/status` | **30s** |
+   638→| 27 | **AI Network Health** | Overall score 0–100, letter grade A–F, 5 factor bars (Devices/Subscribers/Complaints/Resolution/Alerts), AI predictions, recommendations | **Inline SVG HealthGauge** (120×120) showing score+grade + 5 FactorBars + critical warning panel + "View Full Analysis" link | Grade: A #16A34A, B #0D9488, C #D97706, D #EA580C, F #DC2626; critical factors pulse red; `ring-2 ring-red-500/30` when critical | `/api/network/health-enhanced` | 60s |
+   639→| 28 | **Bandwidth Trends** | Peak/Current/Average bandwidth (Mbps) over 24h, download vs upload | 3-up KPI tiles + Recharts AreaChart with two Areas | Download `#0D9488` (teal) gradient 30%→0, Upload `#DC2626` (red) gradient 20%→0; peak red, current teal, average amber | (prop-driven from parent) | n/a |
+   640→| 29 | **ISP Health Score** | Overall score 0–100, label (Excellent/Good/Fair/Poor/Critical), 3 component bars (Uptime/Active Ratio/Complaint Score) | **Inline SVG HealthGauge** (130×130, strokeWidth 12) + 3 MetricRows | scoreColor: ≥80 #16A34A, ≥60 #D97706, else #DC2626 | `/api/dashboard/health-score` | 60s |
+   641→| 30 | **Complaints Analytics** | Total/open/avg resolution time, complaint-type distribution (10 types), priority breakdown (P1–P4), status overview | 3-up KPI + Recharts donut PieChart (180×180) + priority rows with mini-bars + 2×2 status pills | TYPE_COLORS (10 colors); PRIORITY_INFO: P1 #DC2626, P2 #EA580C, P3 #D97706, P4 #16A34A | `/api/complaints/analytics` | 60s |
+   642→| 31 | **Technician Performance** | Available/total technicians, avg rating, open tickets, per-tech rating/resolved/open/resolution-rate/avg-time, workload distribution | 3-up KPI + technician leaderboard cards with avatars + Recharts vertical BarChart (workload by tech initials) | Avatar palette (10 colors hashed); bar colors by load: <3 green, 3-5 amber, >5 red; icon `from-teal-500 to-emerald-600` | `/api/dashboard/technician-stats` | 120s |
+   643→| 32 | **Ticket Response Time** | Avg first response, SLA breach rate, per-priority avg response vs SLA target (with target marker line) | Summary tile + per-priority rows with horizontal bars and SLA target markers | barColor: ≤0.5 green, ≤0.8 teal, ≤1.0 amber, >1.0 red; priority dots P1/P2/P3/P4 red/orange/amber/green | `/api/dashboard/response-time` | 120s |
+   644→| 33 | **Live Activity Feed** | Real-time events (subscriber_created, payment_collected, complaint_raised/resolved, invoice_generated, installation, device_alert, plan_changed, user_login) | Vertical scrollable timeline list with colored category icons + dots | Per-category: subscriber=emerald, payment=green, complaint=red, resolved=teal, invoice=amber, installation=orange, device_alert=rose, plan_changed=yellow, user_login=slate; **green pulsing "LIVE" dot** | `/api/activity-feed?maxItems=20` | **15s** |
+   645→| 34 | **System Alerts** | Critical/High/Warning/Info alert counts, network device status (online/offline/warning/maintenance), alert timeline, quick actions | 4 AlertPills with pulsing dots + device status panel with MiniProgressBar + alert timeline + 3 quick-action buttons | SEVERITY: CRITICAL red, HIGH orange, WARNING amber, INFO teal; device dots: online emerald, offline red, warning amber, maintenance gray | `/api/system/alerts-summary` | **45s** |
+   646→| 35 | **Quick Actions** | 6 shortcut tiles: Add Subscriber, Create Invoice, Log Complaint, View Devices, Run Speed Test, Generate Report | 6-up grid of action tiles with hover gradient overlay + bottom accent bar | Per-action gradient: rose/red, red, orange/red, amber/orange, red/rose, rose/red; icon `from-rose-500 to-red-600` with `Zap` | (none — pure navigation) | n/a |
+   647→
+   648→### System / Infrastructure Widgets
+   649→
+   650→| # | Widget | Metrics | Viz | Colors | API | Refresh |
+   651→|---|--------|---------|-----|--------|-----|---------|
+   652→| 36 | **System Overview** | Server status, DB size+connections, active PPPoE sessions, server uptime, memory used/total, Node.js version, platform version | 5 InfoRow tiles with icons + StatusBadge | Status badge: healthy=emerald, degraded=amber, critical=red | `/api/system/health` + `/api/system-monitor` | 30s / 15s |
+   653→| 37 | **System Health** | API latency, DB status, memory usage %, uptime + status badge + version | 2×2 grid of metric cards with status dots | statusDot: green/yellow/red with `animate-pulse` when green | `/api/system/health` | 30s |
+   654→| 38 | **System Performance** | Server uptime, memory %, CPU avg with sparkline, disk %, API latency, active connections, DB health, cache hit rate | Uptime badge + 3 MetricBars (memory/CPU/disk) + **inline SVG MiniSparkline** for CPU + 2×2 stat grid | Threshold: <70% green, <85% amber, else red | `/api/dashboard/stats` | **30s** |
+   655→| 39 | **RADIUS Sync** | Sync status (synced/minor_drift/drifted/error), app RADIUS subs, RADIUS users, user groups, group replies/checks, drift details | Compact card with MetricRows + drift warnings | statusConfig: synced=emerald, minor_drift=amber, drifted=red, error=red | `/api/freeradius/sync-status` | 120s |
+   656→| 40 | **Dashboard Status Bar** | DB status, API latency (ms), network uptime %, total/online devices, open complaints, overdue invoices, MRR; keyboard shortcuts; last updated | Fixed bottom bar with 3 regions | Background `rgba(15,23,42,0.95)` + blur; 1px red gradient top-border; dots emerald/amber/red; center stats colored | `/api/system/health` + `/api/dashboard/stats` | 60s |
+   657→
+   658→## 6.4 Dashboard Color & Style DNA
+   659→
+   660→- **Primary brand accent: `#DC2626`** — page title gradient, status bar top-border, dominant chart line/area, header icon tiles, "View All" buttons, live-dot. **No blue/indigo used as primary anywhere.**
+   661→- **Secondary palette (semantic):** Teal `#0D9488` (network/bandwidth/SLA-good) · Amber `#D97706` (warnings, approaching threshold, medium priority) · Emerald `#16A34A`/`#059669` (success, on track, active, met target) · Orange `#EA580C` (high priority P2, device warnings) · Rose `#F43F5E`/`#E11D48` (overdue critical, top-revenue, churn) · Purple `#9333EA` (sparingly, only in 8-color bar palettes) · Stone/Gray (disconnected, unknown, low priority).
+   662→- **Chart palette constants:** `PIE_COLORS` (20-color, starts `#DC2626, #16A34A, #D97706, #7C3AED, #EC4899, #14B8A6, #2563EB, #F43F5E, #84CC16, #06B6D4…`), `BAR_COLORS` (8-color cycle: red/teal/amber/emerald/rose/purple/orange/cyan each `from-X-500 to-X-600`), `MODE_COLORS`/`TYPE_COLORS` (semantic per category).
+   663→- **SVG gradients:** `growthGradient` (red 35%→8%→0), `mrrMiniGrad` (red 25%→2%), `downloadGradient` (teal 30%→0), `uploadGradient` (red 20%→0), `collectionGreenGrad`/`collectionRedGrad` (emerald/red 80%/70%→50%/40%). All use SVG `<filter id="glow">` with `feGaussianBlur` for line glow.
+   664→- **Typography & numbers:** All KPI numbers use `tabular-nums` + `font-bold`/`font-semibold`. Indian number formatting via `Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" })` (₹, no decimals) and `formatCompactINR` (₹K/₹L/₹Cr). Tiny uppercase labels `text-[10px] font-medium text-muted-foreground uppercase tracking-wider`. Footer caption `text-[10px] text-muted-foreground/60 text-right` "Auto-refreshes every Xs".
+   665→- **Animations:** `animate-card-enter` (staggered entrance fade-up via `animationDelay` 50ms–1300ms) · `animate-slide-up` · `animate-pulse` (green status dots, LIVE indicator) · `animate-ping` (red alert dots) · `animate-badge-pulse` (pulsing prediction count) · `animate-spin` (RefreshCw during refetch) · `animate-count-up` (KPI numbers). All progress bars `transition-all duration-700 ease-out`. All SVG circular gauges `transition-all duration-1000 ease-out` on `stroke-dashoffset`. Hover: `hover:scale-[1.03] hover:-translate-y-1` on stat cards.
+   666→- **Light/Dark behavior:** Every colored bg has paired `dark:` variant (`bg-red-50 dark:bg-red-950/40`). The 950-shade `bg-{color}-950/40` (40% opacity) is the universal dark-mode tinted bg for badges/pills. Borders `border-{color}-200` light / `dark:border-{color}-800/50` dark. Icon tiles retain `text-white` in both. Status bar permanently dark.
+   667→- **Skeletons:** Every widget has a dedicated `LoadingSkeleton` using `<Skeleton className="skeleton-wave h-X w-Y rounded-lg" />` matching the final layout shape (donut skeleton = circular, bar skeleton = horizontal pill).
+   668→- **Auto-refresh cadences:** **15s** Live Activity Feed · **30s** Network Status, Recent Payments, System Performance, System Overview, System Health · **45s** System Alerts · **60s** SLA Monitor, ISP Health Score, Network Health Enhanced, Connection Types, Recent Signups, Dashboard Status Bar, main `/api/dashboard` · **120s** all revenue/churn/retention/invoice/payment/lifecycle/technician/plan/area widgets. **Manual refresh** button on every widget.
+   669→- **Reusable sub-patterns:** `CircularProgress`/`HealthGauge`/`ComplianceRing`/`RetentionRing` (all hand-rolled SVG, `-rotate-90` + `strokeDasharray` + `strokeDashoffset`, `transition-all duration-1000 ease-out`) · `MiniBar`/`MiniProgressBar`/`MetricBar`/`CollectionBar` (`h-1.5/h-2/h-2.5 w-full rounded-full bg-muted overflow-hidden` with colored fill) · `HorizontalBar` (label+value above, `h-2.5` track, colored fill) · `StatusDot`/`PulsingDot` (`h-2 w-2 rounded-full` with `animate-pulse`/`animate-ping` ring) · `CustomTooltip` (Recharts) `bg-card/90 border border-border/80 rounded-xl shadow-2xl px-4 py-3 text-xs backdrop-blur-md` glass-card style.
+   670→
+   671→## 6.5 Quick Recreation Recipe (for the new product)
+   672→
+   673→1. Set up Tailwind with the same color tokens (red-600 primary, teal-600/amber-600/emerald-600/rose-500/orange-600 secondary).
+   674→2. Build a `<WidgetCard title icon gradient refreshHandler>` primitive wrapping `Card + CardHeader (icon tile + title + badge + refresh) + CardContent`.
+   675→3. Build SVG primitives: `CircularGauge`, `Sparkline`, `HorizontalBar`, `StackedBar`, `DonutChart` (or use Recharts).
+   676→4. Standardize `formatINR` + `formatCompactINR` + `formatRelativeTime` helpers.
+   677→5. Auto-refresh via `setInterval` in `useEffect` with `isRefetching` state for spin icon.
+   678→6. Every widget ~150–500 lines, self-contained, fetches its own endpoint, handles loading/error/empty with skeleton + retry.
+   679→7. Page layout: vertical stack `space-y-6`, then responsive `grid grid-cols-1 lg:grid-cols-2 gap-6` for widget pairs, `grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4` for top stat cards.
+   680→8. Add the fixed `DashboardStatusBar` at bottom (z-50, blur backdrop, red gradient top-border).
+   681→
+   682→---
+   683→
+   684→
+   685→# 7. COMPLETE MENU / PAGE FEATURE CATALOGUE — 113 PAGES
+   686→
+   687→> **Source:** `src/lib/nav-config.ts` (11 legacy sections, ~100 items) + `src/components/pages/` (96 root + 7 sub-tabs + 10 selfcare). This is the **legacy functional/page inventory**, not the final sidebar hierarchy or navigation authority. The canonical final navigation is `11_FINAL_MENU_NAVIGATION_SPECIFICATION.md`. The CRYPTSK Nexus is industry-neutral rather than ISP-only; FreeRADIUS remains a backend AAA implementation detail unless an advanced/diagnostic capability is explicitly licensed.
+   688→
+   689→## 7.1 DASHBOARD
+   690→
+   691→#### Dashboard (`/`) — `dashboard-page.tsx`
+   692→Master operations dashboard. Personalized greeting, AI Insights panel, SLA Warnings panel, wide grid of widget cards (see §3). Also exposes GettingStartedPanel, NotificationSummaryWidget, DashboardStatusBar.
+   693→- **Components:** Stat KPI cards, area/bar/line charts (Recharts), activity feed list, quick-action tiles, system alert banner, skeleton loaders, refresh, Getting-Started wizard, status bar.
+   694→- **APIs:** `/api/dashboard`, `/api/dashboard/subscriber-growth`, `/api/system-monitor` (+ per-widget endpoints).
+   695→
+   696→#### Dashboard Widgets (`/dashboard-widgets`) — `dashboard-widgets-page.tsx`
+   697→Widget catalog & layout manager — 16 widget types across categories NETWORK/BILLING/SUBSCRIBERS/SECURITY/SYSTEM/TRAFFIC. Toggle visibility, reorder, set size (SMALL/MEDIUM/LARGE), preview. Multi-user config (Admin, NOC Operator, Billing Manager, Support Lead).
+   698→- **APIs:** `/api/dashboard-widgets`.
+   699→
+   700→#### Login (`/login`) — `login-page.tsx`
+   701→Animated admin login — email/password, show-password toggle, "remember me", client-side validation, loading state, reduced-motion support, gradient background with hex-grid SVG. Uses `.login-glass-card`, `.login-animated-border`, `.login-logo-glow`, `.login-float-up` particles, `.login-scanlines`.
+   702→- **APIs:** `/api/auth/login` (via `useAuthStore`).
+   703→
+   704→## 7.2 SUBSCRIBERS (core user management — creates RADIUS entries behind the scenes)
+   705→
+   706→#### Subscribers (`/subscribers`) — `subscribers-page.tsx`
+   707→Full subscriber CRM. Paginated/searchable/sortable table with status dots, connection-type icons, plan/area filters. Stat cards (Active, New this month, Suspended, Trial, Online). Add/Edit dialogs (photo upload, KYC, GST/PAN, router rental, IPv4/IPv6 dual-stack, RADIUS enable, subnet/IP picker, device assignment, session/idle timeouts, login restriction). Bulk change-status, CSV/JSON import & export. Per-row actions (view, edit, delete, suspend/activate, disconnect session, view credentials). Detail dialog with 5 tabs (Overview, Billing, Payments, Support, Activity).
+   708→- **APIs:** `/api/subscribers` (GET/POST/PUT/DELETE), `/api/subscribers/stats`, `/api/subscribers/online-count`, `/api/subscribers/bulk`, `/api/subscribers/export`, `/api/subscribers/{id}`, `/api/areas`, `/api/plans`, `/api/subnets`, `/api/devices`, `/api/sessions/disconnect`, `/api/upload`, `/api/files`.
+   709→
+   710→#### Plans (`/plans`) — `plans-page.tsx`
+   711→Plan (RADIUS group) catalog. Two tabs: Plans (CRUD with pricing tiers monthly/quarterly/half-yearly/yearly, FUP limits, IPv6 mode, speed up/down, active subscriber count) and Analytics (subscriber distribution by plan, revenue contribution, top plans). Plan comparison dialog, migrate-subscribers-between-plans dialog.
+   712→- **APIs:** `/api/plans` (CRUD), `/api/plans/analytics`, `/api/plans/migrate`, `/api/plans/reorder`, `/api/subscribers`, `/api/dhcpv6/subnets`.
+   713→
+   714→#### 360° Customer View (`/subscriber-360`) — `subscriber-360-page.tsx`
+   715→Unified subscriber profile — search/select subscriber, load 360° data (subscriber info, plan, sessions, invoices, payments, complaints, RADIUS attributes, IP info). Profile photo loading.
+   716→- **APIs:** `/api/subscribers`, `/api/subscribers/{id}/360`, `/api/files`.
+   717→
+   718→#### Batch Provisioning (`/batch-provisioning`) — `batch-provisioning-page.tsx`
+   719→Bulk subscriber provisioning — reusable templates, batch jobs (CSV upload or generated subscribers), monitor progress, job details dialog.
+   720→- **APIs:** `/api/batch-provisioning/templates` (CRUD), `/api/batch-provisioning/jobs`, `/api/plans`.
+   721→
+   722→#### Plan Recommendation (`/plan-recommendation`) — `plan-recommendation-page.tsx` *(orphan)*
+   723→AI-driven plan recommendation & optimization — analyzes subscriber usage vs plan tier, recommends optimal plan, optimization suggestions.
+   724→- **APIs:** `/api/plans/recommend`, `/api/plans/optimization`.
+   725→
+   726→## 7.3 NETWORK (infrastructure — NAS, IPAM, DHCP, DNS, routing)
+   727→
+   728→#### NAS Clients (`/nas-clients`) — `nas-clients-page.tsx`
+   729→RADIUS NAS client management — list with type (Cisco/MikroTik/Other), shared secret, ports, test-connection button, vendor dropdown.
+   730→- **APIs:** `/api/nas-clients`, `/api/nas-clients/test-connection`, `/api/nas-clients/vendors`.
+   731→
+   732→#### NAS Devices (`/nas-devices`) — `devices-page.tsx`
+   733→Network device inventory — CRUD for routers/switches/OLTs, bulk import/export, test-connection, schedule-maintenance, device detail dialog, multi-select delete.
+   734→- **APIs:** `/api/devices` (CRUD), `/api/devices/bulk`, `/api/devices/export`, `/api/devices/import`, `/api/devices/test-connection`, `/api/areas`.
+   735→
+   736→#### Subnets / IPAM (`/ipam`) — `ipam-page.tsx`
+   737→Comprehensive IP Address Management — subnets/prefixes, IP assignment, VLANs, address pools, SNAT pools, CGNAT pools/mappings, FreeRADIUS pool population, conflict-check, DHCP sync, snapshots, assignment history, import/export, trends, gateway configuration, and address-usage visibility. Includes CGNAT/SNAT management.
+   738→- **APIs:** `/api/ipam`, `/api/ipam/assign-subscriber`, `/api/ipam/assignment-history`, `/api/ipam/conflict-check`, `/api/ipam/dhcp-sync`, `/api/ipam/export`, `/api/ipam/import`, `/api/ipam/radius-pools`, `/api/ipam/snapshots`, `/api/ipam/trends`, `/api/areas`, `/api/gateway/config`.
+   739→
+   740→#### System Interfaces (`/system-interfaces`) — `interfaces-page.tsx`
+   741→Linux interface config — list interfaces (physical/vlan/bridge/bond), configure IP, create VLAN/Bridge/Bond, add static routes, add/remove alias IPs.
+   742→- **APIs:** `/api/interfaces`, `/api/routes`.
+   743→
+   744→#### DHCP Server (`/dhcp`) — `dhcp-page.tsx`
+   745→KEA DHCP server management — subnets, reservations, hotspot integration.
+   746→- **APIs:** `/api/dhcp`, `/api/hotspot`, `/api/interfaces`.
+   747→
+   748→#### DNS Server (`/dns`) — `dns-page.tsx`
+   749→dnsmasq DNS management — A/CNAME/MX/TXT records, captive-portal detection records, generated config preview, reload action.
+   750→- **APIs:** `/api/dns`.
+
+[showing lines 451-750 of 2397; use offset=751 with limit to continue reading]
