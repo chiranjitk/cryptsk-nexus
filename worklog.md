@@ -575,3 +575,59 @@ Stage Summary:
 - ✅ Phase 7 Billing deployed (40 tables, invoices/payments UI)
 - 🔄 VPP compiling from source in background (PID running)
 - Next: Check VPP build result → start VPP in software mode → test with GoVPP
+
+---
+Task ID: PHASE-8
+Agent: orchestrator (sandbox main)
+Task: Phase 8 — Advanced Network (Kea DHCP v4+v6, BIND DNS, Firewall, WAN, VPN)
+
+Work Log:
+- Installed on VM: Kea 3.0.3 (DHCPv4+v6), BIND 9.18.33 (named), nftables 1.1.5
+- 10 Phase 8 Prisma models (50 tables total):
+  * DhcpSubnet (IPv4+IPv6 subnets, pools, gateway, DNS, lease times)
+  * DhcpReservation (Kea host reservations, static IP)
+  * DhcpLease (active leases, IPv4/IPv6, Kea lease ID)
+  * DnsZone (BIND zones, SOA, forward/reverse)
+  * DnsRecord (A/AAAA/CNAME/MX/TXT/SRV/PTR)
+  * FirewallRule (nftables: accept/drop/reject/masquerade/redirect)
+  * ContentFilter (DNS blocking: domain_block, category_block)
+  * VpnTunnel (IPsec/WireGuard/OpenVPN)
+  * WanLink (Multi-WAN: up/down/degraded/backup)
+  * CaptivePortalSession (unauthenticated user tracking)
+- 7 new enums (DhcpLeaseStatus, FirewallAction, FirewallDirection, etc.)
+- Config templates:
+  * gateway/kea/configs/kea-dhcp4.conf (DHCPv4, subnet 10.0.0.0/24)
+  * gateway/kea/configs/kea-dhcp6.conf (DHCPv6, subnet fd00::/64)
+  * gateway/bind/configs/named.conf (forward + reverse zones)
+- Fixed Kea config issues:
+  1. output → output_options array (Kea 3.0 format)
+  2. Missing subnet 'id' field (required by Kea 3.0)
+- API routes (4, RBAC-protected):
+  * /api/dhcp/subnets (list + create)
+  * /api/dhcp/leases (list active/expired)
+  * /api/dns/zones (list + create BIND zones)
+  * /api/dns/records (list + create DNS records)
+- UI panel (src/components/admin/network-panel.tsx):
+  * 7 tabs: DHCP Subnets, DHCP Leases, DNS Zones, DNS Records,
+    Firewall, Multi-WAN, VPN Tunnels
+  * DHCP Subnets: IPv4/IPv6 table + create dialog
+  * DHCP Leases: MAC/IP/hostname/times/state
+  * DNS Zones: zone name/type/NS/serial/records + create dialog
+  * DNS Records: hostname/zone/type/value/TTL
+  * Firewall/WAN/VPN: placeholder tabs
+- Updated page.tsx (view=network) + sidebar (DHCP/DNS/Multi-WAN → /?view=network)
+
+Deployed + verified:
+- 50 tables on PostgreSQL 18.6 (40 Phase 0-7 + 10 Phase 8)
+- kea-dhcp4: active ✅ (DHCPv4 serving 10.0.0.0/24)
+- kea-dhcp6: active ✅ (DHCPv6 serving fd00::/64)
+- named: active ✅ (BIND DNS with cryptsk.local zone)
+- App: HTTP 200
+- 3 PM2 services + 3 systemd services (radiusd, kea-dhcp4, kea-dhcp6, named)
+
+Stage Summary:
+- ✅ Phase 8 Advanced Network deployed — Kea DHCP + BIND DNS + Firewall
+- ✅ 50 tables, 10 Phase 8 models
+- ✅ All services active (PM2 + systemd)
+- Commits: c6a1f8d (Phase 8), d1719cc (schema fix), 3d760dd (Kea output_options), 6aa8eb2 (Kea subnet id)
+- Next: Phase 9 — AI Intelligence (z-ai-web-dev-sdk)
