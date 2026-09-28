@@ -64,3 +64,30 @@ Stage Summary:
 - .gitignore covers all sandbox artifacts (next-env.d.ts, skills/, tool-results/, external-repos/, dev.log, SQLite DBs, .env) so sandbox resets won't push junk.
 - Force-push to origin/main required (remote only has design pack at old path; new path is docs/architecture/ — no information lost, just history rewritten).
 - Next: Phase 0 actual code — Prisma schema for User/Role/Permission/AuditEvent/SystemSetting/Module/FeatureFlag/ApiKey/Notification; CRYPTSK design tokens in globals.css; AppShell at / with 14 menu groups collapsed into role-gated views; NextAuth + bcryptjs + HMAC sessions; RBAC middleware; audit service; dashboard shell.
+
+---
+Task ID: FILES-1
+Agent: orchestrator (sandbox main)
+Task: Integrate user-provided deploy.mjs + CICD-GUIDE.md, rewrite guide for AI-agent convenience, align with Cryptsk Nexus spec
+
+Work Log:
+- Pulled latest from origin/main (fast-forward) — got 2 new commits from user: deploy.mjs (239 lines) + docs/CICD-GUIDE.md (462 lines).
+- Read both files. Discovered: prod server = 103.244.7.221:22222, root, password CryptSK@123#$, PostgreSQL 18.4 (cryptsknexus DB), PM2-managed services (13 services, ports 3000/3003/3005/3007/3009/3011/3013/3015/3017/3019/3021).
+- Identified 4 issues: (1) hardcoded secrets in repo, (2) project path inconsistency (deploy.mjs said /opt/cryptsk-gateway, guide said /opt/cryptsk-nexus), (3) PM2 vs systemd spec conflict, (4) mini-service port scheme differs from spec.
+- Installed ssh2 + @types/ssh2 packages (for scripts/deploy.mjs to SSH from sandbox).
+- Moved deploy.mjs from repo root → scripts/deploy.mjs (per guide line 133 expectation).
+- Updated scripts/deploy.mjs: changed PROD_PROJECT_DIR from '/opt/cryptsk-gateway' → '/opt/cryptsk-nexus', added process.env override support for host/port/user/password (Phase 1+ secrets migration target), added header comment documenting the secrets migration plan.
+- Added deploy scripts to package.json: deploy, deploy:status, deploy:restart, deploy:logs, deploy:no-push.
+- Rewrote docs/CICD-GUIDE.md (462 lines → ~470 lines) for AI-agent convenience: 13 sections including Architecture Overview, Environments, The Hard Rule (push before done), Standard Deploy Flow, Sandbox Reset Recovery (CRITICAL), Deploy Script Usage, Manual Deploy Steps, Production Service Management (PM2 current + systemd future), Database Management, Secrets Management (current + target + rotation plan), Phase Alignment (which CI/CD capabilities in which phase), Troubleshooting, Quick Reference Card.
+- Guide documents the hybrid PM2/systemd decision: PM2 for Next.js OSS/BSS plane (current, works), systemd for gateway plane (Phase 3+ future, spec-compliant).
+- Guide documents port scheme reconciliation: current prod ports (legacy v7.0) vs spec ports (Cryptsk Nexus target) — migration phase-by-phase.
+- About to commit + push.
+
+Stage Summary:
+- scripts/deploy.mjs: at scripts/, path fixed to /opt/cryptsk-nexus, env-overridable, secrets-migration plan documented in header.
+- docs/CICD-GUIDE.md: rewritten, AI-agent-friendly, 13 sections, includes sandbox reset recovery flow + hard rule + phase alignment.
+- package.json: added 5 deploy:* scripts.
+- bun.lock: updated (ssh2 + @types/ssh2 installed).
+- Open items for Phase 0+ code: write sandbox-resetup.sh automation script, add .env.example, add ecosystem.config.cjs, write GitHub Actions CI workflow, refactor deploy.mjs to remove hardcoded fallbacks (Phase 1+ after secrets rotation).
+- Did NOT rotate secrets (user accepted risk for Phase 0; rotation planned in Phase 1 per guide §10.3).
+- Did NOT test outbound SSH from sandbox to 103.244.7.221:22222 yet (will test in Phase 0 when running first real deploy).

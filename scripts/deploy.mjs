@@ -1,30 +1,40 @@
 #!/usr/bin/env node
 /**
- * Cryptsk CI/CD Deploy Script
- * 
+ * CRYPTSK Nexus — CI/CD Deploy Script
+ *
  * Flow: Sandbox (code) → Git Push → SSH to Prod → Git Pull → Restart → Verify
- * 
- * Usage:
- *   node scripts/deploy.mjs                  # Full deploy (commit + push + pull + restart)
- *   node scripts/deploy.mjs --no-push        # Skip git push (just pull + restart on server)
- *   node scripts/deploy.mjs --status         # Check server status only
- *   node scripts/deploy.mjs --restart        # Just restart the dev server on prod
- *   node scripts/deploy.mjs --logs           # Tail PM2 logs from prod
+ *
+ * Usage (from sandbox /home/z/my-project):
+ *   bun run deploy                       # Full deploy (commit + push + pull + install + build + restart + verify)
+ *   bun run deploy -- --no-push          # Skip git push (just pull + restart on server)
+ *   bun run deploy -- --status           # Check server status only
+ *   bun run deploy -- --restart          # Just restart the dev server on prod
+ *   bun run deploy -- --logs             # Tail PM2 logs from prod
+ *
+ * Target: Rocky Linux 10 production server (103.244.7.221:22222)
+ * Project path on prod: /opt/cryptsk-nexus
+ *
+ * SECRETS MIGRATION PLAN (Phase 1+):
+ *   Current: credentials hardcoded below (already in git history — accepted for Phase 0).
+ *   Target:  read from process.env / .env (gitignored). Refactor in Phase 1+ and
+ *            rotate all secrets (SSH pass, DB pass, admin pass, GitHub PAT).
+ *   See docs/CICD-GUIDE.md §10 Secrets Management for the full plan.
  */
 
 import { Client } from 'ssh2';
 import { execSync } from 'child_process';
 
 // ─── Configuration ─────────────────────────────────────────────
+// NOTE: Phase 0 — hardcoded. Phase 1+ — migrate to process.env (see header).
 const PROD = {
-  host: '103.244.7.221',
-  port: 22222,
-  username: 'root',
-  password: 'CryptSK@123#$',
+  host: process.env.PROD_HOST || '103.244.7.221',
+  port: parseInt(process.env.PROD_SSH_PORT || '22222', 10),
+  username: process.env.PROD_SSH_USER || 'root',
+  password: process.env.PROD_SSH_PASS || 'CryptSK@123#$',
   readyTimeout: 30000,
 };
 
-const PROD_PROJECT_DIR = '/opt/cryptsk-gateway';
+const PROD_PROJECT_DIR = '/opt/cryptsk-nexus';
 const SANDBOX_DIR = '/home/z/my-project';
 const APP_PORT = 3000;
 
