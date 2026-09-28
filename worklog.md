@@ -253,3 +253,37 @@ Stage Summary:
 - ✅ Cloudflare tunnel working (HTTP 200, HTTPS)
 - Commits: c3110f9 (schema+sidebar+domain), 816cf64 (plan optional fix), 0b2ac42 (customers+products panels)
 - Next: Phase 3 — AAA (FreeRADIUS integration, sync subscribers→radcheck, products→radgroupcheck)
+
+---
+Task ID: PHASE-3
+Agent: orchestrator (sandbox main)
+Task: Phase 3 — AAA / FreeRADIUS integration
+
+Work Log:
+- Added 8 FreeRADIUS Prisma models (radcheck, radreply, radusergroup, radgroupcheck, radgroupreply, radacct, radpostauth, nas) with Cryptsk extended columns (subscriberId, planId, areaId on radacct)
+- Created radius-sync service (src/lib/radius-sync.ts):
+  * syncSubscriberToRadius — username+password → radcheck, group → radusergroup
+  * syncProductToRadius — bandwidth → radgroupcheck (Mikrotik-Rate-Limit format), defaults → radgroupreply
+  * syncNasToRadius — upsert NAS device
+  * resyncAllToRadius — bulk resync all active subscribers + products
+  * Speed formatting: kbps → '50M'/'512K' Mikrotik format with FUP burst support
+- Created 3 API routes (RBAC-protected):
+  * /api/nas — GET (list), POST (create + sync to RADIUS), DELETE
+  * /api/radius/acct — GET (list accounting sessions with filters)
+  * /api/radius/postauth — GET (list auth events with filters)
+- Created 3 UI panels:
+  * nas-panel.tsx — NAS device management (type badges, last-seen, RADIUS secret)
+  * radius-acct-panel.tsx — accounting sessions (duration, download/upload octets, active filter)
+  * radius-postauth-panel.tsx — auth log (Access-Accept/Reject color-coded, MAC, NAS IP)
+- Updated sidebar AAA links: NAS→/?view=nas, Auth→/?view=radius-postauth, Acct→/?view=radius-acct
+- Updated page.tsx view switcher with 3 new views
+
+Stage Summary:
+- ✅ 30 tables on PostgreSQL 18.6 (22 Phase 0-2 + 8 FreeRADIUS)
+- ✅ FreeRADIUS 3.2.10 installed on VM (installed during Phase 0)
+- ✅ radius-sync service ready (will sync Subscribers→radcheck, Products→radgroupcheck)
+- ✅ NAS device management UI + API
+- ✅ RADIUS accounting viewer (radacct)
+- ✅ RADIUS auth log viewer (radpostauth)
+- Next: configure FreeRADIUS sql module to use PostgreSQL, start radiusd, test auth flow
+- Commit: 3f1159e
