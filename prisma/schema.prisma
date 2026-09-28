@@ -584,7 +584,7 @@ model Subscriber {
 
   // Relations
   customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  plan            Plan             @relation(fields: [planId], references: [id], onDelete: SetNull)
+  plan            Plan?            @relation(fields: [planId], references: [id], onDelete: SetNull)
   subscriptions  Subscription[]
 
   @@index([customerId])
