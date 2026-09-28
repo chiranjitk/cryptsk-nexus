@@ -40,7 +40,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     ] },
   ] },
   { label: "Network & Security", items: [
-    { title: "Network & Gateway", icon: Network, children: [{ title: "Gateways", href: "/?view=vpp" }, { title: "Interfaces" }, { title: "VLAN / VRF" }, { title: "IPAM" }, { title: "Routing" }, { title: "Multi-WAN" }, { title: "DHCP" }, { title: "DNS" }, { title: "PPPoE" }, { title: "Captive Portal" }] },
+    { title: "Network & Gateway", icon: Network, children: [{ title: "Gateways", href: "/?view=vpp" }, { title: "Interfaces" }, { title: "VLAN / VRF" }, { title: "IPAM" }, { title: "Routing" }, { title: "Multi-WAN", href: "/?view=network" }, { title: "DHCP", href: "/?view=network" }, { title: "DNS", href: "/?view=network" }, { title: "PPPoE" }, { title: "Captive Portal" }] },
     { title: "Security & Advanced", icon: Lock, children: [{ title: "Firewall" }, { title: "IPS / IDS" }, { title: "DDoS" }, { title: "VPN" }, { title: "DPI" }, { title: "Content / DNS Filter" }, { title: "TR-069 ACS" }, { title: "SNMP" }, { title: "MikroTik" }, { title: "SSH Terminal" }] },
   ] },
   { label: "Business Operations", items: [

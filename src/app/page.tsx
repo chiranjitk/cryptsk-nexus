@@ -14,6 +14,7 @@ import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { PoliciesPanel } from "@/components/admin/policies-panel";
 import { VppPanel } from "@/components/admin/vpp-panel";
 import { BillingPanel } from "@/components/admin/billing-panel";
+import { NetworkPanel } from "@/components/admin/network-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -159,6 +160,7 @@ export default function DashboardPage() {
   if (view === "policies") return <PoliciesPanel />;
   if (view === "vpp") return <VppPanel />;
   if (view === "billing") return <BillingPanel />;
+  if (view === "network") return <NetworkPanel />;
 
   // Default: dashboard
   return (

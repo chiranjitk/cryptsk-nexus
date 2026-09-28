@@ -1358,18 +1358,21 @@ enum WanLinkStatus {
   backup
 }
 
-/// Phase 8 — DHCP Lease (tracked by dnsmasq or VPP DHCP relay)
+/// Phase 8 — DHCP Lease (Kea DHCPv4/v6 lease database)
 model DhcpLease {
   id              String           @id @default(cuid())
   macAddress      String           @unique
-  ipAddress       String           @unique
+  ipAddress       String           @unique  // IPv4 or IPv6
+  ipType          String           @default("ipv4")  // ipv4, ipv6
   hostname        String?
-  subscriberId    String?  // linked subscriber
+  subscriberId    String?
+  subnetId        String?  // link to DhcpSubnet
   leaseStart      DateTime         @default(now())
   leaseEnd        DateTime
-  status          DhcpLeaseStatus  @default(active)
-  // Network info
-  interface       String?  // which interface/VLAN
+  state           String           @default("active")  // active, expired, released, declined
+  // Kea-specific
+  keaLeaseId      Int?  // Kea's internal lease ID
+  interface       String?
   vlanId          Int?
   gateway         String?
   dnsServer       String?
@@ -1379,24 +1382,129 @@ model DhcpLease {
 
   @@index([macAddress])
   @@index([ipAddress])
-  @@index([status])
+  @@index([subnetId])
+  @@index([state])
   @@index([leaseEnd])
   @@map("dhcp_leases")
 }
 
-/// Phase 8 — DNS Record (custom DNS entries managed via dnsmasq)
-model DnsRecord {
+/// Phase 8 — DHCP Subnet (Kea subnet configuration)
+/// Supports both IPv4 and IPv6 subnets
+model DhcpSubnet {
   id              String        @id @default(cuid())
-  hostname        String  // e.g. "router.local"
-  recordType      String        @default("A")  // A, AAAA, CNAME, MX, TXT
-  value           String  // IP address or CNAME target
-  ttl             Int           @default(300)
+  subnetName      String        @unique  // "Office-LAN-v4", "Guest-v6"
+  subnet          String        @unique  // CIDR: "10.0.0.0/24" or "fd00::/64"
+  ipType          String        @default("ipv4")  // ipv4, ipv6
+  // Pool
+  poolStart       String  // "10.0.0.100"
+  poolEnd         String  // "10.0.0.200"
+  // Gateway + DNS
+  gateway         String?  // "10.0.0.1"
+  dnsServers      String?  // JSON array: ["8.8.8.8", "8.8.4.4"]
+  // Lease times
+  validLifetime   Int           @default(3600)  // seconds
+  preferredLifetime Int?  // for IPv6 (seconds)
+  renewTimer      Int?  // T1
+  rebindTimer     Int?  // T2
+  // Network
+  interface       String?  // which interface to serve
+  vlanId          Int?
+  // Kea-specific
+  keaSubnetId     Int?  // Kea's subnet-id
+  // Metadata
   description     String?
   isActive        Boolean       @default(true)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  @@unique([hostname, recordType])
+  // Relations
+  reservations    DhcpReservation[]
+  leases          DhcpLease[]
+
+  @@index([ipType])
+  @@index([isActive])
+  @@map("dhcp_subnets")
+}
+
+/// Phase 8 — DHCP Reservation (static IP assignment via Kea host reservation)
+model DhcpReservation {
+  id              String        @id @default(cuid())
+  subnetId        String
+  subscriberId   String?
+  macAddress      String        @unique  // client MAC
+  ipAddress       String        @unique  // reserved IP
+  ipType          String        @default("ipv4")
+  hostname        String?
+  // Kea-specific
+  keaHostId       Int?  // Kea's host reservation ID
+  // Options
+  dnsServers      String?  // JSON array
+  gateway         String?
+  // Metadata
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  subnet          DhcpSubnet    @relation(fields: [subnetId], references: [id], onDelete: Cascade)
+
+  @@index([subnetId])
+  @@index([subscriberId])
+  @@index([macAddress])
+  @@map("dhcp_reservations")
+}
+
+/// Phase 8 — DNS Zone (BIND zone management)
+model DnsZone {
+  id              String        @id @default(cuid())
+  zoneName        String        @unique  // "cryptsk.local", "1.0.10.in-addr.arpa"
+  zoneType        String        @default("forward")  // forward, reverse
+  // SOA record
+  primaryNs       String  // "ns1.cryptsk.com"
+  adminEmail      String  // "admin.cryptsk.com"
+  serial          Int           @default(1)
+  refresh         Int           @default(3600)
+  retry           Int           @default(900)
+  expire          Int           @default(604800)
+  minimum         Int           @default(86400)
+  // BIND-specific
+  zoneFile        String?  // path to zone file (e.g. "/var/named/cryptsk.local.zone")
+  allowTransfer   String?  // IP list for zone transfers
+  allowQuery      String?  // IP list for queries
+  // Metadata
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  records         DnsRecord[]
+
+  @@index([zoneName])
+  @@index([zoneType])
+  @@map("dns_zones")
+}
+
+/// Phase 8 — DNS Record (individual records within a zone)
+model DnsRecord {
+  id              String        @id @default(cuid())
+  zoneId          String  // link to DnsZone
+  hostname        String  // relative to zone: "router" (within cryptsk.local)
+  recordType      String        @default("A")  // A, AAAA, CNAME, MX, TXT, SRV, PTR
+  value           String  // IP, CNAME target, MX preference+exchange
+  ttl             Int           @default(300)
+  priority        Int?  // for MX, SRV
+  weight          Int?  // for SRV
+  port            Int?  // for SRV
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  zone            DnsZone       @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([zoneId, hostname, recordType])
+  @@index([zoneId])
   @@index([hostname])
   @@map("dns_records")
 }
