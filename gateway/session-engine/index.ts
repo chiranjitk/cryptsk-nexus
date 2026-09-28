@@ -164,7 +164,10 @@ function parseUrl(url: string): { path: string; params: Record<string, string> }
 const server = Bun.serve({
   port: PORT,
   async fetch(req: Request): Promise<Response> {
-    const { path, params } = parseUrl(req.url);
+    const url = new URL(req.url);
+    const path = url.pathname;
+    const params: Record<string, string> = {};
+    url.searchParams.forEach((v, k) => { params[k] = v; });
     const method = req.method;
 
     // CORS preflight
