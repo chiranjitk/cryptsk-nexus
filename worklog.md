@@ -212,3 +212,44 @@ Stage Summary:
 - ✅ 6 audit events already logged (from login attempts)
 - Commit: a2cc836
 - Next: Phase 2 — Customer/Subscriber/Product/Package models + UI
+
+---
+Task ID: PHASE-2
+Agent: orchestrator (sandbox main)
+Task: Phase 2 — Customer/Product/Plan/Subscription models + UI + domain update
+
+Work Log:
+- Updated docs/CICD-GUIDE.md: http://103.244.7.221:3000 → https://nexus.cryptsk.com (Cloudflare tunnel)
+- Updated NEXTAUTH_URL on prod → https://nexus.cryptsk.com (cookie secure=true for HTTPS)
+- Fixed sidebar: removed RADIUS Users + RADIUS Groups from Access & AAA menu (single source: Customers/Subscribers = RADIUS Users, Products & Packages = RADIUS Groups)
+- Added href links: Customers→/?view=customers, Products→/?view=products
+- Phase 2 Prisma schema (7 models + 11 enums):
+  * Customer (individual/business/government/reseller/lco, GST/PAN, KYC)
+  * Subscriber (RADIUS username/password, plan, NAS, static IP, VLAN)
+  * Contact (phone/email/mobile/whatsapp/emergency, opt-out)
+  * Address (billing/installation/correspondent, geo coords)
+  * Product (broadband/voip/iptv, speed/data/FUP, radiusGroupName)
+  * Plan (monthly/quarterly/yearly, GST 18%, setup fee)
+  * Subscription (Customer→Plan binding, lifecycle)
+  * ServiceLifecycle (state transitions: provision→activate→suspend→terminate)
+- Fixed Prisma schema error: Subscriber.plan must be optional (Plan?) since planId is nullable
+- Deployed: 22 tables created on PostgreSQL 18.6 (14 Phase 0/1 + 8 Phase 2)
+- Created 3 API routes (RBAC-protected):
+  * /api/customers (GET list + POST create with auto customerCode)
+  * /api/products (GET list with plans + POST create with auto productCode)
+  * /api/plans (GET filter by product + POST create)
+- Created 2 UI panels:
+  * customers-panel.tsx — searchable table, create dialog (individual/business with GST/PAN)
+  * products-panel.tsx — expandable rows with plans, create dialog (speed/data/RADIUS group)
+- Updated page.tsx — view=customers + view=products added to switcher
+- Verified: curl returns HTML (5258 bytes), API returns 403 without auth (RBAC works)
+- Note: agent-browser can't pass Cloudflare bot challenge — user must verify in real browser
+
+Stage Summary:
+- ✅ Phase 2 models + API + UI deployed to https://nexus.cryptsk.com
+- ✅ 22 tables on PostgreSQL 18.6
+- ✅ Sidebar fixed (no duplicate RADIUS Users/Groups)
+- ✅ Domain updated everywhere (nexus.cryptsk.com)
+- ✅ Cloudflare tunnel working (HTTP 200, HTTPS)
+- Commits: c3110f9 (schema+sidebar+domain), 816cf64 (plan optional fix), 0b2ac42 (customers+products panels)
+- Next: Phase 3 — AAA (FreeRADIUS integration, sync subscribers→radcheck, products→radgroupcheck)
