@@ -1,6 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+# ============== Dependencies ==============
 node_modules
 /.pnp
 .pnp.*
@@ -10,45 +10,88 @@ node_modules
 !.yarn/releases
 !.yarn/versions
 
-# testing
+# ============== Testing ==============
 /coverage
 
-# next.js
+# ============== Next.js ==============
 /.next/
 /out/
 
-# production
+# ============== Production builds ==============
 /build
+/dist
+*.tsbuildinfo
 
-# misc
+# ============== Misc OS / editor ==============
 .DS_Store
+Thumbs.db
 *.pem
+*.swp
+*.swo
+.vscode/
+.idea/
 
-# debug
+# ============== Debug logs ==============
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
 *.log
-dev.log
-dev.out.log
-test
-prompt
 
-server.log
-# Skills directory
-/skills/
+# ============================================================
+# CRYPTSK NEXUS — project-specific rules
+# ============================================================
+
+# --- Environment & secrets (NEVER commit) ---
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# --- Sandbox runtime artifacts ---
+.zscripts/dev.pid
+dev.log
+
+# --- SQLite dev databases (production uses PostgreSQL per ADR-004) ---
+db/*.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+
+# --- Tool/junk artifacts (not source) ---
+tool-results/
+download/
+
+# --- External repo clones (design pack lives in /docs/architecture/) ---
+external-repos/
+
+# --- Prisma generated client (regenerated on install) ---
+src/generated/prisma/
+prisma/migrations/dev/
+
+# --- Gateway plane build artifacts (Go / VPP / FreeRADIUS) ---
+gateway/bin/
+gateway/build/
+gateway/vendor/
+gateway/vpp/run/
+gateway/vpp/log/
+gateway/runtime/
+gateway/state/
+gateway/**/*.exe
+
+# --- Encrypted backup blobs (AES-256-GCM, still not for git) ---
+*.cryptsk
+backups/
+
+# --- Rocky 10 deploy runtime state ---
+deploy/runtime/
+deploy/state/
+
+# --- Next.js auto-generated type reference (regenerated on dev) ---
+next-env.d.ts
+
+# --- Sandbox-only skills folder (not part of product source) ---
+skills/
+
+# --- Bun lockfile cache (keep bun.lock, ignore cache) ---
+.bun/
+

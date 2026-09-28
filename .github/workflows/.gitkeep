@@ -1,0 +1,10 @@
+# CI workflows placeholder
+
+GitHub Actions workflows will be added in the next commit:
+- `lint.yml` — ESLint + TypeScript typecheck on every push/PR
+- `test.yml` — unit + integration tests
+- `migrate-check.yml` — verify Prisma migrations are valid
+- `build-oss-bss.yml` — build Next.js OSS/BSS plane
+- `build-gateway.yml` — build Go Session Engine (when /gateway has code)
+
+For now this `.gitkeep` ensures the `.github/workflows/` folder exists in the repo.

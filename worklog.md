@@ -34,3 +34,33 @@ Stage Summary:
 - Implementation roadmap = 11 phases (Phase 0 → 10): Architecture Foundation → Platform Core/Identity → Customer/Service/Package → AAA → Session Engine → Policy Engine → VPP Gateway → OSS/BSS Expansion → Advanced Network & Security → Intelligence (AI) → Scale/HA Hardening. Canonical authority is `12_IMPLEMENTATION_PHASE_ROADMAP.md`; STOP-and-approve gates mandatory between phases.
 - Scope size: VERY LARGE (204 Prisma models, 113 legacy pages, 12 mini-services, 40 dashboard widgets, three deployment modes, native gateway plane).
 - Major sandbox conflicts identified (detailed in report §11): gateway plane (DPDK/VPP/Go/FreeRADIUS) cannot run in Next.js-only sandbox; PostgreSQL required for production but dev may use SQLite (acceptable for dev); multiple mini-service ports (3001–3870) violate the "one external port 3000 / no absolute-URL fetch to localhost:PORT" rule; 113-page navigation violates "only `/` is user-visible" rule; self-care portal requires separate application shell; syslog UDP/1514 and WebSocket servers cannot bind extra ports; `bun run build` forbidden (dev-server only) matches Cryptsk dev environment description.
+
+---
+Task ID: SETUP-1
+Agent: orchestrator (sandbox main)
+Task: Repo setup — initialize git, configure GitHub remote with PAT, organize monorepo structure, copy design pack to /docs/architecture/, first commit + push
+
+Work Log:
+- Inspected existing local git repo at /home/z/my-project (3 commits, 100 tracked files, no remote).
+- Tested outbound HTTPS to github.com — confirmed working (got HEAD sha 74b8c8e from public fetch).
+- Set git global config: user.name="Cryptsk Dev Agent", user.email="chiranjitk@users.noreply.github.com", init.defaultBranch=main, pull.rebase=false, credential.helper=store.
+- Stored GitHub PAT in /home/z/.git-credentials (chmod 600, never committed to repo).
+- Added remote `origin` → https://github.com/chiranjitk/cryptsk-nexus.git.
+- Fetched origin/main — confirmed remote has 3 commits, only the 14-doc design pack at Cryptsk_Product_Architecture_Design_Pack_FINAL/.
+- Created monorepo folder structure: docs/architecture/, gateway/{session-engine,vpp,freeradius,policy-engine}/, deploy/{systemd,caddy,postgres}/, .github/workflows/.
+- Copied 14 design docs from external-repos/cryptsk-nexus/Cryptsk_Product_Architecture_Design_Pack_FINAL/ → docs/architecture/ (source of truth in repo).
+- Wrote comprehensive .gitignore (Next.js defaults + Cryptsk-specific rules: .env, db/*.db, tool-results/, external-repos/, next-env.d.ts, skills/, gateway build artifacts, deploy runtime state, *.cryptsk backups).
+- Untracked junk from git: .env, db/custom.db, .zscripts/dev.pid, tool-results/*.txt, external-repos/cryptsk-nexus, download/README.md.
+- Wrote README.md (root — project overview, structure, two-plane architecture, 12-phase roadmap status, golden rules, ADRs).
+- Wrote gateway/README.md (Network/Gateway plane — Go Session Engine, VPP, FreeRADIUS, Policy Engine).
+- Wrote deploy/README.md (Rocky 10 deployment — install-rocky10.sh, systemd, caddy, postgres).
+- Wrote docs/README.md (architecture doc index — 14 docs explained).
+- Wrote .github/workflows/.gitkeep (CI placeholder until next commit).
+- About to commit and force-push to origin/main.
+
+Stage Summary:
+- Repo structure established: monorepo with Next.js OSS/BSS plane at root, design pack at /docs/architecture/, gateway plane scaffolding at /gateway/, deploy tooling at /deploy/, CI placeholder at /.github/workflows/.
+- GitHub remote `origin` configured + PAT stored in credential helper (file mode 600).
+- .gitignore covers all sandbox artifacts (next-env.d.ts, skills/, tool-results/, external-repos/, dev.log, SQLite DBs, .env) so sandbox resets won't push junk.
+- Force-push to origin/main required (remote only has design pack at old path; new path is docs/architecture/ — no information lost, just history rewritten).
+- Next: Phase 0 actual code — Prisma schema for User/Role/Permission/AuditEvent/SystemSetting/Module/FeatureFlag/ApiKey/Notification; CRYPTSK design tokens in globals.css; AppShell at / with 14 menu groups collapsed into role-gated views; NextAuth + bcryptjs + HMAC sessions; RBAC middleware; audit service; dashboard shell.
