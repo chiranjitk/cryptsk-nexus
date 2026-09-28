@@ -13,6 +13,7 @@ import { RadiusPostAuthPanel } from "@/components/admin/radius-postauth-panel";
 import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { PoliciesPanel } from "@/components/admin/policies-panel";
 import { VppPanel } from "@/components/admin/vpp-panel";
+import { BillingPanel } from "@/components/admin/billing-panel";
 import {
   Users, Wifi, DollarSign, Activity, TrendingUp, TrendingDown,
   AlertCircle, Server, ShieldCheck, Zap, type LucideIcon,
@@ -157,6 +158,7 @@ export default function DashboardPage() {
   if (view === "sessions") return <SessionsPanel />;
   if (view === "policies") return <PoliciesPanel />;
   if (view === "vpp") return <VppPanel />;
+  if (view === "billing") return <BillingPanel />;
 
   // Default: dashboard
   return (

@@ -535,6 +535,9 @@ model Customer {
   addresses       Address[]
   subscribers     Subscriber[]
   subscriptions   Subscription[]
+  invoices        Invoice[]
+  payments        Payment[]
+  wallet          Wallet?
   // Audit
   createdBy       String?  // userId
   updatedBy       String?
@@ -746,6 +749,7 @@ model Subscription {
   subscriber      Subscriber?        @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
   plan            Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
   lifecycleEvents ServiceLifecycle[]
+  invoices        Invoice[]
 
   @@index([customerId])
   @@index([subscriberId])
@@ -1048,4 +1052,257 @@ model PlanPolicyMapping {
   @@index([planId])
   @@index([policyId])
   @@map("plan_policy_mappings")
+}
+
+// ============================================================
+// PHASE 7 — Billing & Finance
+// Per: docs/architecture/04_FEATURE §10, 12_ROADMAP (Phase 7A)
+// Invoices, Payments, Tax (GST), Vouchers, Wallet, Credit Notes
+// ============================================================
+
+enum InvoiceStatus {
+  draft
+  issued
+  sent
+  paid
+  partial
+  overdue
+  cancelled
+  void
+}
+
+enum PaymentMethod {
+  cash
+  card
+  upi
+  bank_transfer
+  wallet
+  razorpay
+  stripe
+  payu
+  cheque
+  dd
+}
+
+enum PaymentStatus {
+  pending
+  completed
+  failed
+  refunded
+  partially_refunded
+}
+
+enum VoucherStatus {
+  unused
+  used
+  expired
+  cancelled
+}
+
+enum WalletTxnType {
+  recharge
+  payment
+  refund
+  adjustment
+  cashback
+}
+
+/// Phase 7 — Invoice (billing document)
+model Invoice {
+  id              String        @id @default(cuid())
+  invoiceNumber   String        @unique  // INV-2026-00001
+  customerId      String
+  subscriptionId  String?  // optional link to subscription
+  // Dates
+  issueDate       DateTime      @default(now())
+  dueDate         DateTime
+  // Amounts
+  subtotal        Float         @default(0)  // sum of line items
+  discountPercent Float         @default(0)
+  discountAmount  Float         @default(0)
+  taxableAmount   Float         @default(0)
+  taxRate         Float         @default(18.0)  // GST %
+  taxAmount       Float         @default(0)
+  total           Float         @default(0)  // subtotal - discount + tax
+  paidAmount      Float         @default(0)
+  balanceDue     Float         @default(0)  // total - paidAmount
+  // Status
+  status          InvoiceStatus @default(draft)
+  paymentStatus   String        @default("unpaid")  // unpaid, partial, paid
+  // Metadata
+  notes           String?
+  termsConditions String?
+  pdfUrl          String?  // generated PDF URL
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  lines           InvoiceLine[]
+  payments        Payment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+/// Phase 7 — Invoice line item
+model InvoiceLine {
+  id              String        @id @default(cuid())
+  invoiceId       String
+  description     String
+  quantity        Float         @default(1)
+  unitPrice       Float
+  amount          Float         // quantity * unitPrice
+  taxRate         Float         @default(18.0)
+  taxAmount       Float         @default(0)
+  total           Float         // amount + taxAmount
+  // Reference (what is this line for?)
+  lineType        String        @default("charge")  // charge, discount, tax, adjustment
+  planId          String?  // if this is a plan charge
+  addonId         String?  // if this is an add-on
+  sortOrder       Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  invoice         Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+/// Phase 7 — Payment (received against invoice)
+model Payment {
+  id              String         @id @default(cuid())
+  paymentNumber   String         @unique  // PAY-2026-00001
+  invoiceId       String?
+  customerId      String
+  // Amount
+  amount          Float
+  currency        String         @default("INR")
+  // Method
+  method          PaymentMethod  @default(cash)
+  status          PaymentStatus  @default(pending)
+  // Transaction
+  transactionId   String?  // gateway transaction ID
+  gatewayRef      String?  // payment gateway reference
+  // Dates
+  paidAt          DateTime?
+  receivedAt      DateTime       @default(now())
+  // Metadata
+  notes           String?
+  // Audit
+  receivedBy      String?  // userId
+  createdBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  invoice         Invoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@index([status])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+/// Phase 7 — Voucher (prepaid recharge code)
+model Voucher {
+  id              String        @id @default(cuid())
+  code            String        @unique  // unique voucher code
+  planId          String?  // which plan this voucher activates
+  // Value
+  faceValue       Float   // printed value
+  currency        String        @default("INR")
+  validityDays    Int?    // validity after activation
+  // Status
+  status          VoucherStatus @default(unused)
+  // Batch
+  batchNumber     String?  // which batch this voucher belongs to
+  // Usage
+  usedAt          DateTime?
+  usedBy          String?  // subscriber/customer who used it
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  // Audit
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@index([batchNumber])
+  @@map("vouchers")
+}
+
+/// Phase 7 — Wallet (prepaid wallet per customer)
+model Wallet {
+  id              String        @id @default(cuid())
+  customerId      String        @unique  // one wallet per customer
+  balance         Float         @default(0)
+  currency        String        @default("INR")
+  minBalance      Float         @default(0)
+  autoRecharge    Boolean       @default(false)
+  autoRechargeThreshold Float?  // recharge when balance drops below this
+  autoRechargeAmount  Float?    // amount to recharge
+  // Audit
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  transactions    WalletTransaction[]
+
+  @@index([customerId])
+  @@map("wallets")
+}
+
+/// Phase 7 — Wallet transaction (credit/debit)
+model WalletTransaction {
+  id              String          @id @default(cuid())
+  walletId        String
+  amount          Float   // positive = credit, negative = debit
+  type            WalletTxnType
+  description     String?
+  balanceAfter    Float   // balance after this transaction
+  // Reference
+  invoiceId       String?  // if this is a payment for an invoice
+  paymentId       String?  // if this is a recharge from a payment
+  // Audit
+  createdBy       String?
+  createdAt       DateTime        @default(now())
+
+  wallet          Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("wallet_transactions")
+}
+
+/// Phase 7 — Tax rate (GST, CGST, SGST, IGST, TDS, TCS)
+model TaxRate {
+  id              String        @id @default(cuid())
+  name            String        @unique  // "GST 18%", "CGST 9%", "SGST 9%"
+  code            String        @unique  // GST18, CGST9, SGST9
+  rate            Float         // percentage
+  type            String        @default("percentage")  // percentage, fixed
+  isCompound      Boolean       @default(false)  // tax on tax?
+  // India-specific
+  gstType         String?  // CGST, SGST, IGST, UTGST, Cess
+  hsnCode         String?  // HSN/SAC code
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+  @@map("tax_rates")
 }
