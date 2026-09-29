@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
+    "dev": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus NEXTAUTH_URL=http://localhost:3000 NEXTAUTH_SECRET=9bb58228cf7242586968c4adb7d34520737d6f14f873b8741e90d34c70242753 next dev -p 3000 2>&1 | tee dev.log",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
@@ -12,11 +12,11 @@
     "deploy:restart": "node scripts/deploy.mjs --restart",
     "deploy:logs": "node scripts/deploy.mjs --logs",
     "deploy:no-push": "node scripts/deploy.mjs --no-push",
-    "db:push": "prisma db push --accept-data-loss",
-    "db:generate": "prisma generate",
+    "db:push": "prisma db push --accept-data-loss --schema prisma/schema.prisma",
+    "db:generate": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "db:seed": "bun run prisma/seed.ts"
+    "db:seed": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus bun run prisma/seed.ts"
   },
   "prisma": {
     "seed": "bun run prisma/seed.ts"

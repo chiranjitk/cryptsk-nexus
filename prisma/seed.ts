@@ -172,15 +172,15 @@ async function main() {
   const modules = [
     { name: "Dashboard", slug: "dashboard", description: "Main dashboard", status: "active", isRequired: true, sortOrder: 0 },
     { name: "Identity & Administration", slug: "identity_admin", description: "Users, roles, permissions, RBAC, audit", status: "active", isRequired: true, sortOrder: 1 },
-    { name: "Customer & Services", slug: "customer_service", description: "Customers, subscribers, products, packages", status: "not_installed", sortOrder: 2 },
-    { name: "AAA", slug: "aaa", description: "RADIUS auth/authz/accounting", status: "not_installed", sortOrder: 3 },
-    { name: "Session Engine", slug: "session_engine", description: "Live session management", status: "not_installed", sortOrder: 4 },
-    { name: "Policy Engine", slug: "policy_engine", description: "Policy definition and enforcement", status: "not_installed", sortOrder: 5 },
-    { name: "VPP Gateway", slug: "vpp_gateway", description: "DPDK/VPP dataplane", status: "not_installed", sortOrder: 6 },
-    { name: "Billing & Finance", slug: "billing_finance", description: "Invoices, payments, collections", status: "not_installed", sortOrder: 7 },
+    { name: "Customer & Services", slug: "customer_service", description: "Customers, subscribers, products, packages", status: "active", sortOrder: 2 },
+    { name: "AAA", slug: "aaa", description: "RADIUS auth/authz/accounting", status: "active", sortOrder: 3 },
+    { name: "Session Engine", slug: "session_engine", description: "Live session management", status: "active", sortOrder: 4 },
+    { name: "Policy Engine", slug: "policy_engine", description: "Policy definition and enforcement", status: "active", sortOrder: 5 },
+    { name: "VPP Gateway", slug: "vpp_gateway", description: "DPDK/VPP dataplane", status: "active", sortOrder: 6 },
+    { name: "Billing & Finance", slug: "billing_finance", description: "Invoices, payments, collections", status: "active", sortOrder: 7 },
     { name: "Operations & Support", slug: "operations_support", description: "Tickets, installations, inventory", status: "not_installed", sortOrder: 8 },
     { name: "Monitoring", slug: "monitoring", description: "Live monitoring, syslog, alerts", status: "not_installed", sortOrder: 9 },
-    { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "not_installed", sortOrder: 10 },
+    { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "active", sortOrder: 10 },
   ];
   for (const m of modules) {
     await db.module.upsert({
@@ -191,12 +191,210 @@ async function main() {
   }
   console.log(`   ✓ ${modules.length} modules created\n`);
 
+  // ── 9. Role-permission matrix (idempotent, additive — never prunes manual links) ──
+  console.log("9. Applying role-permission matrix…");
+
+  /** Expand helper: P(resource, [actions]) → [resource, action] tuples */
+  function P(resource: string, actions: string[]): Array<[string, string]> {
+    return actions.map((a) => [resource, a] as [string, string]);
+  }
+
+  // Enterprise RBAC matrix per docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
+  // Key = role slug, value = "ALL" (every permission) or [resource, action] tuples.
+  // super_admin bypasses RBAC in code (src/lib/rbac.ts) but is also fully seeded.
+  const ROLE_PERMISSION_MATRIX: Record<string, "ALL" | Array<[string, string]>> = {
+    super_admin: "ALL",
+
+    platform_admin: [
+      ...P("user", ["manage"]),
+      ...P("role", ["manage"]),
+      ...P("module", ["manage"]),
+      ...P("feature_flag", ["manage"]),
+      ...P("api_key", ["manage"]),
+      ...P("system_setting", ["manage"]),
+      ...P("audit", ["read", "list", "export"]),
+      ...P("subscriber", ["manage"]),
+      ...P("billing.invoice", ["manage"]),
+      ...P("billing.payment", ["manage"]),
+      ...P("billing.refund", ["manage"]),
+      ...P("network.device", ["manage"]),
+      ...P("network.gateway", ["manage"]),
+      ...P("network.interface", ["manage"]),
+      ...P("aaa.radius", ["manage"]),
+      ...P("aaa.nas", ["manage"]),
+      ...P("dhcp", ["manage"]),
+      ...P("dns", ["manage"]),
+      ...P("policy", ["manage"]),
+      ...P("report", ["read", "list", "export"]),
+    ],
+
+    noc_operator: [
+      ...P("session", ["read", "list", "execute"]),
+      ...P("aaa.radius", ["read", "list"]),
+      ...P("aaa.nas", ["read", "list"]),
+      ...P("network.device", ["read", "list"]),
+      ...P("dhcp", ["read", "list"]),
+      ...P("dns", ["read", "list"]),
+      ...P("report", ["read", "list"]),
+      ...P("audit", ["read", "list"]),
+    ],
+
+    network_engineer: [
+      ...P("network.device", ["manage"]),
+      ...P("dhcp", ["manage"]),
+      ...P("dns", ["manage"]),
+      ...P("policy", ["read", "list", "update"]),
+      ...P("report", ["read", "list"]),
+    ],
+
+    aaa_operator: [
+      ...P("aaa.radius", ["manage"]),
+      ...P("aaa.nas", ["manage"]),
+      ...P("session", ["read", "list", "execute"]),
+      ...P("subscriber", ["read", "list"]),
+      ...P("audit", ["read", "list"]),
+    ],
+
+    billing_manager: [
+      ...P("billing.invoice", ["manage"]),
+      ...P("billing.payment", ["manage"]),
+      ...P("billing.refund", ["approve"]),
+      ...P("subscriber", ["read", "list"]),
+      ...P("report", ["read", "list", "export"]),
+      ...P("audit", ["read", "list"]),
+    ],
+
+    finance_operator: [
+      ...P("billing.payment", ["create", "update", "list", "read"]),
+      ...P("billing.invoice", ["read", "list"]),
+      ...P("report", ["read", "list", "export"]),
+    ],
+
+    support_lead: [
+      ...P("subscriber", ["manage"]),
+      ...P("session", ["read", "list"]),
+      ...P("ticket", ["manage"]),
+      ...P("installation", ["manage"]),
+      ...P("audit", ["read", "list"]),
+    ],
+
+    support_agent: [
+      ...P("subscriber", ["read", "list", "update"]),
+      ...P("ticket", ["create", "update", "list", "read"]),
+      ...P("session", ["read", "list"]),
+    ],
+
+    field_technician: [
+      ...P("installation", ["read", "list", "update"]),
+      ...P("subscriber", ["read", "list"]),
+      ...P("inventory", ["read", "list"]),
+    ],
+
+    sales_agent: [
+      ...P("subscriber", ["read", "list", "create"]),
+      ...P("report", ["read"]),
+      ...P("billing.invoice", ["read", "list"]),
+    ],
+
+    reseller: [
+      ...P("subscriber", ["read", "list"]),
+      ...P("report", ["read"]),
+      ...P("billing.invoice", ["read", "list"]),
+    ],
+
+    // Read-only persona: read + list + export only
+    auditor: [
+      ...["audit", "report", "user", "role", "subscriber", "billing.invoice", "billing.payment",
+        "session", "aaa.radius", "network.device", "policy", "dhcp", "dns"].flatMap((r) =>
+        P(r, ["read", "list", "export"])
+      ),
+    ],
+
+    scope_admin: [
+      ...P("subscriber", ["manage"]),
+      ...P("report", ["read", "list"]),
+      ...P("policy", ["read", "list"]),
+    ],
+
+    lco_operator: [
+      ...P("subscriber", ["read", "list", "update"]),
+      ...P("session", ["read", "list"]),
+      ...P("report", ["read"]),
+      ...P("billing.payment", ["create"]),
+    ],
+  };
+
+  // Map "resource.action" → permission id (seed step 2 guarantees all exist)
+  const matrixPermRecords = await db.permission.findMany({
+    select: { id: true, resource: true, action: true },
+  });
+  const permIdByKey = new Map<string, string>(
+    matrixPermRecords.map((p) => [`${p.resource}.${p.action}`, p.id])
+  );
+
+  // Existing links → idempotency: only add missing links, never remove
+  const existingRolePerms = await db.rolePermission.findMany({
+    select: { roleId: true, permissionId: true },
+  });
+  const linkedByRole = new Map<string, Set<string>>();
+  for (const rp of existingRolePerms) {
+    let set = linkedByRole.get(rp.roleId);
+    if (!set) {
+      set = new Set();
+      linkedByRole.set(rp.roleId, set);
+    }
+    set.add(rp.permissionId);
+  }
+
+  let matrixLinksCreated = 0;
+  for (const [roleSlug, spec] of Object.entries(ROLE_PERMISSION_MATRIX)) {
+    const role = await db.role.findUnique({
+      where: { slug: roleSlug },
+      select: { id: true, name: true },
+    });
+    if (!role) {
+      console.log(`   ⚠ role "${roleSlug}" not found — skipped`);
+      continue;
+    }
+
+    let targetIds: string[];
+    if (spec === "ALL") {
+      targetIds = matrixPermRecords.map((p) => p.id);
+    } else {
+      const ids: string[] = [];
+      for (const [resource, action] of spec) {
+        const id = permIdByKey.get(`${resource}.${action}`);
+        if (!id) {
+          console.log(`   ⚠ permission "${resource}.${action}" not found — skipped`);
+          continue;
+        }
+        ids.push(id);
+      }
+      targetIds = Array.from(new Set(ids));
+    }
+
+    const already = linkedByRole.get(role.id) ?? new Set<string>();
+    const missing = targetIds.filter((id) => !already.has(id));
+    if (missing.length > 0) {
+      await db.rolePermission.createMany({
+        data: missing.map((permissionId) => ({ roleId: role.id, permissionId })),
+        skipDuplicates: true,
+      });
+    }
+    matrixLinksCreated += missing.length;
+    console.log(
+      `   ✓ ${roleSlug} (${role.name}): +${missing.length} new → ${targetIds.length} permissions total`
+    );
+  }
+  console.log(`   ✓ Role-permission matrix applied (${matrixLinksCreated} new links)\n`);
+
   // ── Summary ──
   console.log("══════════════════════════════════════════════════");
   console.log("✅ SEED COMPLETE");
   console.log("══════════════════════════════════════════════════");
   console.log(`Roles:        15`);
   console.log(`Permissions:  ${allPerms.length}`);
+  console.log(`Role perms:   +${matrixLinksCreated} links via matrix`);
   console.log(`Admin user:   admin@cryptsk.com (password: Admin@2026)`);
   console.log(`Settings:     ${settings.length}`);
   console.log(`Modules:      ${modules.length}`);

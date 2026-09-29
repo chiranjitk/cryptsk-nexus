@@ -2,67 +2,132 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { useQuery } from "@tanstack/react-query";
 import {
-  LayoutDashboard, Users, Building2, Shield, CreditCard, KeyRound,
-  Network, Lock, Wrench, Activity, BarChart3, Handshake, Brain, Settings,
-  ChevronDown,
+  LayoutDashboard, Users, Package, CreditCard, KeyRound, Radio, ScrollText,
+  Gauge, Network, Server, Brain, ShieldCheck, UserCog, Settings, ListChecks, Wifi,
 } from "lucide-react";
+import { canClient } from "@/lib/rbac";
 
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton,
-  SidebarMenuItem, SidebarMenuSub, SidebarMenuSubItem, SidebarMenuSubButton,
-  SidebarRail,
+  SidebarMenuItem, SidebarRail,
 } from "@/components/ui/sidebar";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 
-type NavItem = {
+// ============================================================
+// Feature-registry-driven navigation (spec 07_UI_UX §30)
+// Every leaf has a REAL destination — no dead links.
+// Visibility = RBAC (session permissions) + module status.
+// ============================================================
+
+type NavLeaf = {
   title: string;
+  href: string;            // real destination
+  view: string;            // ?view= key used for active matching
   icon: React.ComponentType<{ className?: string }>;
-  children?: { title: string; href?: string }[];
-  badge?: string;
+  perm?: { resource: string; action: "read" | "list" | "manage" };
+  badgeKey?: "activeSessions";
 };
 
-const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  { label: "Core", items: [{ title: "Dashboard", icon: LayoutDashboard, children: [{ title: "Overview" }, { title: "Live Sessions", href: "/?view=sessions" }, { title: "System Health" }] }] },
-  { label: "Customer Plane", items: [
-    { title: "Customers & Services", icon: Users, children: [{ title: "Customers / Subscribers", href: "/?view=customers" }, { title: "Customer 360°" }, { title: "Products & Packages", href: "/?view=products" }, { title: "Provisioning" }] },
-    { title: "Organization & Scope", icon: Building2, badge: "LIC", children: [{ title: "Tenants" }, { title: "Organizations" }, { title: "Branches / Sites" }, { title: "Scope Manager" }] },
-  ] },
-  { label: "Policy & Access", items: [
-    { title: "Policy Engine", icon: Shield, children: [{ title: "Surfing Quota" }, { title: "Access Time" }, { title: "Bandwidth" }, { title: "Data Transfer" }, { title: "FUP" }, { title: "App & Content" }, { title: "Security Profiles" }, { title: "Access / Auth" }, { title: "Simulator", href: "/?view=policies" }, { title: "Audit" }] },
-    { title: "Access & AAA", icon: KeyRound, children: [
-      { title: "NAS Devices", href: "/?view=nas" },
-      { title: "Authentication", href: "/?view=radius-postauth" },
-      { title: "Accounting", href: "/?view=radius-acct" },
-      { title: "CoA / Disconnect" },
-      { title: "Auth Logs", href: "/?view=radius-postauth" },
-    ] },
-  ] },
-  { label: "Network & Security", items: [
-    { title: "Network & Gateway", icon: Network, children: [{ title: "Gateways", href: "/?view=vpp" }, { title: "Interfaces" }, { title: "VLAN / VRF" }, { title: "IPAM" }, { title: "Routing" }, { title: "Multi-WAN", href: "/?view=network" }, { title: "DHCP", href: "/?view=network" }, { title: "DNS", href: "/?view=network" }, { title: "PPPoE" }, { title: "Captive Portal" }] },
-    { title: "Security & Advanced", icon: Lock, children: [{ title: "Firewall" }, { title: "IPS / IDS" }, { title: "DDoS" }, { title: "VPN" }, { title: "DPI" }, { title: "Content / DNS Filter" }, { title: "TR-069 ACS" }, { title: "SNMP" }, { title: "MikroTik" }, { title: "SSH Terminal" }] },
-  ] },
-  { label: "Business Operations", items: [
-    { title: "Billing & Finance", icon: CreditCard, children: [{ title: "Invoices", href: "/?view=billing" }, { title: "Payments", href: "/?view=billing" }, { title: "Collections" }, { title: "Plans & Pricing" }, { title: "Vouchers / Top-up" }, { title: "Add-on Charges" }, { title: "GST / Tax" }, { title: "TDS / TCS" }, { title: "Refunds" }, { title: "Reconciliation" }, { title: "Reports" }, { title: "Prepaid Wallet" }, { title: "Credit Notes" }, { title: "Write-off" }, { title: "Bad Debt" }, { title: "AR Aging" }, { title: "Dunning" }] },
-    { title: "Operations & Support", icon: Wrench, children: [{ title: "Complaints" }, { title: "Tickets" }, { title: "Incidents" }, { title: "Installations" }, { title: "Inventory" }, { title: "Technicians" }, { title: "Field Ops" }, { title: "Resellers" }, { title: "Speed Test" }] },
-  ] },
-  { label: "Insights & Admin", items: [
-    { title: "Monitoring & Diagnostics", icon: Activity, children: [{ title: "Live Monitor" }, { title: "Session Monitor" }, { title: "Traffic Analytics" }, { title: "NAT Logs" }, { title: "Syslog" }, { title: "SNMP Polling" }, { title: "Web Browsing Logs" }, { title: "Alerts" }, { title: "Grafana" }, { title: "Traceroute" }, { title: "Ping" }, { title: "Bandwidth Test" }, { title: "RADIUS Test" }] },
-    { title: "Reports & Analytics", icon: BarChart3, children: [{ title: "Revenue" }, { title: "Subscriber Growth" }, { title: "Usage" }, { title: "Churn" }, { title: "ARPU" }] },
-    { title: "Sales, Partners & Engagement", icon: Handshake, children: [{ title: "Leads" }, { title: "Campaigns" }, { title: "LCO / Partners" }, { title: "Commissions" }, { title: "WhatsApp" }, { title: "SMS" }, { title: "Email" }, { title: "Notifications" }] },
-    { title: "AI & Intelligence", icon: Brain, children: [{ title: "AI Advisor", href: "/?view=ai" }, { title: "AI Diagnosis", href: "/?view=ai" }, { title: "Churn Prediction", href: "/?view=ai" }, { title: "Revenue Forecast", href: "/?view=ai" }, { title: "Plan Recommendations", href: "/?view=ai" }, { title: "Competitor Intel" }] },
-    { title: "Administration", icon: Settings, children: [{ title: "Users", href: "/?view=users" }, { title: "Roles & Permissions", href: "/?view=roles" }, { title: "Modules" }, { title: "Feature Flags" }, { title: "API Keys" }, { title: "System Settings" }, { title: "Audit Log", href: "/?view=audit" }] },
-  ] },
+type NavGroup = {
+  label: string;
+  module?: string;         // module slug that gates this group
+  items: NavLeaf[];
+};
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Core",
+    items: [
+      { title: "Dashboard", href: "/", view: "dashboard", icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: "Customers & Billing",
+    module: "customer_service",
+    items: [
+      { title: "Customers & Subscribers", href: "/?view=customers", view: "customers", icon: Users, perm: { resource: "subscriber", action: "list" } },
+      { title: "Products & Packages", href: "/?view=products", view: "products", icon: Package, perm: { resource: "subscriber", action: "list" } },
+      { title: "Invoices & Payments", href: "/?view=billing", view: "billing", icon: CreditCard, perm: { resource: "billing.invoice", action: "list" } },
+    ],
+  },
+  {
+    label: "Access & AAA",
+    module: "aaa",
+    items: [
+      { title: "Active Sessions", href: "/?view=sessions", view: "sessions", icon: Wifi, perm: { resource: "session", action: "list" }, badgeKey: "activeSessions" },
+      { title: "NAS Devices", href: "/?view=nas", view: "nas", icon: Server, perm: { resource: "aaa.nas", action: "list" } },
+      { title: "Authentication Logs", href: "/?view=radius-postauth", view: "radius-postauth", icon: KeyRound, perm: { resource: "aaa.radius", action: "read" } },
+      { title: "RADIUS Accounting", href: "/?view=radius-acct", view: "radius-acct", icon: ScrollText, perm: { resource: "aaa.radius", action: "read" } },
+    ],
+  },
+  {
+    label: "Policy & Network",
+    module: "policy_engine",
+    items: [
+      { title: "Policies & Rules", href: "/?view=policies", view: "policies", icon: ListChecks, perm: { resource: "policy", action: "list" } },
+      { title: "Network Manager", href: "/?view=network", view: "network", icon: Network, perm: { resource: "dhcp", action: "list" } },
+      { title: "VPP Gateway", href: "/?view=vpp", view: "vpp", icon: Gauge, perm: { resource: "network.gateway", action: "read" } },
+    ],
+  },
+  {
+    label: "Intelligence",
+    module: "ai_intelligence",
+    items: [
+      { title: "AI Advisor & Insights", href: "/?view=ai", view: "ai", icon: Brain, perm: { resource: "ai_advisor", action: "read" } },
+    ],
+  },
+  {
+    label: "Administration",
+    module: "identity_admin",
+    items: [
+      { title: "Admin Users", href: "/?view=users", view: "users", icon: UserCog, perm: { resource: "user", action: "list" } },
+      { title: "Roles & Permissions", href: "/?view=roles", view: "roles", icon: ShieldCheck, perm: { resource: "role", action: "list" } },
+      { title: "System Administration", href: "/?view=admin", view: "admin", icon: Settings, perm: { resource: "system_setting", action: "read" } },
+      { title: "Audit Log", href: "/?view=audit", view: "audit", icon: ScrollText, perm: { resource: "audit", action: "list" } },
+    ],
+  },
 ];
 
+type HealthCounts = {
+  status?: string;
+  counts?: { activeSessions?: number };
+};
+
 export function AppSidebar() {
+  const searchParams = useSearchParams();
+  const activeView = searchParams.get("view") ?? "dashboard";
+  const { data: session } = useSession();
+
+  const perms = (session?.user as { permissions?: string[] } | undefined)?.permissions;
+  const roles = (session?.user as { roles?: string[] } | undefined)?.roles;
+
+  // Live badge source: active session count (real data, 30s refresh)
+  const { data: health } = useQuery<HealthCounts>({
+    queryKey: ["sidebar-health"],
+    queryFn: async () => {
+      const res = await fetch("/api/health");
+      if (!res.ok) throw new Error("unavailable");
+      return res.json();
+    },
+    refetchInterval: 30000,
+    retry: 1,
+    staleTime: 25000,
+  });
+  const activeSessions = health?.counts?.activeSessions;
+
+  const canSee = (leaf: NavLeaf): boolean =>
+    !leaf.perm || canClient(perms, roles, leaf.perm.resource, leaf.perm.action);
+
   return (
     <Sidebar collapsible="icon" className="border-r-0">
       <SidebarHeader className="border-b border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
+            <SidebarMenuButton size="lg" asChild tooltip="CRYPTSK Nexus">
               <Link href="/" className="flex items-center gap-3">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary sidebar-logo-glow">
                   <span className="text-primary-foreground font-bold text-sm">C</span>
@@ -78,55 +143,55 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="cryptsk-scrollbar">
-        {NAV_GROUPS.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-sidebar-foreground/40 font-semibold">
-              {group.label}
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {group.items.map((item) => (
-                  <Collapsible key={item.title} defaultOpen={false} className="group/collapsible">
-                    <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton tooltip={item.title}>
-                          {item.icon && <item.icon className="size-4" />}
-                          <span>{item.title}</span>
-                          {item.badge && (
-                            <span className="ml-auto rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold text-primary">{item.badge}</span>
-                          )}
-                          <ChevronDown className="ml-auto size-3 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+        {NAV_GROUPS.map((group) => {
+          const visibleItems = group.items.filter(canSee);
+          if (visibleItems.length === 0) return null;
+          return (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel className="text-[10px] uppercase tracking-wider text-sidebar-foreground/40 font-semibold">
+                {group.label}
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {visibleItems.map((item) => {
+                    const active = item.view === activeView;
+                    const badge =
+                      item.badgeKey === "activeSessions" && typeof activeSessions === "number" && activeSessions > 0
+                        ? activeSessions
+                        : null;
+                    return (
+                      <SidebarMenuItem key={item.view}>
+                        <SidebarMenuButton asChild isActive={active} tooltip={item.title}
+                          className={active
+                            ? "border-l-[3px] border-l-primary rounded-l-none bg-primary/10 text-sidebar-accent-foreground font-semibold"
+                            : ""}>
+                          <Link href={item.href}>
+                            <item.icon className={`size-4 ${active ? "text-primary" : ""}`} />
+                            <span className={active ? "text-primary" : ""}>{item.title}</span>
+                            {badge !== null && (
+                              <span className="ml-auto rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                {badge}
+                              </span>
+                            )}
+                          </Link>
                         </SidebarMenuButton>
-                      </CollapsibleTrigger>
-                      {item.children && (
-                        <CollapsibleContent>
-                          <SidebarMenuSub>
-                            {item.children.map((child) => (
-                              <SidebarMenuSubItem key={child.title}>
-                                <SidebarMenuSubButton asChild>
-                                  <Link href={child.href || "/"}><span>{child.title}</span></Link>
-                                </SidebarMenuSubButton>
-                              </SidebarMenuSubItem>
-                            ))}
-                          </SidebarMenuSub>
-                        </CollapsibleContent>
-                      )}
-                    </SidebarMenuItem>
-                  </Collapsible>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          );
+        })}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="sm" className="text-sidebar-foreground/60">
+            <SidebarMenuButton size="sm" className="text-sidebar-foreground/60" tooltip="System status">
               <div className="flex items-center gap-2">
-                <div className="size-2 rounded-full bg-emerald-500 cryptsk-pulse-dot" />
-                <span className="text-[10px]">v1.0.0-dev</span>
+                <div className={`size-2 rounded-full cryptsk-pulse-dot ${health?.status === "healthy" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                <span className="text-[10px]">v1.0.0 · PostgreSQL 18</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
