@@ -10,6 +10,7 @@
 // ============================================================
 
 import pg from "pg";
+import fs from "fs";
 
 const { Client } = pg;
 
@@ -151,7 +152,7 @@ async function generateSubscriberConfig(subscriberId: string): Promise<string> {
       SELECT s.radiusUsername, s.staticIp, s.vlanId,
              p.name as planName, p.radiusGroupName,
              ra.framedipaddress, ra.nasipaddress, ra.callingstationid
-      FROM subscribers s
+      FROM "Subscriber" s
       LEFT JOIN plans p ON s.planId = p.id
       LEFT JOIN radacct ra ON ra.username = s.radiusUsername AND ra.acctstoptime IS NULL
       WHERE s.id = $1
@@ -241,7 +242,7 @@ const server = Bun.serve({
         status: "ok",
         port: PORT,
         uptime: Math.floor((Date.now() - startTime) / 1000),
-        vppConnected: false,
+        vppConnected: fs.existsSync("/run/vpp/api.sock"),
         vppSocket: "/run/vpp/api.sock",
         message: "VPP adapter running (VPP binary not available — generates configs only)",
         stats,
