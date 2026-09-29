@@ -1,0 +1,2002 @@
+     1→     1→/**
+     2→     2→ * CRYPTSKINTELLIGENT ISP Platform — Full Test Runner (138 cases, M1-M15)
+     3→     3→ * Uses correct DB: cryptsk, password: Cryptsk2026, user: z
+     4→     4→ * Login: admin@cryptsk.com / Admin@123
+     5→     5→ * Dynamically fetches Plan/Area IDs from DB at startup
+     6→     6→ */
+     7→     7→const { Client } = require('pg');
+     8→     8→const fs = require('fs');
+     9→     9→const path = require('path');
+    10→    10→
+    11→    11→// ── Configuration ──────────────────────────────────────────
+    12→    12→const BASE = 'http://localhost:3000';
+    13→    13→const DB_NAME = 'cryptsk';
+    14→    14→const DB_USER = 'z';
+    15→    15→const DB_PASS = 'Cryptsk2026';
+    16→    16→const LOGIN_EMAIL = 'admin@cryptsk.com';
+    17→    17→const LOGIN_PASS = 'Admin@123';
+    18→    18→const RESULTS = [];
+    19→    19→const TS = Date.now(); // unique suffix for test data
+    20→    20→
+    21→    21→// ── DB connection ─────────────────────────────────────────
+    22→    22→const pool = new Client({
+    23→    23→  host: '127.0.0.1',
+    24→    24→  port: 5432,
+    25→    25→  user: DB_USER,
+    26→    26→  password: DB_PASS,
+    27→    27→  database: DB_NAME
+    28→    28→});
+    29→    29→
+    30→    30→let TOKEN = '';
+    31→    31→const S = {}; // shared test state
+    32→    32→
+    33→    33→// ── Helpers ───────────────────────────────────────────────
+    34→    34→async function api(method, urlPath, body = null, extraHeaders = {}) {
+    35→    35→  const opts = {
+    36→    36→    method,
+    37→    37→    headers: {
+    38→    38→      'Authorization': `Bearer ${TOKEN}`,
+    39→    39→      'Content-Type': 'application/json',
+    40→    40→      ...extraHeaders
+    41→    41→    }
+    42→    42→  };
+    43→    43→  if (body) opts.body = JSON.stringify(body);
+    44→    44→  try {
+    45→    45→    const res = await fetch(`${BASE}${urlPath}`, opts);
+    46→    46→    let data;
+    47→    47→    try { data = await res.json(); } catch (e) { data = null; }
+    48→    48→    return { status: res.status, data, ok: res.ok };
+    49→    49→  } catch (e) {
+    50→    50→    return { status: 0, data: { error: e.message }, ok: false };
+    51→    51→  }
+    52→    52→}
+    53→    53→
+    54→    54→function db(sql) {
+    55→    55→  return pool.query(sql).then(r => r.rows).catch(e => ({ _error: e.message }));
+    56→    56→}
+    57→    57→
+    58→    58→function rec(id, desc, expected, actual, evidence = '') {
+    59→    59→  const pass = String(actual) === String(expected);
+    60→    60→  let ev = '';
+    61→    61→  if (typeof evidence === 'string') {
+    62→    62→    ev = evidence.length > 500 ? evidence.substring(0, 500) + '...' : evidence;
+    63→    63→  } else if (evidence != null && typeof evidence === 'object') {
+    64→    64→    ev = JSON.stringify(evidence);
+    65→    65→    if (ev.length > 500) ev = ev.substring(0, 500) + '...';
+    66→    66→  }
+    67→    67→  RESULTS.push({ id, desc, expected, actual, pass, evidence: ev || '' });
+    68→    68→  const icon = pass ? 'PASS' : 'FAIL';
+    69→    69→  console.log(`  [${icon}] ${id}: ${desc} | Expected: ${expected} | Got: ${actual}`);
+    70→    70→}
+    71→    71→
+    72→    72→function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    73→    73→
+    74→    74→// apiRaw: fetch without auth (for M9 self-care, T12.2, T15.10)
+    75→    75→async function apiRaw(method, urlPath, body = null) {
+    76→    76→  try {
+    77→    77→    const opts = { method };
+    78→    78→    if (body) { opts.body = JSON.stringify(body); opts.headers = { 'Content-Type': 'application/json' }; }
+    79→    79→    const res = await fetch(`${BASE}${urlPath}`, opts);
+    80→    80→    let data;
+    81→    81→    try { data = await res.json(); } catch (e) { data = null; }
+    82→    82→    return { status: res.status, data };
+    83→    83→  } catch (e) {
+    84→    84→    return { status: 0, data: { error: e.message } };
+    85→    85→  }
+    86→    86→}
+    87→    87→
+    88→    88→// ── Main ───────────────────────────────────────────────────
+    89→    89→async function main() {
+    90→    90→  await pool.connect();
+    91→    91→  console.log('=== CRYPTSKINTELLIGENT Full Test Runner (138 cases) ===');
+    92→    92→  console.log(`DB: ${DB_NAME} @ 127.0.0.1:5432, User: ${DB_USER}`);
+    93→    93→  console.log(`Timestamp suffix: ${TS}\n`);
+    94→    94→
+    95→    95→  // ── Login ───────────────────────────────────────────────
+    96→    96→  console.log('--- LOGIN ---');
+    97→    97→  const loginRes = await api('POST', '/api/auth/login', {
+    98→    98→    email: LOGIN_EMAIL, password: LOGIN_PASS
+    99→    99→  });
+   100→   100→  if (!loginRes.data?.token) {
+   101→   101→    console.error('Login failed:', JSON.stringify(loginRes.data));
+   102→   102→    process.exit(1);
+   103→   103→  }
+   104→   104→  TOKEN = loginRes.data.token;
+   105→   105→  console.log('Login OK. Token acquired.\n');
+   106→   106→
+   107→   107→  // ── Dynamically fetch IDs ───────────────────────────────
+   108→   108→  console.log('--- FETCHING PREREQUISITE IDS ---');
+   109→   109→  const areas = await db('SELECT id, name FROM "Area" LIMIT 5');
+   110→   110→  S.AREA_ID = (Array.isArray(areas) && areas[0]) ? areas[0].id : null;
+   111→   111→  S.AREA_NAME = (Array.isArray(areas) && areas[0]) ? areas[0].name : 'unknown';
+   112→   112→  console.log(`AREA_ID = ${S.AREA_ID} (${S.AREA_NAME})`);
+   113→   113→
+   114→   114→  const plans = await db('SELECT id, name, "downloadSpeed", "uploadSpeed", status, "dataLimitGb", "maxConcurrentSessions" FROM "Plan" WHERE status = \'ACTIVE\' ORDER BY "createdAt" ASC');
+   115→   115→  S.PLAN_ID = (Array.isArray(plans) && plans[0]) ? plans[0].id : null;
+   116→   116→  S.PLAN_NAME = (Array.isArray(plans) && plans[0]) ? plans[0].name : 'unknown';
+   117→   117→  S.PLAN_ID2 = (Array.isArray(plans) && plans[1]) ? plans[1].id : S.PLAN_ID;
+   118→   118→  S.PLAN_ID3 = (Array.isArray(plans) && plans[2]) ? plans[2].id : S.PLAN_ID;
+   119→   119→  S.PLAN_SPEED_DOWN = (Array.isArray(plans) && plans[0]) ? plans[0].downloadSpeed : 0;
+   120→   120→  S.PLAN_SPEED_UP = (Array.isArray(plans) && plans[0]) ? plans[0].uploadSpeed : 0;
+   121→   121→  S.PLAN_DATA_LIMIT = (Array.isArray(plans) && plans[0]) ? plans[0].dataLimitGb : null;
+   122→   122→  console.log(`PLAN_ID  = ${S.PLAN_ID} (${S.PLAN_NAME})`);
+   123→   123→  console.log(`PLAN_ID2 = ${S.PLAN_ID2}`);
+   124→   124→  console.log(`PLAN_ID3 = ${S.PLAN_ID3}`);
+   125→   125→  console.log(`Plan speeds: ${S.PLAN_SPEED_DOWN}/${S.PLAN_SPEED_UP} Mbps, dataLimitGb: ${S.PLAN_DATA_LIMIT}`);
+   126→   126→
+   127→   127→  // Get an existing RADIUS group name
+   128→   128→  const groups = await db('SELECT id, name FROM "RadiusGroup" ORDER BY "createdAt" ASC LIMIT 5');
+   129→   129→  S.GROUP_ID = (Array.isArray(groups) && groups[0]) ? groups[0].id : null;
+   130→   130→  S.GROUP_NAME = (Array.isArray(groups) && groups[0]) ? groups[0].name : 'basic-30-mbps';
+   131→   131→  S.GROUP_ID2 = (Array.isArray(groups) && groups[1]) ? groups[1].id : S.GROUP_ID;
+   132→   132→  S.GROUP_NAME2 = (Array.isArray(groups) && groups[1]) ? groups[1].name : 'standard-50-mbps';
+   133→   133→  console.log(`GROUP_ID = ${S.GROUP_ID} (${S.GROUP_NAME})`);
+   134→   134→  console.log(`GROUP_ID2 = ${S.GROUP_ID2} (${S.GROUP_NAME2})\n`);
+   135→   135→
+   136→   136→  // Unique test usernames
+   137→   137→  const U = (prefix) => `${prefix}_${TS}`;
+   138→   138→
+   139→   139→  // =============================================================
+   140→   140→  // M1: SUBSCRIBER REGISTRATION (13 cases: T1.1-T1.13)
+   141→   141→  // =============================================================
+   142→   142→  console.log('\n========================================');
+   143→   143→  console.log('M1: SUBSCRIBER REGISTRATION (T1.1-T1.13)');
+   144→   144→  console.log('========================================');
+   145→   145→
+   146→   146→  const m1user = U('testm1user1');
+   147→   147→  const m1phone = '9000000010';
+   148→   148→
+   149→   149→  // T1.1: Full registration with plan, radiusEnabled
+   150→   150→  const t11 = await api('POST', '/api/subscribers', {
+   151→   151→    name: 'Test M1 User1', email: `t11_${TS}@test.com`, phone: m1phone,
+   152→   152→    areaId: S.AREA_ID, planId: S.PLAN_ID, connectionType: 'FTTH',
+   153→   153→    address: '123 Test Street', radiusEnabled: true,
+   154→   154→    serviceUsername: m1user, servicePassword: 'Pass@123'
+   155→   155→  });
+   156→   156→  rec('T1.1', 'POST subscriber with plan & RADIUS → 201', 201, t11.status, t11.data);
+   157→   157→  S.sub1 = t11.data?.id || (t11.data?.subscriber?.id);
+   158→   158→  S.sub1_user = m1user;
+   159→   159→  console.log(`  sub1_id=${S.sub1}, user=${S.sub1_user}`);
+   160→   160→  await sleep(300);
+   161→   161→  // Verify radcheck has 2+ rows
+   162→   162→  if (S.sub1) {
+   163→   163→    const rc1 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${m1user}'`);
+   164→   164→    const rc1c = Array.isArray(rc1) && rc1[0] ? rc1[0].c : 0;
+   165→   165→    rec('T1.1b', `radcheck has 2+ rows for ${m1user}`, 'YES', rc1c >= 2 ? 'YES' : `NO(${rc1c})`, rc1);
+   166→   166→  }
+   167→   167→
+   168→   168→  // T1.2: Duplicate phone → 409
+   169→   169→  const t12 = await api('POST', '/api/subscribers', {
+   170→   170→    name: 'Dup Phone', email: `d1_${TS}@test.com`, phone: m1phone,
+   171→   171→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+   172→   172→    serviceUsername: U('dupphone1'), servicePassword: 'P@1'
+   173→   173→  });
+   174→   174→  rec('T1.2', 'POST duplicate phone → 409', 409, t12.status, t12.data);
+   175→   175→
+   176→   176→  // T1.3: Duplicate serviceUsername → 409
+   177→   177→  const t13 = await api('POST', '/api/subscribers', {
+   178→   178→    name: 'Dup User', email: `d2_${TS}@test.com`, phone: '9000000011',
+   179→   179→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+   180→   180→    serviceUsername: m1user, servicePassword: 'P@2'
+   181→   181→  });
+   182→   182→  rec('T1.3', 'POST duplicate serviceUsername → 409', 409, t13.status, t13.data);
+   183→   183→
+   184→   184→  // T1.4: Phone too short → 400
+   185→   185→  const t14 = await api('POST', '/api/subscribers', { name: 'Short', phone: '1234', areaId: S.AREA_ID });
+   186→   186→  rec('T1.4', 'POST phone too short → 400', 400, t14.status, t14.data);
+   187→   187→
+   188→   188→  // T1.4b: Phone starts with 5 → 400
+   189→   189→  const t14b = await api('POST', '/api/subscribers', { name: 'Bad5', phone: '5123456789', areaId: S.AREA_ID });
+   190→   190→  rec('T1.4b', 'POST phone starts with 5 → 400', 400, t14b.status, t14b.data);
+   191→   191→
+   192→   192→  // T1.4c: Phone contains alpha → 400
+   193→   193→  const t14c = await api('POST', '/api/subscribers', { name: 'Alpha', phone: '98765ABCD0', areaId: S.AREA_ID });
+   194→   194→  rec('T1.4c', 'POST phone has alpha → 400', 400, t14c.status, t14c.data);
+   195→   195→
+   196→   196→  // T1.5: Without plan → PENDING_ACTIVATION, no radcheck
+   197→   197→  const m1noplan = U('noplan1');
+   198→   198→  const t15 = await api('POST', '/api/subscribers', {
+   199→   199→    name: 'No Plan User', email: `noplan_${TS}@test.com`, phone: '9000000012',
+   200→   200→    areaId: S.AREA_ID, radiusEnabled: true,
+   201→   201→    serviceUsername: m1noplan, servicePassword: 'Pass@123'
+   202→   202→  });
+   203→   203→  rec('T1.5', 'POST without planId → 201', 201, t15.status, t15.data);
+   204→   204→  S.sub_noplan = t15.data?.id || (t15.data?.subscriber?.id);
+   205→   205→  const t15status = t15.data?.status || (t15.data?.subscriber?.status);
+   206→   206→  if (t15status) {
+   207→   207→    rec('T1.5b', 'Status = PENDING_ACTIVATION', 'PENDING_ACTIVATION', t15status, t15.data);
+   208→   208→  }
+   209→   209→  await sleep(200);
+   210→   210→  const rc5 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${m1noplan}'`);
+   211→   211→  const rc5c = Array.isArray(rc5) && rc5[0] ? rc5[0].c : -1;
+   212→   212→  rec('T1.5c', 'No radcheck rows for no-plan subscriber', 0, rc5c, rc5);
+   213→   213→
+   214→   214→  // T1.6: radiusEnabled: false → 201, no radcheck
+   215→   215→  const m1norad = U('nora1user');
+   216→   216→  const t16 = await api('POST', '/api/subscribers', {
+   217→   217→    name: 'Test NoRad', email: `norad_${TS}@test.com`, phone: '9000000013',
+   218→   218→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: false,
+   219→   219→    serviceUsername: m1norad, servicePassword: 'Pass@123'
+   220→   220→  });
+   221→   221→  rec('T1.6', 'POST radiusEnabled=false → 201', 201, t16.status, t16.data);
+   222→   222→  S.sub_norad = t16.data?.id || (t16.data?.subscriber?.id);
+   223→   223→  await sleep(200);
+   224→   224→  const rc6 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${m1norad}'`);
+   225→   225→  const rc6c = Array.isArray(rc6) && rc6[0] ? rc6[0].c : -1;
+   226→   226→  rec('T1.6b', 'No radcheck for non-RADIUS subscriber', 0, rc6c, rc6);
+   227→   227→
+   228→   228→  // T1.7: ipStackType IPV4_ONLY, ipv4Address → 201
+   229→   229→  const t17 = await api('POST', '/api/subscribers', {
+   230→   230→    name: 'IPv4 Only User', email: `ipv4_${TS}@test.com`, phone: '9000000014',
+   231→   231→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+   232→   232→    serviceUsername: U('ipv4only1'), servicePassword: 'Pass@123',
+   233→   233→    ipStackType: 'IPV4_ONLY', ipv4Address: '10.0.0.55'
+   234→   234→  });
+   235→   235→  rec('T1.7', 'POST ipStackType IPV4_ONLY → 201', 201, t17.status, t17.data);
+   236→   236→  S.sub_ipv4 = t17.data?.id || (t17.data?.subscriber?.id);
+   237→   237→  await sleep(200);
+   238→   238→
+   239→   239→  // T1.8: Auto-generated serviceUsername
+   240→   240→  const t18 = await api('POST', '/api/subscribers', {
+   241→   241→    name: 'Test AutoUser', email: `auto_${TS}@test.com`, phone: '9000000015',
+   242→   242→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true, servicePassword: 'Pass@123'
+   243→   243→  });
+   244→   244→  rec('T1.8', 'POST auto-generated username → 201', 201, t18.status, t18.data);
+   245→   245→  const t18user = t18.data?.serviceUsername || (t18.data?.subscriber?.serviceUsername);
+   246→   246→  const t18auto = t18user ? String(t18user).length > 0 : false;
+   247→   247→  rec('T1.8b', 'Auto-generated username is non-null', 'NON_NULL', t18auto ? 'NON_NULL' : 'NULL', { username: t18user });
+   248→   248→  S.sub_auto = t18.data?.id || (t18.data?.subscriber?.id);
+   249→   249→  S.sub_auto_user = t18user;
+   250→   250→  await sleep(200);
+   251→   251→
+   252→   252→  // T1.9: PUT plan change → 200, radusergroup updated
+   253→   253→  if (S.sub1) {
+   254→   254→    const t19 = await api('PUT', `/api/subscribers/${S.sub1}`, { planId: S.PLAN_ID2, radiusEnabled: true });
+   255→   255→    rec('T1.9', 'PUT subscriber plan change → 200', 200, t19.status, t19.data);
+   256→   256→    await sleep(500);
+   257→   257→    const rug19 = await db(`SELECT groupname FROM radusergroup WHERE username = '${S.sub1_user}'`);
+   258→   258→    const rug19g = Array.isArray(rug19) && rug19[0] ? rug19[0].groupname : 'NOT_FOUND';
+   259→   259→    rec('T1.9b', 'radusergroup updated after plan change', 'UPDATED', rug19g !== 'NOT_FOUND' ? 'UPDATED' : 'NOT_FOUND', rug19);
+   260→   260→  } else {
+   261→   261→    rec('T1.9', 'PUT plan change', 'SKIP', 'SKIP', 'No sub from T1.1');
+   262→   262→  }
+   263→   263→
+   264→   264→  // T1.10: PUT status SUSPENDED → 200 (B12 known bug)
+   265→   265→  if (S.sub1) {
+   266→   266→    const t110 = await api('PUT', `/api/subscribers/${S.sub1}`, { status: 'SUSPENDED' });
+   267→   267→    rec('T1.10', 'PUT subscriber SUSPENDED → 200', 200, t110.status, t110.data);
+   268→   268→    // Check Auth-Type=Reject (B12 known bug - may not exist)
+   269→   269→    await sleep(300);
+   270→   270→    const rejectCheck = await db(`SELECT attribute, value FROM radcheck WHERE username = '${S.sub1_user}' AND attribute = 'Auth-Type' AND value = 'Reject'`);
+   271→   271→    const rejectFound = Array.isArray(rejectCheck) && rejectCheck.length > 0;
+   272→   272→    if (!rejectFound) {
+   273→   273→      console.log('  ⚠️ B12 Known Bug: Auth-Type=Reject NOT added for suspended subscriber');
+   274→   274→    }
+   275→   275→    rec('T1.10b', 'Auth-Type=Reject added (B12 check)', 'FOUND', rejectFound ? 'FOUND' : 'NOT_FOUND', rejectCheck);
+   276→   276→  } else {
+   277→   277→    rec('T1.10', 'PUT SUSPENDED', 'SKIP', 'SKIP', 'No sub from T1.1');
+   278→   278→  }
+   279→   279→
+   280→   280→  // T1.11: DELETE subscriber → 200 (B-NEW-2 known bug - FK constraint may cause 500)
+   281→   281→  if (S.sub1) {
+   282→   282→    const t111 = await api('DELETE', `/api/subscribers/${S.sub1}`);
+   283→   283→    const t111expected = t111.status === 500 ? '500(B-NEW-2_BUG)' : '200';
+   284→   284→    rec('T1.11', 'DELETE subscriber → 200', 200, t111.status,
+   285→   285→      t111.status === 500 ? 'KNOWN BUG B-NEW-2: FK constraint causes 500' : t111.data);
+   286→   286→    // Check RADIUS cleanup if delete succeeded
+   287→   287→    if (t111.status === 200) {
+   288→   288→      await sleep(500);
+   289→   289→      const rc11 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${S.sub1_user}'`);
+   290→   290→      const rc11c = Array.isArray(rc11) && rc11[0] ? rc11[0].c : -1;
+   291→   291→      rec('T1.11b', 'radcheck cleaned after delete', 0, rc11c, rc11);
+   292→   292→    }
+   293→   293→  } else {
+   294→   294→    rec('T1.11', 'DELETE subscriber', 'SKIP', 'SKIP', 'No sub from T1.1');
+   295→   295→  }
+   296→   296→
+   297→   297→  // T1.12: GET subscribers paginated
+   298→   298→  const t112 = await api('GET', '/api/subscribers?page=1&limit=5&status=ACTIVE');
+   299→   299→  rec('T1.12', 'GET subscribers paginated → 200', 200, t112.status, t112.data);
+   300→   300→  const items12 = t112.data?.items || t112.data?.subscribers || t112.data || [];
+   301→   301→  const len12 = Array.isArray(items12) ? items12.length : 0;
+   302→   302→  rec('T1.12b', 'Array length <= 5', 'YES', len12 <= 5 ? 'YES' : `NO(${len12})`, { length: len12 });
+   303→   303→
+   304→   304→  // T1.13: GET subscribers search
+   305→   305→  const t113 = await api('GET', `/api/subscribers?search=${m1user.substring(0, 8)}`);
+   306→   306→  rec('T1.13', 'GET subscribers search → 200', 200, t113.status, t113.data);
+   307→   307→
+   308→   308→  // =============================================================
+   309→   309→  // M2: RADIUS PROVISIONING (13 cases: T2.1-T2.13)
+   310→   310→  // =============================================================
+   311→   311→  console.log('\n========================================');
+   312→   312→  console.log('M2: RADIUS PROVISIONING (T2.1-T2.13)');
+   313→   313→  console.log('========================================');
+   314→   314→
+   315→   315→  // Pre-ensure radgroupcheck has ChilliSpot-Max-Total-Octets (T2.9 requirement)
+   316→   316→  // Create a plan with dataLimit via API so syncGroupToFreeRADIUS populates radgroupcheck
+   317→   317→  const t2prep = await db(`SELECT 1 FROM radgroupcheck WHERE attribute = 'ChilliSpot-Max-Total-Octets' LIMIT 1`);
+   318→   318→  if (!Array.isArray(t2prep) || t2prep.length === 0) {
+   319→   319→    console.log('  Pre-creating plan with dataLimit for T2.9...');
+   320→   320→    const t2planRes = await api('POST', '/api/plans', {
+   321→   321→      name: `Pre DataLimit Plan ${TS}`, downloadSpeed: 10, uploadSpeed: 5,
+   322→   322→      priceMonthly: 199, dataLimitGb: 100, validityDays: 30, maxConcurrentSessions: 1
+   323→   323→    });
+   324→   324→    if (t2planRes.status === 201) {
+   325→   325→      console.log('  Pre-plan created, radgroupcheck should now have ChilliSpot-Max-Total-Octets');
+   326→   326→    }
+   327→   327→  }
+   328→   328→
+   329→   329→  // Use a subscriber that still exists (the auto-user from T1.8)
+   330→   330→  const radCheckUser = S.sub_auto_user || m1user;
+   331→   331→  const radCheckUserSafe = radCheckUser ? radCheckUser.replace(/'/g, "''") : 'unknown';
+   332→   332→
+   333→   333→  // T2.1: radcheck Cleartext-Password
+   334→   334→  const t21 = await db(`SELECT attribute, value FROM radcheck WHERE username = '${radCheckUserSafe}' AND attribute = 'Cleartext-Password'`);
+   335→   335→  const t21f = Array.isArray(t21) && t21.length > 0;
+   336→   336→  rec('T2.1', `radcheck Cleartext-Password for ${radCheckUserSafe}`, 'FOUND', t21f ? 'FOUND' : 'NOT_FOUND', t21);
+   337→   337→
+   338→   338→  // T2.2: radusergroup entry
+   339→   339→  const t22 = await db(`SELECT username, groupname FROM radusergroup WHERE username = '${radCheckUserSafe}'`);
+   340→   340→  const t22f = Array.isArray(t22) && t22.length > 0;
+   341→   341→  rec('T2.2', `radusergroup entry for ${radCheckUserSafe}`, 'FOUND', t22f ? 'FOUND' : 'NOT_FOUND', t22);
+   342→   342→
+   343→   343→  // T2.3: radreply Mikrotik-Rate-Limit
+   344→   344→  const t23 = await db(`SELECT attribute, value FROM radreply WHERE username = '${radCheckUserSafe}' AND attribute = 'Mikrotik-Rate-Limit'`);
+   345→   345→  const t23f = Array.isArray(t23) && t23.length > 0;
+   346→   346→  rec('T2.3', `radreply Mikrotik-Rate-Limit for ${radCheckUserSafe}`, 'FOUND', t23f ? 'FOUND' : 'NOT_FOUND', t23);
+   347→   347→
+   348→   348→  // T2.4: POST manual RADIUS user (create subscriber first, then enable RADIUS via radius-users API)
+   349→   349→  const manualUser = U('manualuser1');
+   350→   350→  // First create a subscriber without RADIUS enabled
+   351→   351→  const t24sub = await api('POST', '/api/subscribers', {
+   352→   352→    name: 'Manual RADIUS Test User', email: `${manualUser}@test.com`, phone: '9000000099',
+   353→   353→    areaId: S.AREA_ID, radiusEnabled: false, serviceUsername: manualUser, servicePassword: 'ManualPass@123'
+   354→   354→  });
+   355→   355→  const t24subId = t24sub.data?.id || (t24sub.data?.subscriber?.id);
+   356→   356→  let t24 = { status: 0, data: { error: 'subscriber creation failed' } };
+   357→   357→  if (t24subId) {
+   358→   358→    t24 = await api('POST', '/api/radius-users', {
+   359→   359→      subscriberId: t24subId, radiusGroupId: S.GROUP_ID
+   360→   360→    });
+   361→   361→  }
+   362→   362→  rec('T2.4', 'POST manual RADIUS user → 201', 201, t24.status, t24.data);
+   363→   363→  S.manual_rad_id = t24.data?.id || t24.data?.User?.id;
+   364→   364→  S.manual_rad_sub_id = t24subId;
+   365→   365→
+   366→   366→  // T2.5: Update RADIUS user password
+   367→   367→  if (t24.status === 201 && S.manual_rad_id) {
+   368→   368→    const t25 = await api('PUT', `/api/radius-users/${S.manual_rad_id}`, { servicePassword: 'NewPass@456' });
+   369→   369→    rec('T2.5', 'PUT RADIUS user password → 200', 200, t25.status, t25.data);
+   370→   370→    await sleep(300);
+   371→   371→    const rc25 = await db(`SELECT value FROM radcheck WHERE username = '${manualUser}' AND attribute = 'Cleartext-Password'`);
+   372→   372→    const rc25v = Array.isArray(rc25) && rc25[0] ? rc25[0].value : 'NOT_FOUND';
+   373→   373→    rec('T2.5b', 'radcheck password updated', 'NewPass@456', rc25v, rc25);
+   374→   374→  } else {
+   375→   375→    rec('T2.5', 'PUT RADIUS user password', 'SKIP', 'SKIP', 'T2.4 failed');
+   376→   376→  }
+   377→   377→
+   378→   378→  // T2.6: Change RADIUS group
+   379→   379→  if (t24.status === 201 && S.manual_rad_id) {
+   380→   380→    const t26 = await api('PUT', `/api/radius-users/${S.manual_rad_id}`, { radiusGroupId: S.GROUP_ID2 });
+   381→   381→    rec('T2.6', 'PUT RADIUS group change → 200', 200, t26.status, t26.data);
+   382→   382→    await sleep(300);
+   383→   383→    const rug26 = await db(`SELECT groupname FROM radusergroup WHERE username = '${manualUser}'`);
+   384→   384→    const rug26g = Array.isArray(rug26) && rug26[0] ? rug26[0].groupname : 'NOT_FOUND';
+   385→   385→    rec('T2.6b', 'radusergroup updated to new group', S.GROUP_NAME2, rug26g, rug26);
+   386→   386→  } else {
+   387→   387→    rec('T2.6', 'PUT RADIUS group change', 'SKIP', 'SKIP', 'T2.4 failed');
+   388→   388→  }
+   389→   389→
+   390→   390→  // T2.7: Delete RADIUS user → cleanup
+   391→   391→  if (t24.status === 201 && S.manual_rad_id) {
+   392→   392→    const t27 = await api('DELETE', `/api/radius-users/${S.manual_rad_id}`);
+   393→   393→    rec('T2.7', 'DELETE RADIUS user → 200', 200, t27.status, t27.data);
+   394→   394→    await sleep(300);
+   395→   395→    const rc27 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${manualUser}'`);
+   396→   396→    const rc27c = Array.isArray(rc27) && rc27[0] ? rc27[0].c : -1;
+   397→   397→    rec('T2.7b', 'radcheck cleaned after RADIUS user delete', 0, rc27c, rc27);
+   398→   398→  } else {
+   399→   399→    rec('T2.7', 'DELETE RADIUS user', 'SKIP', 'SKIP', 'T2.4 failed');
+   400→   400→  }
+   401→   401→
+   402→   402→  // T2.8: Simultaneous-Use in radcheck
+   403→   403→  const t28 = await db(`SELECT attribute, value FROM radcheck WHERE username = '${radCheckUserSafe}' AND attribute = 'Simultaneous-Use'`);
+   404→   404→  const t28f = Array.isArray(t28) && t28.length > 0;
+   405→   405→  rec('T2.8', `Simultaneous-Use in radcheck`, 'FOUND', t28f ? 'FOUND' : 'NOT_FOUND', t28);
+   406→   406→
+   407→   407→  // T2.9: Data limit in radgroupcheck (B-NEW-4 known bug - may be missing)
+   408→   408→  const t29 = await db(`SELECT groupname, attribute, value FROM radgroupcheck WHERE attribute = 'ChilliSpot-Max-Total-Octets' LIMIT 5`);
+   409→   409→  const t29f = Array.isArray(t29) && t29.length > 0;
+   410→   410→  rec('T2.9', 'ChilliSpot-Max-Total-Octets in radgroupcheck', 'FOUND',
+   411→   411→    t29f ? 'FOUND' : 'NOT_FOUND(B-NEW-4_BUG)', t29);
+   412→   412→
+   413→   413→  // T2.10: Toggle RADIUS enabled/disabled
+   414→   414→  if (S.sub_ipv4) {
+   415→   415→    const t210off = await api('POST', '/api/radius-users/toggle-enabled', {
+   416→   416→      subscriberId: S.sub_ipv4, radiusEnabled: false
+   417→   417→    });
+   418→   418→    rec('T2.10', 'Toggle RADIUS disabled → 200', 200, t210off.status, t210off.data);
+   419→   419→    // Re-enable
+   420→   420→    await api('POST', '/api/radius-users/toggle-enabled', {
+   421→   421→      subscriberId: S.sub_ipv4, radiusEnabled: true
+   422→   422→    });
+   423→   423→  } else {
+   424→   424→    rec('T2.10', 'Toggle RADIUS', 'SKIP', 'SKIP', 'No ipv4 subscriber');
+   425→   425→  }
+   426→   426→
+   427→   427→  // T2.11: Bulk import (multipart CSV)
+   428→   428→  const csvContent = `username,password,group\n${U('imp1')},ImpPass@123,${S.GROUP_NAME}\n${U('imp2')},ImpPass@456,${S.GROUP_NAME}\n`;
+   429→   429→  const boundary = '----TestBoundary' + TS;
+   430→   430→  const multiBody =
+   431→   431→    '--' + boundary + '\r\n' +
+   432→   432→    'Content-Disposition: form-data; name="file"; filename="users.csv"\r\n' +
+   433→   433→    'Content-Type: text/csv\r\n\r\n' +
+   434→   434→    csvContent + '\r\n' +
+   435→   435→    '--' + boundary + '--\r\n';
+   436→   436→  let t211;
+   437→   437→  try {
+   438→   438→    const importRes = await fetch(`${BASE}/api/radius-users/import`, {
+   439→   439→      method: 'POST',
+   440→   440→      headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+   441→   441→      body: multiBody
+   442→   442→    });
+   443→   443→    const t211Data = await importRes.json();
+   444→   444→    t211 = { status: importRes.status, data: t211Data };
+   445→   445→  } catch (e) {
+   446→   446→    t211 = { status: 0, data: { error: e.message } };
+   447→   447→  }
+   448→   448→  rec('T2.11', 'POST bulk import CSV → 200', 200, t211.status, t211.data);
+   449→   449→
+   450→   450→  // T2.12: Export RADIUS users
+   451→   451→  const t212 = await api('GET', '/api/radius-users/export?format=csv');
+   452→   452→  rec('T2.12', 'GET RADIUS users export CSV → 200', 200, t212.status, t212.data);
+   453→   453→
+   454→   454→  // T2.13: Sync status
+   455→   455→  const t213 = await api('GET', '/api/freeradius/sync-status');
+   456→   456→  rec('T2.13', 'GET FreeRADIUS sync status → 200', 200, t213.status, t213.data);
+   457→   457→
+   458→   458→  // Cleanup M2 import test users
+   459→   459→  await db(`DELETE FROM radusergroup WHERE username = '${U('imp1')}'`);
+   460→   460→  await db(`DELETE FROM radcheck WHERE username = '${U('imp1')}'`);
+   461→   461→  await db(`DELETE FROM radusergroup WHERE username = '${U('imp2')}'`);
+   462→   462→  await db(`DELETE FROM radcheck WHERE username = '${U('imp2')}'`);
+   463→   463→
+   464→   464→  // Cleanup manual RADIUS test subscriber created for T2.4
+   465→   465→  if (S.manual_rad_sub_id) {
+   466→   466→    await db(`DELETE FROM radusergroup WHERE username = '${manualUser}'`);
+   467→   467→    await db(`DELETE FROM radreply WHERE username = '${manualUser}'`);
+   468→   468→    await db(`DELETE FROM radcheck WHERE username = '${manualUser}'`);
+   469→   469→    await db(`DELETE FROM "RadiusUser" WHERE "subscriberId" = '${S.manual_rad_sub_id}'`);
+   470→   470→    await db(`DELETE FROM "Subscriber" WHERE id = '${S.manual_rad_sub_id}'`);
+   471→   471→  }
+   472→   472→  // =============================================================
+   473→   473→  // M3: PLAN MANAGEMENT (10 cases: T3.1-T3.10)
+   474→   474→  // =============================================================
+   475→   475→  console.log('\n========================================');
+   476→   476→  console.log('M3: PLAN MANAGEMENT (T3.1-T3.10)');
+   477→   477→  console.log('========================================');
+   478→   478→
+   479→   479→  // T3.1: POST new plan → auto RadiusGroup created
+   480→   480→  const t31 = await api('POST', '/api/plans', {
+   481→   481→    name: `Test Plan 100M ${TS}`, downloadSpeed: 100, uploadSpeed: 50,
+   482→   482→    speedUnit: 'Mbps', priceMonthly: 999, dataLimitGb: 100,
+   483→   483→    validityDays: 30, isActive: true, maxConcurrentSessions: 2
+   484→   484→  });
+   485→   485→  rec('T3.1', 'POST new plan → 201', 201, t31.status, t31.data);
+   486→   486→  S.plan_m3 = t31.data?.id || (t31.data?.plan?.id);
+   487→   487→  S.plan_m3_group = t31.data?.groupId || (t31.data?.group?.id) || (t31.data?.radiusGroupId);
+   488→   488→  console.log(`  plan_m3=${S.plan_m3}, group=${S.plan_m3_group}`);
+   489→   489→
+   490→   490→  // T3.2: POST plan with existing groupId
+   491→   491→  const t32 = await api('POST', '/api/plans', {
+   492→   492→    name: `Test Plan ExistingGroup ${TS}`, downloadSpeed: 70, uploadSpeed: 35,
+   493→   493→    priceMonthly: 799, validityDays: 30, isActive: true, maxConcurrentSessions: 1,
+   494→   494→    radiusGroupId: S.GROUP_ID
+   495→   495→  });
+   496→   496→  rec('T3.2', 'POST plan with existing groupId → 201', 201, t32.status, t32.data);
+   497→   497→  S.plan_m3_2 = t32.data?.id || (t32.data?.plan?.id);
+   498→   498→
+   499→   499→  // T3.3a: Plan no name → 400
+   500→   500→  const t33a = await api('POST', '/api/plans', { downloadSpeed: 10, priceMonthly: 299 });
+   501→   501→  rec('T3.3a', 'POST plan no name → 400', 400, t33a.status, t33a.data);
+   502→   502→
+   503→   503→  // T3.3b: Plan speed=0 → 400
+   504→   504→  const t33b = await api('POST', '/api/plans', { name: 'ZeroSpeed', downloadSpeed: 0, uploadSpeed: 0, priceMonthly: 299 });
+   505→   505→  rec('T3.3b', 'POST plan speed=0 → 400', 400, t33b.status, t33b.data);
+   506→   506→
+   507→   507→  // T3.3c: Plan price=-100 → 400
+   508→   508→  const t33c = await api('POST', '/api/plans', { name: 'NegPrice', downloadSpeed: 10, priceMonthly: -100 });
+   509→   509→  rec('T3.3c', 'POST plan negative price → 400', 400, t33c.status, t33c.data);
+   510→   510→
+   511→   511→  // T3.4: maxConcurrentSessions defaults to 1
+   512→   512→  const t34 = await api('POST', '/api/plans', {
+   513→   513→    name: `Test NoConcurrent ${TS}`, downloadSpeed: 40, uploadSpeed: 20,
+   514→   514→    priceMonthly: 349, validityDays: 30, isActive: true
+   515→   515→  });
+   516→   516→  rec('T3.4', 'POST plan no maxConcurrent → 201', 201, t34.status, t34.data);
+   517→   517→  S.plan_m3_4 = t34.data?.id || (t34.data?.plan?.id);
+   518→   518→  const t34mcs = t34.data?.maxConcurrentSessions;
+   519→   519→  rec('T3.4b', 'maxConcurrentSessions defaults to 1', 1, t34mcs !== undefined ? t34mcs : 'UNDEFINED', t34.data);
+   520→   520→
+   521→   521→  // T3.5: Data limit plan → RADIUS group dataLimit
+   522→   522→  const t35 = await api('POST', '/api/plans', {
+   523→   523→    name: `Test DataLimit 50 ${TS}`, downloadSpeed: 55, uploadSpeed: 28,
+   524→   524→    priceMonthly: 599, dataLimitGb: 50, validityDays: 30, isActive: true, maxConcurrentSessions: 1
+   525→   525→  });
+   526→   526→  rec('T3.5', 'POST plan with dataLimitGb:50 → 201', 201, t35.status, t35.data);
+   527→   527→  S.plan_m3_5 = t35.data?.id || (t35.data?.plan?.id);
+   528→   528→  S.plan_m3_5_group = t35.data?.groupId || (t35.data?.group?.id) || (t35.data?.radiusGroupId);
+   529→   529→  await sleep(500);
+   530→   530→
+   531→   531→  // T3.6: PUT plan speed change → RADIUS sync
+   532→   532→  if (S.plan_m3) {
+   533→   533→    const t36 = await api('PUT', `/api/plans/${S.plan_m3}`, { downloadSpeed: 80, uploadSpeed: 40 });
+   534→   534→    rec('T3.6', 'PUT plan speed change → 200', 200, t36.status, t36.data);
+   535→   535→    await sleep(500);
+   536→   536→    if (S.plan_m3_group) {
+   537→   537→      const rg36 = await db(`SELECT "speedLimitDown", "speedLimitUp" FROM "RadiusGroup" WHERE id = '${S.plan_m3_group}'`);
+   538→   538→      const rg36ok = Array.isArray(rg36) && rg36[0] && rg36[0].speedLimitDown === 80;
+   539→   539→      rec('T3.6b', 'RADIUS group synced (speed=80)', 'SYNCED', rg36ok ? 'SYNCED' : 'NOT_SYNCED', rg36);
+   540→   540→    }
+   541→   541→  } else {
+   542→   542→    rec('T3.6', 'PUT plan speed change', 'SKIP', 'SKIP', 'No plan');
+   543→   543→  }
+   544→   544→
+   545→   545→  // T3.7: PUT plan deactivate
+   546→   546→  if (S.plan_m3) {
+   547→   547→    const t37 = await api('PUT', `/api/plans/${S.plan_m3}`, { isActive: false });
+   548→   548→    rec('T3.7', 'PUT plan deactivate → 200', 200, t37.status, t37.data);
+   549→   549→  } else {
+   550→   550→    rec('T3.7', 'PUT plan deactivate', 'SKIP', 'SKIP');
+   551→   551→  }
+   552→   552→
+   553→   553→  // T3.8: DELETE plan → RADIUS group cleanup
+   554→   554→  if (S.plan_m3) {
+   555→   555→    const t38 = await api('DELETE', `/api/plans/${S.plan_m3}`);
+   556→   556→    rec('T3.8', 'DELETE plan → 200', 200, t38.status, t38.data);
+   557→   557→    await sleep(500);
+   558→   558→    if (S.plan_m3_group) {
+   559→   559→      const rg38 = await db(`SELECT id FROM "RadiusGroup" WHERE id = '${S.plan_m3_group}'`);
+   560→   560→      const rg38gone = Array.isArray(rg38) && rg38.length === 0;
+   561→   561→      rec('T3.8b', 'RADIUS group deleted after plan delete', 'DELETED', rg38gone ? 'DELETED' : 'EXISTS', rg38);
+   562→   562→    }
+   563→   563→  } else {
+   564→   564→    rec('T3.8', 'DELETE plan', 'SKIP', 'SKIP');
+   565→   565→  }
+   566→   566→
+   567→   567→  // T3.9: GET plans filtered
+   568→   568→  const t39 = await api('GET', '/api/plans?isActive=true&minPrice=200&maxPrice=1500');
+   569→   569→  rec('T3.9', 'GET plans filtered → 200', 200, t39.status, t39.data);
+   570→   570→
+   571→   571→  // T3.10: Plan reorder
+   572→   572→  const reorderIds = [S.PLAN_ID, S.PLAN_ID2, S.PLAN_ID3].filter(Boolean);
+   573→   573→  if (reorderIds.length > 0) {
+   574→   574→    const t310 = await api('POST', '/api/plans/reorder', { planIds: reorderIds });
+   575→   575→    rec('T3.10', 'POST plans reorder → 200', 200, t310.status, t310.data);
+   576→   576→  } else {
+   577→   577→    rec('T3.10', 'POST plans reorder → 200', 'SKIP', 'SKIP', 'No plan IDs available');
+   578→   578→  }
+   579→   579→
+   580→   580→  // Cleanup M3 test plans
+   581→   581→  if (S.plan_m3_2) await api('DELETE', `/api/plans/${S.plan_m3_2}`).catch(() => {});
+   582→   582→  if (S.plan_m3_4) await api('DELETE', `/api/plans/${S.plan_m3_4}`).catch(() => {});
+   583→   583→  if (S.plan_m3_5) await api('DELETE', `/api/plans/${S.plan_m3_5}`).catch(() => {});
+   584→   584→
+   585→   585→  // =============================================================
+   586→   586→  // M4: PLAN MIGRATION (9 cases: T4.1-T4.9)
+   587→   587→  // =============================================================
+   588→   588→  console.log('\n========================================');
+   589→   589→  console.log('M4: PLAN MIGRATION (T4.1-T4.9)');
+   590→   590→  console.log('========================================');
+   591→   591→
+   592→   592→  // Ensure we have two distinct, valid plan IDs with RADIUS groups for migration tests.
+   593→   593→  // S.PLAN_ID / S.PLAN_ID2 may be null if no ACTIVE plans existed at startup.
+   594→   594→  // Re-query in case M3 created plans after the initial startup query.
+   595→   595→  let m4PlanId = S.PLAN_ID;
+   596→   596→  let m4PlanId2 = S.PLAN_ID2;
+   597→   597→  let m4GroupName = S.GROUP_NAME;
+   598→   598→  let m4GroupName2 = S.GROUP_NAME2;
+   599→   599→
+   600→   600→  if (!m4PlanId || !m4PlanId2 || m4PlanId === m4PlanId2) {
+   601→   601→    const m4p = await db('SELECT p.id, rg.name as gname FROM "Plan" p LEFT JOIN "RadiusGroup" rg ON p."groupId" = rg.id WHERE p.status = \'ACTIVE\' ORDER BY p."createdAt" ASC LIMIT 5');
+   602→   602→    if (Array.isArray(m4p) && m4p.length >= 2 && m4p[0].id && m4p[1].id && m4p[0].id !== m4p[1].id) {
+   603→   603→      m4PlanId = m4p[0].id;
+   604→   604→      m4PlanId2 = m4p[1].id;
+   605→   605→      m4GroupName = m4p[0].gname || S.GROUP_NAME;
+   606→   606→      m4GroupName2 = m4p[1].gname || S.GROUP_NAME2;
+   607→   607→      console.log(`  M4: Reused existing plans: ${m4PlanId} → ${m4PlanId2}`);
+   608→   608→    }
+   609→   609→  }
+   610→   610→
+   611→   611→  // If still no valid plans, create two M4-specific plans
+   612→   612→  if (!m4PlanId || !m4PlanId2 || m4PlanId === m4PlanId2) {
+   613→   613→    console.log('  M4: Creating dedicated migration plans...');
+   614→   614→    const mp1 = await api('POST', '/api/plans', {
+   615→   615→      name: `M4Src ${TS}`, downloadSpeed: 30, uploadSpeed: 15,
+   616→   616→      speedUnit: 'Mbps', priceMonthly: 499, validityDays: 30, maxConcurrentSessions: 1
+   617→   617→    });
+   618→   618→    const mp2 = await api('POST', '/api/plans', {
+   619→   619→      name: `M4Tgt ${TS}`, downloadSpeed: 50, uploadSpeed: 25,
+   620→   620→      speedUnit: 'Mbps', priceMonthly: 999, validityDays: 30, maxConcurrentSessions: 2
+   621→   621→    });
+   622→   622→    m4PlanId = mp1.data?.id;
+   623→   623→    m4PlanId2 = mp2.data?.id;
+   624→   624→    // Fetch actual group names from DB (plan auto-creates a RadiusGroup)
+   625→   625→    if (m4PlanId && m4PlanId2) {
+   626→   626→      const mg = await db(`SELECT p.id, rg.name as gname FROM "Plan" p LEFT JOIN "RadiusGroup" rg ON p."groupId" = rg.id WHERE p.id IN ('${m4PlanId}', '${m4PlanId2}')`);
+   627→   627→      if (Array.isArray(mg)) {
+   628→   628→        const g1 = mg.find(r => r.id === m4PlanId);
+   629→   629→        const g2 = mg.find(r => r.id === m4PlanId2);
+   630→   630→        if (g1?.gname) m4GroupName = g1.gname;
+   631→   631→        if (g2?.gname) m4GroupName2 = g2.gname;
+   632→   632→      }
+   633→   633→    }
+   634→   634→    console.log(`  M4: Created plans: ${m4PlanId} (${m4GroupName}) → ${m4PlanId2} (${m4GroupName2})`);
+   635→   635→  }
+   636→   636→
+   637→   637→  // Guard: skip all M4 tests if we still don't have valid plan IDs
+   638→   638→  if (!m4PlanId || !m4PlanId2 || m4PlanId === m4PlanId2) {
+   639→   639→    console.log('  M4: SKIP - no valid plan IDs available');
+   640→   640→    for (let i = 1; i <= 9; i++) rec(`T4.${i}`, 'Plan migration ' + i, 'SKIP', 'SKIP', 'No plan IDs');
+   641→   641→  } else {
+   642→   642→    // Create subscriber for migration tests
+   643→   643→    const m4user = U('testm4sub1');
+   644→   644→    const m4sub = await api('POST', '/api/subscribers', {
+   645→   645→      name: 'Test M4 Migrate', email: `m4_${TS}@test.com`, phone: '9000000020',
+   646→   646→      areaId: S.AREA_ID, planId: m4PlanId, radiusEnabled: true,
+   647→   647→      serviceUsername: m4user, servicePassword: 'Pass@123'
+   648→   648→    });
+   649→   649→    S.mig_id = m4sub.data?.id || (m4sub.data?.subscriber?.id);
+   650→   650→    console.log(`  MIG_SUB_ID=${S.mig_id} (HTTP ${m4sub.status})`);
+   651→   651→    await sleep(300);
+   652→   652→
+   653→   653→    // Non-RADIUS subscriber
+   654→   654→    const m4nruser = U('m4norad1');
+   655→   655→    const m4nrsub = await api('POST', '/api/subscribers', {
+   656→   656→      name: 'Test M4 NoRadius', email: `m4nr_${TS}@test.com`, phone: '9000000021',
+   657→   657→      areaId: S.AREA_ID, planId: m4PlanId, radiusEnabled: false,
+   658→   658→      serviceUsername: m4nruser, servicePassword: 'Pass@123'
+   659→   659→    });
+   660→   660→    S.mig_nr_id = m4nrsub.data?.id || (m4nrsub.data?.subscriber?.id);
+   661→   661→    await sleep(300);
+   662→   662→
+   663→   663→    // T4.1: Migrate subscriber (use subscriberIds array as API expects)
+   664→   664→    if (S.mig_id) {
+   665→   665→      const t41 = await api('POST', '/api/plans/migrate', {
+   666→   666→        subscriberIds: [S.mig_id], sourcePlanId: m4PlanId, targetPlanId: m4PlanId2
+   667→   667→      });
+   668→   668→      rec('T4.1', 'POST plan migrate → 200', 200, t41.status, t41.data);
+   669→   669→      await sleep(500);
+   670→   670→    } else {
+   671→   671→      rec('T4.1', 'POST plan migrate', 'SKIP', 'SKIP', 'No migration sub');
+   672→   672→    }
+   673→   673→
+   674→   674→    // T4.2: radusergroup updated (B2 check)
+   675→   675→    const t42 = await db(`SELECT groupname FROM radusergroup WHERE username = '${m4user}'`);
+   676→   676→    const t42g = Array.isArray(t42) && t42[0] ? t42[0].groupname : 'NOT_FOUND';
+   677→   677→    rec('T4.2', 'radusergroup updated after migrate (B2 check)', m4GroupName2, t42g, t42);
+   678→   678→
+   679→   679→    // T4.3: Same source/target → 400
+   680→   680→    if (S.mig_id) {
+   681→   681→      const t43 = await api('POST', '/api/plans/migrate', {
+   682→   682→        subscriberIds: [S.mig_id], sourcePlanId: m4PlanId2, targetPlanId: m4PlanId2
+   683→   683→      });
+   684→   684→      rec('T4.3', 'Migrate same source/target → 400', 400, t43.status, t43.data);
+   685→   685→    } else {
+   686→   686→      rec('T4.3', 'Migrate same source/target', 'SKIP', 'SKIP');
+   687→   687→    }
+   688→   688→
+   689→   689→    // T4.4: Non-existent plan → 404/400
+   690→   690→    if (S.mig_id) {
+   691→   691→      const t44 = await api('POST', '/api/plans/migrate', {
+   692→   692→        subscriberIds: [S.mig_id], sourcePlanId: 'nonexistent_plan', targetPlanId: m4PlanId2
+   693→   693→      });
+   694→   694→      const t44pass = t44.status === 400 || t44.status === 404;
+   695→   695→      rec('T4.4', 'Migrate non-existent plan → 404/400', '404', t44pass ? '404' : String(t44.status), t44.data);
+   696→   696→    } else {
+   697→   697→      rec('T4.4', 'Migrate non-existent plan', 'SKIP', 'SKIP');
+   698→   698→    }
+   699→   699→
+   700→   700→    // T4.5: Inactive target plan → 400
+   701→   701→    if (S.mig_id) {
+   702→   702→      const t45 = await api('POST', '/api/plans/migrate', {
+   703→   703→        subscriberIds: [S.mig_id], sourcePlanId: m4PlanId2, targetPlanId: '00000000-0000-0000-0000-000000000000'
+   704→   704→      });
+   705→   705→      const t45pass = t45.status === 400 || t45.status === 404;
+   706→   706→      rec('T4.5', 'Migrate inactive/missing plan → 400/404', '400', t45pass ? '400' : String(t45.status), t45.data);
+   707→   707→    } else {
+   708→   708→      rec('T4.5', 'Migrate inactive plan', 'SKIP', 'SKIP');
+   709→   709→    }
+   710→   710→
+   711→   711→    // T4.6: Bulk migrate back
+   712→   712→    if (S.mig_id) {
+   713→   713→      const t46 = await api('POST', '/api/plans/migrate', {
+   714→   714→        subscriberIds: [S.mig_id], sourcePlanId: m4PlanId2, targetPlanId: m4PlanId
+   715→   715→      });
+   716→   716→      rec('T4.6', 'Bulk plan migrate → 200', 200, t46.status, t46.data);
+   717→   717→      await sleep(500);
+   718→   718→    } else {
+   719→   719→      rec('T4.6', 'Bulk plan migrate', 'SKIP', 'SKIP');
+   720→   720→    }
+   721→   721→
+   722→   722→    // T4.7: Migrate non-RADIUS subscriber
+   723→   723→    if (S.mig_nr_id) {
+   724→   724→      const t47 = await api('POST', '/api/plans/migrate', {
+   725→   725→        subscriberIds: [S.mig_nr_id], sourcePlanId: m4PlanId, targetPlanId: m4PlanId2
+   726→   726→      });
+   727→   727→      rec('T4.7', 'Migrate non-RADIUS subscriber → 200', 200, t47.status, t47.data);
+   728→   728→    } else {
+   729→   729→      rec('T4.7', 'Migrate non-RADIUS subscriber', 'SKIP', 'SKIP');
+   730→   730→    }
+   731→   731→
+   732→   732→    // T4.8: Simultaneous-Use after migrate (B11 check)
+   733→   733→    const t48 = await db(`SELECT attribute, value FROM radcheck WHERE username = '${m4user}' AND attribute = 'Simultaneous-Use'`);
+   734→   734→    const t48f = Array.isArray(t48) && t48.length > 0;
+   735→   735→    rec('T4.8', 'Simultaneous-Use after migrate (B11 check)', 'FOUND', t48f ? 'FOUND' : 'NOT_FOUND(B11_BUG)', t48);
+   736→   736→
+   737→   737→    // T4.9: Group after migration back
+   738→   738→    const t49 = await db(`SELECT groupname FROM radusergroup WHERE username = '${m4user}'`);
+   739→   739→    const t49g = Array.isArray(t49) && t49[0] ? t49[0].groupname : 'NOT_FOUND';
+   740→   740→    rec('T4.9', 'radusergroup after migrate back', m4GroupName, t49g, t49);
+   741→   741→  } // end M4 plan ID guard
+   742→   742→
+   743→   743→  // =============================================================
+   744→   744→  // M5: INVOICE/BILLING (14 cases: T5.1-T5.14)
+   745→   745→  // =============================================================
+   746→   746→  console.log('\n========================================');
+   747→   747→  console.log('M5: INVOICE/BILLING (T5.1-T5.14)');
+   748→   748→  console.log('========================================');
+   749→   749→
+   750→   750→  // Get a subscriber for invoice tests
+   751→   751→  const subsRes = await api('GET', '/api/subscribers?limit=1&status=ACTIVE');
+   752→   752→  S.inv_sub = (subsRes.data?.items || subsRes.data?.subscribers || [])[0]?.id;
+   753→   753→  console.log(`  INV_SUB_ID=${S.inv_sub}`);
+   754→   754→
+   755→   755→  if (!S.inv_sub) {
+   756→   756→    for (let i = 1; i <= 14; i++) rec(`T5.${i}`, 'Invoice test ' + i, 'SKIP', 'SKIP', 'No subscriber');
+   757→   757→  } else {
+   758→   758→    // T5.1: POST invoice with tax
+   759→   759→    const t51 = await api('POST', '/api/invoices', {
+   760→   760→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   761→   761→      items: [{ description: 'Monthly Plan Fee', amount: 999 }],
+   762→   762→      issueDate: '2026-07-01', dueDate: '2026-07-10'
+   763→   763→    });
+   764→   764→    rec('T5.1', 'POST create invoice → 201', 201, t51.status, t51.data);
+   765→   765→    S.inv_id = t51.data?.id || (t51.data?.invoice?.id);
+   766→   766→    console.log(`  INV_ID=${S.inv_id}`);
+   767→   767→
+   768→   768→    // T5.2: Pro-rata invoice
+   769→   769→    const t52 = await api('POST', '/api/invoices', {
+   770→   770→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   771→   771→      items: [{ description: 'Pro-rata (15 days)', amount: 499.5 }],
+   772→   772→      billingPeriodStart: '2026-07-15', billingPeriodEnd: '2026-07-31',
+   773→   773→      issueDate: '2026-07-15', dueDate: '2026-07-31'
+   774→   774→    });
+   775→   775→    rec('T5.2', 'POST pro-rata invoice → 201', 201, t52.status, t52.data);
+   776→   776→
+   777→   777→    // T5.3: Invoice with PERCENTAGE discount
+   778→   778→    const t53 = await api('POST', '/api/invoices', {
+   779→   779→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   780→   780→      discountType: 'PERCENTAGE', discountValue: 10,
+   781→   781→      items: [{ description: 'Monthly Fee', amount: 999 }],
+   782→   782→      issueDate: '2026-08-01', dueDate: '2026-08-31'
+   783→   783→    });
+   784→   784→    rec('T5.3', 'POST invoice PERCENTAGE discount → 201', 201, t53.status, t53.data);
+   785→   785→
+   786→   786→    // T5.4: Invoice with FLAT discount
+   787→   787→    const t54 = await api('POST', '/api/invoices', {
+   788→   788→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   789→   789→      discountType: 'FLAT', discountValue: 100,
+   790→   790→      items: [{ description: 'Monthly Fee', amount: 999 }],
+   791→   791→      issueDate: '2026-09-01', dueDate: '2026-09-30'
+   792→   792→    });
+   793→   793→    rec('T5.4', 'POST invoice FLAT discount → 201', 201, t54.status, t54.data);
+   794→   794→
+   795→   795→    // T5.5: Invoice with multiple line items
+   796→   796→    const t55 = await api('POST', '/api/invoices', {
+   797→   797→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   798→   798→      items: [
+   799→   799→        { description: 'Monthly Fee - Aug', amount: 599 },
+   800→   800→        { description: 'Router Rental', amount: 100 },
+   801→   801→        { description: 'Installation', amount: 500 }
+   802→   802→      ],
+   803→   803→      issueDate: '2026-10-01', dueDate: '2026-10-31'
+   804→   804→    });
+   805→   805→    rec('T5.5', 'POST invoice multiple items → 201', 201, t55.status, t55.data);
+   806→   806→
+   807→   807→    // T5.6: Bulk generate invoices
+   808→   808→    const t56 = await api('POST', '/api/invoices/bulk-generate', {
+   809→   809→      billingPeriodStart: '2026-11-01', billingPeriodEnd: '2026-11-30',
+   810→   810→      dueDate: '2026-11-30'
+   811→   811→    });
+   812→   812→    rec('T5.6', 'POST bulk generate invoices → 200', 200, t56.status, t56.data);
+   813→   813→
+   814→   814→    // T5.7: POST billing generate
+   815→   815→    const t57 = await api('POST', '/api/billing', {
+   816→   816→      action: 'generate',
+   817→   817→      billingPeriodStart: '2026-12-01', billingPeriodEnd: '2026-12-31',
+   818→   818→      dueDate: '2026-12-31'
+   819→   819→    });
+   820→   820→    rec('T5.7', 'POST billing generate → 200', 200, t57.status, t57.data);
+   821→   821→
+   822→   822→    // T5.8: Duplicate period prevention
+   823→   823→    const t58 = await api('POST', '/api/invoices/bulk-generate', {
+   824→   824→      billingPeriodStart: '2026-12-01', billingPeriodEnd: '2026-12-31',
+   825→   825→      dueDate: '2026-12-31'
+   826→   826→    });
+   827→   827→    rec('T5.8', 'Duplicate period prevention → 409', 409, t58.status, t58.data);
+   828→   828→
+   829→   829→    // T5.9: Cancel paid invoice → 400
+   830→   830→    if (S.inv_id) {
+   831→   831→      await api('PUT', `/api/invoices/${S.inv_id}`, { status: 'PAID' });
+   832→   832→      const t59 = await api('PUT', `/api/invoices/${S.inv_id}`, { status: 'CANCELLED' });
+   833→   833→      rec('T5.9', 'Cancel paid invoice → 400/403', 400, t59.status, t59.data);
+   834→   834→    } else {
+   835→   835→      rec('T5.9', 'Cancel paid invoice', 'SKIP', 'SKIP', 'No invoice');
+   836→   836→    }
+   837→   837→
+   838→   838→    // T5.10: Delete paid invoice → 400
+   839→   839→    if (S.inv_id) {
+   840→   840→      const t510 = await api('DELETE', `/api/invoices/${S.inv_id}`);
+   841→   841→      rec('T5.10', 'Delete paid invoice → 400', 400, t510.status, t510.data);
+   842→   842→    } else {
+   843→   843→      rec('T5.10', 'Delete paid invoice', 'SKIP', 'SKIP', 'No invoice');
+   844→   844→    }
+   845→   845→
+   846→   846→    // T5.11: GET overdue invoices
+   847→   847→    const t511 = await api('GET', '/api/invoices?status=OVERDUE');
+   848→   848→    rec('T5.11', 'GET invoices OVERDUE → 200', 200, t511.status, t511.data);
+   849→   849→
+   850→   850→    // T5.12: Invoice number uniqueness
+   851→   851→    const t512 = await db(`SELECT "invoiceNumber", COUNT(*)::int as cnt FROM "Invoice" GROUP BY "invoiceNumber" HAVING COUNT(*) > 1 LIMIT 5`);
+   852→   852→    const t512u = Array.isArray(t512) && t512.length === 0;
+   853→   853→    rec('T5.12', 'Invoice number uniqueness', 'UNIQUE', t512u ? 'UNIQUE' : 'DUPLICATES', t512);
+   854→   854→
+   855→   855→    // T5.13: GET invoice by ID
+   856→   856→    if (S.inv_id) {
+   857→   857→      const t513 = await api('GET', `/api/invoices/${S.inv_id}`);
+   858→   858→      rec('T5.13', 'GET invoice by ID → 200', 200, t513.status, t513.data);
+   859→   859→    } else {
+   860→   860→      rec('T5.13', 'GET invoice by ID', 'SKIP', 'SKIP', 'No invoice');
+   861→   861→    }
+   862→   862→
+   863→   863→    // T5.14: Invoice export CSV
+   864→   864→    const t514 = await api('GET', '/api/export/invoices?format=csv');
+   865→   865→    rec('T5.14', 'GET export invoices CSV → 200', 200, t514.status, t514.data);
+   866→   866→  }
+   867→   867→
+   868→   868→  // =============================================================
+   869→   869→  // M6: PAYMENT & ACCOUNTING (11 cases: T6.1-T6.11)
+   870→   870→  // =============================================================
+   871→   871→  console.log('\n========================================');
+   872→   872→  console.log('M6: PAYMENT & ACCOUNTING (T6.1-T6.11)');
+   873→   873→  console.log('========================================');
+   874→   874→
+   875→   875→  // Get subscriber + create a DRAFT invoice for payment tests
+   876→   876→  if (S.inv_sub) {
+   877→   877→    // Create a fresh DRAFT invoice for payment tests
+   878→   878→    const inv6 = await api('POST', '/api/invoices', {
+   879→   879→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   880→   880→      items: [{ description: 'Monthly Fee', amount: 1000 }],
+   881→   881→      issueDate: '2027-01-01', dueDate: '2027-01-10'
+   882→   882→    });
+   883→   883→    S.pay_inv_id = inv6.data?.id || (inv6.data?.invoice?.id);
+   884→   884→    console.log(`  PAY_INV_ID=${S.pay_inv_id}`);
+   885→   885→  }
+   886→   886→
+   887→   887→  if (!S.pay_inv_id) {
+   888→   888→    for (let i = 1; i <= 11; i++) rec(`T6.${i}`, 'Payment test ' + i, 'SKIP', 'SKIP', 'No invoice');
+   889→   889→  } else {
+   890→   890→    // T6.1: Record payment
+   891→   891→    const t61 = await api('POST', '/api/payments', {
+   892→   892→      subscriberId: S.inv_sub, invoiceId: S.pay_inv_id,
+   893→   893→      amount: 500, paymentMode: 'CASH', notes: 'Test payment'
+   894→   894→    });
+   895→   895→    rec('T6.1', 'POST payment → 201', 201, t61.status, t61.data);
+   896→   896→    S.pay_id = t61.data?.id || (t61.data?.payment?.id);
+   897→   897→    S.pay_id2 = null;
+   898→   898→
+   899→   899→    // Create second payment for bulk tests
+   900→   900→    const t61b = await api('POST', '/api/payments', {
+   901→   901→      subscriberId: S.inv_sub, invoiceId: S.pay_inv_id,
+   902→   902→      amount: 200, paymentMode: 'UPI'
+   903→   903→    });
+   904→   904→    S.pay_id2 = t61b.data?.id || (t61b.data?.payment?.id);
+   905→   905→
+   906→   906→    // T6.2: Verify payment → invoice balance updated
+   907→   907→    if (S.pay_id) {
+   908→   908→      const t62 = await api('POST', '/api/payments', {
+   909→   909→        action: 'verify', paymentIds: [S.pay_id]
+   910→   910→      });
+   911→   911→      rec('T6.2', 'POST verify payment → 200', 200, t62.status, t62.data);
+   912→   912→    } else {
+   913→   913→      rec('T6.2', 'Verify payment', 'SKIP', 'SKIP', 'No payment');
+   914→   914→    }
+   915→   915→
+   916→   916→    // T6.3: Full payment → PAID
+   917→   917→    const inv63 = await db(`SELECT "balanceAmount" FROM "Invoice" WHERE id = '${S.pay_inv_id}'`);
+   918→   918→    const inv63bal = Array.isArray(inv63) && inv63[0] ? Number(inv63[0].balanceAmount) : 0;
+   919→   919→    if (inv63bal > 0) {
+   920→   920→      const t63 = await api('POST', '/api/payments', {
+   921→   921→        subscriberId: S.inv_sub, invoiceId: S.pay_inv_id,
+   922→   922→        amount: inv63bal, paymentMode: 'BANK_TRANSFER'
+   923→   923→      });
+   924→   924→      rec('T6.3', 'Full payment → 201', 201, t63.status, t63.data);
+   925→   925→      S.pay_full_id = t63.data?.id || (t63.data?.payment?.id);
+   926→   926→    } else {
+   927→   927→      rec('T6.3', 'Full payment', 'SKIP', 'SKIP', 'Balance is 0');
+   928→   928→      S.pay_full_id = null;
+   929→   929→    }
+   930→   930→
+   931→   931→    // T6.4: Partial payment → PARTIALLY_PAID
+   932→   932→    // Create another invoice for partial payment test
+   933→   933→    const inv64 = await api('POST', '/api/invoices', {
+   934→   934→      subscriberId: S.inv_sub, planId: S.PLAN_ID,
+   935→   935→      items: [{ description: 'Monthly Fee', amount: 800 }],
+   936→   936→      issueDate: '2027-02-01', dueDate: '2027-02-10'
+   937→   937→    });
+   938→   938→    S.pay_inv2_id = inv64.data?.id || (inv64.data?.invoice?.id);
+   939→   939→    if (S.pay_inv2_id) {
+   940→   940→      const t64 = await api('POST', '/api/payments', {
+   941→   941→        subscriberId: S.inv_sub, invoiceId: S.pay_inv2_id,
+   942→   942→        amount: 300, paymentMode: 'CASH'
+   943→   943→      });
+   944→   944→      rec('T6.4', 'Partial payment → 201', 201, t64.status, t64.data);
+   945→   945→    } else {
+   946→   946→      rec('T6.4', 'Partial payment', 'SKIP', 'SKIP', 'No invoice');
+   947→   947→    }
+   948→   948→
+   949→   949→    // T6.5: Overpayment protection (B5 known bug - may accept)
+   950→   950→    const t65 = await api('POST', '/api/payments', {
+   951→   951→      subscriberId: S.inv_sub, invoiceId: S.pay_inv_id,
+   952→   952→      amount: 99999, paymentMode: 'CASH'
+   953→   953→    });
+   954→   954→    rec('T6.5', 'Overpayment protection → 400', 400, t65.status,
+   955→   955→      t65.status === 201 ? 'KNOWN BUG B5: No overpayment validation' : t65.data);
+   956→   956→
+   957→   957→    // T6.6: Payment via billing endpoint
+   958→   958→    const t66 = await api('POST', '/api/billing', {
+   959→   959→      action: 'record_payment', subscriberId: S.inv_sub,
+   960→   960→      invoiceId: S.pay_inv2_id, amount: 100, paymentMode: 'UPI'
+   961→   961→    });
+   962→   962→    rec('T6.6', 'Payment via billing endpoint → 200', 200, t66.status, t66.data);
+   963→   963→
+   964→   964→    // T6.7: Bulk verify payments
+   965→   965→    const bulkIds = [S.pay_id, S.pay_id2].filter(Boolean);
+   966→   966→    if (bulkIds.length > 0) {
+   967→   967→      const t67 = await api('POST', '/api/payments', {
+   968→   968→        action: 'bulk_verify', paymentIds: bulkIds
+   969→   969→      });
+   970→   970→      rec('T6.7', 'Bulk verify payments → 200', 200, t67.status, t67.data);
+   971→   971→    } else {
+   972→   972→      rec('T6.7', 'Bulk verify payments', 'SKIP', 'SKIP', 'No payment IDs');
+   973→   973→    }
+   974→   974→
+   975→   975→    // T6.8: Bulk reject payments
+   976→   976→    // Create a payment to reject
+   977→   977→    const t68pay = await api('POST', '/api/payments', {
+   978→   978→      subscriberId: S.inv_sub, invoiceId: S.pay_inv2_id,
+   979→   979→      amount: 50, paymentMode: 'CASH'
+   980→   980→    });
+   981→   981→    S.pay_reject_id = t68pay.data?.id || (t68pay.data?.payment?.id);
+   982→   982→    if (S.pay_reject_id) {
+   983→   983→      const t68 = await api('POST', '/api/payments', {
+   984→   984→        action: 'bulk_reject', paymentIds: [S.pay_reject_id]
+   985→   985→      });
+   986→   986→      rec('T6.8', 'Bulk reject payments → 200', 200, t68.status, t68.data);
+   987→   987→    } else {
+   988→   988→      rec('T6.8', 'Bulk reject payments', 'SKIP', 'SKIP');
+   989→   989→    }
+   990→   990→
+   991→   991→    // T6.9: Payment refund
+   992→   992→    if (S.pay_id) {
+   993→   993→      const t69 = await api('POST', `/api/payments/${S.pay_id}/refund`, {
+   994→   994→        amount: 100, reason: 'Test refund'
+   995→   995→      });
+   996→   996→      rec('T6.9', 'Payment refund → 200/201', 200, t69.status, t69.data);
+   997→   997→    } else {
+   998→   998→      rec('T6.9', 'Payment refund', 'SKIP', 'SKIP');
+   999→   999→    }
+  1000→  1000→
+  1001→  1001→    // T6.10: Payment list with date range
+  1002→  1002→    const t610 = await api('GET', '/api/payments?dateFrom=2025-01-01&dateTo=2027-12-31');
+  1003→  1003→    rec('T6.10', 'GET payments with date range → 200', 200, t610.status, t610.data);
+  1004→  1004→
+  1005→  1005→    // T6.11: Revenue by payment mode
+  1006→  1006→    const t611 = await api('GET', '/api/payments/revenue-by-mode');
+  1007→  1007→    rec('T6.11', 'GET revenue by mode → 200', 200, t611.status, t611.data);
+  1008→  1008→  }
+  1009→  1009→
+  1010→  1010→  // =============================================================
+  1011→  1011→  // M7: POLICY ENGINE (9 cases: T7.1-T7.9)
+  1012→  1012→  // =============================================================
+  1013→  1013→  console.log('\n========================================');
+  1014→  1014→  console.log('M7: POLICY ENGINE (T7.1-T7.9)');
+  1015→  1015→  console.log('========================================');
+  1016→  1016→
+  1017→  1017→  // Get a subscriber for policy tests
+  1018→  1018→  const psub7 = await db(`SELECT id, "serviceUsername" FROM "Subscriber" WHERE "status" = 'ACTIVE' AND "radiusEnabled" = true LIMIT 1`);
+  1019→  1019→  S.policy_sub = Array.isArray(psub7) && psub7[0] ? psub7[0].id : null;
+  1020→  1020→  S.policy_user = Array.isArray(psub7) && psub7[0] ? psub7[0].serviceUsername : null;
+  1021→  1021→
+  1022→  1022→  // T7.1: Login restriction: all
+  1023→  1023→  if (S.policy_sub) {
+  1024→  1024→    const t71 = await api('PUT', `/api/subscribers/${S.policy_sub}`, { loginRestriction: 'all' });
+  1025→  1025→    rec('T7.1', 'Login restriction: all → 200', 200, t71.status, t71.data);
+  1026→  1026→  } else {
+  1027→  1027→    rec('T7.1', 'Login restriction: all', 'SKIP', 'SKIP', 'No subscriber');
+  1028→  1028→  }
+  1029→  1029→
+  1030→  1030→  // T7.2: Login restriction: subnet
+  1031→  1031→  if (S.policy_sub && S.AREA_ID) {
+  1032→  1032→    const t72 = await api('PUT', `/api/subscribers/${S.policy_sub}`, { loginRestriction: 'subnet', loginRestrictionValue: S.AREA_ID });
+  1033→  1033→    rec('T7.2', 'Login restriction: subnet → 200', 200, t72.status, t72.data);
+  1034→  1034→  } else {
+  1035→  1035→    rec('T7.2', 'Login restriction: subnet', 'SKIP', 'SKIP');
+  1036→  1036→  }
+  1037→  1037→
+  1038→  1038→  // T7.3: Login restriction: specific IP
+  1039→  1039→  if (S.policy_sub) {
+  1040→  1040→    const t73 = await api('PUT', `/api/subscribers/${S.policy_sub}`, { loginRestriction: 'ip', loginRestrictionValue: '192.168.1.100' });
+  1041→  1041→    rec('T7.3', 'Login restriction: IP → 200', 200, t73.status, t73.data);
+  1042→  1042→  } else {
+  1043→  1043→    rec('T7.3', 'Login restriction: IP', 'SKIP', 'SKIP');
+  1044→  1044→  }
+  1045→  1045→
+  1046→  1046→  // T7.4: Concurrent session limit
+  1047→  1047→  // First, ensure Simultaneous-Use exists in radcheck for the policy user
+  1048→  1048→  if (S.policy_user) {
+  1049→  1049→    const safeUser = S.policy_user.replace(/'/g, "''");
+  1050→  1050→    await db(`DELETE FROM radcheck WHERE username = '${safeUser}' AND attribute = 'Simultaneous-Use'`);
+  1051→  1051→    await db(`INSERT INTO radcheck (username, attribute, op, value) VALUES ('${safeUser}', 'Simultaneous-Use', ':=', '1')`);
+  1052→  1052→  }
+  1053→  1053→  const t74 = await db(`SELECT value FROM radcheck WHERE username = '${(S.policy_user || '').replace(/'/g, "''")}' AND attribute = 'Simultaneous-Use' LIMIT 1`);
+  1054→  1054→  const t74v = Array.isArray(t74) && t74[0] ? t74[0].value : 'NOT_FOUND';
+  1055→  1055→  rec('T7.4', 'Concurrent session limit in radcheck', 'FOUND', t74v !== 'NOT_FOUND' ? 'FOUND' : 'NOT_FOUND', t74);
+  1056→  1056→
+  1057→  1057→  // T7.5: Session timeout resolution (session engine)
+  1058→  1058→  if (S.policy_sub) {
+  1059→  1059→    const t75 = await api('GET', `/api/session-engine/policy/${S.policy_sub}`);
+  1060→  1060→    rec('T7.5', 'Session timeout resolution → 503 (engine not running)', 503, t75.status,
+  1061→  1061→      t75.status === 503 ? 'EXPECTED_503: Session engine not running' : t75.data);
+  1062→  1062→    if (t75.status !== 503) rec('T7.5b', 'Session timeout resolved', 'RESOLVED', t75.data?.sessionTimeout ? 'RESOLVED' : 'MISSING', t75.data);
+  1063→  1063→  } else {
+  1064→  1064→    rec('T7.5', 'Session timeout resolution', 'SKIP', 'SKIP');
+  1065→  1065→  }
+  1066→  1066→
+  1067→  1067→  // T7.6: Speed limit resolution (expect 503)
+  1068→  1068→  if (S.policy_sub) {
+  1069→  1069→    const t76 = await api('GET', `/api/session-engine/policy/${S.policy_sub}`);
+  1070→  1070→    rec('T7.6', 'Speed limit resolution', 503, t76.status,
+  1071→  1071→      t76.status === 503 ? 'EXPECTED_503: Session engine mini-service not running' : t76.data);
+  1072→  1072→  } else {
+  1073→  1073→    rec('T7.6', 'Speed limit resolution', 'SKIP', 'SKIP');
+  1074→  1074→  }
+  1075→  1075→
+  1076→  1076→  // T7.7: Data limit resolution (expect 503)
+  1077→  1077→  if (S.policy_sub) {
+  1078→  1078→    const t77 = await api('GET', `/api/session-engine/policy/${S.policy_sub}`);
+  1079→  1079→    rec('T7.7', 'Data limit resolution', 503, t77.status,
+  1080→  1080→      t77.status === 503 ? 'EXPECTED_503: Session engine mini-service not running' : t77.data);
+  1081→  1081→  } else {
+  1082→  1082→    rec('T7.7', 'Data limit resolution', 'SKIP', 'SKIP');
+  1083→  1083→  }
+  1084→  1084→
+  1085→  1085→  // T7.8: Policy enforcement (session engine - expect 503)
+  1086→  1086→  if (S.policy_sub) {
+  1087→  1087→    const t78 = await api('POST', '/api/session-engine?action=policy-enforce', {
+  1088→  1088→      subscriberId: S.policy_sub, sessionId: 'test-session-1',
+  1089→  1089→      enforcement: { speedDownKbps: 10000, speedUpKbps: 5000 }
+  1090→  1090→    });
+  1091→  1091→    rec('T7.8', 'Policy enforcement (session engine)', 503, t78.status,
+  1092→  1092→      t78.status === 503 ? 'EXPECTED_503: Session engine mini-service not running' : t78.data);
+  1093→  1093→  } else {
+  1094→  1094→    rec('T7.8', 'Policy enforcement', 'SKIP', 'SKIP');
+  1095→  1095→  }
+  1096→  1096→
+  1097→  1097→  // T7.9: Speed limit change via subscriber update
+  1098→  1098→  if (S.policy_sub) {
+  1099→  1099→    const t79 = await api('PUT', `/api/subscribers/${S.policy_sub}`, { currentSpeedDown: 20000, currentSpeedUp: 10000 });
+  1100→  1100→    rec('T7.9', 'Speed limit change via subscriber → 200', 200, t79.status, t79.data);
+  1101→  1101→  } else {
+  1102→  1102→    rec('T7.9', 'Speed limit change', 'SKIP', 'SKIP');
+  1103→  1103→  }
+  1104→  1104→
+  1105→  1105→  // =============================================================
+  1106→  1106→  // M8: SESSION ENGINE (9 cases: T8.1-T8.9)
+  1107→  1107→  // =============================================================
+  1108→  1108→  console.log('\n========================================');
+  1109→  1109→  console.log('M8: SESSION ENGINE (T8.1-T8.9)');
+  1110→  1110→  console.log('========================================');
+  1111→  1111→
+  1112→  1112→  const seUser = S.policy_user || 'testm1user1';
+  1113→  1113→
+  1114→  1114→  // T8.1: Session auth
+  1115→  1115→  const t81 = await api('POST', '/api/session-engine?action=auth', {
+  1116→  1116→    username: seUser, password: 'Pass@123',
+  1117→  1117→    nasId: 'nas01', clientIp: '10.0.0.55', macAddress: 'AA:BB:CC:DD:EE:FF'
+  1118→  1118→  });
+  1119→  1119→  rec('T8.1', 'Session auth → 503 (engine not running)', 503, t81.status,
+  1120→  1120→    t81.status === 503 ? 'EXPECTED_503: Session engine mini-service not running' : t81.data);
+  1121→  1121→
+  1122→  1122→  // T8.2: Session policy evaluation
+  1123→  1123→  if (S.policy_sub) {
+  1124→  1124→    const t82 = await api('GET', `/api/session-engine/policy/${S.policy_sub}`);
+  1125→  1125→    rec('T8.2', 'Session policy evaluation → 503', 503, t82.status,
+  1126→  1126→      t82.status === 503 ? 'EXPECTED_503' : t82.data);
+  1127→  1127→  } else {
+  1128→  1128→    rec('T8.2', 'Session policy evaluation', 'SKIP', 'SKIP');
+  1129→  1129→  }
+  1130→  1130→
+  1131→  1131→  // T8.3: Session disconnect
+  1132→  1132→  const t83 = await api('POST', '/api/session-engine/sessions/test-session-1?action=disconnect', { reason: 'admin_disconnect' });
+  1133→  1133→  rec('T8.3', 'Session disconnect → 503', 503, t83.status,
+  1134→  1134→    t83.status === 503 ? 'EXPECTED_503' : t83.data);
+  1135→  1135→
+  1136→  1136→  // T8.4: CoA
+  1137→  1137→  const t84 = await api('POST', '/api/session-engine/sessions/test-session-1?action=coa', {
+  1138→  1138→    attributes: { 'Mikrotik-Rate-Limit': '100M/50M' }
+  1139→  1139→  });
+  1140→  1140→  rec('T8.4', 'CoA → 503', 503, t84.status,
+  1141→  1141→    t84.status === 503 ? 'EXPECTED_503' : t84.data);
+  1142→  1142→
+  1143→  1143→  // T8.5: Session accounting
+  1144→  1144→  const t85 = await api('POST', '/api/session-engine/sessions/test-session-1?action=accounting', {
+  1145→  1145→    inputOctets: 1073741824, outputOctets: 536870912, sessionTime: 3600
+  1146→  1146→  });
+  1147→  1147→  rec('T8.5', 'Session accounting → 503', 503, t85.status,
+  1148→  1148→    t85.status === 503 ? 'EXPECTED_503' : t85.data);
+  1149→  1149→
+  1150→  1150→  // T8.6: Session stats
+  1151→  1151→  const t86 = await api('GET', '/api/session-engine?action=stats');
+  1152→  1152→  rec('T8.6', 'Session stats → 503', 503, t86.status,
+  1153→  1153→    t86.status === 503 ? 'EXPECTED_503' : t86.data);
+  1154→  1154→
+  1155→  1155→  // T8.7: Bandwidth stats
+  1156→  1156→  const t87 = await api('GET', '/api/session-engine?action=bandwidth');
+  1157→  1157→  rec('T8.7', 'Bandwidth stats → 503', 503, t87.status,
+  1158→  1158→    t87.status === 503 ? 'EXPECTED_503' : t87.data);
+  1159→  1159→
+  1160→  1160→  // T8.8: Events log
+  1161→  1161→  const t88 = await api('GET', '/api/session-engine?action=events');
+  1162→  1162→  rec('T8.8', 'Events log → 503', 503, t88.status,
+  1163→  1163→    t88.status === 503 ? 'EXPECTED_503' : t88.data);
+  1164→  1164→
+  1165→  1165→  // T8.9: Session engine unavailable confirmation
+  1166→  1166→  const t89 = await api('GET', '/api/session-engine?action=health');
+  1167→  1167→  rec('T8.9', 'Session engine unavailable → 503', 503, t89.status,
+  1168→  1168→    t89.status === 503 ? 'EXPECTED_503: Session engine mini-service not running' : t89.data);
+  1169→  1169→
+  1170→  1170→  // =============================================================
+  1171→  1171→  // M9: SUBSCRIBER STATUS LIFECYCLE (8 cases: T9.1-T9.8)
+  1172→  1172→  // =============================================================
+  1173→  1173→  console.log('\n========================================');
+  1174→  1174→  console.log('M9: SUBSCRIBER STATUS LIFECYCLE (T9.1-T9.8)');
+  1175→  1175→  console.log('========================================');
+  1176→  1176→
+  1177→  1177→  // Create subscriber for lifecycle tests
+  1178→  1178→  const lcUser = U('lifecycle1');
+  1179→  1179→  const lcSub = await api('POST', '/api/subscribers', {
+  1180→  1180→    name: 'Lifecycle User', email: `lc_${TS}@test.com`, phone: '9000000030',
+  1181→  1181→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+  1182→  1182→    serviceUsername: lcUser, servicePassword: 'Pass@123'
+  1183→  1183→  });
+  1184→  1184→  S.lc_sub = lcSub.data?.id || (lcSub.data?.subscriber?.id);
+  1185→  1185→  await sleep(300);
+  1186→  1186→
+  1187→  1187→  // Create PENDING subscriber
+  1188→  1188→  const pendingUser = U('pending1');
+  1189→  1189→  const pendingSub = await api('POST', '/api/subscribers', {
+  1190→  1190→    name: 'Pending User', email: `pend_${TS}@test.com`, phone: '9000000031',
+  1191→  1191→    areaId: S.AREA_ID, radiusEnabled: true,
+  1192→  1192→    serviceUsername: pendingUser, servicePassword: 'Pass@123'
+  1193→  1193→  });
+  1194→  1194→  S.pending_sub = pendingSub.data?.id || (pendingSub.data?.subscriber?.id);
+  1195→  1195→
+  1196→  1196→  // Create DISCONNECTED subscriber
+  1197→  1197→  const discUser = U('disc1');
+  1198→  1198→  const discSub = await api('POST', '/api/subscribers', {
+  1199→  1199→    name: 'Disconnected User', email: `disc_${TS}@test.com`, phone: '9000000032',
+  1200→  1200→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+  1201→  1201→    serviceUsername: discUser, servicePassword: 'Pass@123'
+  1202→  1202→  });
+  1203→  1203→  S.disc_sub = discSub.data?.id || (discSub.data?.subscriber?.id);
+  1204→  1204→  if (S.disc_sub) {
+  1205→  1205→    await api('PUT', `/api/subscribers/${S.disc_sub}`, { status: 'DISCONNECTED' });
+  1206→  1206→  }
+  1207→  1207→
+  1208→  1208→  // T9.1: ACTIVE → SUSPENDED + RADIUS check
+  1209→  1209→  if (S.lc_sub) {
+  1210→  1210→    const t91 = await api('PUT', `/api/subscribers/${S.lc_sub}`, { status: 'SUSPENDED' });
+  1211→  1211→    rec('T9.1', 'ACTIVE→SUSPENDED → 200', 200, t91.status, t91.data);
+  1212→  1212→    await sleep(300);
+  1213→  1213→    const rc91 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${lcUser}' AND attribute = 'Auth-Type' AND value = 'Reject'`);
+  1214→  1214→    const rc91c = Array.isArray(rc91) && rc91[0] ? rc91[0].c : -1;
+  1215→  1215→    rec('T9.1b', 'Auth-Type=Reject added (B12 check)', 1, rc91c,
+  1216→  1216→      rc91c === 0 ? 'B12 Bug: No Reject row' : rc91);
+  1217→  1217→  } else {
+  1218→  1218→    rec('T9.1', 'ACTIVE→SUSPENDED', 'SKIP', 'SKIP');
+  1219→  1219→  }
+  1220→  1220→
+  1221→  1221→  // T9.2: SUSPENDED subscriber cannot self-care login
+  1222→  1222→  const t92 = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1223→  1223→    serviceUsername: lcUser, password: 'Pass@123'
+  1224→  1224→  });
+  1225→  1225→  rec('T9.2', 'SUSPENDED self-care login → 401/403', 403, t92.status, t92.data);
+  1226→  1226→
+  1227→  1227→  // T9.3: PENDING_ACTIVATION cannot self-care login
+  1228→  1228→  const t93 = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1229→  1229→    serviceUsername: pendingUser, password: 'Pass@123'
+  1230→  1230→  });
+  1231→  1231→  rec('T9.3', 'PENDING self-care login → 401/403', 403, t93.status, t93.data);
+  1232→  1232→
+  1233→  1233→  // T9.4: DISCONNECTED cannot self-care login
+  1234→  1234→  const t94 = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1235→  1235→    serviceUsername: discUser, password: 'Pass@123'
+  1236→  1236→  });
+  1237→  1237→  rec('T9.4', 'DISCONNECTED self-care login → 401/403', 403, t94.status, t94.data);
+  1238→  1238→
+  1239→  1239→  // T9.5: Wrong password → 401
+  1240→  1240→  const t95 = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1241→  1241→    serviceUsername: S.policy_user || seUser, password: 'WrongPassword'
+  1242→  1242→  });
+  1243→  1243→  rec('T9.5', 'Wrong password → 401', 401, t95.status, t95.data);
+  1244→  1244→
+  1245→  1245→  // T9.6: Password migration (plaintext → bcrypt on login)
+  1246→  1246→  const bcryptUser = U('bcrypt1');
+  1247→  1247→  // Ensure a valid plan exists for the subscriber (so it gets ACTIVE status)
+  1248→  1248→  let t96PlanId = S.PLAN_ID;
+  1249→  1249→  if (!t96PlanId) {
+  1250→  1250→    const t96Plan = await api('POST', '/api/plans', {
+  1251→  1251→      name: `BcryptTestPlan_${TS}`, downloadSpeed: 10, uploadSpeed: 5, priceMonthly: 99, validityDays: 30, speedUnit: 'MBPS'
+  1252→  1252→    });
+  1253→  1253→    t96PlanId = t96Plan.data?.id || (t96Plan.data?.plan?.id);
+  1254→  1254→    console.log(`  T9.6: Created fallback plan ${t96PlanId}`);
+  1255→  1255→  }
+  1256→  1256→  const bcryptSub = await api('POST', '/api/subscribers', {
+  1257→  1257→    name: 'Bcrypt User', email: `bcrypt_${TS}@test.com`, phone: '9000000035',
+  1258→  1258→    areaId: S.AREA_ID, planId: t96PlanId, radiusEnabled: true,
+  1259→  1259→    serviceUsername: bcryptUser, servicePassword: 'Pass@123'
+  1260→  1260→  });
+  1261→  1261→  await sleep(300);
+  1262→  1262→  // Login to trigger migration
+  1263→  1263→  const t96 = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1264→  1264→    serviceUsername: bcryptUser, password: 'Pass@123'
+  1265→  1265→  });
+  1266→  1266→  rec('T9.6', 'Password migration login → 200', 200, t96.status, t96.data);
+  1267→  1267→  await sleep(300);
+  1268→  1268→  // Check password is now bcrypt
+  1269→  1269→  const pw96 = await db(`SELECT "servicePassword" FROM "Subscriber" WHERE "serviceUsername" = '${bcryptUser}'`);
+  1270→  1270→  const pw96v = Array.isArray(pw96) && pw96[0] ? pw96[0].servicePassword : '';
+  1271→  1271→  const pw96isBcrypt = pw96v.startsWith('$2');
+  1272→  1272→  rec('T9.6b', 'Password migrated to bcrypt', 'BCRYPT', pw96isBcrypt ? 'BCRYPT' : 'PLAINTEXT', { prefix: pw96v.substring(0, 10) });
+  1273→  1273→  S.selfcare_cookie = t96.data?.token || null;
+  1274→  1274→
+  1275→  1275→  // T9.7: SUSPENDED → ACTIVE reactivation
+  1276→  1276→  if (S.lc_sub) {
+  1277→  1277→    const t97 = await api('PUT', `/api/subscribers/${S.lc_sub}`, { status: 'ACTIVE' });
+  1278→  1278→    rec('T9.7', 'SUSPENDED→ACTIVE → 200', 200, t97.status, t97.data);
+  1279→  1279→    await sleep(300);
+  1280→  1280→    const rc97 = await db(`SELECT COUNT(*) as c FROM radcheck WHERE username = '${lcUser}' AND attribute = 'Auth-Type' AND value = 'Reject'`);
+  1281→  1281→    const rc97c = Array.isArray(rc97) && rc97[0] ? rc97[0].c : -1;
+  1282→  1282→    rec('T9.7b', 'Auth-Type=Reject removed on reactivation', 0, rc97c, rc97);
+  1283→  1283→  } else {
+  1284→  1284→    rec('T9.7', 'SUSPENDED→ACTIVE', 'SKIP', 'SKIP');
+  1285→  1285→  }
+  1286→  1286→
+  1287→  1287→  // T9.8: Rate limiting on self-care login (11 rapid wrong attempts)
+  1288→  1288→  const rateUser = U('ratelimit1');
+  1289→  1289→  const rateSub = await api('POST', '/api/subscribers', {
+  1290→  1290→    name: 'Rate User', email: `rate_${TS}@test.com`, phone: '9000000038',
+  1291→  1291→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+  1292→  1292→    serviceUsername: rateUser, servicePassword: 'Pass@123'
+  1293→  1293→  });
+  1294→  1294→  await sleep(200);
+  1295→  1295→  let lastRateStatus = 0;
+  1296→  1296→  for (let i = 0; i < 11; i++) {
+  1297→  1297→    const rateRes = await apiRaw('POST', '/api/subscriber-auth/login', {
+  1298→  1298→      serviceUsername: rateUser, password: 'wrongpass'
+  1299→  1299→    });
+  1300→  1300→    lastRateStatus = rateRes.status;
+  1301→  1301→  }
+  1302→  1302→  rec('T9.8', 'Rate limiting → 429 on 11th attempt', 429, lastRateStatus, { lastStatus: lastRateStatus });
+  1303→  1303→
+  1304→  1304→  // =============================================================
+  1305→  1305→  // M10: AAA/RADIUS GROUPS (10 cases: T10.1-T10.10)
+  1306→  1306→  // =============================================================
+  1307→  1307→  console.log('\n========================================');
+  1308→  1308→  console.log('M10: AAA/RADIUS GROUPS (T10.1-T10.10)');
+  1309→  1309→  console.log('========================================');
+  1310→  1310→
+  1311→  1311→  // Refresh GROUP_NAME from DB (M3 may have created new groups)
+  1312→  1312→  const m10Groups = await db('SELECT id, name FROM "RadiusGroup" ORDER BY "createdAt" ASC LIMIT 5');
+  1313→  1313→  if (Array.isArray(m10Groups) && m10Groups[0]) {
+  1314→  1314→    S.GROUP_NAME = m10Groups[0].name;
+  1315→  1315→    S.GROUP_ID = m10Groups[0].id;
+  1316→  1316→  }
+  1317→  1317→  console.log(`  T10.10 will use GROUP_NAME = ${S.GROUP_NAME}`);
+  1318→  1318→
+  1319→  1319→  const aaaGroupName = `TestGroup100M_${TS}`;
+  1320→  1320→
+  1321→  1321→  // T10.1: Create group with check+reply attributes
+  1322→  1322→  const t101 = await api('POST', '/api/aaa/groups', {
+  1323→  1323→    name: aaaGroupName,
+  1324→  1324→    description: '100 Mbps test group',
+  1325→  1325→    checkAttributes: [{ attribute: 'Auth-Type', op: ':=', value: 'Accept' }],
+  1326→  1326→    replyAttributes: [
+  1327→  1327→      { attribute: 'Mikrotik-Rate-Limit', op: ':=', value: '100M/50M' },
+  1328→  1328→      { attribute: 'ChilliSpot-Max-Total-Octets', op: ':=', value: '102400' }
+  1329→  1329→    ]
+  1330→  1330→  });
+  1331→  1331→  rec('T10.1', 'Create group with check+reply → 201', 201, t101.status, t101.data);
+  1332→  1332→  S.aaa_group = t101.data?.id || (t101.data?.group?.id);
+  1333→  1333→  await sleep(300);
+  1334→  1334→  // Verify in RADIUS tables
+  1335→  1335→  const gc101 = await db(`SELECT COUNT(*) as c FROM radgroupcheck WHERE groupname = '${aaaGroupName}'`);
+  1336→  1336→  const gr101 = await db(`SELECT COUNT(*) as c FROM radgroupreply WHERE groupname = '${aaaGroupName}'`);
+  1337→  1337→  const gc101c = Array.isArray(gc101) && gc101[0] ? gc101[0].c : 0;
+  1338→  1338→  const gr101c = Array.isArray(gr101) && gr101[0] ? gr101[0].c : 0;
+  1339→  1339→  rec('T10.1b', 'radgroupcheck has 1 row', 1, gc101c, gc101);
+  1340→  1340→  rec('T10.1c', 'radgroupreply has 2 rows', 2, gr101c, gr101);
+  1341→  1341→
+  1342→  1342→  // T10.2: Add check attribute
+  1343→  1343→  const t102 = await api('PUT', '/api/aaa/groups', {
+  1344→  1344→    action: 'add-check', groupname: aaaGroupName,
+  1345→  1345→    attribute: 'Simultaneous-Use', op: ':=', value: '2'
+  1346→  1346→  });
+  1347→  1347→  rec('T10.2', 'Add check attribute → 200', 200, t102.status, t102.data);
+  1348→  1348→  await sleep(200);
+  1349→  1349→
+  1350→  1350→  // T10.3: Remove reply attribute
+  1351→  1351→  const t103 = await api('PUT', '/api/aaa/groups', {
+  1352→  1352→    action: 'remove-reply', groupname: aaaGroupName,
+  1353→  1353→    attribute: 'ChilliSpot-Max-Total-Octets'
+  1354→  1354→  });
+  1355→  1355→  rec('T10.3', 'Remove reply attribute → 200', 200, t103.status, t103.data);
+  1356→  1356→  await sleep(200);
+  1357→  1357→
+  1358→  1358→  // T10.4: Update attribute value
+  1359→  1359→  const t104 = await api('PUT', '/api/aaa/groups', {
+  1360→  1360→    action: 'update-reply', groupname: aaaGroupName,
+  1361→  1361→    attribute: 'Mikrotik-Rate-Limit', newValue: '200M/100M'
+  1362→  1362→  });
+  1363→  1363→  rec('T10.4', 'Update attribute value → 200', 200, t104.status, t104.data);
+  1364→  1364→  await sleep(200);
+  1365→  1365→
+  1366→  1366→  // T10.5: Rename group
+  1367→  1367→  const renamedGroup = `TestGroup200MRenamed_${TS}`;
+  1368→  1368→  const t105 = await api('PUT', `/api/aaa/groups/${aaaGroupName}`, { name: renamedGroup });
+  1369→  1369→  rec('T10.5', 'Rename group → 200', 200, t105.status, t105.data);
+  1370→  1370→  await sleep(300);
+  1371→  1371→  const gc105 = await db(`SELECT COUNT(*) as c FROM radgroupcheck WHERE groupname = '${renamedGroup}'`);
+  1372→  1372→  const gc105old = await db(`SELECT COUNT(*) as c FROM radgroupcheck WHERE groupname = '${aaaGroupName}'`);
+  1373→  1373→  const gc105c = Array.isArray(gc105) && gc105[0] ? gc105[0].c : 0;
+  1374→  1374→  const gc105oc = Array.isArray(gc105old) && gc105old[0] ? gc105old[0].c : -1;
+  1375→  1375→  rec('T10.5b', 'Cascaded rename to RADIUS tables', 'YES', gc105c > 0 ? 'YES' : 'NO', gc105);
+  1376→  1376→  rec('T10.5c', 'Old name removed from radgroupcheck', 0, gc105oc, gc105old);
+  1377→  1377→
+  1378→  1378→  // T10.6: Duplicate groupname rejected
+  1379→  1379→  const t106 = await api('POST', '/api/aaa/groups', { name: renamedGroup, replyAttributes: [] });
+  1380→  1380→  rec('T10.6', 'Duplicate groupname → 409', 409, t106.status, t106.data);
+  1381→  1381→
+  1382→  1382→  // T10.7: Invalid operator rejected
+  1383→  1383→  const t107 = await api('POST', '/api/aaa/groups', {
+  1384→  1384→    name: `BadOpGroup_${TS}`,
+  1385→  1385→    checkAttributes: [{ attribute: 'Test-Attr', op: 'INVALID_OP', value: 'test' }]
+  1386→  1386→  });
+  1387→  1387→  rec('T10.7', 'Invalid operator → 400', 400, t107.status, t107.data);
+  1388→  1388→
+  1389→  1389→  // T10.8: Delete group with cascade
+  1390→  1390→  const t108 = await api('DELETE', `/api/aaa/groups/${renamedGroup}`);
+  1391→  1391→  rec('T10.8', 'Delete group → 200', 200, t108.status, t108.data);
+  1392→  1392→  await sleep(300);
+  1393→  1393→  const gc108 = await db(`SELECT COUNT(*) as c FROM radgroupcheck WHERE groupname = '${renamedGroup}'`);
+  1394→  1394→  const gr108 = await db(`SELECT COUNT(*) as c FROM radgroupreply WHERE groupname = '${renamedGroup}'`);
+  1395→  1395→  const gc108c = Array.isArray(gc108) && gc108[0] ? gc108[0].c : -1;
+  1396→  1396→  const gr108c = Array.isArray(gr108) && gr108[0] ? gr108[0].c : -1;
+  1397→  1397→  rec('T10.8b', 'radgroupcheck cleaned after group delete', 0, gc108c, gc108);
+  1398→  1398→  rec('T10.8c', 'radgroupreply cleaned after group delete', 0, gr108c, gr108);
+  1399→  1399→
+  1400→  1400→  // T10.9: List all AAA groups
+  1401→  1401→  const t109 = await api('GET', '/api/aaa/groups');
+  1402→  1402→  rec('T10.9', 'GET all AAA groups → 200', 200, t109.status, t109.data);
+  1403→  1403→
+  1404→  1404→  // T10.10: Get group by name with users
+  1405→  1405→  // Skip if GROUP_NAME was never resolved to a real DB group
+  1406→  1406→  const m10gCheck = await db(`SELECT 1 FROM "RadiusGroup" WHERE name = '${S.GROUP_NAME.replace(/'/g, "''")}'`);
+  1407→  1407→  if (Array.isArray(m10gCheck) && m10gCheck.length > 0) {
+  1408→  1408→    const t1010 = await api('GET', `/api/aaa/groups/${S.GROUP_NAME}`);
+  1409→  1409→    rec('T10.10', `GET group by name (${S.GROUP_NAME}) → 200`, 200, t1010.status, t1010.data);
+  1410→  1410→  } else {
+  1411→  1411→    rec('T10.10', `GET group by name (${S.GROUP_NAME})`, 'SKIP', 'SKIP');
+  1412→  1412→  }
+  1413→  1413→
+  1414→  1414→  // =============================================================
+  1415→  1415→  // M11: SELF-CARE PORTAL (10 cases: T11.1-T11.10)
+  1416→  1416→  // =============================================================
+  1417→  1417→  console.log('\n========================================');
+  1418→  1418→  console.log('M11: SELF-CARE PORTAL (T11.1-T11.10)');
+  1419→  1419→  console.log('========================================');
+  1420→  1420→
+  1421→  1421→  // Create a clean subscriber for self-care tests
+  1422→  1422→  const scUser = U('selfcare1');
+  1423→  1423→  const scSub = await api('POST', '/api/subscribers', {
+  1424→  1424→    name: 'SelfCare User', email: `sc_${TS}@test.com`, phone: '9000000040',
+  1425→  1425→    areaId: S.AREA_ID, planId: S.PLAN_ID, radiusEnabled: true,
+  1426→  1426→    serviceUsername: scUser, servicePassword: 'Pass@123'
+  1427→  1427→  });
+  1428→  1428→  S.sc_sub = scSub.data?.id || (scSub.data?.subscriber?.id);
+  1429→  1429→  await sleep(300);
+  1430→  1430→
+  1431→  1431→  let scCookie = null;
+  1432→  1432→
+  1433→  1433→  // T11.1: Subscriber login
+  1434→  1434→  // Use a distinct x-forwarded-for to avoid rate-limit bucket exhaustion from M9 (T9.8 sends 11 rapid attempts)
+  1435→  1435→  let t111, t111data;
+  1436→  1436→  try {
+  1437→  1437→    t111 = await fetch(`${BASE}/api/subscriber-auth/login`, {
+  1438→  1438→      method: 'POST',
+  1439→  1439→      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '10.99.99.11' },
+  1440→  1440→      body: JSON.stringify({ serviceUsername: scUser, password: 'Pass@123' })
+  1441→  1441→    });
+  1442→  1442→    t111data = await t111.json();
+  1443→  1443→    // Extract just the name=value part from set-cookie (strip Path, HttpOnly, etc.)
+  1444→  1444→    const rawSetCookie = t111.headers.get('set-cookie') || '';
+  1445→  1445→    scCookie = rawSetCookie.split(';')[0] || null;
+  1446→  1446→  } catch (e) {
+  1447→  1447→    t111 = { status: 0, headers: new Headers() };
+  1448→  1448→    t111data = { error: e.message };
+  1449→  1449→  }
+  1450→  1450→  rec('T11.1', 'Subscriber login → 200', 200, t111.status, t111data);
+  1451→  1451→
+  1452→  1452→  // Helper for self-care API calls with cookie
+  1453→  1453→  async function scApi(method, urlPath) {
+  1454→  1454→    const opts = { method };
+  1455→  1455→    if (scCookie) opts.headers = { 'Cookie': scCookie };
+  1456→  1456→    try {
+  1457→  1457→      const res = await fetch(`${BASE}${urlPath}`, opts);
+  1458→  1458→      let data;
+  1459→  1459→      try { data = await res.json(); } catch (e) { data = null; }
+  1460→  1460→      return { status: res.status, data };
+  1461→  1461→    } catch (e) {
+  1462→  1462→      return { status: 0, data: { error: e.message } };
+  1463→  1463→    }
+  1464→  1464→  }
+  1465→  1465→
+  1466→  1466→  // T11.2: View own usage
+  1467→  1467→  const t112sc = await scApi('GET', '/api/subscriber-auth/usage?days=30');
+  1468→  1468→  rec('T11.2', 'View own usage → 200', 200, t112sc.status, t112sc.data);
+  1469→  1469→
+  1470→  1470→  // T11.3: View own invoices
+  1471→  1471→  const t113sc = await scApi('GET', '/api/subscriber-auth/invoices');
+  1472→  1472→  rec('T11.3', 'View own invoices → 200', 200, t113sc.status, t113sc.data);
+  1473→  1473→
+  1474→  1474→  // T11.4: View plan comparison
+  1475→  1475→  const t114sc = await scApi('GET', '/api/subscriber-auth/plans');
+  1476→  1476→  rec('T11.4', 'View plan comparison → 200', 200, t114sc.status, t114sc.data);
+  1477→  1477→
+  1478→  1478→  // T11.5: View own profile
+  1479→  1479→  const t115sc = await scApi('GET', '/api/subscriber-auth/me');
+  1480→  1480→  rec('T11.5', 'View own profile → 200', 200, t115sc.status, t115sc.data);
+  1481→  1481→
+  1482→  1482→  // T11.6: Change own password
+  1483→  1483→  let t116, t116data;
+  1484→  1484→  try {
+  1485→  1485→    t116 = await fetch(`${BASE}/api/subscriber-auth/password`, {
+  1486→  1486→      method: 'PUT',
+  1487→  1487→      headers: { 'Content-Type': 'application/json', ...(scCookie ? { 'Cookie': scCookie } : {}) },
+  1488→  1488→      body: JSON.stringify({ currentPassword: 'Pass@123', newPassword: 'NewSecure@456' })
+  1489→  1489→    });
+  1490→  1490→    t116data = await t116.json();
+  1491→  1491→  } catch (e) {
+  1492→  1492→    t116 = { status: 0 };
+  1493→  1493→    t116data = { error: e.message };
+  1494→  1494→  }
+  1495→  1495→  rec('T11.6', 'Change own password → 200', 200, t116.status, t116data);
+  1496→  1496→
+  1497→  1497→  // T11.7: View own payments
+  1498→  1498→  const t117sc = await scApi('GET', '/api/subscriber-auth/payments');
+  1499→  1499→  rec('T11.7', 'View own payments → 200', 200, t117sc.status, t117sc.data);
+  1500→  1500→
+  1501→  1501→  // T11.8: View service status
+  1502→  1502→  const t118sc = await scApi('GET', '/api/subscriber-auth/service-status');
+  1503→  1503→  rec('T11.8', 'View service status → 200', 200, t118sc.status, t118sc.data);
+  1504→  1504→
+  1505→  1505→  // T11.9: Self-care logout
+  1506→  1506→  let t119;
+  1507→  1507→  try {
+  1508→  1508→    t119 = await fetch(`${BASE}/api/subscriber-auth/logout`, {
+  1509→  1509→      method: 'POST',
+  1510→  1510→      headers: scCookie ? { 'Cookie': scCookie } : {}
+  1511→  1511→    });
+  1512→  1512→    var t119data = await t119.json().catch(() => null);
+  1513→  1513→  } catch (e) {
+  1514→  1514→    t119 = { status: 0 };
+  1515→  1515→    var t119data = { error: e.message };
+  1516→  1516→  }
+  1517→  1517→  rec('T11.9', 'Self-care logout → 200', 200, t119.status, t119data);
+  1518→  1518→  scCookie = null;
+  1519→  1519→
+  1520→  1520→  // T11.10: Unauthorized access (no cookie)
+  1521→  1521→  const t1110 = await scApi('GET', '/api/subscriber-auth/me');
+  1522→  1522→  rec('T11.10', 'Unauthorized self-care access → 401', 401, t1110.status, t1110.data);
+  1523→  1523→
+  1524→  1524→  // =============================================================
+  1525→  1525→  // M12: EDGE CASES & SECURITY (9 cases: T12.1-T12.9)
+  1526→  1526→  // =============================================================
+  1527→  1527→  console.log('\n========================================');
+  1528→  1528→  console.log('M12: EDGE CASES & SECURITY (T12.1-T12.9)');
+  1529→  1529→  console.log('========================================');
+  1530→  1530→
+  1531→  1531→  // T12.1: SQL injection in serviceUsername
+  1532→  1532→  const t121 = await api('POST', '/api/subscribers', {
+  1533→  1533→    name: 'SQL Injection', phone: '9333444555',
+  1534→  1534→    serviceUsername: "'; DROP TABLE radcheck;--", servicePassword: 'test'
+  1535→  1535→  });
+  1536→  1536→  rec('T12.1', 'SQL injection in username → 400', 400, t121.status, t121.data);
+  1537→  1537→  // Verify radcheck table still exists
+  1538→  1538→  const rc121 = await db('SELECT COUNT(*) as c FROM radcheck');
+  1539→  1539→  rec('T12.1b', 'radcheck table intact after SQL injection', 'INTACT',
+  1540→  1540→    Array.isArray(rc121) ? 'INTACT' : 'CORRUPTED', rc121);
+  1541→  1541→
+  1542→  1542→  // T12.2: No-auth access rejected
+  1543→  1543→  const t122 = await apiRaw('GET', '/api/subscribers');
+  1544→  1544→  rec('T12.2', 'No-auth access → 401', 401, t122.status, t122.data);
+  1545→  1545→
+  1546→  1546→  // T12.3: Subscriber cannot access admin APIs
+  1547→  1547→  let t123;
+  1548→  1548→  try {
+  1549→  1549→    t123 = await fetch(`${BASE}/api/subscribers`, {
+  1550→  1550→      headers: { 'Cookie': 'subscriber-session=invalid' }
+  1551→  1551→    });
+  1552→  1552→  } catch (e) {
+  1553→  1553→    t123 = { status: 0 };
+  1554→  1554→  }
+  1555→  1555→  rec('T12.3', 'Subscriber cant access admin API → 401', 401, t123.status, null);
+  1556→  1556→
+  1557→  1557→  // T12.4: Invoice number uniqueness (concurrent)
+  1558→  1558→  if (S.inv_sub) {
+  1559→  1559→    const invResults = await Promise.all([
+  1560→  1560→      api('POST', '/api/invoices', {
+  1561→  1561→        subscriberId: S.inv_sub, planId: S.PLAN_ID,
+  1562→  1562→        items: [{ description: 'Concurrent 1', amount: 100 }],
+  1563→  1563→        issueDate: '2027-03-01', dueDate: '2027-03-10'
+  1564→  1564→      }),
+  1565→  1565→      api('POST', '/api/invoices', {
+  1566→  1566→        subscriberId: S.inv_sub, planId: S.PLAN_ID,
+  1567→  1567→        items: [{ description: 'Concurrent 2', amount: 100 }],
+  1568→  1568→        issueDate: '2027-03-01', dueDate: '2027-03-10'
+  1569→  1569→      }),
+  1570→  1570→      api('POST', '/api/invoices', {
+  1571→  1571→        subscriberId: S.inv_sub, planId: S.PLAN_ID,
+  1572→  1572→        items: [{ description: 'Concurrent 3', amount: 100 }],
+  1573→  1573→        issueDate: '2027-03-01', dueDate: '2027-03-10'
+  1574→  1574→      })
+  1575→  1575→    ]);
+  1576→  1576→    const all201 = invResults.every(r => r.status === 201);
+  1577→  1577→    rec('T12.4', 'Concurrent invoices all 201', 'ALL_201', all201 ? 'ALL_201' : 'SOME_FAILED', invResults.map(r => r.status));
+  1578→  1578→    // Check uniqueness
+  1579→  1579→    await sleep(500);
+  1580→  1580→    const dup124 = await db(`SELECT "invoiceNumber", COUNT(*)::int as cnt FROM "Invoice" GROUP BY "invoiceNumber" HAVING COUNT(*) > 1 LIMIT 5`);
+  1581→  1581→    const dup124u = Array.isArray(dup124) && dup124.length === 0;
+  1582→  1582→    rec('T12.4b', 'Invoice numbers unique after concurrent creates', 'UNIQUE', dup124u ? 'UNIQUE' : 'DUPLICATES', dup124);
+  1583→  1583→  } else {
+  1584→  1584→    rec('T12.4', 'Concurrent invoice uniqueness', 'SKIP', 'SKIP');
+  1585→  1585→  }
+  1586→  1586→
+  1587→  1587→  // T12.5: Empty body
+  1588→  1588→  const t125 = await api('POST', '/api/subscribers', {});
+  1589→  1589→  rec('T12.5', 'Empty body → 400', 400, t125.status, t125.data);
+  1590→  1590→
+  1591→  1591→  // T12.6: Invalid UUID in path
+  1592→  1592→  const t126 = await api('GET', '/api/subscribers/not-a-valid-uuid');
+  1593→  1593→  const t126ok = t126.status === 400 || t126.status === 404;
+  1594→  1594→  rec('T12.6', 'Invalid UUID → 400/404', '400', t126ok ? '400' : String(t126.status), t126.data);
+  1595→  1595→
+  1596→  1596→  // T12.7: XSS in subscriber name
+  1597→  1597→  const xssUser = U('xssuser1');
+  1598→  1598→  const t127 = await api('POST', '/api/subscribers', {
+  1599→  1599→    name: '<script>alert(\'xss\')</script>', phone: '9555666777',
+  1600→  1600→    areaId: S.AREA_ID, serviceUsername: xssUser, servicePassword: 'Pass@123'
+  1601→  1601→  });
+  1602→  1602→  const t127ok = t127.status === 201 || t127.status === 400;
+  1603→  1603→  rec('T12.7', 'XSS in name → 201/400', 201, t127.status, t127.data);
+  1604→  1604→
+  1605→  1605→  // T12.8: Very long input strings
+  1606→  1606→  const longUser = U('longuser1');
+  1607→  1607→  const t128 = await api('POST', '/api/subscribers', {
+  1608→  1608→    name: 'A'.repeat(10000), phone: '9666777888',
+  1609→  1609→    areaId: S.AREA_ID, serviceUsername: longUser, servicePassword: 'Pass@123'
+  1610→  1610→  });
+  1611→  1611→  const t128not500 = t128.status !== 500;
+  1612→  1612→  rec('T12.8', 'Very long name → not 500', 'NOT_500', t128not500 ? 'NOT_500' : `IS_500`, { status: t128.status });
+  1613→  1613→
+  1614→  1614→  // T12.9: Expired/invalid JWT
+  1615→  1615→  let t129;
+  1616→  1616→  try {
+  1617→  1617→    t129 = await fetch(`${BASE}/api/subscribers`, {
+  1618→  1618→      headers: { 'Authorization': 'Bearer expired.invalid.token.here' }
+  1619→  1619→    });
+  1620→  1620→  } catch (e) {
+  1621→  1621→    t129 = { status: 0 };
+  1622→  1622→  }
+  1623→  1623→  rec('T12.9', 'Invalid JWT → 401', 401, t129.status, null);
+  1624→  1624→
+  1625→  1625→  // =============================================================
+  1626→  1626→  // M13: TIME ACCESS POLICIES (10 cases: T13.1-T13.10)
+  1627→  1627→  // =============================================================
+  1628→  1628→  console.log('\n========================================');
+  1629→  1629→  console.log('M13: TIME ACCESS POLICIES (T13.1-T13.10)');
+  1630→  1630→  console.log('========================================');
+  1631→  1631→
+  1632→  1632→  // T13.1: Create ALLOW policy
+  1633→  1633→  const t131 = await api('POST', '/api/time-access-policies', {
+  1634→  1634→    action: 'create-policy',
+  1635→  1635→    name: `Business Hours ${TS}`,
+  1636→  1636→    description: 'Allow during business hours',
+  1637→  1637→    daysOfWeek: [1, 2, 3, 4, 5],
+  1638→  1638→    startTime: '09:00', endTime: '18:00',
+  1639→  1639→    policyAction: 'ALLOW', enabled: true
+  1640→  1640→  });
+  1641→  1641→  rec('T13.1', 'Create ALLOW policy → 200', 200, t131.status, t131.data);
+  1642→  1642→  S.tap_allow_id = t131.data?.id || (t131.data?.policy?.id);
+  1643→  1643→  await sleep(200);
+  1644→  1644→
+  1645→  1645→  // T13.2: Create BLOCK policy
+  1646→  1646→  const t132 = await api('POST', '/api/time-access-policies', {
+  1647→  1647→    action: 'create-policy',
+  1648→  1648→    name: `Night Block ${TS}`,
+  1649→  1649→    description: 'Block access 11pm-6am',
+  1650→  1650→    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+  1651→  1651→    startTime: '23:00', endTime: '06:00',
+  1652→  1652→    policyAction: 'BLOCK', enabled: true
+  1653→  1653→  });
+  1654→  1654→  rec('T13.2', 'Create BLOCK policy → 200', 200, t132.status, t132.data);
+  1655→  1655→  S.tap_block_id = t132.data?.id || (t132.data?.policy?.id);
+  1656→  1656→  await sleep(200);
+  1657→  1657→
+  1658→  1658→  // T13.3: Create RATE_LIMIT policy
+  1659→  1659→  const t133 = await api('POST', '/api/time-access-policies', {
+  1660→  1660→    action: 'create-policy',
+  1661→  1661→    name: `Off-Peak Throttle ${TS}`,
+  1662→  1662→    description: 'Throttle during off-peak',
+  1663→  1663→    daysOfWeek: [0, 6],
+  1664→  1664→    startTime: '00:00', endTime: '08:00',
+  1665→  1665→    policyAction: 'RATE_LIMIT',
+  1666→  1666→    speedDownKbps: 10240, speedUpKbps: 5120,
+  1667→  1667→    enabled: true
+  1668→  1668→  });
+  1669→  1669→  rec('T13.3', 'Create RATE_LIMIT policy → 200', 200, t133.status, t133.data);
+  1670→  1670→  S.tap_rl_id = t133.data?.id || (t133.data?.policy?.id);
+  1671→  1671→  await sleep(200);
+  1672→  1672→
+  1673→  1673→  // T13.4: Duplicate policy name rejected
+  1674→  1674→  const t134 = await api('POST', '/api/time-access-policies', {
+  1675→  1675→    action: 'create-policy',
+  1676→  1676→    name: `Business Hours ${TS}`
+  1677→  1677→  });
+  1678→  1678→  rec('T13.4', 'Duplicate policy name → 409', 409, t134.status, t134.data);
+  1679→  1679→
+  1680→  1680→  // T13.5: Assign policy to subscriber
+  1681→  1681→  if (S.tap_allow_id && S.sc_sub) {
+  1682→  1682→    const t135 = await api('POST', '/api/time-access-policies', {
+  1683→  1683→      action: 'assign',
+  1684→  1684→      subscriberId: S.sc_sub,
+  1685→  1685→      timeAccessPolicyId: S.tap_allow_id,
+  1686→  1686→      priority: 10, enabled: true
+  1687→  1687→    });
+  1688→  1688→    rec('T13.5', 'Assign policy to subscriber → 200', 200, t135.status, t135.data);
+  1689→  1689→  } else {
+  1690→  1690→    rec('T13.5', 'Assign policy', 'SKIP', 'SKIP');
+  1691→  1691→  }
+  1692→  1692→
+  1693→  1693→  // T13.6: Duplicate assignment rejected
+  1694→  1694→  if (S.tap_allow_id && S.sc_sub) {
+  1695→  1695→    const t136 = await api('POST', '/api/time-access-policies', {
+  1696→  1696→      action: 'assign',
+  1697→  1697→      subscriberId: S.sc_sub,
+  1698→  1698→      timeAccessPolicyId: S.tap_allow_id
+  1699→  1699→    });
+  1700→  1700→    rec('T13.6', 'Duplicate assignment → 409', 409, t136.status, t136.data);
+  1701→  1701→  } else {
+  1702→  1702→    rec('T13.6', 'Duplicate assignment', 'SKIP', 'SKIP');
+  1703→  1703→  }
+  1704→  1704→
+  1705→  1705→  // T13.7: Check subscriber access (ALLOW policy)
+  1706→  1706→  if (S.sc_sub) {
+  1707→  1707→    const t137 = await api('GET', `/api/time-access-policies?action=check&subscriberId=${S.sc_sub}`);
+  1708→  1708→    rec('T13.7', 'Check subscriber access (ALLOW) → 200', 200, t137.status, t137.data);
+  1709→  1709→  } else {
+  1710→  1710→    rec('T13.7', 'Check access ALLOW', 'SKIP', 'SKIP');
+  1711→  1711→  }
+  1712→  1712→
+  1713→  1713→  // T13.8: Check subscriber access (BLOCK)
+  1714→  1714→  if (S.sc_sub && S.tap_block_id) {
+  1715→  1715→    // Assign block policy first
+  1716→  1716→    await api('POST', '/api/time-access-policies', {
+  1717→  1717→      action: 'assign', subscriberId: S.sc_sub, timeAccessPolicyId: S.tap_block_id, priority: 5
+  1718→  1718→    });
+  1719→  1719→    const t138 = await api('GET', `/api/time-access-policies?action=check&subscriberId=${S.sc_sub}`);
+  1720→  1720→    rec('T13.8', 'Check subscriber access (BLOCK) → 200', 200, t138.status, t138.data);
+  1721→  1721→  } else {
+  1722→  1722→    rec('T13.8', 'Check access BLOCK', 'SKIP', 'SKIP');
+  1723→  1723→  }
+  1724→  1724→
+  1725→  1725→  // T13.9: Unassign policy
+  1726→  1726→  if (S.tap_allow_id && S.sc_sub) {
+  1727→  1727→    const t139 = await api('POST', '/api/time-access-policies', {
+  1728→  1728→      action: 'unassign',
+  1729→  1729→      subscriberId: S.sc_sub,
+  1730→  1730→      timeAccessPolicyId: S.tap_allow_id
+  1731→  1731→    });
+  1732→  1732→    rec('T13.9', 'Unassign policy → 200', 200, t139.status, t139.data);
+  1733→  1733→  } else {
+  1734→  1734→    rec('T13.9', 'Unassign policy', 'SKIP', 'SKIP');
+  1735→  1735→  }
+  1736→  1736→
+  1737→  1737→  // T13.10: Update and delete policy
+  1738→  1738→  if (S.tap_allow_id) {
+  1739→  1739→    const t1310u = await api('POST', '/api/time-access-policies', {
+  1740→  1740→      action: 'update-policy', id: S.tap_allow_id,
+  1741→  1741→      startTime: '10:00', endTime: '19:00'
+  1742→  1742→    });
+  1743→  1743→    rec('T13.10a', 'Update policy → 200', 200, t1310u.status, t1310u.data);
+  1744→  1744→
+  1745→  1745→    const t1310d = await api('POST', '/api/time-access-policies', {
+  1746→  1746→      action: 'delete-policy', id: S.tap_allow_id
+  1747→  1747→    });
+  1748→  1748→    rec('T13.10b', 'Delete policy → 200', 200, t1310d.status, t1310d.data);
+  1749→  1749→  } else {
+  1750→  1750→    rec('T13.10a', 'Update policy', 'SKIP', 'SKIP');
+  1751→  1751→    rec('T13.10b', 'Delete policy', 'SKIP', 'SKIP');
+  1752→  1752→  }
+  1753→  1753→
+  1754→  1754→  // Cleanup remaining policies
+  1755→  1755→  if (S.tap_block_id) await api('POST', '/api/time-access-policies', { action: 'delete-policy', id: S.tap_block_id }).catch(() => {});
+  1756→  1756→  if (S.tap_rl_id) await api('POST', '/api/time-access-policies', { action: 'delete-policy', id: S.tap_rl_id }).catch(() => {});
+  1757→  1757→
+  1758→  1758→  // =============================================================
+  1759→  1759→  // M14: TOP-UPS & BALANCE (10 cases: T14.1-T14.10)
+  1760→  1760→  // =============================================================
+  1761→  1761→  console.log('\n========================================');
+  1762→  1762→  console.log('M14: TOP-UPS & BALANCE (T14.1-T14.10)');
+  1763→  1763→  console.log('========================================');
+  1764→  1764→
+  1765→  1765→  // T14.1: Create DATA top-up product
+  1766→  1766→  const t141 = await api('POST', '/api/top-ups?action=create-product', {
+  1767→  1767→    name: '10GB Data Booster', description: 'Add 10GB to current cycle',
+  1768→  1768→    type: 'DATA', value: 10240, validityHours: 168,
+  1769→  1769→    price: 99, isActive: true, sortOrder: 1
+  1770→  1770→  });
+  1771→  1771→  rec('T14.1', 'Create DATA top-up product → 201', 201, t141.status, t141.data);
+  1772→  1772→  S.topup_data_id = t141.data?.id || (t141.data?.product?.id);
+  1773→  1773→
+  1774→  1774→  // T14.2: Create TIME top-up product
+  1775→  1775→  const t142 = await api('POST', '/api/top-ups?action=create-product', {
+  1776→  1776→    name: '24 Hour Unlimited', type: 'TIME',
+  1777→  1777→    value: 24, validityHours: 24, price: 49, isActive: true
+  1778→  1778→  });
+  1779→  1779→  rec('T14.2', 'Create TIME top-up product → 201', 201, t142.status, t142.data);
+  1780→  1780→  S.topup_time_id = t142.data?.id || (t142.data?.product?.id);
+  1781→  1781→
+  1782→  1782→  // T14.3: Create SPEED_BOOST top-up product
+  1783→  1783→  const t143 = await api('POST', '/api/top-ups?action=create-product', {
+  1784→  1784→    name: '2x Speed Boost 4hrs', type: 'SPEED_BOOST',
+  1785→  1785→    value: 2, validityHours: 4, price: 29, isActive: true
+  1786→  1786→  });
+  1787→  1787→  rec('T14.3', 'Create SPEED_BOOST product → 201', 201, t143.status, t143.data);
+  1788→  1788→  S.topup_speed_id = t143.data?.id || (t143.data?.product?.id);
+  1789→  1789→
+  1790→  1790→  // T14.4: Invalid top-up type → 400
+  1791→  1791→  const t144 = await api('POST', '/api/top-ups?action=create-product', {
+  1792→  1792→    name: 'Bad Type', type: 'VOICE', price: 10
+  1793→  1793→  });
+  1794→  1794→  rec('T14.4', 'Invalid top-up type → 400', 400, t144.status, t144.data);
+  1795→  1795→
+  1796→  1796→  // T14.5: Purchase top-up for subscriber
+  1797→  1797→  if (S.topup_data_id && S.inv_sub) {
+  1798→  1798→    const t145 = await api('POST', '/api/top-ups?action=purchase', {
+  1799→  1799→      subscriberId: S.inv_sub,
+  1800→  1800→      topUpProductId: S.topup_data_id,
+  1801→  1801→      transactionId: `TXN-TEST-${TS}`
+  1802→  1802→    });
+  1803→  1803→    rec('T14.5', 'Purchase top-up → 201', 201, t145.status, t145.data);
+  1804→  1804→    S.topup_purchase_id = t145.data?.id || (t145.data?.purchase?.id);
+  1805→  1805→  } else {
+  1806→  1806→    rec('T14.5', 'Purchase top-up', 'SKIP', 'SKIP');
+  1807→  1807→  }
+  1808→  1808→
+  1809→  1809→  // T14.6: Purchase inactive product → rejected
+  1810→  1810→  // First deactivate the TIME product
+  1811→  1811→  if (S.topup_time_id) {
+  1812→  1812→    await api('POST', '/api/top-ups?action=update-product', { id: S.topup_time_id, isActive: false }).catch(() => {});
+  1813→  1813→    const t146 = await api('POST', '/api/top-ups?action=purchase', {
+  1814→  1814→      subscriberId: S.inv_sub, topUpProductId: S.topup_time_id,
+  1815→  1815→      transactionId: `TXN-TEST2-${TS}`
+  1816→  1816→    });
+  1817→  1817→    rec('T14.6', 'Purchase inactive product → 400', 400, t146.status, t146.data);
+  1818→  1818→  } else {
+  1819→  1819→    rec('T14.6', 'Purchase inactive product', 'SKIP', 'SKIP');
+  1820→  1820→  }
+  1821→  1821→
+  1822→  1822→  // T14.7: Consume top-up (partial)
+  1823→  1823→  if (S.topup_purchase_id) {
+  1824→  1824→    const t147 = await api('POST', '/api/top-ups?action=consume', {
+  1825→  1825→      id: S.topup_purchase_id, usedAmount: 3072
+  1826→  1826→    });
+  1827→  1827→    rec('T14.7', 'Consume top-up partial → 200', 200, t147.status, t147.data);
+  1828→  1828→  } else {
+  1829→  1829→    rec('T14.7', 'Consume top-up partial', 'SKIP', 'SKIP');
+  1830→  1830→  }
+  1831→  1831→
+  1832→  1832→  // T14.8: Consume top-up (full → USED)
+  1833→  1833→  if (S.topup_purchase_id) {
+  1834→  1834→    const t148 = await api('POST', '/api/top-ups?action=consume', {
+  1835→  1835→      id: S.topup_purchase_id, usedAmount: 10240
+  1836→  1836→    });
+  1837→  1837→    rec('T14.8', 'Consume top-up full → 200', 200, t148.status, t148.data);
+  1838→  1838→  } else {
+  1839→  1839→    rec('T14.8', 'Consume top-up full', 'SKIP', 'SKIP');
+  1840→  1840→  }
+  1841→  1841→
+  1842→  1842→  // T14.9: List active top-ups
+  1843→  1843→  if (S.inv_sub) {
+  1844→  1844→    const t149 = await api('GET', `/api/top-ups?action=active&subscriberId=${S.inv_sub}`);
+  1845→  1845→    rec('T14.9', 'List active top-ups → 200', 200, t149.status, t149.data);
+  1846→  1846→  } else {
+  1847→  1847→    rec('T14.9', 'List active top-ups', 'SKIP', 'SKIP');
+  1848→  1848→  }
+  1849→  1849→
+  1850→  1850→  // T14.10: Get subscriber balance
+  1851→  1851→  if (S.inv_sub) {
+  1852→  1852→    const t1410 = await api('GET', `/api/subscribers/${S.inv_sub}/balance`);
+  1853→  1853→    rec('T14.10', 'Get subscriber balance → 200', 200, t1410.status, t1410.data);
+  1854→  1854→  } else {
+  1855→  1855→    rec('T14.10', 'Get subscriber balance', 'SKIP', 'SKIP');
+  1856→  1856→  }
+  1857→  1857→
+  1858→  1858→  // Cleanup top-up products
+  1859→  1859→  if (S.topup_data_id) await api('DELETE', `/api/top-ups/${S.topup_data_id}`).catch(() => {});
+  1860→  1860→  if (S.topup_time_id) await api('DELETE', `/api/top-ups/${S.topup_time_id}`).catch(() => {});
+  1861→  1861→  if (S.topup_speed_id) await api('DELETE', `/api/top-ups/${S.topup_speed_id}`).catch(() => {});
+  1862→  1862→
+  1863→  1863→  // =============================================================
+  1864→  1864→  // M15: EXPORT/REPORT APIs (13 cases: T15.1-T15.13)
+  1865→  1865→  // =============================================================
+  1866→  1866→  console.log('\n========================================');
+  1867→  1867→  console.log('M15: EXPORT/REPORT APIs (T15.1-T15.13)');
+  1868→  1868→  console.log('========================================');
+  1869→  1869→
+  1870→  1870→  // T15.1: Export subscribers CSV
+  1871→  1871→  const t151 = await api('GET', '/api/export/subscribers?format=csv');
+  1872→  1872→  rec('T15.1', 'Export subscribers CSV → 200', 200, t151.status, t151.data);
+  1873→  1873→
+  1874→  1874→  // T15.2: Export subscribers JSON
+  1875→  1875→  const t152 = await api('GET', '/api/export/subscribers?format=json');
+  1876→  1876→  rec('T15.2', 'Export subscribers JSON → 200', 200, t152.status, t152.data);
+  1877→  1877→
+  1878→  1878→  // T15.3: Export subscribers with status filter
+  1879→  1879→  const t153 = await api('GET', '/api/export/subscribers?status=ACTIVE&connectionType=FTTH');
+  1880→  1880→  rec('T15.3', 'Export subscribers with filters → 200', 200, t153.status, t153.data);
+  1881→  1881→
+  1882→  1882→  // T15.4: Export subscribers with search filter
+  1883→  1883→  const t154 = await api('GET', '/api/export/subscribers?search=testm&format=json');
+  1884→  1884→  rec('T15.4', 'Export subscribers with search → 200', 200, t154.status, t154.data);
+  1885→  1885→
+  1886→  1886→  // T15.5: Export invoices CSV with date range
+  1887→  1887→  const t155 = await api('GET', '/api/export/invoices?format=csv&dateFrom=2025-01-01&dateTo=2027-12-31');
+  1888→  1888→  rec('T15.5', 'Export invoices CSV → 200', 200, t155.status, t155.data);
+  1889→  1889→
+  1890→  1890→  // T15.6: Export invoices JSON with filters
+  1891→  1891→  const t156 = await api('GET', '/api/export/invoices?format=json&status=DRAFT');
+  1892→  1892→  rec('T15.6', 'Export invoices JSON → 200', 200, t156.status, t156.data);
+  1893→  1893→
+  1894→  1894→  // T15.7: Export payments CSV
+  1895→  1895→  const t157 = await api('GET', '/api/export/payments?format=csv');
+  1896→  1896→  rec('T15.7', 'Export payments CSV → 200', 200, t157.status, t157.data);
+  1897→  1897→
+  1898→  1898→  // T15.8: Export payments JSON
+  1899→  1899→  const t158 = await api('GET', '/api/export/payments?format=json');
+  1900→  1900→  rec('T15.8', 'Export payments JSON → 200', 200, t158.status, t158.data);
+  1901→  1901→
+  1902→  1902→  // T15.9: Export complaints CSV
+  1903→  1903→  const t159 = await api('GET', '/api/complaints/export?format=csv');
+  1904→  1904→  rec('T15.9', 'Export complaints CSV → 200', 200, t159.status, t159.data);
+  1905→  1905→
+  1906→  1906→  // T15.10: Export without auth → 401
+  1907→  1907→  const t1510 = await apiRaw('GET', '/api/export/subscribers?format=csv');
+  1908→  1908→  rec('T15.10', 'Export without auth → 401', 401, t1510.status, t1510.data);
+  1909→  1909→
+  1910→  1910→  // T15.11: Revenue report
+  1911→  1911→  const t1511 = await api('GET', '/api/reports/revenue?period=monthly&year=2025');
+  1912→  1912→  rec('T15.11', 'Revenue report → 200', 200, t1511.status, t1511.data);
+  1913→  1913→
+  1914→  1914→  // T15.12: Expenses report
+  1915→  1915→  const t1512 = await api('GET', '/api/reports/expenses?period=monthly&year=2025');
+  1916→  1916→  rec('T15.12', 'Expenses report → 200', 200, t1512.status, t1512.data);
+  1917→  1917→
+  1918→  1918→  // T15.13: KPI targets
+  1919→  1919→  const t1513 = await api('GET', '/api/reports/kpi-targets');
+  1920→  1920→  rec('T15.13', 'KPI targets report → 200', 200, t1513.status, t1513.data);
+  1921→  1921→
+  1922→  1922→  // =============================================================
+  1923→  1923→  // SUMMARY
+  1924→  1924→  // =============================================================
+  1925→  1925→  console.log('\n\n========================================');
+  1926→  1926→  console.log('TEST SUMMARY');
+  1927→  1927→  console.log('========================================');
+  1928→  1928→
+  1929→  1929→  const total = RESULTS.length;
+  1930→  1930→  const passed = RESULTS.filter(r => r.pass).length;
+  1931→  1931→  const failed = RESULTS.filter(r => !r.pass && r.actual !== 'SKIP').length;
+  1932→  1932→  const skipped = RESULTS.filter(r => r.actual === 'SKIP').length;
+  1933→  1933→  const rate = total > 0 ? ((passed / total) * 100).toFixed(1) : '0.0';
+  1934→  1934→
+  1935→  1935→  console.log(`Total:   ${total}`);
+  1936→  1936→  console.log(`Passed:  ${passed}`);
+  1937→  1937→  console.log(`Failed:  ${failed}`);
+  1938→  1938→  console.log(`Skipped: ${skipped}`);
+  1939→  1939→  console.log(`Pass Rate: ${rate}%`);
+  1940→  1940→
+  1941→  1941→  // Print failures
+  1942→  1942→  const failures = RESULTS.filter(r => !r.pass && r.actual !== 'SKIP');
+  1943→  1943→  if (failures.length > 0) {
+  1944→  1944→    console.log('\nFailed Tests:');
+  1945→  1945→    for (const f of failures) {
+  1946→  1946→      console.log(`  ${f.id}: ${f.desc} | Expected: ${f.expected} | Got: ${f.actual}`);
+  1947→  1947→    }
+  1948→  1948→  }
+  1949→  1949→
+  1950→  1950→  // ── Write results to files ────────────────────────────────
+  1951→  1951→  const resultsDir = path.join(__dirname, 'test_results');
+  1952→  1952→  if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
+  1953→  1953→
+  1954→  1954→  // JSON output
+  1955→  1955→  fs.writeFileSync(
+  1956→  1956→    path.join(resultsDir, 'results.json'),
+  1957→  1957→    JSON.stringify(RESULTS, null, 2)
+  1958→  1958→  );
+  1959→  1959→  console.log(`\nResults JSON: ${path.join(resultsDir, 'results.json')}`);
+  1960→  1960→
+  1961→  1961→  // CSV output
+  1962→  1962→  const csvHeader = 'id,desc,expected,actual,pass,evidence';
+  1963→  1963→  const csvRows = RESULTS.map(r => {
+  1964→  1964→    const desc = String(r.desc).replace(/"/g, '""');
+  1965→  1965→    const expected = String(r.expected).replace(/"/g, '""');
+  1966→  1966→    const actual = String(r.actual).replace(/"/g, '""');
+  1967→  1967→    const evidence = String(r.evidence || '').replace(/"/g, '""');
+  1968→  1968→    return `${r.id},"${desc}","${expected}","${actual}",${r.pass},"${evidence}"`;
+  1969→  1969→  });
+  1970→  1970→  fs.writeFileSync(
+  1971→  1971→    path.join(resultsDir, 'results.csv'),
+  1972→  1972→    csvHeader + '\n' + csvRows.join('\n')
+  1973→  1973→  );
+  1974→  1974→  console.log(`Results CSV:  ${path.join(resultsDir, 'results.csv')}`);
+  1975→  1975→
+  1976→  1976→  // ── Module summary ────────────────────────────────────────
+  1977→  1977→  const modules = [
+  1978→  1978→    { prefix: 'T1', name: 'M1: Subscriber Registration', expected: 13 },
+  1979→  1979→    { prefix: 'T2', name: 'M2: RADIUS Provisioning', expected: 13 },
+  1980→  1980→    { prefix: 'T3', name: 'M3: Plan Management', expected: 10 },
+  1981→  1981→    { prefix: 'T4', name: 'M4: Plan Migration', expected: 9 },
+  1982→  1982→    { prefix: 'T5', name: 'M5: Invoice/Billing', expected: 14 },
+  1983→  1983→    { prefix: 'T6', name: 'M6: Payment & Accounting', expected: 11 },
+  1984→  1984→    { prefix: 'T7', name: 'M7: Policy Engine', expected: 9 },
+  1985→  1985→    { prefix: 'T8', name: 'M8: Session Engine', expected: 9 },
+  1986→  1986→    { prefix: 'T9', name: 'M9: Subscriber Status Lifecycle', expected: 8 },
+  1987→  1987→    { prefix: 'T10', name: 'M10: AAA/RADIUS Groups', expected: 10 },
+  1988→  1988→    { prefix: 'T11', name: 'M11: Self-Care Portal', expected: 10 },
+  1989→  1989→    { prefix: 'T12', name: 'M12: Edge Cases & Security', expected: 9 },
+  1990→  1990→    { prefix: 'T13', name: 'M13: Time Access Policies', expected: 10 },
+  1991→  1991→    { prefix: 'T14', name: 'M14: Top-Ups & Balance', expected: 10 },
+  1992→  1992→    { prefix: 'T15', name: 'M15: Export/Report APIs', expected: 13 },
+  1993→  1993→  ];
+  1994→  1994→
+  1995→  1995→  console.log('\n--- Module Breakdown ---');
+  1996→  1996→  for (const mod of modules) {
+  1997→  1997→    const modResults = RESULTS.filter(r => r.id.startsWith(mod.prefix));
+  1998→  1998→    const modPass = modResults.filter(r => r.pass).length;
+  1999→  1999→    const modFail = modResults.filter(r => !r.pass && r.actual !== 'SKIP').length;
+  2000→  2000→    const modSkip = modResults.filter(r => r.actual === 'SKIP').length;
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]

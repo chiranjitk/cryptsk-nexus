@@ -7,12 +7,12 @@ module.exports = {
       args: 'next dev -p 3000 -H 0.0.0.0',
       cwd: '/home/z/my-project',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
         SESSION_SECRET: 'cryptsk_session_secret_key_2026_isp_platform',
         NODE_OPTIONS: '--max-old-space-size=2048',
       },
       watch: false,
-      max_memory_restart: '0',
+      max_memory_restart: '3800M',
       restart_delay: 5000,
       exp_backoff_restart_delay: 5000,
       max_restarts: 50,
@@ -32,7 +32,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/radius-service',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -51,7 +51,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/ips-daemon',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -70,7 +70,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/ndpi-service',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -89,7 +89,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/gateway-service',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -108,7 +108,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/multiwan-monitor',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -127,7 +127,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/syslog-service',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -180,7 +180,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/network-monitor',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -199,7 +199,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/billing-cron',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -218,7 +218,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/whatsapp-bot',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,
@@ -237,7 +237,7 @@ module.exports = {
       interpreter: 'bun',
       cwd: '/home/z/my-project/mini-services/session-engine',
       env: {
-        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
       },
       watch: false,
       restart_delay: 5000,

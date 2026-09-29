@@ -1,0 +1,744 @@
+  1221→                {/* Server Stats */}
+  1222→                <Card className="border shadow-sm">
+  1223→                  <CardHeader className="pb-3">
+  1224→                    <CardTitle className="text-base flex items-center gap-2">
+  1225→                      <Activity className="h-4 w-4" />
+  1226→                      Server Statistics
+  1227→                    </CardTitle>
+  1228→                  </CardHeader>
+  1229→                  <CardContent>
+  1230→                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+  1231→                      <Card className="border-0 rounded-xl bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-950/30 dark:to-gray-950/20 ring-1 ring-slate-200/60">
+  1232→                        <CardContent className="p-4 text-center">
+  1233→                          <p className="text-2xl font-bold tabular-nums">{keaStatus?.totalSubnets ?? subnets.length}</p>
+  1234→                          <p className="text-xs text-muted-foreground">Subnets Configured</p>
+  1235→                        </CardContent>
+  1236→                      </Card>
+  1237→                      <Card className="border-0 rounded-xl bg-gradient-to-br from-blue-50 to-sky-50 dark:from-blue-950/30 dark:to-sky-950/20 ring-1 ring-blue-200/60">
+  1238→                        <CardContent className="p-4 text-center">
+  1239→                          <p className="text-2xl font-bold tabular-nums text-blue-600">{keaStatus?.totalLeases ?? leases.length}</p>
+  1240→                          <p className="text-xs text-muted-foreground">Total Leases</p>
+  1241→                        </CardContent>
+  1242→                      </Card>
+  1243→                      <Card className="border-0 rounded-xl bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/20 ring-1 ring-green-200/60">
+  1244→                        <CardContent className="p-4 text-center">
+  1245→                          <p className="text-2xl font-bold tabular-nums text-green-600">{keaStatus?.activeLeases ?? totalActiveLeases}</p>
+  1246→                          <p className="text-xs text-muted-foreground">Active Leases</p>
+  1247→                        </CardContent>
+  1248→                      </Card>
+  1249→                      <Card className="border-0 rounded-xl bg-gradient-to-br from-amber-50 to-yellow-50 dark:from-amber-950/30 dark:to-yellow-950/20 ring-1 ring-amber-200/60">
+  1250→                        <CardContent className="p-4 text-center">
+  1251→                          <p className="text-2xl font-bold tabular-nums text-amber-600">{keaStatus?.expiredLeases ?? totalExpiredLeases}</p>
+  1252→                          <p className="text-xs text-muted-foreground">Expired Leases</p>
+  1253→                        </CardContent>
+  1254→                      </Card>
+  1255→                    </div>
+  1256→                  </CardContent>
+  1257→                </Card>
+  1258→
+  1259→                {/* Config Preview */}
+  1260→                <Card className="border shadow-sm">
+  1261→                  <CardHeader className="pb-3">
+  1262→                    <div className="flex items-center justify-between">
+  1263→                      <CardTitle className="text-base flex items-center gap-2">
+  1264→                        <Info className="h-4 w-4" />
+  1265→                        KEA Configuration Preview
+  1266→                      </CardTitle>
+  1267→                      <Button
+  1268→                        variant="ghost"
+  1269→                        size="sm"
+  1270→                        onClick={() => setShowConfig(!showConfig)}
+  1271→                      >
+  1272→                        {showConfig ? (
+  1273→                          <><ChevronDown className="h-3.5 w-3.5 mr-1" />Hide</>
+  1274→                        ) : (
+  1275→                          <><ChevronRight className="h-3.5 w-3.5 mr-1" />Show</>
+  1276→                        )}
+  1277→                      </Button>
+  1278→                    </div>
+  1279→                  </CardHeader>
+  1280→                  {showConfig && (
+  1281→                    <CardContent>
+  1282→                      <div className="relative">
+  1283→                        <pre className="bg-slate-900 text-slate-100 rounded-lg p-4 text-xs font-mono overflow-auto max-h-96">
+  1284→                          {formatConfigJson(keaStatus?.config)}
+  1285→                        </pre>
+  1286→                        <Button
+  1287→                          variant="outline"
+  1288→                          size="sm"
+  1289→                          className="absolute top-2 right-2 h-7"
+  1290→                          onClick={() => {
+  1291→                            navigator.clipboard.writeText(formatConfigJson(keaStatus?.config));
+  1292→                            toast.success("Config copied to clipboard");
+  1293→                          }}
+  1294→                        >
+  1295→                          <Copy className="h-3 w-3 mr-1" />Copy
+  1296→                        </Button>
+  1297→                      </div>
+  1298→                    </CardContent>
+  1299→                  )}
+  1300→                </Card>
+  1301→              </>
+  1302→            )}
+  1303→          </TabsContent>
+  1304→        </Tabs>
+  1305→
+  1306→        {/* ═══════════════════════════════════════════════════════
+  1307→            DIALOGS
+  1308→            ═══════════════════════════════════════════════════════ */}
+  1309→
+  1310→        {/* ─── Add Subnet Dialog ─── */}
+  1311→        <Dialog open={subnetAddOpen} onOpenChange={setSubnetAddOpen}>
+  1312→          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+  1313→            <DialogHeader>
+  1314→              <DialogTitle>Add DHCP Subnet</DialogTitle>
+  1315→              <DialogDescription>
+  1316→                Create a new DHCP subnet configuration. All fields with * are required.
+  1317→              </DialogDescription>
+  1318→            </DialogHeader>
+  1319→            <div className="space-y-4">
+  1320→              {subnetFormErrors.length > 0 && (
+  1321→                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+  1322→                  <AlertTriangle className="h-4 w-4 shrink-0" />
+  1323→                  <span>{subnetFormErrors.join(", ")}</span>
+  1324→                </div>
+  1325→              )}
+  1326→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1327→                <div className="space-y-2">
+  1328→                  <Label>Name *</Label>
+  1329→                  <Input
+  1330→                    placeholder="e.g., Office LAN"
+  1331→                    value={subnetForm.name}
+  1332→                    onChange={(e) => setSubnetForm((p) => ({ ...p, name: e.target.value }))}
+  1333→                  />
+  1334→                </div>
+  1335→                <div className="space-y-2">
+  1336→                  <Label>Interface *</Label>
+  1337→                  <Select
+  1338→                    value={subnetForm.interfaceName}
+  1339→                    onValueChange={(v) => setSubnetForm((p) => ({ ...p, interfaceName: v }))}
+  1340→                  >
+  1341→                    <SelectTrigger>
+  1342→                      <SelectValue placeholder="Select interface" />
+  1343→                    </SelectTrigger>
+  1344→                    <SelectContent>
+  1345→                      {interfaces.map((intf) => (
+  1346→                        <SelectItem key={intf.name} value={intf.name}>
+  1347→                          {intf.name}
+  1348→                          <span className="text-muted-foreground ml-1">({intf.status})</span>
+  1349→                        </SelectItem>
+  1350→                      ))}
+  1351→                    </SelectContent>
+  1352→                  </Select>
+  1353→                </div>
+  1354→                <div className="space-y-2">
+  1355→                  <Label>Subnet Address *</Label>
+  1356→                  <Input
+  1357→                    placeholder="e.g., 10.0.0.0"
+  1358→                    value={subnetForm.subnet}
+  1359→                    onChange={(e) => setSubnetForm((p) => ({ ...p, subnet: e.target.value }))}
+  1360→                  />
+  1361→                </div>
+  1362→                <div className="space-y-2">
+  1363→                  <Label>Netmask *</Label>
+  1364→                  <Input
+  1365→                    placeholder="e.g., 255.255.255.0"
+  1366→                    value={subnetForm.netmask}
+  1367→                    onChange={(e) => setSubnetForm((p) => ({ ...p, netmask: e.target.value }))}
+  1368→                  />
+  1369→                </div>
+  1370→                <div className="space-y-2">
+  1371→                  <Label>Range Start *</Label>
+  1372→                  <Input
+  1373→                    placeholder="e.g., 10.0.0.100"
+  1374→                    value={subnetForm.rangeStart}
+  1375→                    onChange={(e) => setSubnetForm((p) => ({ ...p, rangeStart: e.target.value }))}
+  1376→                  />
+  1377→                </div>
+  1378→                <div className="space-y-2">
+  1379→                  <Label>Range End *</Label>
+  1380→                  <Input
+  1381→                    placeholder="e.g., 10.0.0.250"
+  1382→                    value={subnetForm.rangeEnd}
+  1383→                    onChange={(e) => setSubnetForm((p) => ({ ...p, rangeEnd: e.target.value }))}
+  1384→                  />
+  1385→                </div>
+  1386→                <div className="space-y-2">
+  1387→                  <Label>Lease Time</Label>
+  1388→                  <div className="flex gap-2">
+  1389→                    <Select value={leasePreset} onValueChange={handleLeasePresetChange}>
+  1390→                      <SelectTrigger className="w-[130px]">
+  1391→                        <SelectValue />
+  1392→                      </SelectTrigger>
+  1393→                      <SelectContent>
+  1394→                        {LEASE_PRESETS.map((p) => (
+  1395→                          <SelectItem key={p.label} value={p.label}>{p.label}</SelectItem>
+  1396→                        ))}
+  1397→                        <SelectItem value="custom">Custom</SelectItem>
+  1398→                      </SelectContent>
+  1399→                    </Select>
+  1400→                    <Input
+  1401→                      type="number"
+  1402→                      placeholder="Seconds"
+  1403→                      value={subnetForm.leaseTime}
+  1404→                      onChange={(e) => {
+  1405→                        setLeasePreset("custom");
+  1406→                        setSubnetForm((p) => ({ ...p, leaseTime: Number(e.target.value) }));
+  1407→                      }}
+  1408→                      className="flex-1"
+  1409→                    />
+  1410→                  </div>
+  1411→                </div>
+  1412→                <div className="space-y-2">
+  1413→                  <Label>Gateway IP</Label>
+  1414→                  <Input
+  1415→                    placeholder="e.g., 10.0.0.1"
+  1416→                    value={subnetForm.gateway}
+  1417→                    onChange={(e) => setSubnetForm((p) => ({ ...p, gateway: e.target.value }))}
+  1418→                  />
+  1419→                </div>
+  1420→                <div className="space-y-2 sm:col-span-2">
+  1421→                  <Label>DNS Servers</Label>
+  1422→                  <Input
+  1423→                    placeholder="e.g., 8.8.8.8, 8.8.4.4"
+  1424→                    value={subnetForm.dnsServers}
+  1425→                    onChange={(e) => setSubnetForm((p) => ({ ...p, dnsServers: e.target.value }))}
+  1426→                  />
+  1427→                </div>
+  1428→                <div className="space-y-2 sm:col-span-2">
+  1429→                  <Label>Domain Name</Label>
+  1430→                  <Input
+  1431→                    placeholder="e.g., local.lan"
+  1432→                    value={subnetForm.domainName}
+  1433→                    onChange={(e) => setSubnetForm((p) => ({ ...p, domainName: e.target.value }))}
+  1434→                  />
+  1435→                </div>
+  1436→                <div className="space-y-2">
+  1437→                  <Label>NTP Servers</Label>
+  1438→                  <Input
+  1439→                    placeholder="e.g., pool.ntp.org"
+  1440→                    value={subnetForm.ntpServers}
+  1441→                    onChange={(e) => setSubnetForm((p) => ({ ...p, ntpServers: e.target.value }))}
+  1442→                  />
+  1443→                </div>
+  1444→                <div className="space-y-2">
+  1445→                  <Label>WINS Server</Label>
+  1446→                  <Input
+  1447→                    placeholder="e.g., 10.0.0.1"
+  1448→                    value={subnetForm.winsServer}
+  1449→                    onChange={(e) => setSubnetForm((p) => ({ ...p, winsServer: e.target.value }))}
+  1450→                  />
+  1451→                </div>
+  1452→                <div className="space-y-2 sm:col-span-2">
+  1453→                  <Label>Allowed Hosts (Walled Garden)</Label>
+  1454→                  <div className="flex gap-2">
+  1455→                    <Input
+  1456→                      placeholder="Enter hostname/IP and press Add"
+  1457→                      value={allowedHostInput}
+  1458→                      onChange={(e) => setAllowedHostInput(e.target.value)}
+  1459→                      onKeyDown={(e) => {
+  1460→                        if (e.key === "Enter") { e.preventDefault(); addAllowedHost(); }
+  1461→                      }}
+  1462→                    />
+  1463→                    <Button variant="outline" size="sm" onClick={addAllowedHost}>
+  1464→                      Add
+  1465→                    </Button>
+  1466→                  </div>
+  1467→                  {subnetForm.allowedHosts.length > 0 && (
+  1468→                    <div className="flex flex-wrap gap-1 mt-2">
+  1469→                      {subnetForm.allowedHosts.map((host) => (
+  1470→                        <Badge key={host} variant="secondary" className="text-xs rounded-full px-2 py-1">
+  1471→                          {host}
+  1472→                          <button
+  1473→                            className="ml-1 text-muted-foreground hover:text-foreground"
+  1474→                            onClick={() => removeAllowedHost(host)}
+  1475→                          >
+  1476→                            <XCircle className="h-3 w-3" />
+  1477→                          </button>
+  1478→                        </Badge>
+  1479→                      ))}
+  1480→                    </div>
+  1481→                  )}
+  1482→                </div>
+  1483→                <div className="space-y-2">
+  1484→                  <Label>Captive Portal</Label>
+  1485→                  <Select
+  1486→                    value={subnetForm.captivePortalId}
+  1487→                    onValueChange={(v) => setSubnetForm((p) => ({ ...p, captivePortalId: v }))}
+  1488→                  >
+  1489→                    <SelectTrigger>
+  1490→                      <SelectValue placeholder="None" />
+  1491→                    </SelectTrigger>
+  1492→                    <SelectContent>
+  1493→                      <SelectItem value="none">None</SelectItem>
+  1494→                      {portalList.map((p) => (
+  1495→                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+  1496→                      ))}
+  1497→                    </SelectContent>
+  1498→                  </Select>
+  1499→                </div>
+  1500→                <div className="flex items-center gap-2 sm:col-span-2">
+  1501→                  <Switch
+  1502→                    checked={subnetForm.enabled}
+  1503→                    onCheckedChange={(v) => setSubnetForm((p) => ({ ...p, enabled: v }))}
+  1504→                  />
+  1505→                  <Label>Enable this subnet</Label>
+  1506→                </div>
+  1507→              </div>
+  1508→            </div>
+  1509→            <DialogFooter>
+  1510→              <Button variant="outline" onClick={() => setSubnetAddOpen(false)}>Cancel</Button>
+  1511→              <Button
+  1512→                className="bg-red-600 hover:bg-red-700 text-white"
+  1513→                disabled={createSubnetMutation.isPending}
+  1514→                onClick={() => {
+  1515→                  if (validateSubnetForm(subnetForm)) {
+  1516→                    createSubnetMutation.mutate({
+  1517→                      ...subnetForm,
+  1518→                      captivePortalId: subnetForm.captivePortalId === "none" ? "" : subnetForm.captivePortalId,
+  1519→                    });
+  1520→                  }
+  1521→                }}
+  1522→              >
+  1523→                {createSubnetMutation.isPending ? (
+  1524→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Creating...</>
+  1525→                ) : (
+  1526→                  <><Plus className="h-4 w-4 mr-2" />Create Subnet</>
+  1527→                )}
+  1528→              </Button>
+  1529→            </DialogFooter>
+  1530→          </DialogContent>
+  1531→        </Dialog>
+  1532→
+  1533→        {/* ─── Edit Subnet Dialog ─── */}
+  1534→        <Dialog open={subnetEditOpen} onOpenChange={setSubnetEditOpen}>
+  1535→          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+  1536→            <DialogHeader>
+  1537→              <DialogTitle>Edit DHCP Subnet</DialogTitle>
+  1538→              <DialogDescription>Update subnet configuration.</DialogDescription>
+  1539→            </DialogHeader>
+  1540→            <div className="space-y-4">
+  1541→              {subnetFormErrors.length > 0 && (
+  1542→                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+  1543→                  <AlertTriangle className="h-4 w-4 shrink-0" />
+  1544→                  <span>{subnetFormErrors.join(", ")}</span>
+  1545→                </div>
+  1546→              )}
+  1547→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1548→                <div className="space-y-2">
+  1549→                  <Label>Name *</Label>
+  1550→                  <Input value={subnetForm.name} onChange={(e) => setSubnetForm((p) => ({ ...p, name: e.target.value }))} />
+  1551→                </div>
+  1552→                <div className="space-y-2">
+  1553→                  <Label>Interface *</Label>
+  1554→                  <Select value={subnetForm.interfaceName} onValueChange={(v) => setSubnetForm((p) => ({ ...p, interfaceName: v }))}>
+  1555→                    <SelectTrigger><SelectValue placeholder="Select interface" /></SelectTrigger>
+  1556→                    <SelectContent>
+  1557→                      {interfaces.map((intf) => (
+  1558→                        <SelectItem key={intf.name} value={intf.name}>{intf.name}</SelectItem>
+  1559→                      ))}
+  1560→                    </SelectContent>
+  1561→                  </Select>
+  1562→                </div>
+  1563→                <div className="space-y-2">
+  1564→                  <Label>Subnet *</Label>
+  1565→                  <Input value={subnetForm.subnet} onChange={(e) => setSubnetForm((p) => ({ ...p, subnet: e.target.value }))} />
+  1566→                </div>
+  1567→                <div className="space-y-2">
+  1568→                  <Label>Netmask *</Label>
+  1569→                  <Input value={subnetForm.netmask} onChange={(e) => setSubnetForm((p) => ({ ...p, netmask: e.target.value }))} />
+  1570→                </div>
+  1571→                <div className="space-y-2">
+  1572→                  <Label>Range Start *</Label>
+  1573→                  <Input value={subnetForm.rangeStart} onChange={(e) => setSubnetForm((p) => ({ ...p, rangeStart: e.target.value }))} />
+  1574→                </div>
+  1575→                <div className="space-y-2">
+  1576→                  <Label>Range End *</Label>
+  1577→                  <Input value={subnetForm.rangeEnd} onChange={(e) => setSubnetForm((p) => ({ ...p, rangeEnd: e.target.value }))} />
+  1578→                </div>
+  1579→                <div className="space-y-2">
+  1580→                  <Label>Lease Time (seconds)</Label>
+  1581→                  <Input
+  1582→                    type="number"
+  1583→                    value={subnetForm.leaseTime}
+  1584→                    onChange={(e) => setSubnetForm((p) => ({ ...p, leaseTime: Number(e.target.value) }))}
+  1585→                  />
+  1586→                </div>
+  1587→                <div className="space-y-2">
+  1588→                  <Label>Gateway</Label>
+  1589→                  <Input value={subnetForm.gateway} onChange={(e) => setSubnetForm((p) => ({ ...p, gateway: e.target.value }))} />
+  1590→                </div>
+  1591→                <div className="space-y-2 sm:col-span-2">
+  1592→                  <Label>DNS Servers</Label>
+  1593→                  <Input value={subnetForm.dnsServers} onChange={(e) => setSubnetForm((p) => ({ ...p, dnsServers: e.target.value }))} />
+  1594→                </div>
+  1595→                <div className="space-y-2 sm:col-span-2">
+  1596→                  <Label>Domain Name</Label>
+  1597→                  <Input value={subnetForm.domainName} onChange={(e) => setSubnetForm((p) => ({ ...p, domainName: e.target.value }))} />
+  1598→                </div>
+  1599→                <div className="space-y-2">
+  1600→                  <Label>NTP Servers</Label>
+  1601→                  <Input value={subnetForm.ntpServers} onChange={(e) => setSubnetForm((p) => ({ ...p, ntpServers: e.target.value }))} />
+  1602→                </div>
+  1603→                <div className="space-y-2">
+  1604→                  <Label>WINS Server</Label>
+  1605→                  <Input value={subnetForm.winsServer} onChange={(e) => setSubnetForm((p) => ({ ...p, winsServer: e.target.value }))} />
+  1606→                </div>
+  1607→                <div className="space-y-2 sm:col-span-2">
+  1608→                  <Label>Allowed Hosts</Label>
+  1609→                  <div className="flex gap-2">
+  1610→                    <Input
+  1611→                      placeholder="Add hostname/IP"
+  1612→                      value={allowedHostInput}
+  1613→                      onChange={(e) => setAllowedHostInput(e.target.value)}
+  1614→                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addAllowedHost(); } }}
+  1615→                    />
+  1616→                    <Button variant="outline" size="sm" onClick={addAllowedHost}>Add</Button>
+  1617→                  </div>
+  1618→                  {subnetForm.allowedHosts.length > 0 && (
+  1619→                    <div className="flex flex-wrap gap-1 mt-2">
+  1620→                      {subnetForm.allowedHosts.map((host) => (
+  1621→                        <Badge key={host} variant="secondary" className="text-xs rounded-full px-2 py-1">
+  1622→                          {host}
+  1623→                          <button className="ml-1 text-muted-foreground hover:text-foreground" onClick={() => removeAllowedHost(host)}>
+  1624→                            <XCircle className="h-3 w-3" />
+  1625→                          </button>
+  1626→                        </Badge>
+  1627→                      ))}
+  1628→                    </div>
+  1629→                  )}
+  1630→                </div>
+  1631→                <div className="space-y-2">
+  1632→                  <Label>Captive Portal</Label>
+  1633→                  <Select value={subnetForm.captivePortalId || "none"} onValueChange={(v) => setSubnetForm((p) => ({ ...p, captivePortalId: v }))}>
+  1634→                    <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+  1635→                    <SelectContent>
+  1636→                      <SelectItem value="none">None</SelectItem>
+  1637→                      {portalList.map((p) => (
+  1638→                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+  1639→                      ))}
+  1640→                    </SelectContent>
+  1641→                  </Select>
+  1642→                </div>
+  1643→                <div className="flex items-center gap-2 sm:col-span-2">
+  1644→                  <Switch checked={subnetForm.enabled} onCheckedChange={(v) => setSubnetForm((p) => ({ ...p, enabled: v }))} />
+  1645→                  <Label>Enable this subnet</Label>
+  1646→                </div>
+  1647→              </div>
+  1648→            </div>
+  1649→            <DialogFooter>
+  1650→              <Button variant="outline" onClick={() => setSubnetEditOpen(false)}>Cancel</Button>
+  1651→              <Button
+  1652→                className="bg-red-600 hover:bg-red-700 text-white"
+  1653→                disabled={updateSubnetMutation.isPending}
+  1654→                onClick={() => {
+  1655→                  if (validateSubnetForm(subnetForm) && selectedSubnetId) {
+  1656→                    updateSubnetMutation.mutate({
+  1657→                      id: selectedSubnetId,
+  1658→                      data: {
+  1659→                        ...subnetForm,
+  1660→                        captivePortalId: subnetForm.captivePortalId === "none" ? "" : subnetForm.captivePortalId,
+  1661→                      },
+  1662→                    });
+  1663→                  }
+  1664→                }}
+  1665→              >
+  1666→                {updateSubnetMutation.isPending ? (
+  1667→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Saving...</>
+  1668→                ) : (
+  1669→                  <><CheckCircle className="h-4 w-4 mr-2" />Update Subnet</>
+  1670→                )}
+  1671→              </Button>
+  1672→            </DialogFooter>
+  1673→          </DialogContent>
+  1674→        </Dialog>
+  1675→
+  1676→        {/* ─── Delete Subnet Confirmation ─── */}
+  1677→        <AlertDialog open={subnetDeleteOpen} onOpenChange={setSubnetDeleteOpen}>
+  1678→          <AlertDialogContent>
+  1679→            <AlertDialogHeader>
+  1680→              <AlertDialogTitle>Delete Subnet</AlertDialogTitle>
+  1681→              <AlertDialogDescription>
+  1682→                Are you sure you want to delete this subnet? This action cannot be undone. All associated reservations and lease data may be affected.
+  1683→              </AlertDialogDescription>
+  1684→            </AlertDialogHeader>
+  1685→            <AlertDialogFooter>
+  1686→              <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1687→              <AlertDialogAction
+  1688→                className="bg-red-600 hover:bg-red-700 text-white"
+  1689→                onClick={() => {
+  1690→                  if (selectedSubnetId) deleteSubnetMutation.mutate(selectedSubnetId);
+  1691→                }}
+  1692→                disabled={deleteSubnetMutation.isPending}
+  1693→              >
+  1694→                {deleteSubnetMutation.isPending ? (
+  1695→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Deleting...</>
+  1696→                ) : (
+  1697→                  <><Trash2 className="h-4 w-4 mr-2" />Delete</>
+  1698→                )}
+  1699→              </AlertDialogAction>
+  1700→            </AlertDialogFooter>
+  1701→          </AlertDialogContent>
+  1702→        </AlertDialog>
+  1703→
+  1704→        {/* ─── Add Reservation Dialog ─── */}
+  1705→        <Dialog open={resAddOpen} onOpenChange={setResAddOpen}>
+  1706→          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+  1707→            <DialogHeader>
+  1708→              <DialogTitle>Add DHCP Reservation</DialogTitle>
+  1709→              <DialogDescription>Create a static DHCP reservation for a device.</DialogDescription>
+  1710→            </DialogHeader>
+  1711→            <div className="space-y-4">
+  1712→              {resFormErrors.length > 0 && (
+  1713→                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+  1714→                  <AlertTriangle className="h-4 w-4 shrink-0" />
+  1715→                  <span>{resFormErrors.join(", ")}</span>
+  1716→                </div>
+  1717→              )}
+  1718→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1719→                <div className="space-y-2 sm:col-span-2">
+  1720→                  <Label>Subnet *</Label>
+  1721→                  <Select value={resForm.subnetId} onValueChange={(v) => setResForm((p) => ({ ...p, subnetId: v }))}>
+  1722→                    <SelectTrigger><SelectValue placeholder="Select subnet" /></SelectTrigger>
+  1723→                    <SelectContent>
+  1724→                      {subnets.map((sn) => (
+  1725→                        <SelectItem key={sn.id} value={sn.id}>{sn.name} ({sn.subnet})</SelectItem>
+  1726→                      ))}
+  1727→                    </SelectContent>
+  1728→                  </Select>
+  1729→                </div>
+  1730→                <div className="space-y-2">
+  1731→                  <Label>MAC Address *</Label>
+  1732→                  <Input
+  1733→                    placeholder="AA:BB:CC:DD:EE:FF"
+  1734→                    value={resForm.macAddress}
+  1735→                    onChange={(e) => setResForm((p) => ({ ...p, macAddress: e.target.value.toUpperCase() }))}
+  1736→                  />
+  1737→                </div>
+  1738→                <div className="space-y-2">
+  1739→                  <Label>IP Address *</Label>
+  1740→                  <Input
+  1741→                    placeholder="e.g., 10.0.0.50"
+  1742→                    value={resForm.ipAddress}
+  1743→                    onChange={(e) => setResForm((p) => ({ ...p, ipAddress: e.target.value }))}
+  1744→                  />
+  1745→                </div>
+  1746→                <div className="space-y-2">
+  1747→                  <Label>Hostname</Label>
+  1748→                  <Input
+  1749→                    placeholder="e.g., server-01"
+  1750→                    value={resForm.hostname}
+  1751→                    onChange={(e) => setResForm((p) => ({ ...p, hostname: e.target.value }))}
+  1752→                  />
+  1753→                </div>
+  1754→                <div className="space-y-2">
+  1755→                  <Label>Client Type</Label>
+  1756→                  <Select value={resForm.clientType} onValueChange={(v) => setResForm((p) => ({ ...p, clientType: v }))}>
+  1757→                    <SelectTrigger><SelectValue /></SelectTrigger>
+  1758→                    <SelectContent>
+  1759→                      {CLIENT_TYPES.map((ct) => (
+  1760→                        <SelectItem key={ct.value} value={ct.value}>{ct.label}</SelectItem>
+  1761→                      ))}
+  1762→                    </SelectContent>
+  1763→                  </Select>
+  1764→                </div>
+  1765→                <div className="space-y-2 sm:col-span-2">
+  1766→                  <Label>Description</Label>
+  1767→                  <Textarea
+  1768→                    placeholder="Optional description for this reservation..."
+  1769→                    value={resForm.description}
+  1770→                    onChange={(e) => setResForm((p) => ({ ...p, description: e.target.value }))}
+  1771→                    rows={2}
+  1772→                  />
+  1773→                </div>
+  1774→                <div className="flex items-center gap-2 sm:col-span-2">
+  1775→                  <Switch
+  1776→                    checked={resForm.enabled}
+  1777→                    onCheckedChange={(v) => setResForm((p) => ({ ...p, enabled: v }))}
+  1778→                  />
+  1779→                  <Label>Enable this reservation</Label>
+  1780→                </div>
+  1781→              </div>
+  1782→            </div>
+  1783→            <DialogFooter>
+  1784→              <Button variant="outline" onClick={() => setResAddOpen(false)}>Cancel</Button>
+  1785→              <Button
+  1786→                className="bg-red-600 hover:bg-red-700 text-white"
+  1787→                disabled={createResMutation.isPending}
+  1788→                onClick={() => {
+  1789→                  if (validateResForm(resForm)) createResMutation.mutate(resForm);
+  1790→                }}
+  1791→              >
+  1792→                {createResMutation.isPending ? (
+  1793→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Creating...</>
+  1794→                ) : (
+  1795→                  <><Plus className="h-4 w-4 mr-2" />Create Reservation</>
+  1796→                )}
+  1797→              </Button>
+  1798→            </DialogFooter>
+  1799→          </DialogContent>
+  1800→        </Dialog>
+  1801→
+  1802→        {/* ─── Edit Reservation Dialog ─── */}
+  1803→        <Dialog open={resEditOpen} onOpenChange={setResEditOpen}>
+  1804→          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+  1805→            <DialogHeader>
+  1806→              <DialogTitle>Edit DHCP Reservation</DialogTitle>
+  1807→              <DialogDescription>Update static DHCP reservation.</DialogDescription>
+  1808→            </DialogHeader>
+  1809→            <div className="space-y-4">
+  1810→              {resFormErrors.length > 0 && (
+  1811→                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+  1812→                  <AlertTriangle className="h-4 w-4 shrink-0" />
+  1813→                  <span>{resFormErrors.join(", ")}</span>
+  1814→                </div>
+  1815→              )}
+  1816→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1817→                <div className="space-y-2 sm:col-span-2">
+  1818→                  <Label>Subnet *</Label>
+  1819→                  <Select value={resForm.subnetId} onValueChange={(v) => setResForm((p) => ({ ...p, subnetId: v }))}>
+  1820→                    <SelectTrigger><SelectValue placeholder="Select subnet" /></SelectTrigger>
+  1821→                    <SelectContent>
+  1822→                      {subnets.map((sn) => (
+  1823→                        <SelectItem key={sn.id} value={sn.id}>{sn.name} ({sn.subnet})</SelectItem>
+  1824→                      ))}
+  1825→                    </SelectContent>
+  1826→                  </Select>
+  1827→                </div>
+  1828→                <div className="space-y-2">
+  1829→                  <Label>MAC Address *</Label>
+  1830→                  <Input value={resForm.macAddress} onChange={(e) => setResForm((p) => ({ ...p, macAddress: e.target.value.toUpperCase() }))} />
+  1831→                </div>
+  1832→                <div className="space-y-2">
+  1833→                  <Label>IP Address *</Label>
+  1834→                  <Input value={resForm.ipAddress} onChange={(e) => setResForm((p) => ({ ...p, ipAddress: e.target.value }))} />
+  1835→                </div>
+  1836→                <div className="space-y-2">
+  1837→                  <Label>Hostname</Label>
+  1838→                  <Input value={resForm.hostname} onChange={(e) => setResForm((p) => ({ ...p, hostname: e.target.value }))} />
+  1839→                </div>
+  1840→                <div className="space-y-2">
+  1841→                  <Label>Client Type</Label>
+  1842→                  <Select value={resForm.clientType} onValueChange={(v) => setResForm((p) => ({ ...p, clientType: v }))}>
+  1843→                    <SelectTrigger><SelectValue /></SelectTrigger>
+  1844→                    <SelectContent>
+  1845→                      {CLIENT_TYPES.map((ct) => (
+  1846→                        <SelectItem key={ct.value} value={ct.value}>{ct.label}</SelectItem>
+  1847→                      ))}
+  1848→                    </SelectContent>
+  1849→                  </Select>
+  1850→                </div>
+  1851→                <div className="space-y-2 sm:col-span-2">
+  1852→                  <Label>Description</Label>
+  1853→                  <Textarea
+  1854→                    value={resForm.description}
+  1855→                    onChange={(e) => setResForm((p) => ({ ...p, description: e.target.value }))}
+  1856→                    rows={2}
+  1857→                  />
+  1858→                </div>
+  1859→                <div className="flex items-center gap-2 sm:col-span-2">
+  1860→                  <Switch checked={resForm.enabled} onCheckedChange={(v) => setResForm((p) => ({ ...p, enabled: v }))} />
+  1861→                  <Label>Enable this reservation</Label>
+  1862→                </div>
+  1863→              </div>
+  1864→            </div>
+  1865→            <DialogFooter>
+  1866→              <Button variant="outline" onClick={() => setResEditOpen(false)}>Cancel</Button>
+  1867→              <Button
+  1868→                className="bg-red-600 hover:bg-red-700 text-white"
+  1869→                disabled={updateResMutation.isPending}
+  1870→                onClick={() => {
+  1871→                  if (validateResForm(resForm) && selectedResId) {
+  1872→                    updateResMutation.mutate({ id: selectedResId, data: resForm });
+  1873→                  }
+  1874→                }}
+  1875→              >
+  1876→                {updateResMutation.isPending ? (
+  1877→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Saving...</>
+  1878→                ) : (
+  1879→                  <><CheckCircle className="h-4 w-4 mr-2" />Update</>
+  1880→                )}
+  1881→              </Button>
+  1882→            </DialogFooter>
+  1883→          </DialogContent>
+  1884→        </Dialog>
+  1885→
+  1886→        {/* ─── Delete Reservation Confirmation ─── */}
+  1887→        <AlertDialog open={resDeleteOpen} onOpenChange={setResDeleteOpen}>
+  1888→          <AlertDialogContent>
+  1889→            <AlertDialogHeader>
+  1890→              <AlertDialogTitle>Delete Reservation</AlertDialogTitle>
+  1891→              <AlertDialogDescription>
+  1892→                Are you sure you want to delete this DHCP reservation? The device will obtain an address dynamically after deletion.
+  1893→              </AlertDialogDescription>
+  1894→            </AlertDialogHeader>
+  1895→            <AlertDialogFooter>
+  1896→              <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1897→              <AlertDialogAction
+  1898→                className="bg-red-600 hover:bg-red-700 text-white"
+  1899→                onClick={() => {
+  1900→                  if (selectedResId) deleteResMutation.mutate(selectedResId);
+  1901→                }}
+  1902→                disabled={deleteResMutation.isPending}
+  1903→              >
+  1904→                {deleteResMutation.isPending ? (
+  1905→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Deleting...</>
+  1906→                ) : (
+  1907→                  <><Trash2 className="h-4 w-4 mr-2" />Delete</>
+  1908→                )}
+  1909→              </AlertDialogAction>
+  1910→            </AlertDialogFooter>
+  1911→          </AlertDialogContent>
+  1912→        </AlertDialog>
+  1913→
+  1914→        {/* ─── KEA Reload Confirmation ─── */}
+  1915→        <AlertDialog open={keaReloadOpen} onOpenChange={setKeaReloadOpen}>
+  1916→          <AlertDialogContent>
+  1917→            <AlertDialogHeader>
+  1918→              <AlertDialogTitle className="flex items-center gap-2">
+  1919→                <AlertTriangle className="h-5 w-5 text-amber-500" />
+  1920→                Reload KEA Configuration
+  1921→              </AlertDialogTitle>
+  1922→              <AlertDialogDescription>
+  1923→                This will reload the KEA DHCP server configuration. Active leases may be briefly disrupted. Are you sure you want to continue?
+  1924→              </AlertDialogDescription>
+  1925→            </AlertDialogHeader>
+  1926→            <AlertDialogFooter>
+  1927→              <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1928→              <AlertDialogAction
+  1929→                className="bg-amber-600 hover:bg-amber-700 text-white"
+  1930→                onClick={() => reloadKeaMutation.mutate()}
+  1931→                disabled={reloadKeaMutation.isPending}
+  1932→              >
+  1933→                {reloadKeaMutation.isPending ? (
+  1934→                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Reloading...</>
+  1935→                ) : (
+  1936→                  <><RefreshCw className="h-4 w-4 mr-2" />Reload Now</>
+  1937→                )}
+  1938→              </AlertDialogAction>
+  1939→            </AlertDialogFooter>
+  1940→          </AlertDialogContent>
+  1941→        </AlertDialog>
+  1942→      </div>
+  1943→    </TooltipProvider>
+  1944→  );
+  1945→}
+  1946→
+  1947→// Activity icon used inline
+  1948→function Activity({ className }: { className?: string }) {
+  1949→  return (
+  1950→    <svg
+  1951→      xmlns="http://www.w3.org/2000/svg"
+  1952→      viewBox="0 0 24 24"
+  1953→      fill="none"
+  1954→      stroke="currentColor"
+  1955→      strokeWidth="2"
+  1956→      strokeLinecap="round"
+  1957→      strokeLinejoin="round"
+  1958→      className={className}
+  1959→    >
+  1960→      <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+  1961→    </svg>
+  1962→  );
+  1963→}
+  1964→

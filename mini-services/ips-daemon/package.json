@@ -1,0 +1,11 @@
+{
+  "name": "ips-daemon",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.2"
+  }
+}

@@ -191,7 +191,6 @@ model Area {
   RecurringInvoiceTemplate RecurringInvoiceTemplate[]
   Subnet                   Subnet[]
   Subscriber               Subscriber[]
-  ProvisioningTemplate     ProvisioningTemplate[]
 
   @@index([assignedAgentId])
   @@index([assignedTechnicianId])
@@ -359,8 +358,7 @@ model BatchProvisioningJob {
   errorDetail          String               @default("")
   createdAt            DateTime             @default(now())
   updatedAt DateTime @updatedAt
-  template             ProvisioningTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  StartedBy            User?                 @relation(fields: [startedBy], references: [id])
+  ProvisioningTemplate ProvisioningTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([status])
@@ -461,8 +459,8 @@ model CaptivePortal {
   createdAt                                                     DateTime             @default(now())
   updatedAt DateTime @updatedAt
   SystemInterface                                               SystemInterface?     @relation(fields: [interfaceId], references: [id])
-  location                                                      Area?                @relation(fields: [locationId], references: [id])
-  partner                                                       CollectionAgent?     @relation(fields: [partnerId], references: [id])
+  Area                                                          Area?                @relation(fields: [locationId], references: [id])
+  CollectionAgent                                               CollectionAgent?     @relation(fields: [partnerId], references: [id])
   DhcpSubnet                                                    DhcpSubnet[]
   DnsRecord                                                     DnsRecord[]
   PortalAccessRule                                              PortalAccessRule[]
@@ -2347,14 +2345,14 @@ model NetworkDevice {
   BandwidthLog                                                     BandwidthLog[]
   BandwidthThrottleConfig                                          BandwidthThrottleConfig[]
   DeviceConfigHistory                                              DeviceConfigHistory[]
-  connectedInterfaces                                              DeviceInterface[]         @relation("DeviceInterface_connectedDeviceIdToNetworkDevice")
-  interfaces                                                       DeviceInterface[]         @relation("DeviceInterface_deviceIdToNetworkDevice")
+  DeviceInterface_DeviceInterface_connectedDeviceIdToNetworkDevice DeviceInterface[]         @relation("DeviceInterface_connectedDeviceIdToNetworkDevice")
+  DeviceInterface_DeviceInterface_deviceIdToNetworkDevice          DeviceInterface[]         @relation("DeviceInterface_deviceIdToNetworkDevice")
   NasClientConfig                                                  NasClientConfig?
   Area                                                             Area?                     @relation(fields: [areaId], references: [id])
-  parent                                                           NetworkDevice?            @relation("NetworkDeviceToNetworkDevice", fields: [parentId], references: [id])
-  children                                                         NetworkDevice[]           @relation("NetworkDeviceToNetworkDevice")
-  oltPorts                                                         OltPort[]
-  assignedSubscribers                                              Subscriber[]
+  NetworkDevice                                                    NetworkDevice?            @relation("NetworkDeviceToNetworkDevice", fields: [parentId], references: [id])
+  other_NetworkDevice                                              NetworkDevice[]           @relation("NetworkDeviceToNetworkDevice")
+  OltPort                                                          OltPort[]
+  Subscriber                                                       Subscriber[]
 
   @@index([ipAddress])
   @@index([status])
@@ -2562,7 +2560,6 @@ model Plan {
   RecurringInvoiceTemplate RecurringInvoiceTemplate[]
   Subscriber               Subscriber[]
   Voucher                  Voucher[]
-  ProvisioningTemplate     ProvisioningTemplate[]
 
   @@index([category])
   @@index([groupId])
@@ -2874,9 +2871,7 @@ model ProvisioningTemplate {
   isActive             Boolean                @default(true)
   createdAt            DateTime               @default(now())
   updatedAt DateTime @updatedAt
-  jobs                 BatchProvisioningJob[]
-  Plan                 Plan?                  @relation(fields: [planId], references: [id])
-  Area                 Area?                  @relation(fields: [areaId], references: [id])
+  BatchProvisioningJob BatchProvisioningJob[]
 
   @@index([isActive])
 }
@@ -2928,7 +2923,7 @@ model QosConfig {
   enabled          Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt DateTime @updatedAt
-  targetPlan       Plan?    @relation(fields: [targetPlanId], references: [id])
+  Plan             Plan?    @relation(fields: [targetPlanId], references: [id])
 
   @@index([enabled])
   @@index([priority])
@@ -2983,7 +2978,7 @@ model RadiusAttributeDef {
   enabled             Boolean               @default(true)
   createdAt           DateTime              @default(now())
   updatedAt DateTime @updatedAt
-  userAttributes      UserRadiusAttribute[]
+  UserRadiusAttribute UserRadiusAttribute[]
 
   @@index([attrType])
   @@index([enabled])
@@ -3955,7 +3950,7 @@ model Technician {
   certifications    String?
   createdAt         DateTime           @default(now())
   updatedAt DateTime @updatedAt
-  areasManaged      Area[]
+  Area              Area[]
   AttendanceRecord  AttendanceRecord[]
   Complaint         Complaint[]
   Installation      Installation[]
@@ -4009,7 +4004,7 @@ model UptimeCheck {
   statusCode   Int?
   message      String?
   createdAt    DateTime     @default(now())
-  target       UptimeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  UptimeTarget UptimeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([status])
@@ -4026,7 +4021,7 @@ model UptimeTarget {
   timeout     Int           @default(10)
   paused      Boolean       @default(false)
   createdAt   DateTime      @default(now())
-  checks      UptimeCheck[]
+  UptimeCheck UptimeCheck[]
 
   @@index([paused])
   @@index([type])
@@ -4079,7 +4074,6 @@ model User {
   Refund                               Refund[]
   Technician                           Technician?
   UserSession                          UserSession[]
-  BatchProvisioningJob                 BatchProvisioningJob[]
 
   @@index([email])
   @@index([role])

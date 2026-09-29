@@ -1,0 +1,28 @@
+[Unit]
+Description=Cryptsk ISP Platform - Next.js Application
+After=network.target
+Wants=cryptsk-mini-services.service
+
+[Service]
+Type=simple
+User=cryptsk
+Group=cryptsk
+WorkingDirectory=/opt/cryptsk/app
+EnvironmentFile=/opt/cryptsk/app/.env
+ExecStart=/home/cryptsk/.bun/bin/bun run start
+# For dev mode, use: ExecStart=/home/cryptsk/.bun/bin/bun --hot run dev
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/cryptsk/logs/nextjs/app.log
+StandardError=append:/opt/cryptsk/logs/nextjs/error.log
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=4G
+
+# Security
+NoNewPrivileges=false
+ReadWritePaths=/opt/cryptsk
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+{
+  "name": "cryptsk-whatsapp-bot",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "latest"
+  }
+}

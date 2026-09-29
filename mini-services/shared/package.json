@@ -1,0 +1,7 @@
+{
+  "name": "cryptsk-mini-services-shared",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Shared utilities for Cryptsk ISP mini-services (auth, logging, DB)",
+  "dependencies": {}
+}

@@ -1,0 +1,75 @@
+========================================
+CRYPTSK ISP PLATFORM — Unit Test Suite
+Started: Thu Jul 30 08:23:20 UTC 2026
+========================================
+
+--- MODULE 1: Authentication ---
+Token obtained (120 chars)
+✅ T1.1: Login valid (HTTP 200)
+❌ T1.2: Login wrong password (expected 401, got 429) {"success":false,"error":"Too many login attempts. Please try again later."}
+❌ T1.3: Login missing fields (expected 400, got 429) {"success":false,"error":"Too many login attempts. Please try again later."}
+✅ T1.4: Get current user (HTTP 200)
+✅ T1.5: Protected route rejects unauth (401)
+
+--- MODULE 2: Subscriber Registration ---
+Using Plan: cms73xekj0008t6jqc5a6hzle, Area: cms73xek60000t6jqhme9w7lb
+✅ T2.1: Register prepaid (HTTP 201)
+  Prepaid: cms78xzcd000jt68qt6eogpcm (testprepaidunitCRY00016)
+✅ T2.2: Register postpaid (HTTP 201)
+  Postpaid: cms78xzfm000pt68qg1z5onhp (testpostpaidunitCRY00017)
+✅ T2.3: Register no-RADIUS (HTTP 201)
+✅ T2.4: Duplicate phone rejection (HTTP 409)
+✅ T2.6: Invalid phone rejection (HTTP 400)
+✅ T2.7: Invalid email rejection (HTTP 400)
+✅ T2.8: Invalid MAC rejection (HTTP 400)
+
+--- MODULE 3: Subscriber Management ---
+✅ T3.1: List with pagination (HTTP 200)
+✅ T3.2: Search by name (HTTP 200)
+✅ T3.3: Filter by ACTIVE (HTTP 200)
+✅ T3.4: Filter by PREPAID (HTTP 200)
+✅ T3.5: Filter by area (HTTP 200)
+✅ T3.6: Get by ID (HTTP 200)
+✅ T3.7: Update subscriber (HTTP 200)
+✅ T3.9: Enable RADIUS (HTTP 200)
+✅ T3.10: Disable RADIUS (HTTP 200)
+✅ T3.11: Suspend subscriber (HTTP 200)
+✅ T3.12: Reactivate subscriber (HTTP 200)
+✅ T3.13: 360 view (HTTP 200)
+✅ T3.14: Balance (HTTP 200)
+
+--- MODULE 4: Plan Management ---
+✅ T4.1: Create plan (HTTP 201)
+  Plan: cms78y3g2001bt68qdcmn5bj1, RADIUS Group: cms78y3g8001ct68qhe0d9pnp
+✅ T4.2: List plans (HTTP 200)
+✅ T4.3: Get plan by ID (HTTP 200)
+✅ T4.4: Update plan speeds (HTTP 200)
+
+--- MODULE 5: RADIUS Integration ---
+❌ T5.1a: radcheck for prepaid user (expected '1', got '0')
+❌ T5.1b: radreply for prepaid user (expected '1', got '0')
+❌ T5.1c: radusergroup for prepaid user (expected '1', got '0')
+❌ T5.1d: radcheck for postpaid user (expected '1', got '0')
+❌ T5.1e: radreply for postpaid user (expected '1', got '0')
+❌ T5.1f: radusergroup for postpaid user (expected '1', got '0')
+❌ T5.3: Simultaneous-Use NOT in any radgroupcheck — login limit enforcement missing
+  UT Group name: UTPlan100M
+❌ T5.2: radgroupreply for plan group (expected '1', got '0')
+✅ T5.8: RADIUS user list (HTTP 200)
+✅ T5.10: RADIUS group list (HTTP 200)
+❌ T5.14: FreeRADIUS dashboard (expected 200, got 500) 
+❌ T5.9: RADIUS user detail (expected 200, got 404) {"success":false,"error":"User 'testprepaidunitCRY00016' not found"}
+❌ T5.5: Change RADIUS password (expected 200, got 404) {"success":false,"error":"User 'testprepaidunitCRY00016' not found"}
+❌ T5.5b: Password synced to radcheck (expected 'TestPass123!', got '')
+❌ T5.6: Change RADIUS user group (expected 200, got 404) {"success":false,"error":"User 'testprepaidunitCRY00016' not found"}
+❌ T5.6b: Group updated in radusergroup (expected 'UTPlan100M', got '')
+
+--- MODULE 6: Billing Engine ---
+❌ T6.1: Generate invoice (expected 201, got 400) {"error":"Missing required fields: subscriberId, issueDate, dueDate, periodStart, periodEnd"}
+  Invoice: 
+✅ T6.4: List invoices (HTTP 200)
+
+--- MODULE 7: Payments ---
+✅ T7.4: List payments (HTTP 200)
+
+--- MODULE 13: Security Tests ---

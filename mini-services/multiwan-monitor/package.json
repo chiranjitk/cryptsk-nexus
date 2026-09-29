@@ -1,0 +1,12 @@
+{
+  "name": "multiwan-monitor",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2"
+  }
+}

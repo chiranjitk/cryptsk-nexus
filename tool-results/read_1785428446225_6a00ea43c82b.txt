@@ -1,0 +1,707 @@
+  1058→                    Assigned Users
+  1059→                    <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5">{groupDetail.group.assignedUsers?.length || 0}</Badge>
+  1060→                  </TabsTrigger>
+  1061→                  <TabsTrigger value="sessions" className="flex items-center gap-1.5 text-xs">
+  1062→                    <Activity className="h-3.5 w-3.5" />
+  1063→                    Sessions
+  1064→                  </TabsTrigger>
+  1065→                </TabsList>
+  1066→
+  1067→                {/* ─── Check Attributes Sub-tab ─── */}
+  1068→                <TabsContent value="check-attrs" className="space-y-3">
+  1069→                  <div className="flex items-center justify-between">
+  1070→                    <p className="text-sm text-muted-foreground">
+  1071→                      radgroupcheck — authentication and authorization control attributes.
+  1072→                    </p>
+  1073→                    <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => openAddAttr("check")}>
+  1074→                      <Plus className="h-3.5 w-3.5 mr-1.5" />Add Check Attribute
+  1075→                    </Button>
+  1076→                  </div>
+  1077→                  <Card className="border shadow-sm">
+  1078→                    <CardContent className="p-0">
+  1079→                      <div className="max-h-96 overflow-y-auto">
+  1080→                        <Table>
+  1081→                          <TableHeader>
+  1082→                            <TableRow>
+  1083→                              <TableHead className="text-xs w-16">ID</TableHead>
+  1084→                              <TableHead className="text-xs">Attribute</TableHead>
+  1085→                              <TableHead className="text-xs w-20">Operator</TableHead>
+  1086→                              <TableHead className="text-xs">Value</TableHead>
+  1087→                              <TableHead className="text-xs text-right w-24">Actions</TableHead>
+  1088→                            </TableRow>
+  1089→                          </TableHeader>
+  1090→                          <TableBody>
+  1091→                            {groupDetail.group.checkAttrs.length === 0 ? (
+  1092→                              <TableRow>
+  1093→                                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground text-sm">
+  1094→                                  No check attributes defined. Click &quot;Add Check Attribute&quot; to add one.
+  1095→                                </TableCell>
+  1096→                              </TableRow>
+  1097→                            ) : (
+  1098→                              groupDetail.group.checkAttrs.map((attr) => (
+  1099→                                <TableRow key={attr.id} className="hover:bg-muted/50">
+  1100→                                  <TableCell className="text-xs tabular-nums text-muted-foreground">{attr.id}</TableCell>
+  1101→                                  <TableCell>
+  1102→                                    <span className="font-mono text-xs font-medium">{attr.attribute}</span>
+  1103→                                  </TableCell>
+  1104→                                  <TableCell>
+  1105→                                    <Badge variant="outline" className="text-[10px] font-mono">{attr.op}</Badge>
+  1106→                                  </TableCell>
+  1107→                                  <TableCell>
+  1108→                                    <span className="text-xs">{attr.value}</span>
+  1109→                                  </TableCell>
+  1110→                                  <TableCell className="text-right">
+  1111→                                    <div className="flex items-center justify-end gap-1">
+  1112→                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditAttr("check", attr)}>
+  1113→                                        <Edit className="h-3.5 w-3.5" />
+  1114→                                      </Button>
+  1115→                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => openRemoveAttr("check", attr)}>
+  1116→                                        <Trash2 className="h-3.5 w-3.5" />
+  1117→                                      </Button>
+  1118→                                    </div>
+  1119→                                  </TableCell>
+  1120→                                </TableRow>
+  1121→                              ))
+  1122→                            )}
+  1123→                          </TableBody>
+  1124→                        </Table>
+  1125→                      </div>
+  1126→                    </CardContent>
+  1127→                  </Card>
+  1128→                </TabsContent>
+  1129→
+  1130→                {/* ─── Reply Attributes Sub-tab ─── */}
+  1131→                <TabsContent value="reply-attrs" className="space-y-3">
+  1132→                  <div className="flex items-center justify-between">
+  1133→                    <p className="text-sm text-muted-foreground">
+  1134→                      radgroupreply — reply and bandwidth policy attributes sent to NAS.
+  1135→                    </p>
+  1136→                    <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => openAddAttr("reply")}>
+  1137→                      <Plus className="h-3.5 w-3.5 mr-1.5" />Add Reply Attribute
+  1138→                    </Button>
+  1139→                  </div>
+  1140→                  <Card className="border shadow-sm">
+  1141→                    <CardContent className="p-0">
+  1142→                      <div className="max-h-96 overflow-y-auto">
+  1143→                        <Table>
+  1144→                          <TableHeader>
+  1145→                            <TableRow>
+  1146→                              <TableHead className="text-xs w-16">ID</TableHead>
+  1147→                              <TableHead className="text-xs">Attribute</TableHead>
+  1148→                              <TableHead className="text-xs w-20">Operator</TableHead>
+  1149→                              <TableHead className="text-xs">Value</TableHead>
+  1150→                              <TableHead className="text-xs text-right w-24">Actions</TableHead>
+  1151→                            </TableRow>
+  1152→                          </TableHeader>
+  1153→                          <TableBody>
+  1154→                            {groupDetail.group.replyAttrs.length === 0 ? (
+  1155→                              <TableRow>
+  1156→                                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground text-sm">
+  1157→                                  No reply attributes defined. Click &quot;Add Reply Attribute&quot; to add one.
+  1158→                                </TableCell>
+  1159→                              </TableRow>
+  1160→                            ) : (
+  1161→                              groupDetail.group.replyAttrs.map((attr) => (
+  1162→                                <TableRow key={attr.id} className="hover:bg-muted/50">
+  1163→                                  <TableCell className="text-xs tabular-nums text-muted-foreground">{attr.id}</TableCell>
+  1164→                                  <TableCell>
+  1165→                                    <span className="font-mono text-xs font-medium">{attr.attribute}</span>
+  1166→                                  </TableCell>
+  1167→                                  <TableCell>
+  1168→                                    <Badge variant="outline" className="text-[10px] font-mono">{attr.op}</Badge>
+  1169→                                  </TableCell>
+  1170→                                  <TableCell>
+  1171→                                    <span className="text-xs">{attr.value}</span>
+  1172→                                  </TableCell>
+  1173→                                  <TableCell className="text-right">
+  1174→                                    <div className="flex items-center justify-end gap-1">
+  1175→                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditAttr("reply", attr)}>
+  1176→                                        <Edit className="h-3.5 w-3.5" />
+  1177→                                      </Button>
+  1178→                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => openRemoveAttr("reply", attr)}>
+  1179→                                        <Trash2 className="h-3.5 w-3.5" />
+  1180→                                      </Button>
+  1181→                                    </div>
+  1182→                                  </TableCell>
+  1183→                                </TableRow>
+  1184→                              ))
+  1185→                            )}
+  1186→                          </TableBody>
+  1187→                        </Table>
+  1188→                      </div>
+  1189→                    </CardContent>
+  1190→                  </Card>
+  1191→                </TabsContent>
+  1192→
+  1193→                {/* ─── Assigned Users Sub-tab ─── */}
+  1194→                <TabsContent value="assigned-users" className="space-y-3">
+  1195→                  <p className="text-sm text-muted-foreground">
+  1196→                    Subscribers assigned to this group via radusergroup.
+  1197→                  </p>
+  1198→                  <Card className="border shadow-sm">
+  1199→                    <CardContent className="p-0">
+  1200→                      <div className="max-h-96 overflow-y-auto">
+  1201→                        <Table>
+  1202→                          <TableHeader>
+  1203→                            <TableRow>
+  1204→                              <TableHead className="text-xs">Username</TableHead>
+  1205→                              <TableHead className="text-xs hidden sm:table-cell">Subscriber Name</TableHead>
+  1206→                              <TableHead className="text-xs">Status</TableHead>
+  1207→                              <TableHead className="text-xs hidden md:table-cell">Plan</TableHead>
+  1208→                              <TableHead className="text-xs text-right">Actions</TableHead>
+  1209→                            </TableRow>
+  1210→                          </TableHeader>
+  1211→                          <TableBody>
+  1212→                            {(!groupDetail.group.assignedUsers || groupDetail.group.assignedUsers.length === 0) ? (
+  1213→                              <TableRow>
+  1214→                                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground text-sm">
+  1215→                                  No users assigned to this group.
+  1216→                                </TableCell>
+  1217→                              </TableRow>
+  1218→                            ) : (
+  1219→                              groupDetail.group.assignedUsers.map((user) => (
+  1220→                                <TableRow key={user.username} className="hover:bg-muted/50">
+  1221→                                  <TableCell>
+  1222→                                    <span className="font-mono text-xs font-medium">{user.username}</span>
+  1223→                                  </TableCell>
+  1224→                                  <TableCell className="hidden sm:table-cell">
+  1225→                                    <div className="text-xs">
+  1226→                                      {user.subscriberName || "—"}
+  1227→                                      {user.subscriberCode && (
+  1228→                                        <span className="text-muted-foreground ml-1.5">({user.subscriberCode})</span>
+  1229→                                      )}
+  1230→                                    </div>
+  1231→                                  </TableCell>
+  1232→                                  <TableCell>
+  1233→                                    <Badge
+  1234→                                      variant={
+  1235→                                        user.subscriberStatus === "ACTIVE" ? "default" :
+  1236→                                        user.subscriberStatus === "SUSPENDED" ? "destructive" : "secondary"
+  1237→                                      }
+  1238→                                      className="text-[10px]"
+  1239→                                    >
+  1240→                                      {user.subscriberStatus || "UNKNOWN"}
+  1241→                                    </Badge>
+  1242→                                  </TableCell>
+  1243→                                  <TableCell className="hidden md:table-cell">
+  1244→                                    <span className="text-xs">{user.planName || "—"}</span>
+  1245→                                  </TableCell>
+  1246→                                  <TableCell className="text-right">
+  1247→                                    <Button
+  1248→                                      variant="ghost" size="sm" className="h-7 text-xs text-red-600 hover:text-red-700"
+  1249→                                      disabled
+  1250→                                      title="Remove user from group"
+  1251→                                    >
+  1252→                                      <UserMinus className="h-3.5 w-3.5 mr-1" />Remove
+  1253→                                    </Button>
+  1254→                                  </TableCell>
+  1255→                                </TableRow>
+  1256→                              ))
+  1257→                            )}
+  1258→                          </TableBody>
+  1259→                        </Table>
+  1260→                      </div>
+  1261→                    </CardContent>
+  1262→                  </Card>
+  1263→                </TabsContent>
+  1264→
+  1265→                {/* ─── Sessions Sub-tab ─── */}
+  1266→                <TabsContent value="sessions" className="space-y-3">
+  1267→                  <p className="text-sm text-muted-foreground">
+  1268→                    Aggregate session statistics for all users in this group.
+  1269→                  </p>
+  1270→                  <Card className="border shadow-sm">
+  1271→                    <CardContent className="p-5">
+  1272→                      {groupDetail.group.sessionStats ? (
+  1273→                        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+  1274→                          <div>
+  1275→                            <p className="text-xs text-muted-foreground mb-1">Total Sessions</p>
+  1276→                            <p className="text-2xl font-bold tabular-nums">{groupDetail.group.sessionStats.totalSessions}</p>
+  1277→                          </div>
+  1278→                          <div>
+  1279→                            <p className="text-xs text-muted-foreground mb-1">Currently Active</p>
+  1280→                            <p className="text-2xl font-bold tabular-nums text-green-600">{groupDetail.group.sessionStats.activeSessions}</p>
+  1281→                          </div>
+  1282→                          <div>
+  1283→                            <p className="text-xs text-muted-foreground mb-1">Total Session Time</p>
+  1284→                            <p className="text-2xl font-bold tabular-nums">{formatDuration(groupDetail.group.sessionStats.totalSessionSeconds)}</p>
+  1285→                          </div>
+  1286→                          <div>
+  1287→                            <p className="text-xs text-muted-foreground mb-1">Total Download</p>
+  1288→                            <p className="text-2xl font-bold tabular-nums text-cyan-600">{groupDetail.group.sessionStats.totalDownloadGB} GB</p>
+  1289→                          </div>
+  1290→                          <div>
+  1291→                            <p className="text-xs text-muted-foreground mb-1">Total Upload</p>
+  1292→                            <p className="text-2xl font-bold tabular-nums text-teal-600">{groupDetail.group.sessionStats.totalUploadGB} GB</p>
+  1293→                          </div>
+  1294→                          <div>
+  1295→                            <p className="text-xs text-muted-foreground mb-1">Total Data Transfer</p>
+  1296→                            <p className="text-2xl font-bold tabular-nums text-amber-600">{groupDetail.group.sessionStats.totalDataGB} GB</p>
+  1297→                          </div>
+  1298→                        </div>
+  1299→                      ) : (
+  1300→                        <p className="text-sm text-muted-foreground text-center py-8">No session data available.</p>
+  1301→                      )}
+  1302→                    </CardContent>
+  1303→                  </Card>
+  1304→                </TabsContent>
+  1305→              </Tabs>
+  1306→            </>
+  1307→          )}
+  1308→        </TabsContent>
+  1309→      </Tabs>
+  1310→
+  1311→      {/* ═══════════════════════════════════════════════════════════ */}
+  1312→      {/* DIALOGS                                                    */}
+  1313→      {/* ═══════════════════════════════════════════════════════════ */}
+  1314→
+  1315→      {/* ─── Add/Edit Group Dialog ─── */}
+  1316→      <Dialog open={addGroupOpen || editGroupOpen} onOpenChange={(open) => {
+  1317→        if (!open) { setAddGroupOpen(false); setEditGroupOpen(false); }
+  1318→      }}>
+  1319→        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+  1320→          <DialogHeader>
+  1321→            <DialogTitle>{addGroupOpen ? "Create New Group" : `Edit Group: ${groupForm.groupname}`}</DialogTitle>
+  1322→            <DialogDescription>
+  1323→              {addGroupOpen
+  1324→                ? "Define a new FreeRADIUS group with authentication and bandwidth policies."
+  1325→                : "Update group enrichment and RADIUS attributes."}
+  1326→            </DialogDescription>
+  1327→          </DialogHeader>
+  1328→
+  1329→          <div className="space-y-5 py-2">
+  1330→            {/* Basic Info */}
+  1331→            <div className="space-y-3">
+  1332→              <h4 className="text-sm font-semibold text-foreground">Basic Information</h4>
+  1333→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1334→                <div className="space-y-1.5">
+  1335→                  <Label htmlFor="groupname" className="text-xs">Group Name</Label>
+  1336→                  <Input
+  1337→                    id="groupname"
+  1338→                    placeholder="e.g. ftth-100mbps"
+  1339→                    value={groupForm.groupname}
+  1340→                    onChange={(e) => setGroupForm((p) => ({ ...p, groupname: e.target.value }))}
+  1341→                    disabled={!!editGroupOpen}
+  1342→                    className="font-mono text-sm"
+  1343→                  />
+  1344→                </div>
+  1345→                <div className="space-y-1.5">
+  1346→                  <Label htmlFor="priority" className="text-xs">Priority</Label>
+  1347→                  <Input
+  1348→                    id="priority"
+  1349→                    type="number"
+  1350→                    placeholder="0"
+  1351→                    value={groupForm.priority}
+  1352→                    onChange={(e) => setGroupForm((p) => ({ ...p, priority: parseInt(e.target.value) || 0 }))}
+  1353→                    className="text-sm"
+  1354→                  />
+  1355→                </div>
+  1356→              </div>
+  1357→              <div className="space-y-1.5">
+  1358→                <Label htmlFor="description" className="text-xs">Description</Label>
+  1359→                <Textarea
+  1360→                  id="description"
+  1361→                  placeholder="Describe this group/policy..."
+  1362→                  value={groupForm.description}
+  1363→                  onChange={(e) => setGroupForm((p) => ({ ...p, description: e.target.value }))}
+  1364→                  rows={2}
+  1365→                  className="text-sm resize-none"
+  1366→                />
+  1367→              </div>
+  1368→            </div>
+  1369→
+  1370→            <Separator />
+  1371→
+  1372→            {/* Speed & Limits */}
+  1373→            <div className="space-y-3">
+  1374→              <h4 className="text-sm font-semibold text-foreground">Speed & Limits</h4>
+  1375→              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1376→                <div className="space-y-1.5">
+  1377→                  <Label className="text-xs flex items-center gap-1">
+  1378→                    <Gauge className="h-3 w-3 text-green-600" />Download (Mbps)
+  1379→                  </Label>
+  1380→                  <Input
+  1381→                    type="number"
+  1382→                    placeholder="100"
+  1383→                    value={groupForm.speedLimitDown}
+  1384→                    onChange={(e) => setGroupForm((p) => ({ ...p, speedLimitDown: parseInt(e.target.value) || 0 }))}
+  1385→                    className="text-sm"
+  1386→                  />
+  1387→                </div>
+  1388→                <div className="space-y-1.5">
+  1389→                  <Label className="text-xs flex items-center gap-1">
+  1390→                    <Gauge className="h-3 w-3 text-teal-600" />Upload (Mbps)
+  1391→                  </Label>
+  1392→                  <Input
+  1393→                    type="number"
+  1394→                    placeholder="50"
+  1395→                    value={groupForm.speedLimitUp}
+  1396→                    onChange={(e) => setGroupForm((p) => ({ ...p, speedLimitUp: parseInt(e.target.value) || 0 }))}
+  1397→                    className="text-sm"
+  1398→                  />
+  1399→                </div>
+  1400→                <div className="space-y-1.5">
+  1401→                  <Label className="text-xs flex items-center gap-1">
+  1402→                    <Database className="h-3 w-3 text-amber-600" />Data Limit (GB)
+  1403→                  </Label>
+  1404→                  <Input
+  1405→                    type="number"
+  1406→                    placeholder="Unlimited"
+  1407→                    value={groupForm.dataLimit}
+  1408→                    onChange={(e) => setGroupForm((p) => ({ ...p, dataLimit: e.target.value }))}
+  1409→                    className="text-sm"
+  1410→                  />
+  1411→                </div>
+  1412→                <div className="space-y-1.5">
+  1413→                  <Label className="text-xs flex items-center gap-1">
+  1414→                    <Clock className="h-3 w-3 text-purple-600" />Session Timeout (s)
+  1415→                  </Label>
+  1416→                  <Input
+  1417→                    type="number"
+  1418→                    placeholder="Unlimited"
+  1419→                    value={groupForm.sessionTimeout}
+  1420→                    onChange={(e) => setGroupForm((p) => ({ ...p, sessionTimeout: e.target.value }))}
+  1421→                    className="text-sm"
+  1422→                  />
+  1423→                </div>
+  1424→              </div>
+  1425→            </div>
+  1426→
+  1427→            <Separator />
+  1428→
+  1429→            {/* Check Attributes */}
+  1430→            <div className="space-y-3">
+  1431→              <div className="flex items-center justify-between">
+  1432→                <h4 className="text-sm font-semibold text-foreground">Check Attributes (radgroupcheck)</h4>
+  1433→                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => addGroupFormAttrRow("checkAttrs")}>
+  1434→                  <Plus className="h-3 w-3 mr-1" />Add Row
+  1435→                </Button>
+  1436→              </div>
+  1437→              {/* Quick-add buttons */}
+  1438→              <div className="flex flex-wrap gap-1.5">
+  1439→                {COMMON_CHECK_ATTRS.map((attr) => (
+  1440→                  <Button
+  1441→                    key={attr}
+  1442→                    variant="outline"
+  1443→                    size="sm"
+  1444→                    className="h-6 text-[10px] px-2 font-mono"
+  1445→                    onClick={() => quickAddAttr("checkAttrs", attr)}
+  1446→                  >
+  1447→                    + {attr}
+  1448→                  </Button>
+  1449→                ))}
+  1450→              </div>
+  1451→              {groupForm.checkAttrs.map((row, idx) => (
+  1452→                <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+  1453→                  <div className="col-span-5">
+  1454→                    <Input
+  1455→                      placeholder="Attribute"
+  1456→                      value={row.attribute}
+  1457→                      onChange={(e) => updateGroupFormAttr("checkAttrs", idx, "attribute", e.target.value)}
+  1458→                      className="h-8 text-xs font-mono"
+  1459→                    />
+  1460→                  </div>
+  1461→                  <div className="col-span-2">
+  1462→                    <Select value={row.op} onValueChange={(v) => updateGroupFormAttr("checkAttrs", idx, "op", v)}>
+  1463→                      <SelectTrigger className="h-8 text-xs font-mono w-full">
+  1464→                        <SelectValue />
+  1465→                      </SelectTrigger>
+  1466→                      <SelectContent>
+  1467→                        {CHECK_OPS.map((op) => (
+  1468→                          <SelectItem key={op} value={op} className="text-xs font-mono">{op}</SelectItem>
+  1469→                        ))}
+  1470→                      </SelectContent>
+  1471→                    </Select>
+  1472→                  </div>
+  1473→                  <div className="col-span-4">
+  1474→                    <Input
+  1475→                      placeholder="Value"
+  1476→                      value={row.value}
+  1477→                      onChange={(e) => updateGroupFormAttr("checkAttrs", idx, "value", e.target.value)}
+  1478→                      className="h-8 text-xs font-mono"
+  1479→                    />
+  1480→                  </div>
+  1481→                  <div className="col-span-1">
+  1482→                    <Button
+  1483→                      variant="ghost" size="icon" className="h-8 w-8 text-red-500"
+  1484→                      onClick={() => removeGroupFormAttrRow("checkAttrs", idx)}
+  1485→                    >
+  1486→                      <XCircle className="h-3.5 w-3.5" />
+  1487→                    </Button>
+  1488→                  </div>
+  1489→                </div>
+  1490→              ))}
+  1491→            </div>
+  1492→
+  1493→            <Separator />
+  1494→
+  1495→            {/* Reply Attributes */}
+  1496→            <div className="space-y-3">
+  1497→              <div className="flex items-center justify-between">
+  1498→                <h4 className="text-sm font-semibold text-foreground">Reply Attributes (radgroupreply)</h4>
+  1499→                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => addGroupFormAttrRow("replyAttrs")}>
+  1500→                  <Plus className="h-3 w-3 mr-1" />Add Row
+  1501→                </Button>
+  1502→              </div>
+  1503→              {/* Quick-add buttons */}
+  1504→              <div className="flex flex-wrap gap-1.5">
+  1505→                {COMMON_REPLY_ATTRS.map((attr) => (
+  1506→                  <Button
+  1507→                    key={attr}
+  1508→                    variant="outline"
+  1509→                    size="sm"
+  1510→                    className="h-6 text-[10px] px-2 font-mono"
+  1511→                    onClick={() => quickAddAttr("replyAttrs", attr)}
+  1512→                  >
+  1513→                    + {attr}
+  1514→                  </Button>
+  1515→                ))}
+  1516→              </div>
+  1517→              {groupForm.replyAttrs.map((row, idx) => (
+  1518→                <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+  1519→                  <div className="col-span-5">
+  1520→                    <Input
+  1521→                      placeholder="Attribute"
+  1522→                      value={row.attribute}
+  1523→                      onChange={(e) => updateGroupFormAttr("replyAttrs", idx, "attribute", e.target.value)}
+  1524→                      className="h-8 text-xs font-mono"
+  1525→                    />
+  1526→                  </div>
+  1527→                  <div className="col-span-2">
+  1528→                    <Select value={row.op} onValueChange={(v) => updateGroupFormAttr("replyAttrs", idx, "op", v)}>
+  1529→                      <SelectTrigger className="h-8 text-xs font-mono w-full">
+  1530→                        <SelectValue />
+  1531→                      </SelectTrigger>
+  1532→                      <SelectContent>
+  1533→                        {REPLY_OPS.map((op) => (
+  1534→                          <SelectItem key={op} value={op} className="text-xs font-mono">{op}</SelectItem>
+  1535→                        ))}
+  1536→                      </SelectContent>
+  1537→                    </Select>
+  1538→                  </div>
+  1539→                  <div className="col-span-4">
+  1540→                    <Input
+  1541→                      placeholder="Value"
+  1542→                      value={row.value}
+  1543→                      onChange={(e) => updateGroupFormAttr("replyAttrs", idx, "value", e.target.value)}
+  1544→                      className="h-8 text-xs font-mono"
+  1545→                    />
+  1546→                  </div>
+  1547→                  <div className="col-span-1">
+  1548→                    <Button
+  1549→                      variant="ghost" size="icon" className="h-8 w-8 text-red-500"
+  1550→                      onClick={() => removeGroupFormAttrRow("replyAttrs", idx)}
+  1551→                    >
+  1552→                      <XCircle className="h-3.5 w-3.5" />
+  1553→                    </Button>
+  1554→                  </div>
+  1555→                </div>
+  1556→              ))}
+  1557→            </div>
+  1558→          </div>
+  1559→
+  1560→          <DialogFooter>
+  1561→            <Button variant="outline" onClick={() => { setAddGroupOpen(false); setEditGroupOpen(false); }}>
+  1562→              Cancel
+  1563→            </Button>
+  1564→            <Button
+  1565→              className="bg-red-600 hover:bg-red-700 text-white"
+  1566→              onClick={() => handleSaveGroup(false)}
+  1567→              disabled={createGroupMutation.isPending}
+  1568→            >
+  1569→              {createGroupMutation.isPending ? "Saving..." : addGroupOpen ? "Create Group" : "Save Changes"}
+  1570→            </Button>
+  1571→          </DialogFooter>
+  1572→        </DialogContent>
+  1573→      </Dialog>
+  1574→
+  1575→      {/* ─── Clone Group Dialog ─── */}
+  1576→      <Dialog open={cloneGroupOpen} onOpenChange={setCloneGroupOpen}>
+  1577→        <DialogContent className="max-w-md">
+  1578→          <DialogHeader>
+  1579→            <DialogTitle>Clone Group</DialogTitle>
+  1580→            <DialogDescription>
+  1581→              Create a copy of an existing group with all its attributes.
+  1582→            </DialogDescription>
+  1583→          </DialogHeader>
+  1584→          <div className="space-y-4 py-2">
+  1585→            <div className="space-y-1.5">
+  1586→              <Label className="text-xs">Copy From</Label>
+  1587→              <Input value={cloneForm.sourceGroupname} disabled className="font-mono text-sm bg-muted" />
+  1588→            </div>
+  1589→            <div className="space-y-1.5">
+  1590→              <Label htmlFor="clone-name" className="text-xs">New Group Name</Label>
+  1591→              <Input
+  1592→                id="clone-name"
+  1593→                placeholder="Enter new group name..."
+  1594→                value={cloneForm.newGroupname}
+  1595→                onChange={(e) => setCloneForm((p) => ({ ...p, newGroupname: e.target.value }))}
+  1596→                className="font-mono text-sm"
+  1597→              />
+  1598→            </div>
+  1599→          </div>
+  1600→          <DialogFooter>
+  1601→            <Button variant="outline" onClick={() => setCloneGroupOpen(false)}>Cancel</Button>
+  1602→            <Button
+  1603→              className="bg-red-600 hover:bg-red-700 text-white"
+  1604→              onClick={() => handleSaveGroup(true)}
+  1605→              disabled={cloneGroupMutation.isPending}
+  1606→            >
+  1607→              {cloneGroupMutation.isPending ? "Cloning..." : "Clone Group"}
+  1608→            </Button>
+  1609→          </DialogFooter>
+  1610→        </DialogContent>
+  1611→      </Dialog>
+  1612→
+  1613→      {/* ─── Delete Group Confirmation ─── */}
+  1614→      <AlertDialog open={deleteGroupOpen} onOpenChange={setDeleteGroupOpen}>
+  1615→        <AlertDialogContent>
+  1616→          <AlertDialogHeader>
+  1617→            <AlertDialogTitle>Delete Group</AlertDialogTitle>
+  1618→            <AlertDialogDescription>
+  1619→              Are you sure you want to delete group <span className="font-mono font-semibold">{selectedGroupname}</span>?
+  1620→              This will remove all check attributes, reply attributes, and user assignments from the RADIUS database.
+  1621→              This action cannot be undone.
+  1622→            </AlertDialogDescription>
+  1623→          </AlertDialogHeader>
+  1624→          <AlertDialogFooter>
+  1625→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1626→            <AlertDialogAction
+  1627→              className="bg-red-600 hover:bg-red-700 text-white"
+  1628→              onClick={() => {
+  1629→                if (selectedGroupname) deleteGroupMutation.mutate(selectedGroupname);
+  1630→              }}
+  1631→              disabled={deleteGroupMutation.isPending}
+  1632→            >
+  1633→              {deleteGroupMutation.isPending ? "Deleting..." : "Delete Group"}
+  1634→            </AlertDialogAction>
+  1635→          </AlertDialogFooter>
+  1636→        </AlertDialogContent>
+  1637→      </AlertDialog>
+  1638→
+  1639→      {/* ─── Add/Edit Attribute Dialog ─── */}
+  1640→      <Dialog open={attrDialogOpen} onOpenChange={setAttrDialogOpen}>
+  1641→        <DialogContent className="max-w-md">
+  1642→          <DialogHeader>
+  1643→            <DialogTitle>
+  1644→              {attrDialogMode === "add-check" && "Add Check Attribute"}
+  1645→              {attrDialogMode === "add-reply" && "Add Reply Attribute"}
+  1646→              {attrDialogMode === "edit-check" && "Edit Check Attribute"}
+  1647→              {attrDialogMode === "edit-reply" && "Edit Reply Attribute"}
+  1648→            </DialogTitle>
+  1649→            <DialogDescription>
+  1650→              {attrDialogMode.startsWith("add") ? "Add a new RADIUS attribute to this group." : "Modify this RADIUS attribute."}
+  1651→            </DialogDescription>
+  1652→          </DialogHeader>
+  1653→          <div className="space-y-4 py-2">
+  1654→            {/* Common attribute quick-select */}
+  1655→            {(attrDialogMode === "add-check" || attrDialogMode === "add-reply") && (
+  1656→              <div className="space-y-2">
+  1657→                <Label className="text-xs text-muted-foreground">Quick Select</Label>
+  1658→                <div className="flex flex-wrap gap-1.5">
+  1659→                  {(attrDialogMode === "add-check" ? COMMON_CHECK_ATTRS : COMMON_REPLY_ATTRS).map((attr) => (
+  1660→                    <Button
+  1661→                      key={attr}
+  1662→                      variant="outline"
+  1663→                      size="sm"
+  1664→                      className="h-6 text-[10px] px-2 font-mono"
+  1665→                      onClick={() => setAttrDialogData((p) => ({ ...p, attribute: attr }))}
+  1666→                    >
+  1667→                      {attr}
+  1668→                    </Button>
+  1669→                  ))}
+  1670→                </div>
+  1671→              </div>
+  1672→            )}
+  1673→
+  1674→            <div className="space-y-1.5">
+  1675→              <Label className="text-xs">Attribute</Label>
+  1676→              <Input
+  1677→                placeholder="e.g. Auth-Type"
+  1678→                value={attrDialogData.attribute}
+  1679→                onChange={(e) => setAttrDialogData((p) => ({ ...p, attribute: e.target.value }))}
+  1680→                className="font-mono text-sm"
+  1681→              />
+  1682→            </div>
+  1683→
+  1684→            <div className="space-y-1.5">
+  1685→              <Label className="text-xs">Operator</Label>
+  1686→              <Select value={attrDialogData.op} onValueChange={(v) => setAttrDialogData((p) => ({ ...p, op: v }))}>
+  1687→                <SelectTrigger className="w-full font-mono text-sm">
+  1688→                  <SelectValue />
+  1689→                </SelectTrigger>
+  1690→                <SelectContent>
+  1691→                  {(attrDialogMode.includes("check") ? CHECK_OPS : REPLY_OPS).map((op) => (
+  1692→                    <SelectItem key={op} value={op} className="font-mono text-sm">{op}</SelectItem>
+  1693→                  ))}
+  1694→                </SelectContent>
+  1695→              </Select>
+  1696→            </div>
+  1697→
+  1698→            <div className="space-y-1.5">
+  1699→              <Label className="text-xs">Value</Label>
+  1700→              <Input
+  1701→                placeholder="e.g. Accept, 86400, 100M/50M"
+  1702→                value={attrDialogData.value}
+  1703→                onChange={(e) => setAttrDialogData((p) => ({ ...p, value: e.target.value }))}
+  1704→                className="font-mono text-sm"
+  1705→              />
+  1706→            </div>
+  1707→          </div>
+  1708→          <DialogFooter>
+  1709→            <Button variant="outline" onClick={() => setAttrDialogOpen(false)}>Cancel</Button>
+  1710→            <Button
+  1711→              className="bg-red-600 hover:bg-red-700 text-white"
+  1712→              onClick={handleSaveAttr}
+  1713→              disabled={attrMutation.isPending}
+  1714→            >
+  1715→              {attrMutation.isPending ? "Saving..." : attrDialogMode.startsWith("add") ? "Add Attribute" : "Update Attribute"}
+  1716→            </Button>
+  1717→          </DialogFooter>
+  1718→        </DialogContent>
+  1719→      </Dialog>
+  1720→
+  1721→      {/* ─── Remove Attribute Confirmation ─── */}
+  1722→      <AlertDialog open={removeAttrDialogOpen} onOpenChange={setRemoveAttrDialogOpen}>
+  1723→        <AlertDialogContent>
+  1724→          <AlertDialogHeader>
+  1725→            <AlertDialogTitle>Remove Attribute</AlertDialogTitle>
+  1726→            <AlertDialogDescription>
+  1727→              Remove <span className="font-mono font-semibold">{removeAttrTarget?.attribute}</span> ({removeAttrTarget?.type}) from this group?
+  1728→              This may affect authentication or bandwidth policies for all users in this group.
+  1729→            </AlertDialogDescription>
+  1730→          </AlertDialogHeader>
+  1731→          <AlertDialogFooter>
+  1732→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1733→            <AlertDialogAction
+  1734→              className="bg-red-600 hover:bg-red-700 text-white"
+  1735→              onClick={handleRemoveAttr}
+  1736→              disabled={attrMutation.isPending}
+  1737→            >
+  1738→              {attrMutation.isPending ? "Removing..." : "Remove Attribute"}
+  1739→            </AlertDialogAction>
+  1740→          </AlertDialogFooter>
+  1741→        </AlertDialogContent>
+  1742→      </AlertDialog>
+  1743→    </div>
+  1744→  );
+  1745→}
+  1746→
+  1747→// Re-export Activity icon for the sessions tab
+  1748→function Activity({ className }: { className?: string }) {
+  1749→  return (
+  1750→    <svg
+  1751→      xmlns="http://www.w3.org/2000/svg"
+  1752→      viewBox="0 0 24 24"
+  1753→      fill="none"
+  1754→      stroke="currentColor"
+  1755→      strokeWidth="2"
+  1756→      strokeLinecap="round"
+  1757→      strokeLinejoin="round"
+  1758→      className={className}
+  1759→    >
+  1760→      <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+  1761→    </svg>
+  1762→  );
+  1763→}
+  1764→

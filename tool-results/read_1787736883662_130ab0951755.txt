@@ -1,0 +1,859 @@
+     1→// Cryptsk Multi-WAN Monitor Service — Port 3006
+     2→// Health check daemon with auto-failover/failback for WAN links
+     3→
+     4→import { PrismaClient } from "@prisma/client";
+     5→import { execFile } from "child_process";
+     6→import { promisify } from "util";
+     7→
+     8→const execFileAsync = promisify(execFile);
+     9→
+    10→// ─── Prisma Client ──────────────────────────────────────────
+    11→
+    12→const db = new PrismaClient({
+    13→  datasources: {
+    14→    db: {
+    15→      url: process.env.DATABASE_URL || "postgresql://z:Cryptsk2026@localhost:5432/ispplatform",
+    16→    },
+    17→  },
+    18→});
+    19→
+    20→// ─── Types ──────────────────────────────────────────────────
+    21→
+    22→interface HealthRecord {
+    23→  status: "UP" | "DOWN" | "UNKNOWN";
+    24→  consecutiveFails: number;
+    25→  consecutiveSuccess: number;
+    26→  lastCheck: Date | null;
+    27→  lastLatency: number;
+    28→  lastPacketLoss: number;
+    29→  history: HealthHistoryEntry[];
+    30→  linkId: string;
+    31→  linkName: string;
+    32→  gateway: string;
+    33→  interfaceName: string;
+    34→  isPrimary: boolean;
+    35→  dbStatus: string;
+    36→  failbackDelaySec: number;
+    37→  autoFailback: boolean;
+    38→}
+    39→
+    40→interface HealthHistoryEntry {
+    41→  timestamp: string;
+    42→  alive: boolean;
+    43→  latency: number;
+    44→}
+    45→
+    46→interface FailoverEvent {
+    47→  timestamp: string;
+    48→  fromLink: string;
+    49→  toLink: string;
+    50→  type: "failover" | "failback";
+    51→  gateway: string;
+    52→  interfaceName: string;
+    53→}
+    54→
+    55→interface MonitorConfig {
+    56→  checkInterval: number;
+    57→  failThreshold: number;
+    58→  recoveryThreshold: number;
+    59→  autoFailover: boolean;
+    60→}
+    61→
+    62→// ─── State ──────────────────────────────────────────────────
+    63→
+    64→const healthMap = new Map<string, HealthRecord>();
+    65→const failoverEvents: FailoverEvent[] = [];
+    66→let monitorInterval: ReturnType<typeof setInterval> | null = null;
+    67→let monitorRunning = false;
+    68→let currentDefaultGateway = "";
+    69→let hasFailovered = false;
+    70→let failbackTimer: ReturnType<typeof setTimeout> | null = null;
+    71→
+    72→const config: MonitorConfig = {
+    73→  checkInterval: parseInt(process.env.MULTIWAN_CHECK_INTERVAL || "15", 10),
+    74→  failThreshold: parseInt(process.env.MULTIWAN_FAIL_THRESHOLD || "3", 10),
+    75→  recoveryThreshold: parseInt(process.env.MULTIWAN_RECOVERY_THRESHOLD || "2", 10),
+    76→  autoFailover: process.env.MULTIWAN_AUTO_FAILOVER !== "false",
+    77→};
+    78→
+    79→const startTime = Date.now();
+    80→
+    81→// ─── Helpers ────────────────────────────────────────────────
+    82→
+    83→function json(data: unknown, status = 200) {
+    84→  return new Response(JSON.stringify(data), {
+    85→    status,
+    86→    headers: { "Content-Type": "application/json" },
+    87→  });
+    88→}
+    89→
+    90→function jsonErr(message: string, status = 400) {
+    91→  return json({ error: message }, status);
+    92→}
+    93→
+    94→function log(tag: string, msg: string) {
+    95→  const ts = new Date().toISOString();
+    96→  console.log(`[${ts}] [multiwan-monitor:${tag}] ${msg}`);
+    97→}
+    98→
+    99→// ─── Ping Implementation ────────────────────────────────────
+   100→
+   101→/**
+   102→ * Ping a gateway using system ping command.
+   103→ * Falls back to TCP connect probe on port 53 if ICMP is blocked.
+   104→ */
+   105→async function pingGateway(
+   106→  gateway: string,
+   107→  timeoutMs = 10000
+   108→): Promise<{ alive: boolean; latencyMs: number; packetLoss: number }> {
+   109→  try {
+   110→    const result = await execFileAsync(
+   111→      "ping",
+   112→      ["-c", "1", "-W", "3", gateway],
+   113→      { timeout: timeoutMs }
+   114→    );
+   115→
+   116→    const output = result.stdout + result.stderr;
+   117→    const rttMatch = output.match(
+   118→      /rtt\s+min\/avg\/max\/mdev\s*=\s*[\d.]+\/([\d.]+)\//
+   119→    );
+   120→    const lossMatch = output.match(/(\d+)% packet loss/);
+   121→
+   122→    const latency = rttMatch ? parseFloat(rttMatch[1]) : -1;
+   123→    const packetLoss = lossMatch ? parseInt(lossMatch[1]) : 0;
+   124→
+   125→    return {
+   126→      alive: result.exitCode === 0,
+   127→      latencyMs: latency,
+   128→      packetLoss,
+   129→    };
+   130→  } catch (err: any) {
+   131→    // If ICMP is not permitted, fall back to TCP connect probe on port 53
+   132→    if (err?.message?.includes("Operation not permitted") || err?.code === "EPERM") {
+   133→      log("ping", `ICMP blocked for ${gateway}, falling back to TCP probe on port 53`);
+   134→      return tcpProbe(gateway, 53, timeoutMs);
+   135→    }
+   136→
+   137→    // On timeout or error, try TCP probe as fallback
+   138→    return tcpProbe(gateway, 53, timeoutMs);
+   139→  }
+   140→}
+   141→
+   142→/**
+   143→ * TCP connect probe: try connecting to gateway on given port.
+   144→ * Used as fallback when ICMP ping is blocked (sandbox environments).
+   145→ */
+   146→async function tcpProbe(
+   147→  gateway: string,
+   148→  port = 53,
+   149→  timeoutMs = 5000
+   150→): Promise<{ alive: boolean; latencyMs: number; packetLoss: number }> {
+   151→  try {
+   152→    const start = Date.now();
+   153→    const controller = new AbortController();
+   154→    const timer = setTimeout(() => controller.abort(), timeoutMs);
+   155→
+   156→    const socket = Bun.connect({
+   157→      hostname: gateway,
+   158→      port,
+   159→      socket: {
+   160→        data: () => {},
+   161→        open: () => {},
+   162→        close: () => {},
+   163→        error: () => {},
+   164→      },
+   165→      timeout: timeoutMs,
+   166→    });
+   167→
+   168→    clearTimeout(timer);
+   169→
+   170→    // Bun.connect returns immediately; we just check if it succeeded
+   171→    const latency = Date.now() - start;
+   172→    try {
+   173→      socket.end();
+   174→    } catch {
+   175→      // ignore close errors
+   176→    }
+   177→
+   178→    return {
+   179→      alive: true,
+   180→      latencyMs: latency,
+   181→      packetLoss: 0,
+   182→    };
+   183→  } catch {
+   184→    return {
+   185→      alive: false,
+   186→      latencyMs: -1,
+   187→      packetLoss: 100,
+   188→    };
+   189→  }
+   190→}
+   191→
+   192→// ─── Route Management ───────────────────────────────────────
+   193→
+   194→/**
+   195→ * Switch the default route to a specific gateway/interface.
+   196→ */
+   197→async function switchDefaultRoute(
+   198→  gateway: string,
+   199→  interfaceName: string
+   200→): Promise<boolean> {
+   201→  try {
+   202→    await execFileAsync("ip", [
+   203→      "route",
+   204→      "replace",
+   205→      "default",
+   206→      "via",
+   207→      gateway,
+   208→      "dev",
+   209→      interfaceName,
+   210→    ], { timeout: 10000 });
+   211→
+   212→    currentDefaultGateway = gateway;
+   213→    log("route", `Default route switched to ${gateway} via ${interfaceName}`);
+   214→    return true;
+   215→  } catch (err: any) {
+   216→    log("route", `Failed to switch route to ${gateway}: ${err?.message || err}`);
+   217→    return false;
+   218→  }
+   219→}
+   220→
+   221→/**
+   222→ * Detect the current default gateway from the system routing table.
+   223→ */
+   224→async function detectCurrentGateway(): Promise<string> {
+   225→  try {
+   226→    const result = await execFileAsync("ip", ["route", "show", "default"], {
+   227→      timeout: 5000,
+   228→    });
+   229→    const match = (result.stdout || "").match(/default via ([\d.]+)/);
+   230→    return match ? match[1] : "";
+   231→  } catch {
+   232→    return "";
+   233→  }
+   234→}
+   235→
+   236→// ─── Database Helpers ───────────────────────────────────────
+   237→
+   238→/**
+   239→ * Log a WAN event to the database.
+   240→ */
+   241→async function logWanEvent(
+   242→  action: string,
+   243→  wanName: string,
+   244→  details: Record<string, unknown>
+   245→) {
+   246→  try {
+   247→    await db.wanEvent.create({
+   248→      data: {
+   249→        action,
+   250→        wanName,
+   251→        details: JSON.stringify(details),
+   252→        userId: null,
+   253→      },
+   254→    });
+   255→  } catch (err: any) {
+   256→    log("db", `Failed to log WAN event: ${err?.message || err}`);
+   257→  }
+   258→}
+   259→
+   260→// ─── Auto-Failover Logic ───────────────────────────────────
+   261→
+   262→/**
+   263→ * Perform failover: switch to a backup WAN link when primary goes down.
+   264→ */
+   265→async function performFailover(downLink: HealthRecord) {
+   266→  if (!config.autoFailover) {
+   267→    log("failover", `Auto-failover is disabled, skipping failover for ${downLink.linkName}`);
+   268→    return;
+   269→  }
+   270→
+   271→  // Find the first active non-primary link as backup
+   272→  const backupLinks: HealthRecord[] = [];
+   273→  for (const [, record] of healthMap) {
+   274→    if (
+   275→      record.linkId !== downLink.linkId &&
+   276→      record.status === "UP" &&
+   277→      !record.isPrimary
+   278→    ) {
+   279→      backupLinks.push(record);
+   280→    }
+   281→  }
+   282→
+   283→  if (backupLinks.length === 0) {
+   284→    log("failover", `No backup WAN links available for failover`);
+   285→    await logWanEvent("FAILOVER", downLink.linkName, {
+   286→      type: "failover_failed",
+   287→      reason: "No backup links available",
+   288→      gateway: downLink.gateway,
+   289→    });
+   290→    return;
+   291→  }
+   292→
+   293→  // Pick the backup link (first UP non-primary)
+   294→  const backup = backupLinks[0];
+   295→  log("failover", `Initiating failover from ${downLink.linkName} to ${backup.linkName}`);
+   296→
+   297→  // Switch route
+   298→  const success = await switchDefaultRoute(backup.gateway, backup.interfaceName);
+   299→  if (!success) {
+   300→    await logWanEvent("FAILOVER", downLink.linkName, {
+   301→      type: "failover_failed",
+   302→      reason: "Route switch failed",
+   303→      targetLink: backup.linkName,
+   304→      gateway: backup.gateway,
+   305→    });
+   306→    return;
+   307→  }
+   308→
+   309→  // Update primary link status to STANDBY in DB
+   310→  try {
+   311→    await db.wanLink.update({
+   312→      where: { id: downLink.linkId },
+   313→      data: { status: "STANDBY" },
+   314→    });
+   315→    downLink.dbStatus = "STANDBY";
+   316→  } catch (err: any) {
+   317→    log("failover", `Failed to update DB status for ${downLink.linkName}: ${err?.message || err}`);
+   318→  }
+   319→
+   320→  // Record the event
+   321→  hasFailovered = true;
+   322→  const event: FailoverEvent = {
+   323→    timestamp: new Date().toISOString(),
+   324→    fromLink: downLink.linkName,
+   325→    toLink: backup.linkName,
+   326→    type: "failover",
+   327→    gateway: backup.gateway,
+   328→    interfaceName: backup.interfaceName,
+   329→  };
+   330→  failoverEvents.push(event);
+   331→
+   332→  await logWanEvent("FAILOVER", downLink.linkName, {
+   333→    type: "failover",
+   334→    fromLink: downLink.linkName,
+   335→    toLink: backup.linkName,
+   336→    gateway: backup.gateway,
+   337→    interfaceName: backup.interfaceName,
+   338→  });
+   339→
+   340→  log("failover", `Failover complete: ${downLink.linkName} → ${backup.linkName} (gateway: ${backup.gateway})`);
+   341→}
+   342→
+   343→/**
+   344→ * Schedule failback: after failbackDelaySec, switch back to primary.
+   345→ */
+   346→function scheduleFailback(recoveredLink: HealthRecord) {
+   347→  if (!hasFailovered) return;
+   348→  if (!recoveredLink.autoFailback) {
+   349→    log("failback", `Auto-failback is disabled for ${recoveredLink.linkName}`);
+   350→    return;
+   351→  }
+   352→
+   353→  const delayMs = (recoveredLink.failbackDelaySec || 60) * 1000;
+   354→  log("failback", `Scheduling failback to ${recoveredLink.linkName} in ${recoveredLink.failbackDelaySec || 60}s`);
+   355→
+   356→  // Clear any existing failback timer
+   357→  if (failbackTimer) {
+   358→    clearTimeout(failbackTimer);
+   359→    failbackTimer = null;
+   360→  }
+   361→
+   362→  failbackTimer = setTimeout(async () => {
+   363→    failbackTimer = null;
+   364→    await performFailback(recoveredLink);
+   365→    hasFailovered = false;
+   366→  }, delayMs);
+   367→}
+   368→
+   369→/**
+   370→ * Perform failback: switch back to the primary (or recovered) link.
+   371→ */
+   372→async function performFailback(targetLink: HealthRecord) {
+   373→  log("failback", `Initiating failback to ${targetLink.linkName}`);
+   374→
+   375→  // First verify the target is still UP
+   376→  const pingResult = await pingGateway(targetLink.gateway);
+   377→  if (!pingResult.alive) {
+   378→    log("failback", `Target link ${targetLink.linkName} is not responding, aborting failback`);
+   379→    return;
+   380→  }
+   381→
+   382→  // Switch route
+   383→  const success = await switchDefaultRoute(targetLink.gateway, targetLink.interfaceName);
+   384→  if (!success) {
+   385→    await logWanEvent("FAILBACK", targetLink.linkName, {
+   386→      type: "failback_failed",
+   387→      reason: "Route switch failed",
+   388→      gateway: targetLink.gateway,
+   389→    });
+   390→    return;
+   391→  }
+   392→
+   393→  // Update link status back to ACTIVE in DB
+   394→  try {
+   395→    await db.wanLink.update({
+   396→      where: { id: targetLink.linkId },
+   397→      data: { status: "ACTIVE" },
+   398→    });
+   399→    targetLink.dbStatus = "ACTIVE";
+   400→  } catch (err: any) {
+   401→    log("failback", `Failed to update DB status for ${targetLink.linkName}: ${err?.message || err}`);
+   402→  }
+   403→
+   404→  // Record the event
+   405→  const event: FailoverEvent = {
+   406→    timestamp: new Date().toISOString(),
+   407→    fromLink: "failover-backup",
+   408→    toLink: targetLink.linkName,
+   409→    type: "failback",
+   410→    gateway: targetLink.gateway,
+   411→    interfaceName: targetLink.interfaceName,
+   412→  };
+   413→  failoverEvents.push(event);
+   414→
+   415→  await logWanEvent("FAILBACK", targetLink.linkName, {
+   416→    type: "failback",
+   417→    toLink: targetLink.linkName,
+   418→    gateway: targetLink.gateway,
+   419→    interfaceName: targetLink.interfaceName,
+   420→  });
+   421→
+   422→  log("failback", `Failback complete: restored ${targetLink.linkName} (gateway: ${targetLink.gateway})`);
+   423→}
+   424→
+   425→// ─── Health Check Daemon ───────────────────────────────────
+   426→
+   427→/**
+   428→ * Load active WAN links from the database into memory.
+   429→ */
+   430→async function loadWanLinks() {
+   431→  try {
+   432→    const links = await db.wanLink.findMany({
+   433→      where: {
+   434→        status: "ACTIVE",
+   435→        gateway: { not: "" },
+   436→      },
+   437→    });
+   438→
+   439→    log("daemon", `Loaded ${links.length} active WAN links from database`);
+   440→
+   441→    for (const link of links) {
+   442→      // Preserve existing health state if link already tracked
+   443→      if (healthMap.has(link.id)) {
+   444→        const existing = healthMap.get(link.id)!;
+   445→        existing.linkName = link.name;
+   446→        existing.gateway = link.gateway;
+   447→        existing.interfaceName = link.interfaceName;
+   448→        existing.isPrimary = link.isPrimary;
+   449→        existing.dbStatus = link.status;
+   450→        existing.failbackDelaySec = link.failbackDelaySec;
+   451→        existing.autoFailback = link.autoFailback;
+   452→      } else {
+   453→        healthMap.set(link.id, {
+   454→          linkId: link.id,
+   455→          linkName: link.name,
+   456→          gateway: link.gateway,
+   457→          interfaceName: link.interfaceName,
+   458→          isPrimary: link.isPrimary,
+   459→          dbStatus: link.status,
+   460→          failbackDelaySec: link.failbackDelaySec,
+   461→          autoFailback: link.autoFailback,
+   462→          status: "UNKNOWN",
+   463→          consecutiveFails: 0,
+   464→          consecutiveSuccess: 0,
+   465→          lastCheck: null,
+   466→          lastLatency: -1,
+   467→          lastPacketLoss: 100,
+   468→          history: [],
+   469→        });
+   470→      }
+   471→    }
+   472→
+   473→    // Remove links that are no longer active
+   474→    const linkIds = new Set(links.map((l) => l.id));
+   475→    for (const [id] of healthMap) {
+   476→      if (!linkIds.has(id)) {
+   477→        healthMap.delete(id);
+   478→        log("daemon", `Removed stale link ${id} from monitoring`);
+   479→      }
+   480→    }
+   481→  } catch (err: any) {
+   482→    log("daemon", `Failed to load WAN links: ${err?.message || err}`);
+   483→  }
+   484→}
+   485→
+   486→/**
+   487→ * Run a single health check cycle across all monitored links.
+   488→ */
+   489→async function healthCheckCycle() {
+   490→  if (!monitorRunning) return;
+   491→
+   492→  log("daemon", `Starting health check cycle (${healthMap.size} links)`);
+   493→
+   494→  // Reload links from DB to pick up any changes
+   495→  await loadWanLinks();
+   496→
+   497→  for (const [linkId, record] of healthMap) {
+   498→    try {
+   499→      const result = await pingGateway(record.gateway);
+   500→
+   501→      // Update history (keep last 100 entries)
+   502→      const historyEntry: HealthHistoryEntry = {
+   503→        timestamp: new Date().toISOString(),
+   504→        alive: result.alive,
+   505→        latency: result.latencyMs,
+   506→      };
+   507→      record.history.push(historyEntry);
+   508→      if (record.history.length > 100) {
+   509→        record.history = record.history.slice(-100);
+   510→      }
+   511→
+   512→      // Update check metadata
+   513→      record.lastCheck = new Date();
+   514→      record.lastLatency = result.alive ? result.latencyMs : -1;
+   515→      record.lastPacketLoss = result.packetLoss;
+   516→
+   517→      if (result.alive) {
+   518→        record.consecutiveFails = 0;
+   519→        record.consecutiveSuccess++;
+   520→
+   521→        // Check if link was DOWN and now recovers
+   522→        if (record.status === "DOWN") {
+   523→          if (record.consecutiveSuccess >= config.recoveryThreshold) {
+   524→            log("daemon", `Link ${record.linkName} recovered after ${record.consecutiveSuccess} consecutive successes`);
+   525→
+   526→            const prevStatus = record.status;
+   527→            record.status = "UP";
+   528→
+   529→            // Log recovery event
+   530→            await logWanEvent("STATUS_CHANGE", record.linkName, {
+   531→              type: "link_up",
+   532→              previousStatus: prevStatus,
+   533→              currentStatus: "UP",
+   534→              latency: result.latencyMs,
+   535→              packetLoss: result.packetLoss,
+   536→              consecutiveSuccess: record.consecutiveSuccess,
+   537→            });
+   538→
+   539→            // If this is the primary link, schedule failback
+   540→            if (record.isPrimary) {
+   541→              scheduleFailback(record);
+   542→            }
+   543→          } else {
+   544→            log("daemon", `Link ${record.linkName} showing recovery signs (${record.consecutiveSuccess}/${config.recoveryThreshold} successes)`);
+   545→          }
+   546→        } else {
+   547→          record.status = "UP";
+   548→        }
+   549→      } else {
+   550→        record.consecutiveSuccess = 0;
+   551→        record.consecutiveFails++;
+   552→
+   553→        // Check if link should be marked DOWN
+   554→        if (record.consecutiveFails >= config.failThreshold) {
+   555→          if (record.status !== "DOWN") {
+   556→            log("daemon", `Link ${record.linkName} marked DOWN after ${record.consecutiveFails} consecutive failures`);
+   557→
+   558→            const prevStatus = record.status;
+   559→            record.status = "DOWN";
+   560→
+   561→            // Log failure event
+   562→            await logWanEvent("STATUS_CHANGE", record.linkName, {
+   563→              type: "link_down",
+   564→              previousStatus: prevStatus,
+   565→              currentStatus: "DOWN",
+   566→              packetLoss: result.packetLoss,
+   567→              consecutiveFails: record.consecutiveFails,
+   568→            });
+   569→
+   570→            // If this is the primary link, trigger failover
+   571→            if (record.isPrimary) {
+   572→              await performFailover(record);
+   573→            }
+   574→          }
+   575→        } else {
+   576→          log("daemon", `Link ${record.linkName} experiencing issues (${record.consecutiveFails}/${config.failThreshold} failures)`);
+   577→        }
+   578→      }
+   579→    } catch (err: any) {
+   580→      log("daemon", `Error checking ${record.linkName}: ${err?.message || err}`);
+   581→      record.consecutiveSuccess = 0;
+   582→      record.consecutiveFails++;
+   583→      record.lastCheck = new Date();
+   584→      record.lastLatency = -1;
+   585→      record.lastPacketLoss = 100;
+   586→
+   587→      record.history.push({
+   588→        timestamp: new Date().toISOString(),
+   589→        alive: false,
+   590→        latency: -1,
+   591→      });
+   592→      if (record.history.length > 100) {
+   593→        record.history = record.history.slice(-100);
+   594→      }
+   595→
+   596→      if (record.consecutiveFails >= config.failThreshold && record.status !== "DOWN") {
+   597→        record.status = "DOWN";
+   598→        log("daemon", `Link ${record.linkName} marked DOWN after ${record.consecutiveFails} consecutive errors`);
+   599→        await logWanEvent("STATUS_CHANGE", record.linkName, {
+   600→          type: "link_down",
+   601→          previousStatus: record.status,
+   602→          currentStatus: "DOWN",
+   603→          reason: "check_error",
+   604→          consecutiveFails: record.consecutiveFails,
+   605→        });
+   606→
+   607→        if (record.isPrimary) {
+   608→          await performFailover(record);
+   609→        }
+   610→      }
+   611→    }
+   612→  }
+   613→
+   614→  log("daemon", `Health check cycle complete`);
+   615→}
+   616→
+   617→/**
+   618→ * Start the monitoring daemon.
+   619→ */
+   620→function startMonitor() {
+   621→  if (monitorRunning) {
+   622→    log("daemon", "Monitor is already running");
+   623→    return;
+   624→  }
+   625→
+   626→  monitorRunning = true;
+   627→  log("daemon", `Starting monitor (interval: ${config.checkInterval}s, failThreshold: ${config.failThreshold}, recoveryThreshold: ${config.recoveryThreshold}, autoFailover: ${config.autoFailover})`);
+   628→
+   629→  // Initial load
+   630→  loadWanLinks().then(() => {
+   631→    // Detect current default gateway
+   632→    detectCurrentGateway().then((gw) => {
+   633→      currentDefaultGateway = gw;
+   634→      log("daemon", `Detected current default gateway: ${gw || "(none)"}`);
+   635→    });
+   636→  });
+   637→
+   638→  // Start interval
+   639→  monitorInterval = setInterval(() => {
+   640→    healthCheckCycle().catch((err) => {
+   641→      log("daemon", `Health check cycle error: ${err}`);
+   642→    });
+   643→  }, config.checkInterval * 1000);
+   644→
+   645→  // Run first check after 2 seconds
+   646→  setTimeout(() => {
+   647→    healthCheckCycle().catch((err) => {
+   648→      log("daemon", `Initial health check error: ${err}`);
+   649→    });
+   650→  }, 2000);
+   651→}
+   652→
+   653→/**
+   654→ * Stop the monitoring daemon.
+   655→ */
+   656→function stopMonitor() {
+   657→  log("daemon", "Stopping monitor");
+   658→  monitorRunning = false;
+   659→
+   660→  if (monitorInterval) {
+   661→    clearInterval(monitorInterval);
+   662→    monitorInterval = null;
+   663→  }
+   664→
+   665→  if (failbackTimer) {
+   666→    clearTimeout(failbackTimer);
+   667→    failbackTimer = null;
+   668→  }
+   669→}
+   670→
+   671→/**
+   672→ * Restart the monitoring daemon.
+   673→ */
+   674→function restartMonitor() {
+   675→  log("daemon", "Restarting monitor");
+   676→  stopMonitor();
+   677→  setTimeout(() => startMonitor(), 1000);
+   678→}
+   679→
+   680→// ─── HTTP Server ────────────────────────────────────────────
+   681→
+   682→Bun.serve({
+   683→  port: 3006,
+   684→  async fetch(req) {
+   685→    const url = new URL(req.url);
+   686→    const path = url.pathname;
+   687→
+   688→    // CORS
+   689→    if (req.method === "OPTIONS") {
+   690→      return new Response(null, {
+   691→        status: 204,
+   692→        headers: {
+   693→          "Access-Control-Allow-Origin": "*",
+   694→          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+   695→          "Access-Control-Allow-Headers": "Content-Type",
+   696→        },
+   697→      });
+   698→    }
+   699→
+   700→    // ── GET /health ──
+   701→    if (path === "/health" && req.method === "GET") {
+   702→      return json({
+   703→        status: "ok",
+   704→        uptime: Math.floor((Date.now() - startTime) / 1000),
+   705→        service: "multiwan-monitor",
+   706→        version: "1.0.0",
+   707→      });
+   708→    }
+   709→
+   710→    // ── GET /api/status ──
+   711→    if (path === "/api/status" && req.method === "GET") {
+   712→      const links: object[] = [];
+   713→      for (const [, record] of healthMap) {
+   714→        links.push({
+   715→          id: record.linkId,
+   716→          name: record.linkName,
+   717→          gateway: record.gateway,
+   718→          interfaceName: record.interfaceName,
+   719→          isPrimary: record.isPrimary,
+   720→          status: record.dbStatus,
+   721→          monitorStatus: record.status,
+   722→          consecutiveFails: record.consecutiveFails,
+   723→          consecutiveSuccess: record.consecutiveSuccess,
+   724→          lastCheck: record.lastCheck?.toISOString() || null,
+   725→          lastLatency: record.lastLatency,
+   726→          lastPacketLoss: record.lastPacketLoss,
+   727→          history: record.history,
+   728→        });
+   729→      }
+   730→
+   731→      // Refresh current gateway
+   732→      const gw = await detectCurrentGateway();
+   733→      if (gw) currentDefaultGateway = gw;
+   734→
+   735→      return json({
+   736→        running: monitorRunning,
+   737→        links,
+   738→        currentDefaultGateway,
+   739→        failoverEvents: failoverEvents.slice(-50), // Last 50 events
+   740→        checkInterval: config.checkInterval,
+   741→        uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
+   742→        config,
+   743→      });
+   744→    }
+   745→
+   746→    // ── POST /api/config ──
+   747→    if (path === "/api/config" && req.method === "POST") {
+   748→      try {
+   749→        const body = await req.json();
+   750→
+   751→        if (body.checkInterval !== undefined) {
+   752→          const val = parseInt(body.checkInterval, 10);
+   753→          if (val >= 5 && val <= 300) {
+   754→            config.checkInterval = val;
+   755→            log("config", `Check interval updated to ${val}s`);
+   756→          }
+   757→        }
+   758→        if (body.failThreshold !== undefined) {
+   759→          const val = parseInt(body.failThreshold, 10);
+   760→          if (val >= 1 && val <= 20) {
+   761→            config.failThreshold = val;
+   762→            log("config", `Fail threshold updated to ${val}`);
+   763→          }
+   764→        }
+   765→        if (body.recoveryThreshold !== undefined) {
+   766→          const val = parseInt(body.recoveryThreshold, 10);
+   767→          if (val >= 1 && val <= 20) {
+   768→            config.recoveryThreshold = val;
+   769→            log("config", `Recovery threshold updated to ${val}`);
+   770→          }
+   771→        }
+   772→        if (body.autoFailover !== undefined) {
+   773→          config.autoFailover = !!body.autoFailover;
+   774→          log("config", `Auto-failover updated to ${config.autoFailover}`);
+   775→        }
+   776→
+   777→        // Restart monitor to apply interval change
+   778→        if (body.checkInterval !== undefined && monitorRunning) {
+   779→          restartMonitor();
+   780→        }
+   781→
+   782→        await logWanEvent("CONFIG_CHANGE", "system", {
+   783→          config: { ...config },
+   784→          changedBy: "api",
+   785→        });
+   786→
+   787→        return json({
+   788→          success: true,
+   789→          message: "Configuration updated",
+   790→          config,
+   791→        });
+   792→      } catch (err: any) {
+   793→        return jsonErr(`Invalid request: ${err?.message || err}`);
+   794→      }
+   795→    }
+   796→
+   797→    // ── POST /api/control ──
+   798→    if (path === "/api/control" && req.method === "POST") {
+   799→      try {
+   800→        const body = await req.json();
+   801→        const action = body.action;
+   802→
+   803→        switch (action) {
+   804→          case "start":
+   805→            startMonitor();
+   806→            return json({ success: true, message: "Monitor started" });
+   807→
+   808→          case "stop":
+   809→            stopMonitor();
+   810→            return json({ success: true, message: "Monitor stopped" });
+   811→
+   812→          case "restart":
+   813→            restartMonitor();
+   814→            return json({ success: true, message: "Monitor restarted" });
+   815→
+   816→          case "force-check":
+   817→            if (!monitorRunning) {
+   818→              return jsonErr("Monitor is not running. Start it first.");
+   819→            }
+   820→            // Trigger immediate health check
+   821→            healthCheckCycle().catch((err) => {
+   822→              log("daemon", `Force check error: ${err}`);
+   823→            });
+   824→            return json({ success: true, message: "Force health check triggered" });
+   825→
+   826→          default:
+   827→            return jsonErr(`Unknown action: ${action}. Valid actions: start, stop, restart, force-check`);
+   828→        }
+   829→      } catch (err: any) {
+   830→        return jsonErr(`Invalid request: ${err?.message || err}`);
+   831→      }
+   832→    }
+   833→
+   834→    // ── 404 ──
+   835→    return json({ error: "Not Found", path }, 404);
+   836→  },
+   837→});
+   838→
+   839→// ─── Startup ────────────────────────────────────────────────
+   840→
+   841→log("startup", "Multi-WAN Monitor Service starting on port 3006");
+   842→log("startup", `Configuration: interval=${config.checkInterval}s, failThreshold=${config.failThreshold}, recoveryThreshold=${config.recoveryThreshold}, autoFailover=${config.autoFailover}`);
+   843→
+   844→// Auto-start the monitoring daemon
+   845→startMonitor();
+   846→
+   847→// ─── Graceful Shutdown ──────────────────────────────────────
+   848→
+   849→async function shutdown() {
+   850→  log("shutdown", "Shutting down Multi-WAN Monitor Service...");
+   851→  stopMonitor();
+   852→  await db.$disconnect();
+   853→  log("shutdown", "Shutdown complete");
+   854→  process.exit(0);
+   855→}
+   856→
+   857→process.on("SIGINT", shutdown);
+   858→process.on("SIGTERM", shutdown);
+   859→

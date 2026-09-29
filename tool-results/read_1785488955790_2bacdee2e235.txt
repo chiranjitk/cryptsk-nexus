@@ -1,0 +1,1130 @@
+     1→"use client";
+     2→
+     3→import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore, type FormEvent } from "react";
+     4→import { useAuthStore } from "@/store/auth-store";
+     5→import { useAppStore } from "@/store/app-store";
+     6→import { Button } from "@/components/ui/button";
+     7→import { Input } from "@/components/ui/input";
+     8→import { Label } from "@/components/ui/label";
+     9→import { Checkbox } from "@/components/ui/checkbox";
+    10→import {
+    11→  Mail,
+    12→  Lock,
+    13→  Eye,
+    14→  EyeOff,
+    15→  CircleDot,
+    16→  Loader2,
+    17→  Shield,
+    18→  Zap,
+    19→  Globe,
+    20→  Server,
+    21→  BarChart3,
+    22→  Users,
+    23→  Wifi,
+    24→} from "lucide-react";
+    25→import { toast } from "sonner";
+    26→import { escapeHtml } from "@/lib/utils/html-escape";
+    27→
+    28→// ─── Validation Helpers ───────────────────────────────────────
+    29→
+    30→function isValidEmail(email: string): boolean {
+    31→  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    32→}
+    33→
+    34→// ─── Keyframes (injected once) ─────────────────────────────────
+    35→
+    36→function LoginAnimations() {
+    37→  return (
+    38→    <style>{`
+    39→      /* ═══ Reduced Motion Override ═══ */
+    40→      @media (prefers-reduced-motion: reduce) {
+    41→        .login-shake,
+    42→        .login-fade-in,
+    43→        .login-fade-in-scale,
+    44→        .login-glow-line,
+    45→        .login-grid-scan,
+    46→        .login-btn-loading,
+    47→        .login-typing-cursor,
+    48→        .login-status-blink,
+    49→        .login-metric-count,
+    50→        .login-orbit-ring,
+    51→        .login-float-up,
+    52→        .login-shimmer-sweep,
+    53→        .login-bg-shift,
+    54→        .login-pulse-ring {
+    55→          animation: none !important;
+    56→        }
+    57→        .login-glass-card:hover {
+    58→          transform: none !important;
+    59→        }
+    60→      }
+    61→
+    62→      /* ═══ Core Animations ═══ */
+    63→      @keyframes login-shake {
+    64→        0%, 100% { transform: translateX(0); }
+    65→        10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+    66→        20%, 40%, 60%, 80% { transform: translateX(4px); }
+    67→      }
+    68→
+    69→      @keyframes login-fade-in {
+    70→        0% { opacity: 0; transform: translateY(24px) scale(0.96); filter: blur(4px); }
+    71→        100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    72→      }
+    73→
+    74→      @keyframes login-fade-in-scale {
+    75→        0% { opacity: 0; transform: scale(0.85); filter: blur(6px); }
+    76→        100% { opacity: 1; transform: scale(1); filter: blur(0); }
+    77→      }
+    78→
+    79→      @keyframes login-fade-in-left {
+    80→        0% { opacity: 0; transform: translateX(-16px); }
+    81→        100% { opacity: 1; transform: translateX(0); }
+    82→      }
+    83→
+    84→      @keyframes login-logo-entrance {
+    85→        0% { opacity: 0; transform: scale(0.5) rotate(-10deg); }
+    86→        60% { transform: scale(1.08) rotate(2deg); }
+    87→        80% { transform: scale(0.96) rotate(-1deg); }
+    88→        100% { opacity: 1; transform: scale(1) rotate(0deg); }
+    89→      }
+    90→
+    91→      @keyframes login-glow-line {
+    92→        0%, 100% { opacity: 0.25; }
+    93→        50% { opacity: 0.8; }
+    94→      }
+    95→
+    96→      @keyframes login-grid-scan {
+    97→        0% { transform: translateY(-100%); }
+    98→        100% { transform: translateY(100vh); }
+    99→      }
+   100→
+   101→      @keyframes login-input-focus {
+   102→        0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+   103→        100% { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15), 0 0 24px rgba(220, 38, 38, 0.06); }
+   104→      }
+   105→
+   106→      @keyframes login-btn-pulse {
+   107→        0%, 100% { box-shadow: 0 4px 15px rgba(220, 38, 38, 0.3); }
+   108→        50% { box-shadow: 0 4px 28px rgba(220, 38, 38, 0.5); }
+   109→      }
+   110→
+   111→      @keyframes login-typing-cursor {
+   112→        0%, 100% { opacity: 1; }
+   113→        50% { opacity: 0; }
+   114→      }
+   115→
+   116→      @keyframes login-status-blink {
+   117→        0%, 100% { opacity: 0.4; }
+   118→        50% { opacity: 1; }
+   119→      }
+   120→
+   121→      @keyframes login-metric-count {
+   122→        0% { opacity: 0; transform: translateY(8px); }
+   123→        100% { opacity: 1; transform: translateY(0); }
+   124→      }
+   125→
+   126→      /* ═══ Background Gradient Shift (Navy → Red) ═══ */
+   127→      @keyframes login-bg-shift {
+   128→        0% { background-position: 0% 0%; }
+   129→        25% { background-position: 100% 0%; }
+   130→        50% { background-position: 100% 100%; }
+   131→        75% { background-position: 0% 100%; }
+   132→        100% { background-position: 0% 0%; }
+   133→      }
+   134→
+   135→      /* ═══ Static Dot Particles (CSS-only, no JS) ═══ */
+   136→      @keyframes login-particle-drift {
+   137→        0% { transform: translateY(0) translateX(0); opacity: 0; }
+   138→        15% { opacity: 0.6; }
+   139→        85% { opacity: 0.2; }
+   140→        100% { transform: translateY(-60vh) translateX(20px); opacity: 0; }
+   141→      }
+   142→      @keyframes login-particle-drift-reverse {
+   143→        0% { transform: translateY(0) translateX(0); opacity: 0; }
+   144→        15% { opacity: 0.4; }
+   145→        85% { opacity: 0.15; }
+   146→        100% { transform: translateY(-80vh) translateX(-15px); opacity: 0; }
+   147→      }
+   148→      @keyframes login-particle-pulse {
+   149→        0%, 100% { opacity: 0.15; transform: scale(1); }
+   150→        50% { opacity: 0.5; transform: scale(1.3); }
+   151→      }
+   152→      .login-static-dot {
+   153→        position: absolute;
+   154→        border-radius: 50%;
+   155→        background: #DC2626;
+   156→        pointer-events: none;
+   157→      }
+   158→
+   159→      /* ═══ Orbit Ring around Logo ═══ */
+   160→      @keyframes login-orbit-ring {
+   161→        0% { transform: rotate(0deg); }
+   162→        100% { transform: rotate(360deg); }
+   163→      }
+   164→
+   165→      /* ═══ Pulse Ring on Logo ═══ */
+   166→      @keyframes login-pulse-ring {
+   167→        0% { transform: scale(1); opacity: 0.5; }
+   168→        100% { transform: scale(1.8); opacity: 0; }
+   169→      }
+   170→
+   171→      /* ═══ Shimmer Sweep on Button ═══ */
+   172→      @keyframes login-shimmer-sweep {
+   173→        0% { transform: translateX(-100%); }
+   174→        100% { transform: translateX(100%); }
+   175→      }
+   176→
+   177→      /* ═══ Data Flow Lines ═══ */
+   178→      @keyframes login-data-flow {
+   179→        0% { stroke-dashoffset: 24; opacity: 0; }
+   180→        20% { opacity: 0.6; }
+   181→        80% { opacity: 0.6; }
+   182→        100% { stroke-dashoffset: 0; opacity: 0; }
+   183→      }
+   184→
+   185→      /* ═══ Card Glow Pulse ═══ */
+   186→      @keyframes login-card-glow {
+   187→        0%, 100% { opacity: 0.03; }
+   188→        50% { opacity: 0.08; }
+   189→      }
+   190→
+   191→      /* ═══ Progress Bar Fill ═══ */
+   192→      @keyframes login-progress-indeterminate {
+   193→        0% { transform: translateX(-100%); }
+   194→        50% { transform: translateX(0%); }
+   195→        100% { transform: translateX(200%); }
+   196→      }
+   197→
+   198→      /* ═══ Floating Particles (CSS-only) ═══ */
+   199→      @keyframes login-float-up {
+   200→        0% {
+   201→          transform: translateY(0) scale(1);
+   202→          opacity: 0;
+   203→        }
+   204→        10% {
+   205→          opacity: 0.8;
+   206→        }
+   207→        90% {
+   208→          opacity: 0.3;
+   209→        }
+   210→        100% {
+   211→          transform: translateY(-100vh) scale(0.4);
+   212→          opacity: 0;
+   213→        }
+   214→      }
+   215→
+   216→      /* ═══ Glassmorphism Card ═══ */
+   217→      .login-glass-card {
+   218→        backdrop-filter: blur(24px) saturate(1.4);
+   219→        -webkit-backdrop-filter: blur(24px) saturate(1.4);
+   220→        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+   221→      }
+   222→      .login-glass-card:hover {
+   223→        transform: translateY(-2px);
+   224→        box-shadow: 0 8px 40px rgba(220, 38, 38, 0.12), 0 2px 12px rgba(0, 0, 0, 0.3);
+   225→      }
+   226→
+   227→      /* ═══ Animated Border ═══ */
+   228→      .login-animated-border {
+   229→        position: relative;
+   230→        padding: 1px;
+   231→        border-radius: 1rem;
+   232→        background: linear-gradient(135deg, rgba(220, 38, 38, 0.2) 0%, rgba(220, 38, 38, 0.05) 40%, rgba(15, 23, 42, 0.1) 60%, rgba(220, 38, 38, 0.15) 100%);
+   233→        background-size: 300% 300%;
+   234→        animation: login-border-shift 8s ease infinite;
+   235→      }
+   236→      @keyframes login-border-shift {
+   237→        0%, 100% { background-position: 0% 50%; }
+   238→        50% { background-position: 100% 50%; }
+   239→      }
+   240→
+   241→      /* ═══ Red Glow on Submit Button ═══ */
+   242→      .login-submit-btn:not(:disabled):hover {
+   243→        box-shadow: 0 6px 30px rgba(220, 38, 38, 0.45), 0 2px 8px rgba(220, 38, 38, 0.3) !important;
+   244→        transform: translateY(-1px);
+   245→        transition: box-shadow 0.25s ease, transform 0.25s ease;
+   246→      }
+   247→      .login-submit-btn:not(:disabled):active {
+   248→        transform: translateY(0);
+   249→        box-shadow: 0 2px 10px rgba(220, 38, 38, 0.4) !important;
+   250→      }
+   251→
+   252→      /* ═══ Utility Classes ═══ */
+   253→      .login-shake { animation: login-shake 0.5s ease-in-out; }
+   254→      .login-fade-in { animation: login-fade-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+   255→      .login-fade-in-scale { animation: login-fade-in-scale 0.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
+   256→      .login-glow-line { animation: login-glow-line 3s ease-in-out infinite; }
+   257→      .login-grid-scan { animation: login-grid-scan 4s linear infinite; }
+   258→      .login-input-group:focus-within {
+   259→        animation: login-input-focus 0.2s ease-out forwards;
+   260→      }
+   261→      .login-input-group-error:focus-within {
+   262→        animation: login-input-focus 0.2s ease-out forwards;
+   263→      }
+   264→      .login-btn-loading { animation: login-btn-pulse 1.5s ease-in-out infinite; }
+   265→      .login-typing-cursor { animation: login-typing-cursor 1s step-end infinite; }
+   266→      .login-status-blink { animation: login-status-blink 2s ease-in-out infinite; }
+   267→      .login-metric-count { animation: login-metric-count 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+   268→      .login-orbit-ring { animation: login-orbit-ring 20s linear infinite; }
+   269→      .login-pulse-ring { animation: login-pulse-ring 2.5s ease-out infinite; }
+   270→      .login-shimmer-sweep { animation: login-shimmer-sweep 2.5s ease-in-out infinite; }
+   271→      .login-bg-shift {
+   272→        animation: login-bg-shift 20s ease infinite;
+   273→        background-size: 400% 400%;
+   274→      }
+   275→      .login-progress-bar {
+   276→        animation: login-progress-indeterminate 1.8s ease-in-out infinite;
+   277→      }
+   278→    `}</style>
+   279→  );
+   280→}
+   281→
+   282→// ─── Animated Gradient Background ─────────────────────────────
+   283→
+   284→function AnimatedBackground() {
+   285→  return (
+   286→    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+   287→      {/* Layer 1: Deep base color */}
+   288→      <div className="absolute inset-0" style={{ background: "#060612" }} />
+   289→
+   290→      {/* Layer 2: Animated navy-to-red gradient shift */}
+   291→      <div
+   292→        className="absolute inset-0 login-bg-shift"
+   293→        style={{
+   294→          background: `
+   295→            linear-gradient(135deg,
+   296→              rgba(15, 23, 42, 1) 0%,
+   297→              rgba(127, 29, 29, 0.6) 25%,
+   298→              rgba(6, 6, 18, 0.9) 50%,
+   299→              rgba(220, 38, 38, 0.3) 75%,
+   300→              rgba(15, 23, 42, 1) 100%
+   301→            )
+   302→          `,
+   303→          backgroundSize: "400% 400%",
+   304→        }}
+   305→      />
+   306→
+   307→      {/* Layer 3: Radial glows */}
+   308→      <div
+   309→        className="absolute inset-0 login-bg-shift"
+   310→        style={{
+   311→          background: `
+   312→            radial-gradient(ellipse at 20% 50%, rgba(220, 38, 38, 0.15) 0%, transparent 50%),
+   313→            radial-gradient(ellipse at 80% 20%, rgba(127, 29, 29, 0.12) 0%, transparent 50%),
+   314→            radial-gradient(ellipse at 50% 80%, rgba(15, 23, 42, 0.8) 0%, transparent 50%)
+   315→          `,
+   316→          animationDuration: "25s",
+   317→        }}
+   318→      />
+   319→
+   320→      {/* Layer 4: Hex grid pattern */}
+   321→      <svg className="absolute inset-0 w-full h-full opacity-[0.03]" xmlns="http://www.w3.org/2000/svg">
+   322→        <defs>
+   323→          <pattern id="login-hex-grid" width="60" height="52" patternUnits="userSpaceOnUse" patternTransform="rotate(15)">
+   324→            <path d="M30 0L60 15V37L30 52L0 37V15Z" fill="none" stroke="#DC2626" strokeWidth="0.5" />
+   325→          </pattern>
+   326→        </defs>
+   327→        <rect width="100%" height="100%" fill="url(#login-hex-grid)" />
+   328→      </svg>
+   329→
+   330→      {/* Layer 5: Network topology SVG with animated data flow */}
+   331→      <svg className="absolute inset-0 w-full h-full opacity-[0.04]" xmlns="http://www.w3.org/2000/svg">
+   332→        <defs>
+   333→          <pattern id="login-network-dots" width="120" height="120" patternUnits="userSpaceOnUse">
+   334→            {/* Node dots */}
+   335→            <circle cx="60" cy="60" r="1.5" fill="#DC2626" />
+   336→            <circle cx="0" cy="0" r="1" fill="#DC2626" />
+   337→            <circle cx="120" cy="0" r="1" fill="#DC2626" />
+   338→            <circle cx="0" cy="120" r="1" fill="#DC2626" />
+   339→            <circle cx="120" cy="120" r="1" fill="#DC2626" />
+   340→            {/* Connection lines */}
+   341→            <line x1="60" y1="60" x2="0" y2="0" stroke="#DC2626" strokeWidth="0.3" />
+   342→            <line x1="60" y1="60" x2="120" y2="0" stroke="#DC2626" strokeWidth="0.3" />
+   343→            <line x1="60" y1="60" x2="0" y2="120" stroke="#DC2626" strokeWidth="0.3" />
+   344→            <line x1="60" y1="60" x2="120" y2="120" stroke="#DC2626" strokeWidth="0.3" />
+   345→            <line x1="0" y1="0" x2="120" y2="0" stroke="#DC2626" strokeWidth="0.2" />
+   346→            <line x1="120" y1="0" x2="120" y2="120" stroke="#DC2626" strokeWidth="0.2" />
+   347→            <line x1="120" y1="120" x2="0" y2="120" stroke="#DC2626" strokeWidth="0.2" />
+   348→            <line x1="0" y1="120" x2="0" y2="0" stroke="#DC2626" strokeWidth="0.2" />
+   349→          </pattern>
+   350→        </defs>
+   351→        <rect width="100%" height="100%" fill="url(#login-network-dots)" />
+   352→      </svg>
+   353→
+   354→      {/* Layer 6: Scanning line */}
+   355→      <div
+   356→        className="absolute left-0 right-0 h-px login-grid-scan"
+   357→        style={{
+   358→          background:
+   359→            "linear-gradient(90deg, transparent 0%, rgba(220, 38, 38, 0.3) 20%, rgba(220, 38, 38, 0.6) 50%, rgba(220, 38, 38, 0.3) 80%, transparent 100%)",
+   360→        }}
+   361→      />
+   362→
+   363→      {/* Layer 7: Floating particles (CSS-driven) */}
+   364→      <FloatingParticles />
+   365→
+   366→      {/* Layer 8: CSS-only static dot particles scattered across background */}
+   367→      <div className="absolute inset-0" aria-hidden="true">
+   368→        {[
+   369→          { top: "8%", left: "12%", size: 3, dur: "12s", delay: "0s", anim: "login-particle-drift" },
+   370→          { top: "15%", left: "85%", size: 2, dur: "15s", delay: "2s", anim: "login-particle-drift-reverse" },
+   371→          { top: "25%", left: "45%", size: 2.5, dur: "10s", delay: "4s", anim: "login-particle-drift" },
+   372→          { top: "35%", left: "70%", size: 2, dur: "14s", delay: "1s", anim: "login-particle-drift-reverse" },
+   373→          { top: "50%", left: "20%", size: 3, dur: "11s", delay: "3s", anim: "login-particle-drift" },
+   374→          { top: "60%", left: "90%", size: 2, dur: "16s", delay: "5s", anim: "login-particle-drift-reverse" },
+   375→          { top: "70%", left: "35%", size: 2.5, dur: "13s", delay: "2.5s", anim: "login-particle-drift" },
+   376→          { top: "80%", left: "60%", size: 2, dur: "9s", delay: "6s", anim: "login-particle-drift-reverse" },
+   377→          { top: "90%", left: "15%", size: 3, dur: "17s", delay: "1.5s", anim: "login-particle-drift" },
+   378→          { top: "45%", left: "55%", size: 2, dur: "12s", delay: "7s", anim: "login-particle-drift-reverse" },
+   379→        ].map((p, i) => (
+   380→          <div
+   381→            key={`dot-${i}`}
+   382→            className="login-static-dot"
+   383→            style={{
+   384→              top: p.top,
+   385→              left: p.left,
+   386→              width: p.size,
+   387→              height: p.size,
+   388→              animation: `${p.anim} ${p.dur} ease-in-out ${p.delay} infinite`,
+   389→              boxShadow: `0 0 ${p.size * 4}px ${p.size}px rgba(220, 38, 38, 0.3)`,
+   390→            }}
+   391→          />
+   392→        ))}
+   393→        {/* Pulsing static dots */}
+   394→        {[
+   395→          { top: "18%", left: "30%", size: 2, delay: "0s" },
+   396→          { top: "42%", left: "78%", size: 3, delay: "1.5s" },
+   397→          { top: "65%", left: "8%", size: 2, delay: "3s" },
+   398→          { top: "28%", left: "92%", size: 2.5, delay: "4.5s" },
+   399→          { top: "75%", left: "50%", size: 2, delay: "2s" },
+   400→          { top: "55%", left: "42%", size: 3, delay: "0.8s" },
+   401→        ].map((p, i) => (
+   402→          <div
+   403→            key={`pulse-${i}`}
+   404→            className="login-static-dot"
+   405→            style={{
+   406→              top: p.top,
+   407→              left: p.left,
+   408→              width: p.size,
+   409→              height: p.size,
+   410→              animation: `login-particle-pulse 3s ease-in-out ${p.delay} infinite`,
+   411→              boxShadow: `0 0 ${p.size * 3}px ${p.size}px rgba(220, 38, 38, 0.25)`,
+   412→            }}
+   413→          />
+   414→        ))}
+   415→      </div>
+   416→
+   417→      {/* Layer 9: Central radial glow */}
+   418→      <div
+   419→        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] rounded-full"
+   420→        style={{
+   421→          background: "radial-gradient(circle, rgba(220, 38, 38, 0.08) 0%, transparent 60%)",
+   422→        }}
+   423→      />
+   424→
+   425→      {/* Layer 10: Vignette overlay */}
+   426→      <div
+   427→        className="absolute inset-0"
+   428→        style={{
+   429→          background: "radial-gradient(ellipse at center, transparent 40%, rgba(6, 6, 18, 0.7) 100%)",
+   430→        }}
+   431→      />
+   432→    </div>
+   433→  );
+   434→}
+   435→
+   436→// ─── Floating Particles ───────────────────────────────────────
+   437→
+   438→function FloatingParticles() {
+   439→  const particles = [
+   440→    { top: "100%", left: "5%", size: 2, delay: 0, duration: 14, color: "#DC2626" },
+   441→    { top: "95%", left: "15%", size: 3, delay: 2, duration: 11, color: "#EF4444" },
+   442→    { top: "100%", left: "28%", size: 2, delay: 4, duration: 16, color: "#F87171" },
+   443→    { top: "90%", left: "42%", size: 2.5, delay: 1, duration: 13, color: "#DC2626" },
+   444→    { top: "100%", left: "55%", size: 2, delay: 6, duration: 15, color: "#EF4444" },
+   445→    { top: "85%", left: "68%", size: 3, delay: 3, duration: 12, color: "#F87171" },
+   446→    { top: "100%", left: "78%", size: 2, delay: 7, duration: 17, color: "#DC2626" },
+   447→    { top: "95%", left: "90%", size: 2.5, delay: 5, duration: 10, color: "#EF4444" },
+   448→    { top: "100%", left: "10%", size: 2, delay: 8, duration: 18, color: "#F87171" },
+   449→    { top: "90%", left: "35%", size: 3, delay: 0.5, duration: 14, color: "#DC2626" },
+   450→    { top: "100%", left: "60%", size: 2, delay: 9, duration: 11, color: "#EF4444" },
+   451→    { top: "85%", left: "82%", size: 2.5, delay: 4.5, duration: 16, color: "#F87171" },
+   452→    { top: "100%", left: "22%", size: 2, delay: 10, duration: 13, color: "#DC2626" },
+   453→    { top: "95%", left: "48%", size: 3, delay: 1.5, duration: 15, color: "#EF4444" },
+   454→    { top: "100%", left: "72%", size: 2, delay: 6.5, duration: 12, color: "#F87171" },
+   455→    { top: "90%", left: "95%", size: 2.5, delay: 3.5, duration: 17, color: "#DC2626" },
+   456→  ];
+   457→
+   458→  return (
+   459→    <>
+   460→      {particles.map((p, i) => (
+   461→        <div
+   462→          key={i}
+   463→          className="absolute rounded-full login-float-up"
+   464→          style={{
+   465→            top: p.top,
+   466→            left: p.left,
+   467→            width: p.size,
+   468→            height: p.size,
+   469→            background: p.color,
+   470→            boxShadow: `0 0 ${p.size * 3}px ${p.size}px ${p.color}40`,
+   471→            "--float-delay": `${p.delay}s`,
+   472→            "--float-duration": `${p.duration}s`,
+   473→          } as React.CSSProperties}
+   474→        />
+   475→      ))}
+   476→    </>
+   477→  );
+   478→}
+   479→
+   480→// ─── Enhanced Logo with Orbital Rings ─────────────────────────
+   481→
+   482→function LoginLogo() {
+   483→  return (
+   484→    <div className="flex flex-col items-center mb-8 login-fade-in" style={{ animationDelay: "0.05s" }}>
+   485→      <div className="relative mb-5">
+   486→        {/* Outer pulse ring */}
+   487→        <div className="absolute -inset-6 rounded-full border border-red-500/10 login-pulse-ring" />
+   488→
+   489→        {/* Orbiting ring with dot */}
+   490→        <div className="absolute -inset-8 login-orbit-ring">
+   491→          <div
+   492→            className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full"
+   493→            style={{
+   494→              background: "#DC2626",
+   495→              boxShadow: "0 0 8px rgba(220, 38, 38, 0.6)",
+   496→            }}
+   497→          />
+   498→        </div>
+   499→
+   500→        {/* Second orbiting ring (counter-rotation via CSS) */}
+   501→        <div
+   502→          className="absolute -inset-12 rounded-full border border-red-500/[0.06]"
+   503→          style={{ animation: "login-orbit-ring 30s linear infinite reverse" }}
+   504→        >
+   505→          <div
+   506→            className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-red-400/50"
+   507→            style={{ boxShadow: "0 0 6px rgba(220, 38, 38, 0.4)" }}
+   508→          />
+   509→        </div>
+   510→
+   511→        {/* Main logo */}
+   512→        <div
+   513→          className="relative w-20 h-20 rounded-2xl flex items-center justify-center login-logo-glow z-10"
+   514→          style={{
+   515→            background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)",
+   516→            boxShadow: "0 0 20px rgba(220, 38, 38, 0.3), 0 0 60px rgba(220, 38, 38, 0.1)",
+   517→          }}
+   518→        >
+   519→          <CircleDot className="w-10 h-10 text-white" strokeWidth={2} />
+   520→          {/* Inner shine */}
+   521→          <div
+   522→            className="absolute inset-0 rounded-2xl"
+   523→            style={{
+   524→              background: "linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%)",
+   525→            }}
+   526→          />
+   527→        </div>
+   528→
+   529→        {/* Decorative rings */}
+   530→        <div className="absolute -inset-3 rounded-3xl border border-red-500/10" />
+   531→        <div className="absolute -inset-6 rounded-[2rem] border border-red-500/[0.05]" />
+   532→      </div>
+   533→
+   534→      {/* Brand name */}
+   535→      <h1 className="text-3xl font-black tracking-[0.15em] text-white uppercase login-fade-in" style={{ animationDelay: "0.2s" }}>
+   536→        CRYPTSK
+   537→      </h1>
+   538→      <div className="flex items-center gap-2 mt-1.5 login-fade-in" style={{ animationDelay: "0.3s" }}>
+   539→        <div className="w-6 h-px bg-red-500/50 login-glow-line" />
+   540→        <p className="text-[10px] font-semibold tracking-[0.35em] text-red-400/80 uppercase">
+   541→          Intelligent ISP Platform
+   542→        </p>
+   543→        <div className="w-6 h-px bg-red-500/50 login-glow-line" />
+   544→      </div>
+   545→    </div>
+   546→  );
+   547→}
+   548→
+   549→// ─── Status Indicator (top bar) ───────────────────────────────
+   550→
+   551→function StatusIndicator() {
+   552→  return (
+   553→    <div
+   554→      className="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-4 sm:gap-6 py-3 px-4 text-[10px] font-medium tracking-wider uppercase"
+   555→      style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 100%)" }}
+   556→    >
+   557→      <div className="flex items-center gap-1.5 text-green-400/70">
+   558→        <span className="w-1.5 h-1.5 rounded-full bg-green-400 login-status-blink" />
+   559→        <span className="hidden xs:inline">All Systems Operational</span>
+   560→        <span className="inline xs:hidden">Operational</span>
+   561→      </div>
+   562→      <span className="text-white/20">|</span>
+   563→      <div className="hidden sm:flex items-center gap-1.5 text-white/40">
+   564→        <Shield className="w-3 h-3" />
+   565→        TLS 1.3 Encrypted
+   566→      </div>
+   567→      <span className="text-white/20 hidden sm:inline">|</span>
+   568→      <div className="flex items-center gap-1.5 text-white/40">
+   569→        <Globe className="w-3 h-3" />
+   570→        v6.4
+   571→      </div>
+   572→    </div>
+   573→  );
+   574→}
+   575→
+   576→// ─── Bottom Metrics Bar ───────────────────────────────────────
+   577→
+   578→function MetricsBar() {
+   579→  const mounted = useSyncExternalStore(
+   580→    () => () => {},
+   581→    () => true,
+   582→    () => false
+   583→  );
+   584→
+   585→  const metrics = [
+   586→    { icon: Server, label: "Active Nodes", value: mounted ? "\u2014" : "..." },
+   587→    { icon: Wifi, label: "Avg Latency", value: mounted ? "\u2014" : "..." },
+   588→    { icon: BarChart3, label: "Bandwidth", value: mounted ? "\u2014" : "..." },
+   589→  ];
+   590→
+   591→  return (
+   592→    <div
+   593→      className="absolute bottom-0 left-0 right-0 z-20"
+   594→      style={{ background: "linear-gradient(0deg, rgba(0,0,0,0.6) 0%, transparent 100%)" }}
+   595→    >
+   596→      <div className="flex items-center justify-center gap-5 sm:gap-8 md:gap-12 py-5">
+   597→        {metrics.map((m, i) => (
+   598→          <div
+   599→            key={m.label}
+   600→            className="flex items-center gap-2 login-metric-count"
+   601→            style={{ animationDelay: `${1.5 + i * 0.15}s` }}
+   602→          >
+   603→            <m.icon className="w-3.5 h-3.5 text-red-500/60" />
+   604→            <span className="text-[11px] font-medium text-white/35 uppercase tracking-wider hidden sm:inline">
+   605→              {m.label}
+   606→            </span>
+   607→            <span className="text-xs font-bold text-white/70 tabular-nums">
+   608→              {m.value}
+   609→            </span>
+   610→          </div>
+   611→        ))}
+   612→      </div>
+   613→    </div>
+   614→  );
+   615→}
+   616→
+   617→// ─── Progress Bar (shown during login) ────────────────────────
+   618→
+   619→function LoginProgressBar({ visible }: { visible: boolean }) {
+   620→  if (!visible) return null;
+   621→  return (
+   622→    <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden rounded-t-2xl z-10">
+   623→      <div
+   624→        className="login-progress-bar h-full w-1/2"
+   625→        style={{
+   626→          background: "linear-gradient(90deg, transparent, #DC2626, #EF4444, transparent)",
+   627→        }}
+   628→      />
+   629→    </div>
+   630→  );
+   631→}
+   632→
+   633→// ─── Main Login Page ──────────────────────────────────────────
+   634→
+   635→export default function LoginPage() {
+   636→  const { login, isLoggingIn, error, clearError, checkAuth, isAuthenticated } =
+   637→    useAuthStore();
+   638→  const { setUser } = useAppStore();
+   639→  const abortControllerRef = useRef<AbortController | null>(null);
+   640→
+   641→  // Form state
+   642→  const [email, setEmail] = useState("");
+   643→  const [password, setPassword] = useState("");
+   644→  const [showPassword, setShowPassword] = useState(false);
+   645→  const [rememberMe, setRememberMe] = useState(false);
+   646→  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
+   647→  const [shakeKey, setShakeKey] = useState(0);
+   648→  const [networkRetry, setNetworkRetry] = useState(0);
+   649→  const year = new Date().getFullYear().toString();
+   650→
+   651→  // Check auth on mount
+   652→  useEffect(() => {
+   653→    checkAuth();
+   654→  }, [checkAuth]);
+   655→
+   656→  // Cleanup abort controller on unmount
+   657→  useEffect(() => {
+   658→    return () => {
+   659→      abortControllerRef.current?.abort();
+   660→    };
+   661→  }, []);
+   662→
+   663→  // If already authenticated, skip showing login (parent handles redirect)
+   664→  useEffect(() => {
+   665→    if (isAuthenticated) {
+   666→      const user = useAuthStore.getState().user;
+   667→      if (user) {
+   668→        setUser(user);
+   669→      }
+   670→    }
+   671→  }, [isAuthenticated, setUser]);
+   672→
+   673→  // Clear global error when user types
+   674→  const handleEmailChange = useCallback(
+   675→    (e: React.ChangeEvent<HTMLInputElement>) => {
+   676→      setEmail(e.target.value);
+   677→      if (error) clearError();
+   678→      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+   679→      if (networkRetry > 0) setNetworkRetry(0);
+   680→    },
+   681→    [error, clearError, fieldErrors.email, networkRetry]
+   682→  );
+   683→
+   684→  const handlePasswordChange = useCallback(
+   685→    (e: React.ChangeEvent<HTMLInputElement>) => {
+   686→      setPassword(e.target.value);
+   687→      if (error) clearError();
+   688→      if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
+   689→      if (networkRetry > 0) setNetworkRetry(0);
+   690→    },
+   691→    [error, clearError, fieldErrors.password, networkRetry]
+   692→  );
+   693→
+   694→  // ── Welcome TTS after login ──────────────────────────────────────
+   695→  const playWelcomeTTS = useCallback((userName?: string) => {
+   696→    try {
+   697→      const name = userName || "there";
+   698→      const text = `Welcome back, ${name}. How can I help you today?`;
+   699→      fetch("/api/voice/speak", {
+   700→        method: "POST",
+   701→        headers: { "Content-Type": "application/json" },
+   702→        body: JSON.stringify({ text }),
+   703→      })
+   704→        .then((res) => {
+   705→          if (!res.ok) throw new Error("TTS failed");
+   706→          return res.blob();
+   707→        })
+   708→        .then((blob) => {
+   709→          const url = URL.createObjectURL(blob);
+   710→          const audio = new Audio(url);
+   711→          audio.play().catch(() => {});
+   712→          audio.onended = () => URL.revokeObjectURL(url);
+   713→          audio.onerror = () => URL.revokeObjectURL(url);
+   714→        })
+   715→        .catch(() => {
+   716→          // TTS failure is non-critical — silent fallback
+   717→        });
+   718→    } catch {
+   719→      // Ignore TTS errors during login
+   720→    }
+   721→  }, []);
+   722→
+   723→  // Form submission with timeout & retry
+   724→  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+   725→    e.preventDefault();
+   726→
+   727→    // Abort any previous in-flight request
+   728→    abortControllerRef.current?.abort();
+   729→    const controller = new AbortController();
+   730→    abortControllerRef.current = controller;
+   731→
+   732→    // Client-side validation
+   733→    const errors: { email?: string; password?: string } = {};
+   734→    if (!email.trim()) {
+   735→      errors.email = "Email is required";
+   736→    } else if (!isValidEmail(email.trim())) {
+   737→      errors.email = "Please enter a valid email address";
+   738→    }
+   739→    if (!password.trim()) {
+   740→      errors.password = "Password is required";
+   741→    } else if (password.length < 6) {
+   742→      errors.password = "Password must be at least 6 characters";
+   743→    }
+   744→
+   745→    if (Object.keys(errors).length > 0) {
+   746→      setFieldErrors(errors);
+   747→      setShakeKey((prev) => prev + 1);
+   748→      return;
+   749→    }
+   750→
+   751→    setFieldErrors({});
+   752→
+   753→    // Attempt login with built-in timeout (15s) and auto-retry
+   754→    const maxRetries = 1;
+   755→    let attempt = 0;
+   756→    let success = false;
+   757→
+   758→    while (attempt <= maxRetries && !success) {
+   759→      attempt++;
+   760→
+   761→      if (attempt > 1) {
+   762→        setNetworkRetry(attempt - 1);
+   763→      }
+   764→
+   765→      try {
+   766→        success = await login(email.trim(), password, { signal: controller.signal, timeout: 15000 });
+   767→      } catch {
+   768→        break;
+   769→      }
+   770→
+   771→      if (!success) {
+   772→        const storeError = useAuthStore.getState().error;
+   773→        const isNetworkError =
+   774→          storeError?.includes("network") ||
+   775→          storeError?.includes("fetch") ||
+   776→          storeError?.includes("timeout") ||
+   777→          storeError?.includes("Failed to fetch");
+   778→
+   779→        if (!isNetworkError || attempt > maxRetries || controller.signal.aborted) {
+   780→          break;
+   781→        }
+   782→
+   783→        await new Promise((resolve) => setTimeout(resolve, 1500));
+   784→      }
+   785→    }
+   786→
+   787→    setNetworkRetry(0);
+   788→
+   789→    if (success) {
+   790→      const user = useAuthStore.getState().user;
+   791→      if (user) {
+   792→        setUser(user);
+   793→      }
+   794→      // Show welcome notification using a custom element instead of sonner
+   795→      // to guarantee readable text color in both light and dark modes
+   796→      const welcomeEl = document.createElement("div");
+   797→      welcomeEl.setAttribute("role", "status");
+   798→      welcomeEl.setAttribute("aria-live", "polite");
+   799→      welcomeEl.style.cssText = "position:fixed;bottom:24px;right:24px;z-index:999999999;padding:14px 18px;background:#FFFFFF;color:#111827;border:1px solid #E5E7EB;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,0.12),0 1px 4px rgba(0,0,0,0.06);font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:14px;max-width:380px;animation:toastSlideIn 0.35s ease forwards;cursor:pointer;";
+   800→      welcomeEl.innerHTML = `<div style="display:flex;align-items:center;gap:8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div><div style="font-weight:600;font-size:14px;color:#111827;">Welcome back!</div><div style="font-size:13px;color:#4B5563;margin-top:2px;">Signed in as ${escapeHtml(user?.name || email)}</div></div></div>`;
+   801→      welcomeEl.onclick = () => { welcomeEl.style.animation = "toastSlideOut 0.3s ease forwards"; setTimeout(() => welcomeEl.remove(), 300); };
+   802→      document.body.appendChild(welcomeEl);
+   803→      setTimeout(() => { if (welcomeEl.parentNode) { welcomeEl.style.animation = "toastSlideOut 0.3s ease forwards"; setTimeout(() => welcomeEl.remove(), 300); } }, 4000);
+   804→
+   805→      // Speak welcome message via TTS
+   806→      playWelcomeTTS(user?.name);
+   807→    } else {
+   808→      setShakeKey((prev) => prev + 1);
+   809→      const storeError = useAuthStore.getState().error;
+   810→      toast.error("Login failed", {
+   811→        description: storeError || "Invalid credentials",
+   812→        style: {
+   813→          background: "#FFFFFF",
+   814→          color: "#111827",
+   815→          border: "1px solid #FCA5A5",
+   816→        },
+   817→        descriptionClassName: "!text-gray-600",
+   818→      });
+   819→    }
+   820→  };
+   821→
+   822→  // If already authenticated, render nothing (parent will show dashboard)
+   823→  if (isAuthenticated) {
+   824→    return null;
+   825→  }
+   826→
+   827→  return (
+   828→    <div className="fixed inset-0 z-50 flex flex-col justify-center items-center login-scanlines overflow-hidden">
+   829→      {/* Background layers */}
+   830→      <AnimatedBackground />
+   831→      <LoginAnimations />
+   832→      <StatusIndicator />
+   833→
+   834→      {/* Main login card container */}
+   835→      <div className="relative z-10 w-full max-w-[440px] mx-3 sm:mx-4">
+   836→        {/* Logo + Brand */}
+   837→        <LoginLogo />
+   838→
+   839→        {/* Login Card */}
+   840→        <div
+   841→          key={shakeKey}
+   842→          className={`${shakeKey > 0 ? "login-shake" : ""} login-fade-in`}
+   843→          style={{ animationDelay: "0.2s" }}
+   844→        >
+   845→          <div className="login-animated-border rounded-2xl">
+   846→            <div
+   847→              className="rounded-2xl p-6 sm:p-8 border relative overflow-hidden login-glass-card"
+   848→              style={{
+   849→                background:
+   850→                  "linear-gradient(180deg, rgba(15, 23, 42, 0.88) 0%, rgba(8, 12, 24, 0.94) 100%)",
+   851→                borderColor: "rgba(220, 38, 38, 0.08)",
+   852→              }}
+   853→            >
+   854→              {/* Loading progress bar */}
+   855→              <LoginProgressBar visible={isLoggingIn} />
+   856→
+   857→              {/* Subtle card glow */}
+   858→              <div
+   859→                className="absolute inset-0 pointer-events-none rounded-2xl"
+   860→                style={{
+   861→                  boxShadow: "inset 0 0 80px rgba(220, 38, 38, 0.03)",
+   862→                }}
+   863→              />
+   864→
+   865→              {/* Top accent line */}
+   866→              <div
+   867→                className="absolute top-0 left-8 right-8 h-px"
+   868→                style={{
+   869→                  background:
+   870→                    "linear-gradient(90deg, transparent 0%, rgba(220, 38, 38, 0.4) 50%, transparent 100%)",
+   871→                }}
+   872→              />
+   873→
+   874→              {/* Noise texture overlay for frosted glass */}
+   875→              <div
+   876→                className="absolute inset-0 pointer-events-none rounded-2xl opacity-[0.015]"
+   877→                style={{
+   878→                  backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+   879→                  backgroundRepeat: "repeat",
+   880→                  backgroundSize: "128px 128px",
+   881→                }}
+   882→              />
+   883→
+   884→              {/* Card header */}
+   885→              <div className="text-center mb-7 relative z-[1] float-subtle">
+   886→                <h2 className="text-xl font-bold text-white tracking-tight">
+   887→                  Access Your Control Panel
+   888→                </h2>
+   889→                <p className="mt-1.5 text-sm text-slate-400">
+   890→                  Authenticate to manage your ISP network
+   891→                </p>
+   892→              </div>
+   893→
+   894→              <form onSubmit={handleSubmit} className="space-y-5 relative z-[1]" noValidate>
+   895→                {/* Global error */}
+   896→                {(error || networkRetry > 0) && (
+   897→                  <div
+   898→                    className="flex items-start gap-2.5 rounded-xl border p-3.5 text-sm login-fade-in"
+   899→                    style={{
+   900→                      background: "rgba(220, 38, 38, 0.08)",
+   901→                      borderColor: "rgba(220, 38, 38, 0.25)",
+   902→                    }}
+   903→                  >
+   904→                    <div
+   905→                      className="mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+   906→                      style={{ background: "rgba(220, 38, 38, 0.2)" }}
+   907→                    >
+   908→                      <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+   909→                    </div>
+   910→                    <div className="flex-1">
+   911→                      <span className="font-medium text-red-300">
+   912→                        {networkRetry > 0 ? "Connection issue" : "Authentication failed"}
+   913→                      </span>
+   914→                      <p className="text-xs mt-0.5 text-red-400/70">
+   915→                        {networkRetry > 0
+   916→                          ? `Retrying connection\u2026 (attempt ${networkRetry}/1)`
+   917→                          : error || "Invalid credentials. Please try again."}
+   918→                      </p>
+   919→                    </div>
+   920→                    {networkRetry > 0 && (
+   921→                      <Loader2 className="w-4 h-4 text-red-400 animate-spin flex-shrink-0 mt-0.5" />
+   922→                    )}
+   923→                  </div>
+   924→                )}
+   925→
+   926→                {/* Email field */}
+   927→                <div className="space-y-2">
+   928→                  <Label
+   929→                    htmlFor="email"
+   930→                    className="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+   931→                  >
+   932→                    Email Address
+   933→                  </Label>
+   934→                  <div
+   935→                    className={`${
+   936→                      fieldErrors.email ? "login-input-group-error" : "login-input-group"
+   937→                    } relative rounded-xl transition-all duration-200`}
+   938→                  >
+   939→                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+   940→                      <Mail className="h-4 w-4 text-slate-500" />
+   941→                    </div>
+   942→                    <Input
+   943→                      id="email"
+   944→                      type="email"
+   945→                      placeholder="admin@cryptsk.com"
+   946→                      autoComplete="email"
+   947→                      value={email}
+   948→                      onChange={handleEmailChange}
+   949→                      className="pl-10 h-12 rounded-xl text-white placeholder:text-slate-600 border-slate-700/50 focus:border-red-500/50 login-input-enhanced"
+   950→                      style={{ background: "rgba(15, 23, 42, 0.6)" }}
+   951→                      disabled={isLoggingIn}
+   952→                    />
+   953→                    {fieldErrors.email && (
+   954→                      <div className="absolute right-3 inset-y-0 flex items-center">
+   955→                        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+   956→                      </div>
+   957→                    )}
+   958→                  </div>
+   959→                  {fieldErrors.email && (
+   960→                    <p className="text-xs text-red-400 mt-1 pl-1 flex items-center gap-1.5">
+   961→                      <span className="inline-block w-1 h-1 rounded-full bg-red-500 flex-shrink-0" />
+   962→                      {fieldErrors.email}
+   963→                    </p>
+   964→                  )}
+   965→                </div>
+   966→
+   967→                {/* Password field */}
+   968→                <div className="space-y-2">
+   969→                  <Label
+   970→                    htmlFor="password"
+   971→                    className="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+   972→                  >
+   973→                    Password
+   974→                  </Label>
+   975→                  <div
+   976→                    className={`${
+   977→                      fieldErrors.password ? "login-input-group-error" : "login-input-group"
+   978→                    } relative rounded-xl transition-all duration-200`}
+   979→                  >
+   980→                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+   981→                      <Lock className="h-4 w-4 text-slate-500" />
+   982→                    </div>
+   983→                    <Input
+   984→                      id="password"
+   985→                      type={showPassword ? "text" : "password"}
+   986→                      placeholder="Enter your password"
+   987→                      autoComplete="current-password"
+   988→                      value={password}
+   989→                      onChange={handlePasswordChange}
+   990→                      className="pl-10 pr-11 h-12 rounded-xl text-white placeholder:text-slate-600 border-slate-700/50 focus:border-red-500/50 login-input-enhanced"
+   991→                      style={{ background: "rgba(15, 23, 42, 0.6)" }}
+   992→                      disabled={isLoggingIn}
+   993→                    />
+   994→                    <button
+   995→                      type="button"
+   996→                      onClick={() => setShowPassword(!showPassword)}
+   997→                      className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-500 hover:text-slate-300 transition-colors rounded-lg"
+   998→                      tabIndex={-1}
+   999→                      aria-label={showPassword ? "Hide password" : "Show password"}
+  1000→                    >
+  1001→                      {showPassword ? (
+  1002→                        <EyeOff className="h-4 w-4" />
+  1003→                      ) : (
+  1004→                        <Eye className="h-4 w-4" />
+  1005→                      )}
+  1006→                    </button>
+  1007→                  </div>
+  1008→                  {fieldErrors.password && (
+  1009→                    <p className="text-xs text-red-400 mt-1 pl-1 flex items-center gap-1.5">
+  1010→                      <span className="inline-block w-1 h-1 rounded-full bg-red-500 flex-shrink-0" />
+  1011→                      {fieldErrors.password}
+  1012→                    </p>
+  1013→                  )}
+  1014→                </div>
+  1015→
+  1016→                {/* Remember me + Forgot password */}
+  1017→                <div className="flex items-center justify-between pt-1">
+  1018→                  <div className="flex items-center gap-2">
+  1019→                    <Checkbox
+  1020→                      id="remember"
+  1021→                      checked={rememberMe}
+  1022→                      onCheckedChange={(checked) => setRememberMe(checked === true)}
+  1023→                      className="login-checkbox"
+  1024→                    />
+  1025→                    <Label
+  1026→                      htmlFor="remember"
+  1027→                      className="text-xs text-slate-400 cursor-pointer select-none"
+  1028→                    >
+  1029→                      Remember this device
+  1030→                    </Label>
+  1031→                  </div>
+  1032→                  <button
+  1033→                    type="button"
+  1034→                    onClick={() => {
+  1035→                      toast.info("Password reset", {
+  1036→                        description:
+  1037→                          "Please contact your administrator to reset your password.",
+  1038→                      });
+  1039→                    }}
+  1040→                    className="text-xs font-medium text-red-400/80 hover:text-red-300 transition-colors duration-200"
+  1041→                  >
+  1042→                    Forgot password?
+  1043→                  </button>
+  1044→                </div>
+  1045→
+  1046→                {/* Submit button with shimmer effect */}
+  1047→                <div className="relative">
+  1048→                  <Button
+  1049→                    type="submit"
+  1050→                    disabled={isLoggingIn}
+  1051→                    className={`w-full h-12 font-semibold text-sm tracking-wide rounded-xl text-white cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed border-0 login-submit-btn btn-ripple relative overflow-hidden ${
+  1052→                      isLoggingIn ? "login-btn-loading" : ""
+  1053→                    }`}
+  1054→                    style={{
+  1055→                      background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)",
+  1056→                      boxShadow: "0 4px 15px rgba(220, 38, 38, 0.3)",
+  1057→                    }}
+  1058→                  >
+  1059→                    {/* Shimmer overlay */}
+  1060→                    <div
+  1061→                      className="absolute inset-0 login-shimmer-sweep pointer-events-none"
+  1062→                      style={{
+  1063→                        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 50%, transparent 100%)",
+  1064→                      }}
+  1065→                    />
+  1066→                    <span className="relative z-[1]">
+  1067→                      {isLoggingIn ? (
+  1068→                        <>
+  1069→                          <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />
+  1070→                          Authenticating<span className="login-typing-cursor">&hellip;</span>
+  1071→                        </>
+  1072→                      ) : (
+  1073→                        "Sign In to Control Panel"
+  1074→                      )}
+  1075→                    </span>
+  1076→                  </Button>
+  1077→                </div>
+  1078→              </form>
+  1079→
+  1080→              {/* Bottom accent line */}
+  1081→              <div
+  1082→                className="absolute bottom-0 left-8 right-8 h-px"
+  1083→                style={{
+  1084→                  background:
+  1085→                    "linear-gradient(90deg, transparent 0%, rgba(220, 38, 38, 0.12) 50%, transparent 100%)",
+  1086→                }}
+  1087→              />
+  1088→            </div>
+  1089→          </div>
+  1090→        </div>
+  1091→
+  1092→        {/* Subscriber Portal CTA */}
+  1093→        <div className="mt-5 login-fade-in" style={{ animationDelay: "0.4s" }}>
+  1094→          <button
+  1095→            type="button"
+  1096→            onClick={() => {
+  1097→              window.open("/?portal=selfcare", "_blank");
+  1098→            }}
+  1099→            className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl border border-white/[0.06] text-sm font-medium text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 hover:bg-emerald-500/[0.04] transition-all duration-200 group"
+  1100→          >
+  1101→            <Users className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
+  1102→            <span>Subscriber Self-Care Portal</span>
+  1103→            <svg className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400/60 group-hover:translate-x-0.5 transition-all" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+  1104→          </button>
+  1105→        </div>
+  1106→
+  1107→        {/* Security footer */}
+  1108→        <div className="mt-4 text-center login-fade-in" style={{ animationDelay: "0.5s" }}>
+  1109→          <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500">
+  1110→            <Shield className="w-3 h-3 text-red-500/40" />
+  1111→            <span className="hidden sm:inline">Secured with 256-bit TLS encryption</span>
+  1112→            <span className="inline sm:hidden">256-bit TLS</span>
+  1113→            <span className="text-slate-700">&middot;</span>
+  1114→            <span>&copy; {year || "----"} Cryptsk Pvt Ltd</span>
+  1115→          </div>
+  1116→          {/* Credential hint — shown in development/demo environments */}
+  1117→          <div className="mt-2 px-3 py-1.5 rounded-lg text-[10px] text-slate-500 inline-block" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+  1118→            <span className="text-slate-400 font-medium">Demo:</span>{" "}
+  1119→            <span className="text-slate-500">admin@cryptsk.com</span>
+  1120→            <span className="text-slate-600 mx-1">/</span>
+  1121→            <span className="text-slate-500">Admin@123</span>
+  1122→          </div>
+  1123→        </div>
+  1124→      </div>
+  1125→
+  1126→      <MetricsBar />
+  1127→    </div>
+  1128→  );
+  1129→}
+  1130→

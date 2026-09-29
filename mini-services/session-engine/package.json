@@ -1,0 +1,17 @@
+{
+  "name": "cryptsk-session-engine",
+  "version": "1.0.0",
+  "description": "CRYPTSKINTELLIGENT Session Engine — Built-in NAS Manager (24Online/Antlabs style)",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.0.0",
+    "@types/bun": "^1.1.0"
+  }
+}

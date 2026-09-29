@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "snmp-service",
+      "dependencies": {
+        "net-snmp": "^3.26.1",
+      },
+    },
+  },
+  "packages": {
+    "asn1-ber": ["asn1-ber@1.2.2", "", {}, "sha512-CbNem/7hxrjSiOAOOTX4iZxu+0m3jiLqlsERQwwPM1IDR/22M8IPpA1VVndCLw5KtjRYyRODbvAEIfuTogNDng=="],
+
+    "net-snmp": ["net-snmp@3.26.1", "", { "dependencies": { "asn1-ber": "^1.2.1", "smart-buffer": "^4.1.0" } }, "sha512-ZWsfchno5Lxj6OOUt4YS+88KLwce4tpnh4pLxiiwUULg3QQsN1n4OYAli4Ch2C+fkjqQXjhoI8rKltQyBVFzxg=="],
+
+    "smart-buffer": ["smart-buffer@4.2.0", "", {}, "sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg=="],
+  }
+}

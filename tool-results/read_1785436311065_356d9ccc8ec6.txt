@@ -1,0 +1,907 @@
+     1→     1→/**
+     2→     2→ * CRYPTSKINTELLIGENT ISP Platform — FreeRADIUS Group Policy Management
+     3→     3→ *
+     4→     4→ * Full CRUD on FreeRADIUS group tables (radgroupcheck, radgroupreply)
+     5→     5→ * with enrichment from the RadiusGroup Prisma model.
+     6→     6→ *
+     7→     7→ * GET    /api/aaa/groups          — List all groups with attributes & user counts
+     8→     8→ * POST   /api/aaa/groups          — Create a new group with check/reply attrs
+     9→     9→ * PUT    /api/aaa/groups          — Update group attributes (add/remove/update)
+    10→    10→ * DELETE /api/aaa/groups          — Delete a group and all its RADIUS entries
+    11→    11→ */
+    12→    12→
+    13→    13→import { db } from "@/lib/db";
+    14→    14→import { NextRequest, NextResponse } from "next/server";
+    15→    15→import { requireAuth, AuthError } from "@/lib/api-auth";
+    16→    16→
+    17→    17→// ─── Serialization helper for raw SQL rows (bigint → number) ────────────────
+    18→    18→
+    19→    19→function serializeRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+    20→    20→  return rows.map((row) => {
+    21→    21→    const serialized: Record<string, unknown> = {};
+    22→    22→    for (const [key, value] of Object.entries(row)) {
+    23→    23→      serialized[key] = typeof value === "bigint" ? Number(value) : value;
+    24→    24→    }
+    25→    25→    return serialized;
+    26→    26→  });
+    27→    27→}
+    28→    28→
+    29→    29→// ─── Valid RADIUS operators ──────────────────────────────────────────────────
+    30→    30→
+    31→    31→const VALID_CHECK_OPS = ["==", ":=", "!=", ">", ">=", "<", "<=", "=~", "!~", "=*", "!*"];
+    32→    32→const VALID_REPLY_OPS = ["=", ":=", "+=", "!=", ">", ">=", "<", "<=", "=~", "!~", "=*", "!*"];
+    33→    33→
+    34→    34→// ─── Known RADIUS attributes for validation ──────────────────────────────────
+    35→    35→
+    36→    36→const KNOWN_CHECK_ATTRS = [
+    37→    37→  "Auth-Type", "Simultaneous-Use", "Login-Time", "Expire-After",
+    38→    38→  "Session-Timeout", "Max-Daily-Session", "Max-Monthly-Session", "Access-Period",
+    39→    39→  "Cleartext-Password", "Crypt-Password", "MD5-Password", "SHA-Password",
+    40→    40→  "NT-Password", "LM-Password", "SSHA-Password",
+    41→    41→  "Called-Station-Id", "Calling-Station-Id", "NAS-IP-Address", "NAS-Port",
+    42→    42→  "Service-Type", "Framed-Protocol", "Huntgroup-Name",
+    43→    43→];
+    44→    44→
+    45→    45→const KNOWN_REPLY_ATTRS = [
+    46→    46→  "Framed-Protocol", "Framed-IP-Address", "Framed-IP-Netmask", "Framed-Pool",
+    47→    47→  "Framed-Route", "Framed-Routing", "Framed-MTU",
+    48→    48→  "WISPr-Bandwidth-Max-Down", "WISPr-Bandwidth-Max-Up",
+    49→    49→  "Mikrotik-Rate-Limit", "Mikrotik-Address-List", "Mikrotik-Recv-Limit",
+    50→    50→  "Mikrotik-Xmit-Limit", "Mikrotik-Total-Limit", "Mikrotik-Link-Down",
+    51→    51→  "Mikrotik-Wireless-Comment", "Mikrotik-Wireless-Forwarding",
+    52→    52→  "Session-Timeout", "Idle-Timeout", "Acct-Interim-Interval",
+    53→    53→  "Service-Type", "Class", "Reply-Message",
+    54→    54→  "Delegated-IPv6-Prefix-Pool", "Framed-IPv6-Pool", "Framed-IPv6-Address",
+    55→    55→  "Framed-IPv6-Prefix", "Framed-IPv6-Netmask", "Framed-Interface-Id",
+    56→    56→  "IPv6-Prefix-Pool",
+    57→    57→  "Filter-Id", "Ascend-Data-Rate", "Ascend-Xmit-Rate",
+    58→    58→];
+    59→    59→
+    60→    60→// ─── GET /api/aaa/groups ─────────────────────────────────────────────────────
+    61→    61→
+    62→    62→export async function GET(req: NextRequest) {
+    63→    63→  try {
+    64→    64→    await requireAuth(req);
+    65→    65→
+    66→    66→    const { searchParams } = new URL(req.url);
+    67→    67→    const search = searchParams.get("search")?.trim() || "";
+    68→    68→    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    69→    69→    const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50")));
+    70→    70→    const offset = (page - 1) * limit;
+    71→    71→
+    72→    72→    // Build WHERE clause for search
+    73→    73→    const whereClause = search
+    74→    74→      ? `WHERE gname ILIKE $1`
+    75→    75→      : "";
+    76→    76→    const params: unknown[] = search ? [`%${search}%`] : [];
+    77→    77→
+    78→    78→    // Main query: distinct groupnames from both tables + enrichment
+    79→    79→    const [groupRows, totalResult] = await Promise.all([
+    80→    80→      db.$queryRawUnsafe<Record<string, unknown>[]>(
+    81→    81→        `SELECT * FROM (
+    82→    82→          SELECT DISTINCT groupname AS gname FROM radgroupcheck
+    83→    83→          UNION
+    84→    84→          SELECT DISTINCT groupname AS gname FROM radgroupreply
+    85→    85→        ) AS distinct_groups
+    86→    86→        ${whereClause}
+    87→    87→        ORDER BY gname ASC
+    88→    88→        LIMIT ${limit} OFFSET ${offset}`,
+    89→    89→        ...params
+    90→    90→      ),
+    91→    91→      db.$queryRawUnsafe<{ count: string }[]>(
+    92→    92→        `SELECT COUNT(*)::text AS count FROM (
+    93→    93→          SELECT DISTINCT groupname FROM radgroupcheck
+    94→    94→          UNION
+    95→    95→          SELECT DISTINCT groupname FROM radgroupreply
+    96→    96→        ) AS all_groups
+    97→    97→        ${whereClause}`,
+    98→    98→        ...params
+    99→    99→      ),
+   100→   100→    ]);
+   101→   101→
+   102→   102→    const totalGroups = Number(totalResult[0]?.count || 0);
+   103→   103→
+   104→   104→    if (groupRows.length === 0) {
+   105→   105→      return NextResponse.json({
+   106→   106→        success: true,
+   107→   107→        groups: [],
+   108→   108→        pagination: { page, limit, total: totalGroups, totalPages: 0 },
+   109→   109→        stats: { totalGroups: 0, totalUsersAcrossGroups: 0 },
+   110→   110→      });
+   111→   111→    }
+   112→   112→
+   113→   113→    // Fetch check attrs, reply attrs, user counts, and RadiusGroup enrichment for all groups
+   114→   114→    const groupNames = groupRows.map((r) => r.gname as string);
+   115→   115→
+   116→   116→    // Check attributes
+   117→   117→    const checkRows = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   118→   118→      `SELECT id, groupname, attribute, op, value
+   119→   119→       FROM radgroupcheck
+   120→   120→       WHERE groupname = ANY($1)
+   121→   121→       ORDER BY groupname, attribute`,
+   122→   122→      groupNames
+   123→   123→    );
+   124→   124→
+   125→   125→    // Reply attributes
+   126→   126→    const replyRows = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   127→   127→      `SELECT id, groupname, attribute, op, value
+   128→   128→       FROM radgroupreply
+   129→   129→       WHERE groupname = ANY($1)
+   130→   130→       ORDER BY groupname, attribute`,
+   131→   131→      groupNames
+   132→   132→    );
+   133→   133→
+   134→   134→    // User counts from radusergroup
+   135→   135→    const userCountRows = await db.$queryRawUnsafe<{ groupname: string; user_count: string }[]>(
+   136→   136→      `SELECT groupname, COUNT(*)::text AS user_count
+   137→   137→       FROM radusergroup
+   138→   138→       WHERE groupname = ANY($1)
+   139→   139→       GROUP BY groupname`,
+   140→   140→      groupNames
+   141→   141→    );
+   142→   142→
+   143→   143→    // RadiusGroup Prisma enrichment
+   144→   144→    const enrichedGroups = await db.radiusGroup.findMany({
+   145→   145→      where: { name: { in: groupNames } },
+   146→   146→      select: {
+   147→   147→        id: true,
+   148→   148→        name: true,
+   149→   149→        description: true,
+   150→   150→        priority: true,
+   151→   151→        speedLimitDown: true,
+   152→   152→        speedLimitUp: true,
+   153→   153→        dataLimit: true,
+   154→   154→        sessionTimeout: true,
+   155→   155→        framedIpv6Pool: true,
+   156→   156→        delegatedIpv6PrefixPool: true,
+   157→   157→      },
+   158→   158→    });
+   159→   159→
+   160→   160→    // Build maps
+   161→   161→    const checkMap = new Map<string, Record<string, unknown>[]>();
+   162→   162→    for (const row of checkRows) {
+   163→   163→      const gn = row.groupname as string;
+   164→   164→      if (!checkMap.has(gn)) checkMap.set(gn, []);
+   165→   165→      checkMap.get(gn)!.push(row);
+   166→   166→    }
+   167→   167→
+   168→   168→    const replyMap = new Map<string, Record<string, unknown>[]>();
+   169→   169→    for (const row of replyRows) {
+   170→   170→      const gn = row.groupname as string;
+   171→   171→      if (!replyMap.has(gn)) replyMap.set(gn, []);
+   172→   172→      replyMap.get(gn)!.push(row);
+   173→   173→    }
+   174→   174→
+   175→   175→    const userCountMap = new Map<string, number>();
+   176→   176→    let totalUsersAcrossGroups = 0;
+   177→   177→    for (const row of userCountRows) {
+   178→   178→      const count = Number(row.user_count);
+   179→   179→      userCountMap.set(row.groupname, count);
+   180→   180→      totalUsersAcrossGroups += count;
+   181→   181→    }
+   182→   182→
+   183→   183→    const enrichedMap = new Map<string, Record<string, unknown>>();
+   184→   184→    for (const eg of enrichedGroups) {
+   185→   185→      enrichedMap.set(eg.name, eg as unknown as Record<string, unknown>);
+   186→   186→    }
+   187→   187→
+   188→   188→    // Assemble final groups array
+   189→   189→    const groups = groupRows.map((row) => {
+   190→   190→      const gname = row.gname as string;
+   191→   191→      const checks = serializeRows(checkMap.get(gname) || []);
+   192→   192→      const replies = serializeRows(replyMap.get(gname) || []);
+   193→   193→      const userCount = userCountMap.get(gname) || 0;
+   194→   194→      const enrichment = enrichedMap.get(gname) || null;
+   195→   195→
+   196→   196→      return {
+   197→   197→        groupname: gname,
+   198→   198→        checkAttrs: checks,
+   199→   199→        replyAttrs: replies,
+   200→   200→        userCount,
+   201→   201→        checkCount: checks.length,
+   202→   202→        replyCount: replies.length,
+   203→   203→        enrichment,
+   204→   204→        description: enrichment?.description || "",
+   205→   205→        priority: enrichment?.priority || 0,
+   206→   206→      };
+   207→   207→    });
+   208→   208→
+   209→   209→    const totalPages = Math.ceil(totalGroups / limit);
+   210→   210→
+   211→   211→    return NextResponse.json({
+   212→   212→      success: true,
+   213→   213→      groups,
+   214→   214→      pagination: { page, limit, total: totalGroups, totalPages },
+   215→   215→      stats: {
+   216→   216→        totalGroups,
+   217→   217→        totalUsersAcrossGroups,
+   218→   218→      },
+   219→   219→    });
+   220→   220→  } catch (error: unknown) {
+   221→   221→    if (error instanceof AuthError) {
+   222→   222→      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+   223→   223→    }
+   224→   224→    console.error("[aaa/groups] GET error:", error);
+   225→   225→    const msg = error instanceof Error ? error.message : "Internal server error";
+   226→   226→    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+   227→   227→  }
+   228→   228→}
+   229→   229→
+   230→   230→// ─── POST /api/aaa/groups ────────────────────────────────────────────────────
+   231→   231→
+   232→   232→interface CreateGroupBody {
+   233→   233→  groupname: string;
+   234→   234→  description?: string;
+   235→   235→  priority?: number;
+   236→   236→  speedLimitDown?: number;
+   237→   237→  speedLimitUp?: number;
+   238→   238→  dataLimit?: number;
+   239→   239→  sessionTimeout?: number;
+   240→   240→  checkAttrs?: { attribute: string; op?: string; value: string }[];
+   241→   241→  replyAttrs?: { attribute: string; op?: string; value: string }[];
+   242→   242→}
+   243→   243→
+   244→   244→export async function POST(req: NextRequest) {
+   245→   245→  try {
+   246→   246→    const userId = await requireAuth(req);
+   247→   247→    const body: CreateGroupBody = await req.json();
+   248→   248→
+   249→   249→    const { groupname, description, priority, speedLimitDown, speedLimitUp, dataLimit, sessionTimeout, checkAttrs, replyAttrs } = body;
+   250→   250→
+   251→   251→    // ── Validate groupname
+   252→   252→    if (!groupname?.trim()) {
+   253→   253→      return NextResponse.json({ success: false, error: "groupname is required" }, { status: 400 });
+   254→   254→    }
+   255→   255→
+   256→   256→    const trimmedName = groupname.trim();
+   257→   257→
+   258→   258→    if (trimmedName.length > 64) {
+   259→   259→      return NextResponse.json({ success: false, error: "groupname must not exceed 64 characters" }, { status: 400 });
+   260→   260→    }
+   261→   261→
+   262→   262→    // ── Validate no duplicate
+   263→   263→    const existing = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   264→   264→      `SELECT EXISTS(
+   265→   265→        SELECT 1 FROM radgroupcheck WHERE groupname = $1
+   266→   266→        UNION
+   267→   267→        SELECT 1 FROM radgroupreply WHERE groupname = $1
+   268→   268→      )::text::boolean AS exists`,
+   269→   269→      trimmedName
+   270→   270→    );
+   271→   271→
+   272→   272→    if (existing[0]?.exists) {
+   273→   273→      return NextResponse.json({ success: false, error: `Group '${trimmedName}' already exists in FreeRADIUS tables` }, { status: 409 });
+   274→   274→    }
+   275→   275→
+   276→   276→    // Also check RadiusGroup Prisma model
+   277→   277→    const existingPrisma = await db.radiusGroup.findUnique({ where: { name: trimmedName } });
+   278→   278→    if (existingPrisma) {
+   279→   279→      return NextResponse.json({ success: false, error: `Group '${trimmedName}' already exists in RadiusGroup model` }, { status: 409 });
+   280→   280→    }
+   281→   281→
+   282→   282→    // ── Validate and insert check attributes
+   283→   283→    if (checkAttrs && checkAttrs.length > 0) {
+   284→   284→      for (const attr of checkAttrs) {
+   285→   285→        if (!attr.attribute?.trim()) {
+   286→   286→          return NextResponse.json({ success: false, error: "Each check attribute must have a non-empty 'attribute'" }, { status: 400 });
+   287→   287→        }
+   288→   288→        if (!attr.value?.trim()) {
+   289→   289→          return NextResponse.json({ success: false, error: `Check attribute '${attr.attribute}' must have a non-empty 'value'` }, { status: 400 });
+   290→   290→        }
+   291→   291→        const op = attr.op || "==";
+   292→   292→        if (!VALID_CHECK_OPS.includes(op)) {
+   293→   293→          return NextResponse.json({ success: false, error: `Invalid operator '${op}' for check attribute '${attr.attribute}'. Valid: ${VALID_CHECK_OPS.join(", ")}` }, { status: 400 });
+   294→   294→        }
+   295→   295→        if (attr.attribute.length > 64 || attr.value.length > 253) {
+   296→   296→          return NextResponse.json({ success: false, error: `Attribute '${attr.attribute}' exceeds field length limits (attribute: 64, value: 253)` }, { status: 400 });
+   297→   297→        }
+   298→   298→      }
+   299→   299→
+   300→   300→      // Batch insert check attributes
+   301→   301→      for (const attr of checkAttrs) {
+   302→   302→        const op = attr.op || "==";
+   303→   303→        await db.$queryRawUnsafe(
+   304→   304→          `INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ($1, $2, $3, $4)`,
+   305→   305→          trimmedName, attr.attribute.trim(), op, attr.value.trim()
+   306→   306→        );
+   307→   307→      }
+   308→   308→    }
+   309→   309→
+   310→   310→    // ── Validate and insert reply attributes
+   311→   311→    if (replyAttrs && replyAttrs.length > 0) {
+   312→   312→      for (const attr of replyAttrs) {
+   313→   313→        if (!attr.attribute?.trim()) {
+   314→   314→          return NextResponse.json({ success: false, error: "Each reply attribute must have a non-empty 'attribute'" }, { status: 400 });
+   315→   315→        }
+   316→   316→        if (!attr.value?.trim()) {
+   317→   317→          return NextResponse.json({ success: false, error: `Reply attribute '${attr.attribute}' must have a non-empty 'value'` }, { status: 400 });
+   318→   318→        }
+   319→   319→        const op = attr.op || "=";
+   320→   320→        if (!VALID_REPLY_OPS.includes(op)) {
+   321→   321→          return NextResponse.json({ success: false, error: `Invalid operator '${op}' for reply attribute '${attr.attribute}'. Valid: ${VALID_REPLY_OPS.join(", ")}` }, { status: 400 });
+   322→   322→        }
+   323→   323→        if (attr.attribute.length > 64 || attr.value.length > 253) {
+   324→   324→          return NextResponse.json({ success: false, error: `Attribute '${attr.attribute}' exceeds field length limits (attribute: 64, value: 253)` }, { status: 400 });
+   325→   325→        }
+   326→   326→      }
+   327→   327→
+   328→   328→      // Batch insert reply attributes
+   329→   329→      for (const attr of replyAttrs) {
+   330→   330→        const op = attr.op || "=";
+   331→   331→        await db.$queryRawUnsafe(
+   332→   332→          `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES ($1, $2, $3, $4)`,
+   333→   333→          trimmedName, attr.attribute.trim(), op, attr.value.trim()
+   334→   334→        );
+   335→   335→      }
+   336→   336→    }
+   337→   337→
+   338→   338→    // ── Create/update RadiusGroup Prisma model for enrichment
+   339→   339→    await db.radiusGroup.upsert({
+   340→   340→      where: { name: trimmedName },
+   341→   341→      create: {
+   342→   342→        name: trimmedName,
+   343→   343→        description: description || "",
+   344→   344→        priority: priority || 0,
+   345→   345→        speedLimitDown: speedLimitDown || 0,
+   346→   346→        speedLimitUp: speedLimitUp || 0,
+   347→   347→        dataLimit: dataLimit ?? null,
+   348→   348→        sessionTimeout: sessionTimeout ?? null,
+   349→   349→      },
+   350→   350→      update: {
+   351→   351→        description: description || "",
+   352→   352→        priority: priority || 0,
+   353→   353→        speedLimitDown: speedLimitDown || 0,
+   354→   354→        speedLimitUp: speedLimitUp || 0,
+   355→   355→        dataLimit: dataLimit ?? null,
+   356→   356→        sessionTimeout: sessionTimeout ?? null,
+   357→   357→      },
+   358→   358→    });
+   359→   359→
+   360→   360→    // ── Fetch the created data back for response
+   361→   361→    const [checks, replies] = await Promise.all([
+   362→   362→      db.$queryRawUnsafe<Record<string, unknown>[]>(
+   363→   363→        `SELECT id, groupname, attribute, op, value FROM radgroupcheck WHERE groupname = $1 ORDER BY attribute`,
+   364→   364→        trimmedName
+   365→   365→      ),
+   366→   366→      db.$queryRawUnsafe<Record<string, unknown>[]>(
+   367→   367→        `SELECT id, groupname, attribute, op, value FROM radgroupreply WHERE groupname = $1 ORDER BY attribute`,
+   368→   368→        trimmedName
+   369→   369→      ),
+   370→   370→    ]);
+   371→   371→
+   372→   372→    const radiusGroup = await db.radiusGroup.findUnique({ where: { name: trimmedName } });
+   373→   373→
+   374→   374→    return NextResponse.json({
+   375→   375→      success: true,
+   376→   376→      group: {
+   377→   377→        groupname: trimmedName,
+   378→   378→        checkAttrs: serializeRows(checks),
+   379→   379→        replyAttrs: serializeRows(replies),
+   380→   380→        checkCount: checks.length,
+   381→   381→        replyCount: replies.length,
+   382→   382→        userCount: 0,
+   383→   383→        enrichment: radiusGroup,
+   384→   384→      },
+   385→   385→    });
+   386→   386→  } catch (error: unknown) {
+   387→   387→    if (error instanceof AuthError) {
+   388→   388→      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+   389→   389→    }
+   390→   390→    console.error("[aaa/groups] POST error:", error);
+   391→   391→    const msg = error instanceof Error ? error.message : "Internal server error";
+   392→   392→    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+   393→   393→  }
+   394→   394→}
+   395→   395→
+   396→   396→// ─── PUT /api/aaa/groups ─────────────────────────────────────────────────────
+   397→   397→
+   398→   398→interface UpdateGroupAction {
+   399→   399→  groupname: string;
+   400→   400→  action:
+   401→   401→    | "add-check"
+   402→   402→    | "remove-check"
+   403→   403→    | "add-reply"
+   404→   404→    | "remove-reply"
+   405→   405→    | "update-check"
+   406→   406→    | "update-reply"
+   407→   407→    | "rename"
+   408→   408→    | "update-enrichment"
+   409→   409→    | "replace-checks"
+   410→   410→    | "replace-replies";
+   411→   411→  // For add-check / add-reply
+   412→   412→  attribute?: string;
+   413→   413→  op?: string;
+   414→   414→  value?: string;
+   415→   415→  // For remove-check / remove-reply / update-check / update-reply — by row id
+   416→   416→  id?: number | string;
+   417→   417→  // For update operations — new values
+   418→   418→  newAttribute?: string;
+   419→   419→  newOp?: string;
+   420→   420→  newValue?: string;
+   421→   421→  // For rename
+   422→   422→  newGroupname?: string;
+   423→   423→  // For update-enrichment
+   424→   424→  description?: string;
+   425→   425→  priority?: number;
+   426→   426→  speedLimitDown?: number;
+   427→   427→  speedLimitUp?: number;
+   428→   428→  dataLimit?: number | null;
+   429→   429→  sessionTimeout?: number | null;
+   430→   430→  framedIpv6Pool?: string;
+   431→   431→  delegatedIpv6PrefixPool?: string;
+   432→   432→  // For replace-checks / replace-replies — full arrays
+   433→   433→  checkAttrs?: { attribute: string; op?: string; value: string }[];
+   434→   434→  replyAttrs?: { attribute: string; op?: string; value: string }[];
+   435→   435→}
+   436→   436→
+   437→   437→export async function PUT(req: NextRequest) {
+   438→   438→  try {
+   439→   439→    await requireAuth(req);
+   440→   440→    const body: UpdateGroupAction = await req.json();
+   441→   441→
+   442→   442→    const { groupname, action } = body;
+   443→   443→
+   444→   444→    if (!groupname?.trim()) {
+   445→   445→      return NextResponse.json({ success: false, error: "groupname is required" }, { status: 400 });
+   446→   446→    }
+   447→   447→
+   448→   448→    if (!action) {
+   449→   449→      return NextResponse.json({ success: false, error: "action is required. Valid: add-check, remove-check, add-reply, remove-reply, update-check, update-reply, rename, update-enrichment, replace-checks, replace-replies" }, { status: 400 });
+   450→   450→    }
+   451→   451→
+   452→   452→    const trimmedName = groupname.trim();
+   453→   453→
+   454→   454→    // ── Verify group exists in FreeRADIUS tables
+   455→   455→    const exists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   456→   456→      `SELECT EXISTS(
+   457→   457→        SELECT 1 FROM radgroupcheck WHERE groupname = $1
+   458→   458→        UNION
+   459→   459→        SELECT 1 FROM radgroupreply WHERE groupname = $1
+   460→   460→      )::text::boolean AS exists`,
+   461→   461→      trimmedName
+   462→   462→    );
+   463→   463→
+   464→   464→    if (!exists[0]?.exists) {
+   465→   465→      return NextResponse.json({ success: false, error: `Group '${trimmedName}' not found` }, { status: 404 });
+   466→   466→    }
+   467→   467→
+   468→   468→    // ── Handle each action ──
+   469→   469→
+   470→   470→    switch (action) {
+   471→   471→      // ── ADD CHECK ATTRIBUTE ────────────────────────────────────────────
+   472→   472→      case "add-check": {
+   473→   473→        if (!body.attribute?.trim()) {
+   474→   474→          return NextResponse.json({ success: false, error: "attribute is required for add-check" }, { status: 400 });
+   475→   475→        }
+   476→   476→        if (!body.value?.trim() && body.value !== "0") {
+   477→   477→          return NextResponse.json({ success: false, error: "value is required for add-check" }, { status: 400 });
+   478→   478→        }
+   479→   479→        const op = body.op || "==";
+   480→   480→        if (!VALID_CHECK_OPS.includes(op)) {
+   481→   481→          return NextResponse.json({ success: false, error: `Invalid check operator '${op}'` }, { status: 400 });
+   482→   482→        }
+   483→   483→
+   484→   484→        // Check for duplicate attribute within the same group
+   485→   485→        const dupCheck = await db.$queryRawUnsafe<{ count: string }[]>(
+   486→   486→          `SELECT COUNT(*)::text AS count FROM radgroupcheck WHERE groupname = $1 AND attribute = $2`,
+   487→   487→          trimmedName, body.attribute.trim()
+   488→   488→        );
+   489→   489→        if (Number(dupCheck[0]?.count) > 0) {
+   490→   490→          return NextResponse.json({ success: false, error: `Check attribute '${body.attribute}' already exists for group '${trimmedName}'` }, { status: 409 });
+   491→   491→        }
+   492→   492→
+   493→   493→        const result = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   494→   494→          `INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ($1, $2, $3, $4) RETURNING id, groupname, attribute, op, value`,
+   495→   495→          trimmedName, body.attribute.trim(), op, body.value.trim()
+   496→   496→        );
+   497→   497→
+   498→   498→        return NextResponse.json({ success: true, action: "add-check", attribute: serializeRows(result)[0] });
+   499→   499→      }
+   500→   500→
+   501→   501→      // ── REMOVE CHECK ATTRIBUTE ────────────────────────────────────────
+   502→   502→      case "remove-check": {
+   503→   503→        if (!body.id) {
+   504→   504→          return NextResponse.json({ success: false, error: "id is required for remove-check" }, { status: 400 });
+   505→   505→        }
+   506→   506→        const numId = Number(body.id);
+   507→   507→
+   508→   508→        // Verify the row belongs to this group
+   509→   509→        const verify = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   510→   510→          `SELECT id, attribute FROM radgroupcheck WHERE id = $1 AND groupname = $2`,
+   511→   511→          numId, trimmedName
+   512→   512→        );
+   513→   513→        if (verify.length === 0) {
+   514→   514→          return NextResponse.json({ success: false, error: `Check attribute id ${numId} not found for group '${trimmedName}'` }, { status: 404 });
+   515→   515→        }
+   516→   516→
+   517→   517→        await db.$queryRawUnsafe(`DELETE FROM radgroupcheck WHERE id = $1`, numId);
+   518→   518→
+   519→   519→        return NextResponse.json({ success: true, action: "remove-check", removed: { id: numId, attribute: verify[0].attribute } });
+   520→   520→      }
+   521→   521→
+   522→   522→      // ── ADD REPLY ATTRIBUTE ────────────────────────────────────────────
+   523→   523→      case "add-reply": {
+   524→   524→        if (!body.attribute?.trim()) {
+   525→   525→          return NextResponse.json({ success: false, error: "attribute is required for add-reply" }, { status: 400 });
+   526→   526→        }
+   527→   527→        if (!body.value?.trim() && body.value !== "0") {
+   528→   528→          return NextResponse.json({ success: false, error: "value is required for add-reply" }, { status: 400 });
+   529→   529→        }
+   530→   530→        const op = body.op || "=";
+   531→   531→        if (!VALID_REPLY_OPS.includes(op)) {
+   532→   532→          return NextResponse.json({ success: false, error: `Invalid reply operator '${op}'` }, { status: 400 });
+   533→   533→        }
+   534→   534→
+   535→   535→        // Check for duplicate
+   536→   536→        const dupReply = await db.$queryRawUnsafe<{ count: string }[]>(
+   537→   537→          `SELECT COUNT(*)::text AS count FROM radgroupreply WHERE groupname = $1 AND attribute = $2`,
+   538→   538→          trimmedName, body.attribute.trim()
+   539→   539→        );
+   540→   540→        if (Number(dupReply[0]?.count) > 0) {
+   541→   541→          return NextResponse.json({ success: false, error: `Reply attribute '${body.attribute}' already exists for group '${trimmedName}'` }, { status: 409 });
+   542→   542→        }
+   543→   543→
+   544→   544→        const result = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   545→   545→          `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES ($1, $2, $3, $4) RETURNING id, groupname, attribute, op, value`,
+   546→   546→          trimmedName, body.attribute.trim(), op, body.value.trim()
+   547→   547→        );
+   548→   548→
+   549→   549→        return NextResponse.json({ success: true, action: "add-reply", attribute: serializeRows(result)[0] });
+   550→   550→      }
+   551→   551→
+   552→   552→      // ── REMOVE REPLY ATTRIBUTE ────────────────────────────────────────
+   553→   553→      case "remove-reply": {
+   554→   554→        if (!body.id) {
+   555→   555→          return NextResponse.json({ success: false, error: "id is required for remove-reply" }, { status: 400 });
+   556→   556→        }
+   557→   557→        const numId = Number(body.id);
+   558→   558→
+   559→   559→        const verify = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   560→   560→          `SELECT id, attribute FROM radgroupreply WHERE id = $1 AND groupname = $2`,
+   561→   561→          numId, trimmedName
+   562→   562→        );
+   563→   563→        if (verify.length === 0) {
+   564→   564→          return NextResponse.json({ success: false, error: `Reply attribute id ${numId} not found for group '${trimmedName}'` }, { status: 404 });
+   565→   565→        }
+   566→   566→
+   567→   567→        await db.$queryRawUnsafe(`DELETE FROM radgroupreply WHERE id = $1`, numId);
+   568→   568→
+   569→   569→        return NextResponse.json({ success: true, action: "remove-reply", removed: { id: numId, attribute: verify[0].attribute } });
+   570→   570→      }
+   571→   571→
+   572→   572→      // ── UPDATE CHECK ATTRIBUTE ────────────────────────────────────────
+   573→   573→      case "update-check": {
+   574→   574→        if (!body.id) {
+   575→   575→          return NextResponse.json({ success: false, error: "id is required for update-check" }, { status: 400 });
+   576→   576→        }
+   577→   577→        const numId = Number(body.id);
+   578→   578→
+   579→   579→        const verify = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   580→   580→          `SELECT id, groupname, attribute, op, value FROM radgroupcheck WHERE id = $1 AND groupname = $2`,
+   581→   581→          numId, trimmedName
+   582→   582→        );
+   583→   583→        if (verify.length === 0) {
+   584→   584→          return NextResponse.json({ success: false, error: `Check attribute id ${numId} not found for group '${trimmedName}'` }, { status: 404 });
+   585→   585→        }
+   586→   586→
+   587→   587→        const current = verify[0];
+   588→   588→        const newAttribute = body.newAttribute || (current.attribute as string);
+   589→   589→        const newOp = body.newOp || (current.op as string);
+   590→   590→        const newValue = body.newValue !== undefined ? body.newValue : (current.value as string);
+   591→   591→
+   592→   592→        if (!VALID_CHECK_OPS.includes(newOp)) {
+   593→   593→          return NextResponse.json({ success: false, error: `Invalid check operator '${newOp}'` }, { status: 400 });
+   594→   594→        }
+   595→   595→
+   596→   596→        // Check for duplicate attribute if attribute name is changing
+   597→   597→        if (newAttribute !== current.attribute) {
+   598→   598→          const dupCheck = await db.$queryRawUnsafe<{ count: string }[]>(
+   599→   599→            `SELECT COUNT(*)::text AS count FROM radgroupcheck WHERE groupname = $1 AND attribute = $2 AND id != $3`,
+   600→   600→            trimmedName, newAttribute, numId
+   601→   601→          );
+   602→   602→          if (Number(dupCheck[0]?.count) > 0) {
+   603→   603→            return NextResponse.json({ success: false, error: `Check attribute '${newAttribute}' already exists for group '${trimmedName}'` }, { status: 409 });
+   604→   604→          }
+   605→   605→        }
+   606→   606→
+   607→   607→        const result = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   608→   608→          `UPDATE radgroupcheck SET attribute = $1, op = $2, value = $3 WHERE id = $4 RETURNING id, groupname, attribute, op, value`,
+   609→   609→          newAttribute, newOp, newValue, numId
+   610→   610→        );
+   611→   611→
+   612→   612→        return NextResponse.json({ success: true, action: "update-check", attribute: serializeRows(result)[0] });
+   613→   613→      }
+   614→   614→
+   615→   615→      // ── UPDATE REPLY ATTRIBUTE ────────────────────────────────────────
+   616→   616→      case "update-reply": {
+   617→   617→        if (!body.id) {
+   618→   618→          return NextResponse.json({ success: false, error: "id is required for update-reply" }, { status: 400 });
+   619→   619→        }
+   620→   620→        const numId = Number(body.id);
+   621→   621→
+   622→   622→        const verify = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   623→   623→          `SELECT id, groupname, attribute, op, value FROM radgroupreply WHERE id = $1 AND groupname = $2`,
+   624→   624→          numId, trimmedName
+   625→   625→        );
+   626→   626→        if (verify.length === 0) {
+   627→   627→          return NextResponse.json({ success: false, error: `Reply attribute id ${numId} not found for group '${trimmedName}'` }, { status: 404 });
+   628→   628→        }
+   629→   629→
+   630→   630→        const current = verify[0];
+   631→   631→        const newAttribute = body.newAttribute || (current.attribute as string);
+   632→   632→        const newOp = body.newOp || (current.op as string);
+   633→   633→        const newValue = body.newValue !== undefined ? body.newValue : (current.value as string);
+   634→   634→
+   635→   635→        if (!VALID_REPLY_OPS.includes(newOp)) {
+   636→   636→          return NextResponse.json({ success: false, error: `Invalid reply operator '${newOp}'` }, { status: 400 });
+   637→   637→        }
+   638→   638→
+   639→   639→        if (newAttribute !== current.attribute) {
+   640→   640→          const dupReply = await db.$queryRawUnsafe<{ count: string }[]>(
+   641→   641→            `SELECT COUNT(*)::text AS count FROM radgroupreply WHERE groupname = $1 AND attribute = $2 AND id != $3`,
+   642→   642→            trimmedName, newAttribute, numId
+   643→   643→          );
+   644→   644→          if (Number(dupReply[0]?.count) > 0) {
+   645→   645→            return NextResponse.json({ success: false, error: `Reply attribute '${newAttribute}' already exists for group '${trimmedName}'` }, { status: 409 });
+   646→   646→          }
+   647→   647→        }
+   648→   648→
+   649→   649→        const result = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   650→   650→          `UPDATE radgroupreply SET attribute = $1, op = $2, value = $3 WHERE id = $4 RETURNING id, groupname, attribute, op, value`,
+   651→   651→          newAttribute, newOp, newValue, numId
+   652→   652→        );
+   653→   653→
+   654→   654→        return NextResponse.json({ success: true, action: "update-reply", attribute: serializeRows(result)[0] });
+   655→   655→      }
+   656→   656→
+   657→   657→      // ── RENAME GROUP ──────────────────────────────────────────────────
+   658→   658→      case "rename": {
+   659→   659→        if (!body.newGroupname?.trim()) {
+   660→   660→          return NextResponse.json({ success: false, error: "newGroupname is required for rename" }, { status: 400 });
+   661→   661→        }
+   662→   662→        const newName = body.newGroupname.trim();
+   663→   663→
+   664→   664→        if (newName.length > 64) {
+   665→   665→          return NextResponse.json({ success: false, error: "newGroupname must not exceed 64 characters" }, { status: 400 });
+   666→   666→        }
+   667→   667→
+   668→   668→        // Check if new name already exists
+   669→   669→        const newNameExists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   670→   670→          `SELECT EXISTS(
+   671→   671→            SELECT 1 FROM radgroupcheck WHERE groupname = $1
+   672→   672→            UNION
+   673→   673→            SELECT 1 FROM radgroupreply WHERE groupname = $1
+   674→   674→          )::text::boolean AS exists`,
+   675→   675→          newName
+   676→   676→        );
+   677→   677→        if (newNameExists[0]?.exists) {
+   678→   678→          return NextResponse.json({ success: false, error: `Group '${newName}' already exists` }, { status: 409 });
+   679→   679→        }
+   680→   680→
+   681→   681→        // Check RadiusGroup
+   682→   682→        const rgExists = await db.radiusGroup.findUnique({ where: { name: newName } });
+   683→   683→        if (rgExists) {
+   684→   684→          return NextResponse.json({ success: false, error: `Group '${newName}' already exists in RadiusGroup model` }, { status: 409 });
+   685→   685→        }
+   686→   686→
+   687→   687→        // Rename in radgroupcheck
+   688→   688→        await db.$queryRawUnsafe(`UPDATE radgroupcheck SET groupname = $1 WHERE groupname = $2`, newName, trimmedName);
+   689→   689→
+   690→   690→        // Rename in radgroupreply
+   691→   691→        await db.$queryRawUnsafe(`UPDATE radgroupreply SET groupname = $1 WHERE groupname = $2`, newName, trimmedName);
+   692→   692→
+   693→   693→        // Rename in radusergroup
+   694→   694→        await db.$queryRawUnsafe(`UPDATE radusergroup SET groupname = $1 WHERE groupname = $2`, newName, trimmedName);
+   695→   695→
+   696→   696→        // Rename in RadiusGroup Prisma model
+   697→   697→        const existingRG = await db.radiusGroup.findUnique({ where: { name: trimmedName } });
+   698→   698→        if (existingRG) {
+   699→   699→          await db.radiusGroup.update({ where: { name: trimmedName }, data: { name: newName } });
+   700→   700→        }
+   701→   701→
+   702→   702→        return NextResponse.json({ success: true, action: "rename", oldGroupname: trimmedName, newGroupname: newName });
+   703→   703→      }
+   704→   704→
+   705→   705→      // ── UPDATE ENRICHMENT (RadiusGroup Prisma model) ──────────────────
+   706→   706→      case "update-enrichment": {
+   707→   707→        const updateData: Record<string, unknown> = {};
+   708→   708→        if (body.description !== undefined) updateData.description = body.description;
+   709→   709→        if (body.priority !== undefined) updateData.priority = Number(body.priority);
+   710→   710→        if (body.speedLimitDown !== undefined) updateData.speedLimitDown = Number(body.speedLimitDown);
+   711→   711→        if (body.speedLimitUp !== undefined) updateData.speedLimitUp = Number(body.speedLimitUp);
+   712→   712→        if (body.dataLimit !== undefined) updateData.dataLimit = body.dataLimit ?? null;
+   713→   713→        if (body.sessionTimeout !== undefined) updateData.sessionTimeout = body.sessionTimeout ?? null;
+   714→   714→        if (body.framedIpv6Pool !== undefined) updateData.framedIpv6Pool = body.framedIpv6Pool;
+   715→   715→        if (body.delegatedIpv6PrefixPool !== undefined) updateData.delegatedIpv6PrefixPool = body.delegatedIpv6PrefixPool;
+   716→   716→
+   717→   717→        // Upsert the RadiusGroup model
+   718→   718→        const enriched = await db.radiusGroup.upsert({
+   719→   719→          where: { name: trimmedName },
+   720→   720→          create: {
+   721→   721→            name: trimmedName,
+   722→   722→            description: (body.description as string) || "",
+   723→   723→            priority: Number(body.priority) || 0,
+   724→   724→            speedLimitDown: Number(body.speedLimitDown) || 0,
+   725→   725→            speedLimitUp: Number(body.speedLimitUp) || 0,
+   726→   726→            dataLimit: body.dataLimit ?? null,
+   727→   727→            sessionTimeout: body.sessionTimeout ?? null,
+   728→   728→            framedIpv6Pool: (body.framedIpv6Pool as string) || "",
+   729→   729→            delegatedIpv6PrefixPool: (body.delegatedIpv6PrefixPool as string) || "",
+   730→   730→          },
+   731→   731→          update: updateData,
+   732→   732→        });
+   733→   733→
+   734→   734→        return NextResponse.json({ success: true, action: "update-enrichment", enrichment: enriched });
+   735→   735→      }
+   736→   736→
+   737→   737→      // ── REPLACE ALL CHECK ATTRIBUTES ──────────────────────────────────
+   738→   738→      case "replace-checks": {
+   739→   739→        if (!Array.isArray(body.checkAttrs)) {
+   740→   740→          return NextResponse.json({ success: false, error: "checkAttrs array is required for replace-checks" }, { status: 400 });
+   741→   741→        }
+   742→   742→
+   743→   743→        // Validate all attrs before deleting
+   744→   744→        for (const attr of body.checkAttrs) {
+   745→   745→          if (!attr.attribute?.trim() || (!attr.value?.trim() && attr.value !== "0")) {
+   746→   746→            return NextResponse.json({ success: false, error: "Each check attribute must have non-empty attribute and value" }, { status: 400 });
+   747→   747→          }
+   748→   748→          const op = attr.op || "==";
+   749→   749→          if (!VALID_CHECK_OPS.includes(op)) {
+   750→   750→            return NextResponse.json({ success: false, error: `Invalid check operator '${op}'` }, { status: 400 });
+   751→   751→          }
+   752→   752→        }
+   753→   753→
+   754→   754→        // Delete all existing checks
+   755→   755→        await db.$queryRawUnsafe(`DELETE FROM radgroupcheck WHERE groupname = $1`, trimmedName);
+   756→   756→
+   757→   757→        // Insert new ones
+   758→   758→        for (const attr of body.checkAttrs) {
+   759→   759→          const op = attr.op || "==";
+   760→   760→          await db.$queryRawUnsafe(
+   761→   761→            `INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ($1, $2, $3, $4)`,
+   762→   762→            trimmedName, attr.attribute.trim(), op, attr.value.trim()
+   763→   763→          );
+   764→   764→        }
+   765→   765→
+   766→   766→        const newChecks = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   767→   767→          `SELECT id, groupname, attribute, op, value FROM radgroupcheck WHERE groupname = $1 ORDER BY attribute`,
+   768→   768→          trimmedName
+   769→   769→        );
+   770→   770→
+   771→   771→        return NextResponse.json({ success: true, action: "replace-checks", checkAttrs: serializeRows(newChecks), count: newChecks.length });
+   772→   772→      }
+   773→   773→
+   774→   774→      // ── REPLACE ALL REPLY ATTRIBUTES ──────────────────────────────────
+   775→   775→      case "replace-replies": {
+   776→   776→        if (!Array.isArray(body.replyAttrs)) {
+   777→   777→          return NextResponse.json({ success: false, error: "replyAttrs array is required for replace-replies" }, { status: 400 });
+   778→   778→        }
+   779→   779→
+   780→   780→        for (const attr of body.replyAttrs) {
+   781→   781→          if (!attr.attribute?.trim() || (!attr.value?.trim() && attr.value !== "0")) {
+   782→   782→            return NextResponse.json({ success: false, error: "Each reply attribute must have non-empty attribute and value" }, { status: 400 });
+   783→   783→          }
+   784→   784→          const op = attr.op || "=";
+   785→   785→          if (!VALID_REPLY_OPS.includes(op)) {
+   786→   786→            return NextResponse.json({ success: false, error: `Invalid reply operator '${op}'` }, { status: 400 });
+   787→   787→          }
+   788→   788→        }
+   789→   789→
+   790→   790→        await db.$queryRawUnsafe(`DELETE FROM radgroupreply WHERE groupname = $1`, trimmedName);
+   791→   791→
+   792→   792→        for (const attr of body.replyAttrs) {
+   793→   793→          const op = attr.op || "=";
+   794→   794→          await db.$queryRawUnsafe(
+   795→   795→            `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES ($1, $2, $3, $4)`,
+   796→   796→            trimmedName, attr.attribute.trim(), op, attr.value.trim()
+   797→   797→          );
+   798→   798→        }
+   799→   799→
+   800→   800→        const newReplies = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+   801→   801→          `SELECT id, groupname, attribute, op, value FROM radgroupreply WHERE groupname = $1 ORDER BY attribute`,
+   802→   802→          trimmedName
+   803→   803→        );
+   804→   804→
+   805→   805→        return NextResponse.json({ success: true, action: "replace-replies", replyAttrs: serializeRows(newReplies), count: newReplies.length });
+   806→   806→      }
+   807→   807→
+   808→   808→      default:
+   809→   809→        return NextResponse.json({
+   810→   810→          success: false,
+   811→   811→          error: `Unknown action '${action}'. Valid actions: add-check, remove-check, add-reply, remove-reply, update-check, update-reply, rename, update-enrichment, replace-checks, replace-replies`,
+   812→   812→        }, { status: 400 });
+   813→   813→    }
+   814→   814→  } catch (error: unknown) {
+   815→   815→    if (error instanceof AuthError) {
+   816→   816→      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+   817→   817→    }
+   818→   818→    console.error("[aaa/groups] PUT error:", error);
+   819→   819→    const msg = error instanceof Error ? error.message : "Internal server error";
+   820→   820→    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+   821→   821→  }
+   822→   822→}
+   823→   823→
+   824→   824→// ─── DELETE /api/aaa/groups ──────────────────────────────────────────────────
+   825→   825→
+   826→   826→export async function DELETE(req: NextRequest) {
+   827→   827→  try {
+   828→   828→    await requireAuth(req);
+   829→   829→
+   830→   830→    const { searchParams } = new URL(req.url);
+   831→   831→    const groupname = searchParams.get("groupname")?.trim();
+   832→   832→
+   833→   833→    if (!groupname) {
+   834→   834→      return NextResponse.json({ success: false, error: "groupname query parameter is required" }, { status: 400 });
+   835→   835→    }
+   836→   836→
+   837→   837→    // Verify group exists
+   838→   838→    const exists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   839→   839→      `SELECT EXISTS(
+   840→   840→        SELECT 1 FROM radgroupcheck WHERE groupname = $1
+   841→   841→        UNION
+   842→   842→        SELECT 1 FROM radgroupreply WHERE groupname = $1
+   843→   843→      )::text::boolean AS exists`,
+   844→   844→      groupname
+   845→   845→    );
+   846→   846→
+   847→   847→    if (!exists[0]?.exists) {
+   848→   848→      return NextResponse.json({ success: false, error: `Group '${groupname}' not found` }, { status: 404 });
+   849→   849→    }
+   850→   850→
+   851→   851→    // Count users assigned to this group before deletion
+   852→   852→    const userCountResult = await db.$queryRawUnsafe<{ count: string }[]>(
+   853→   853→      `SELECT COUNT(*)::text AS count FROM radusergroup WHERE groupname = $1`,
+   854→   854→      groupname
+   855→   855→    );
+   856→   856→    const affectedUsers = Number(userCountResult[0]?.count || 0);
+   857→   857→
+   858→   858→    // Count check/reply attrs
+   859→   859→    const [checkCountResult, replyCountResult] = await Promise.all([
+   860→   860→      db.$queryRawUnsafe<{ count: string }[]>(
+   861→   861→        `SELECT COUNT(*)::text AS count FROM radgroupcheck WHERE groupname = $1`,
+   862→   862→        groupname
+   863→   863→      ),
+   864→   864→      db.$queryRawUnsafe<{ count: string }[]>(
+   865→   865→        `SELECT COUNT(*)::text AS count FROM radgroupreply WHERE groupname = $1`,
+   866→   866→        groupname
+   867→   867→      ),
+   868→   868→    ]);
+   869→   869→    const deletedChecks = Number(checkCountResult[0]?.count || 0);
+   870→   870→    const deletedReplies = Number(replyCountResult[0]?.count || 0);
+   871→   871→
+   872→   872→    // Execute all deletions in a logical sequence
+   873→   873→    // 1. Delete all radgroupcheck entries
+   874→   874→    await db.$queryRawUnsafe(`DELETE FROM radgroupcheck WHERE groupname = $1`, groupname);
+   875→   875→
+   876→   876→    // 2. Delete all radgroupreply entries
+   877→   877→    await db.$queryRawUnsafe(`DELETE FROM radgroupreply WHERE groupname = $1`, groupname);
+   878→   878→
+   879→   879→    // 3. Remove all radusergroup assignments for this group
+   880→   880→    await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE groupname = $1`, groupname);
+   881→   881→
+   882→   882→    // 4. Remove RadiusGroup Prisma model if exists
+   883→   883→    try {
+   884→   884→      await db.radiusGroup.deleteMany({ where: { name: groupname } });
+   885→   885→    } catch {
+   886→   886→      // RadiusGroup might not exist, that's fine
+   887→   887→    }
+   888→   888→
+   889→   889→    return NextResponse.json({
+   890→   890→      success: true,
+   891→   891→      deleted: {
+   892→   892→        groupname,
+   893→   893→        deletedChecks,
+   894→   894→        deletedReplies,
+   895→   895→        unassignedUsers: affectedUsers,
+   896→   896→      },
+   897→   897→    });
+   898→   898→  } catch (error: unknown) {
+   899→   899→    if (error instanceof AuthError) {
+   900→   900→      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+   901→   901→    }
+   902→   902→    console.error("[aaa/groups] DELETE error:", error);
+   903→   903→    const msg = error instanceof Error ? error.message : "Internal server error";
+   904→   904→    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+   905→   905→  }
+   906→   906→}
+   907→   907→

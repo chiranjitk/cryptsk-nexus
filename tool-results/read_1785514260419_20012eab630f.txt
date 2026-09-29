@@ -1,0 +1,2002 @@
+   200→SELECT * FROM radcheck WHERE username = 'testuser1' AND attribute = 'Auth-Type';
+   201→-- EXPECTED BUG: No Auth-Type = Reject row is added (should block RADIUS auth for suspended users)
+   202→```
+   203→
+   204→### T1.11 — Delete subscriber → RADIUS cleanup
+   205→**Endpoint:** `DELETE /api/subscribers/<id>`
+   206→**Method:** DELETE
+   207→**Request Body:** None
+   208→**Expected HTTP Status:** 200
+   209→**Expected Response Validation:** `success: true`
+   210→**RADIUS Table Verification SQL:**
+   211→```sql
+   212→SELECT COUNT(*) FROM radcheck WHERE username = 'testuser1';
+   213→SELECT COUNT(*) FROM radreply WHERE username = 'testuser1';
+   214→SELECT COUNT(*) FROM radusergroup WHERE username = 'testuser1';
+   215→-- Expected: All return 0 (full cleanup)
+   216→```
+   217→
+   218→### T1.12 — Get subscriber list with pagination
+   219→**Endpoint:** `GET /api/subscribers?page=1&limit=5&status=ACTIVE`
+   220→**Method:** GET
+   221→**Request Body:** None
+   222→**Expected HTTP Status:** 200
+   223→**Expected Response Validation:** Array of subscribers, `length <= 5`, all with `status: "ACTIVE"`
+   224→**RADIUS Table Verification SQL:** None
+   225→
+   226→### T1.13 — Search subscriber by name or code
+   227→**Endpoint:** `GET /api/subscribers?search=testuser1`
+   228→**Method:** GET
+   229→**Request Body:** None
+   230→**Expected HTTP Status:** 200
+   231→**Expected Response Validation:** Results filtered to contain "testuser1" in name/code/email/phone
+   232→**RADIUS Table Verification SQL:** None
+   233→
+   234→---
+   235→
+   236→## Test Suite 2: RADIUS Provisioning (13 cases)
+   237→
+   238→### T2.1 — Subscriber creation with radiusEnabled=true → radcheck entry
+   239→**Endpoint:** `POST /api/subscribers` (via T1.1)
+   240→**Method:** POST
+   241→**Request Body:** See T1.1
+   242→**Expected HTTP Status:** 201
+   243→**Expected Response Validation:** Subscriber created with `radiusEnabled: true`
+   244→**RADIUS Table Verification SQL:**
+   245→```sql
+   246→SELECT * FROM radcheck WHERE username = 'testuser1';
+   247→-- Expected rows:
+   248→--   1. attribute='Cleartext-Password', op=':=', value='TestPass@123'
+   249→--   2. attribute='Simultaneous-Use', op=':=', value='1'
+   250→```
+   251→
+   252→### T2.2 — RADIUS group assignment via radusergroup
+   253→**Endpoint:** `POST /api/subscribers` (via T1.1)
+   254→**Method:** POST
+   255→**Request Body:** See T1.1
+   256→**Expected HTTP Status:** 201
+   257→**Expected Response Validation:** Subscriber linked to plan's RadiusGroup
+   258→**RADIUS Table Verification SQL:**
+   259→```sql
+   260→SELECT * FROM radusergroup WHERE username = 'testuser1';
+   261→-- Expected: 1 row with groupname = '<plan-group-name>', priority = 0
+   262→```
+   263→
+   264→### T2.3 — RADIUS rate limit from group → radreply
+   265→**Endpoint:** `POST /api/subscribers` (via T1.1)
+   266→**Method:** POST
+   267→**Request Body:** See T1.1
+   268→**Expected HTTP Status:** 201
+   269→**Expected Response Validation:** Speed values in response match plan settings
+   270→**RADIUS Table Verification SQL:**
+   271→```sql
+   272→SELECT * FROM radreply WHERE username = 'testuser1' AND attribute = 'Mikrotik-Rate-Limit';
+   273→-- Expected: value='<download>M/<upload>M' (e.g., '50M/10M')
+   274→```
+   275→
+   276→### T2.4 — Create RADIUS user via /api/radius-users (manual enable)
+   277→**Endpoint:** `POST /api/radius-users`
+   278→**Method:** POST
+   279→**Request Body:**
+   280→```json
+   281→{
+   282→  "username": "manualuser1",
+   283→  "password": "ManualPass@123",
+   284→  "radiusGroupId": "<GROUP_ID>"
+   285→}
+   286→```
+   287→**Expected HTTP Status:** 201
+   288→**Expected Response Validation:** RADIUS user created with `username: "manualuser1"`
+   289→**RADIUS Table Verification SQL:**
+   290→```sql
+   291→SELECT * FROM radcheck WHERE username = 'manualuser1';
+   292→-- Expected: Cleartext-Password entry
+   293→
+   294→SELECT * FROM radusergroup WHERE username = 'manualuser1';
+   295→-- Expected: 1 row with correct groupname
+   296→```
+   297→
+   298→### T2.5 — Update RADIUS user password → radcheck updated
+   299→**Endpoint:** `PUT /api/radius-users/<id>`
+   300→**Method:** PUT
+   301→**Request Body:** `{ "password": "NewPass@456" }`
+   302→**Expected HTTP Status:** 200
+   303→**Expected Response Validation:** User object returned
+   304→**RADIUS Table Verification SQL:**
+   305→```sql
+   306→SELECT value FROM radcheck WHERE username = 'manualuser1' AND attribute = 'Cleartext-Password';
+   307→-- Expected: 'NewPass@456'
+   308→```
+   309→
+   310→### T2.6 — Change RADIUS group → radusergroup updated + radreply rate-limit updated
+   311→**Endpoint:** `PUT /api/radius-users/<id>`
+   312→**Method:** PUT
+   313→**Request Body:** `{ "radiusGroupId": "<NEW_GROUP_ID>" }`
+   314→**Expected HTTP Status:** 200
+   315→**Expected Response Validation:** `radiusGroupId` updated
+   316→**RADIUS Table Verification SQL:**
+   317→```sql
+   318→SELECT * FROM radusergroup WHERE username = 'manualuser1';
+   319→-- Expected: Old group removed, new group present
+   320→
+   321→SELECT * FROM radreply WHERE username = 'manualuser1' AND attribute = 'Mikrotik-Rate-Limit';
+   322→-- Expected: Value matches new group's speed settings
+   323→```
+   324→
+   325→### T2.7 — Delete RADIUS user → cleanup radcheck/radreply/radusergroup
+   326→**Endpoint:** `DELETE /api/radius-users/<id>`
+   327→**Method:** DELETE
+   328→**Request Body:** None
+   329→**Expected HTTP Status:** 200
+   330→**Expected Response Validation:** `success: true`
+   331→**RADIUS Table Verification SQL:**
+   332→```sql
+   333→SELECT COUNT(*) FROM radcheck WHERE username = 'manualuser1';
+   334→SELECT COUNT(*) FROM radreply WHERE username = 'manualuser1';
+   335→SELECT COUNT(*) FROM radusergroup WHERE username = 'manualuser1';
+   336→-- Expected: All return 0
+   337→```
+   338→
+   339→### T2.8 — Concurrent session limit (Simultaneous-Use) in radcheck
+   340→**Endpoint:** `POST /api/subscribers` (via T1.1 with plan having maxConcurrentSessions=2)
+   341→**Method:** POST
+   342→**Request Body:** Subscriber with plan that has `maxConcurrentSessions: 2`
+   343→**Expected HTTP Status:** 201
+   344→**Expected Response Validation:** Subscriber created
+   345→**RADIUS Table Verification SQL:**
+   346→```sql
+   347→SELECT value FROM radcheck WHERE username = '<username>' AND attribute = 'Simultaneous-Use';
+   348→-- Expected: '2' (or plan default if not overridden)
+   349→```
+   350→
+   351→### T2.9 — Data limit (ChilliSpot-Max-Total-Octets) in group reply
+   352→**Endpoint:** `POST /api/subscribers` (via T1.1 with plan having dataLimitGb=50)
+   353→**Method:** POST
+   354→**Request Body:** Subscriber with plan that has `dataLimitGb: 50`
+   355→**Expected HTTP Status:** 201
+   356→**Expected Response Validation:** Subscriber created
+   357→**RADIUS Table Verification SQL:**
+   358→```sql
+   359→SELECT * FROM radgroupreply WHERE groupname = '<plan-group>' AND attribute = 'ChilliSpot-Max-Total-Octets';
+   360→-- Expected: value = '51200' (50 GB * 1024 MB/GB) or equivalent in bytes
+   361→```
+   362→
+   363→### T2.10 — Toggle RADIUS enabled/disabled on subscriber
+   364→**Endpoint:** `POST /api/radius-users/toggle-enabled`
+   365→**Method:** POST
+   366→**Request Body:** `{ "subscriberId": "<SUBSCRIBER_ID>" }`
+   367→**Expected HTTP Status:** 200
+   368→**Expected Response Validation:** `radiusEnabled` toggled
+   369→**RADIUS Table Verification SQL:**
+   370→```sql
+   371→SELECT COUNT(*) FROM radcheck WHERE username = '<username>';
+   372→-- After disabling: Expected 0 (entries removed)
+   373→-- After re-enabling: Expected > 0 (entries re-created)
+   374→```
+   375→
+   376→### T2.11 — Import RADIUS users in bulk
+   377→**Endpoint:** `POST /api/radius-users/import`
+   378→**Method:** POST
+   379→**Request Body:**
+   380→```json
+   381→{
+   382→  "users": [
+   383→    { "username": "import1", "password": "ImpPass1", "radiusGroupId": "<GROUP_ID>" },
+   384→    { "username": "import2", "password": "ImpPass2", "radiusGroupId": "<GROUP_ID>" }
+   385→  ]
+   386→}
+   387→```
+   388→**Expected HTTP Status:** 200 or 201
+   389→**Expected Response Validation:** Import summary with success/failure counts
+   390→**RADIUS Table Verification SQL:**
+   391→```sql
+   392→SELECT COUNT(*) FROM radcheck WHERE username IN ('import1', 'import2');
+   393→-- Expected: >= 2 (one Cleartext-Password per user at minimum)
+   394→```
+   395→
+   396→### T2.12 — Export RADIUS users list
+   397→**Endpoint:** `GET /api/radius-users/export?format=csv`
+   398→**Method:** GET
+   399→**Request Body:** None
+   400→**Expected HTTP Status:** 200
+   401→**Expected Response Validation:** CSV content with headers, Content-Type contains 'text/csv'
+   402→**RADIUS Table Verification SQL:** None (read-only export)
+   403→
+   404→### T2.13 — RADIUS sync status check
+   405→**Endpoint:** `GET /api/freeradius/sync-status`
+   406→**Method:** GET
+   407→**Request Body:** None
+   408→**Expected HTTP Status:** 200
+   409→**Expected Response Validation:** Object with `status` field (e.g., "minor_drift", "in_sync"), `totalSubscribers`, `totalRadiusUsers`
+   410→**RADIUS Table Verification SQL:**
+   411→```sql
+   412→SELECT COUNT(*) FROM radcheck;
+   413→-- Cross-check with response's totalRadiusUsers
+   414→```
+   415→
+   416→---
+   417→
+   418→## Test Suite 3: Plan Management (10 cases)
+   419→
+   420→### T3.1 — Create plan → auto RadiusGroup created
+   421→**Endpoint:** `POST /api/plans`
+   422→**Method:** POST
+   423→**Request Body:**
+   424→```json
+   425→{
+   426→  "name": "Test Plan 100M",
+   427→  "downloadSpeed": 100,
+   428→  "uploadSpeed": 50,
+   429→  "speedUnit": "Mbps",
+   430→  "priceMonthly": 999,
+   431→  "dataLimitGb": 100,
+   432→  "validityDays": 30,
+   433→  "isActive": true,
+   434→  "maxConcurrentSessions": 2
+   435→}
+   436→```
+   437→**Expected HTTP Status:** 201
+   438→**Expected Response Validation:** Plan object with `id`, `name: "Test Plan 100M"`, linked `RadiusGroup` with matching speeds
+   439→**RADIUS Table Verification SQL:**
+   440→```sql
+   441→SELECT * FROM radgroupreply WHERE groupname LIKE '%Test%Plan%100M%' AND attribute = 'Mikrotik-Rate-Limit';
+   442→-- Expected: value = '100M/50M' or '100000k/50000k'
+   443→```
+   444→
+   445→### T3.2 — Create plan with existing groupId → uses that group
+   446→**Endpoint:** `POST /api/plans`
+   447→**Method:** POST
+   448→**Request Body:** Same as T3.1 but with `"radiusGroupId": "<EXISTING_GROUP_ID>"`
+   449→**Expected HTTP Status:** 201
+   450→**Expected Response Validation:** Plan linked to existing group, no new RadiusGroup created
+   451→**RADIUS Table Verification SQL:**
+   452→```sql
+   453→SELECT COUNT(*) FROM radgroupreply WHERE groupname = '<existing-group-name>';
+   454→-- Expected: Same count as before (no new rows)
+   455→```
+   456→
+   457→### T3.3a — Plan validation: name required
+   458→**Endpoint:** `POST /api/plans`
+   459→**Method:** POST
+   460→**Request Body:** `{ "downloadSpeed": 10, "priceMonthly": 299 }`
+   461→**Expected HTTP Status:** 400
+   462→**Expected Response Validation:** Validation error about missing name
+   463→**RADIUS Table Verification SQL:** None
+   464→
+   465→### T3.3b — Plan validation: speed must be > 0
+   466→**Endpoint:** `POST /api/plans`
+   467→**Method:** POST
+   468→**Request Body:** `{ "name": "Zero Speed", "downloadSpeed": 0, "uploadSpeed": 0, "priceMonthly": 299 }`
+   469→**Expected HTTP Status:** 400
+   470→**Expected Response Validation:** Validation error about speed
+   471→**RADIUS Table Verification SQL:** None
+   472→
+   473→### T3.3c — Plan validation: price must be >= 0
+   474→**Endpoint:** `POST /api/plans`
+   475→**Method:** POST
+   476→**Request Body:** `{ "name": "Neg Price", "downloadSpeed": 10, "priceMonthly": -100 }`
+   477→**Expected HTTP Status:** 400
+   478→**Expected Response Validation:** Validation error about price
+   479→**RADIUS Table Verification SQL:** None
+   480→
+   481→### T3.4 — maxConcurrentSessions defaults to 1
+   482→**Endpoint:** `POST /api/plans`
+   483→**Method:** POST
+   484→**Request Body:** Same as T3.1 without `maxConcurrentSessions` field
+   485→**Expected HTTP Status:** 201
+   486→**Expected Response Validation:** `maxConcurrentSessions: 1`
+   487→**RADIUS Table Verification SQL:** None
+   488→
+   489→### T3.5 — Data limit in GB → RadiusGroup dataLimit in MB
+   490→**Endpoint:** `POST /api/plans`
+   491→**Method:** POST
+   492→**Request Body:** Same as T3.1 with `"dataLimitGb": 50`
+   493→**Expected HTTP Status:** 201
+   494→**Expected Response Validation:** Plan created with `dataLimitGb: 50`
+   495→**RADIUS Table Verification SQL:**
+   496→```sql
+   497→SELECT value FROM radgroupreply WHERE groupname LIKE '%Test%Plan%' AND attribute = 'ChilliSpot-Max-Total-Octets';
+   498→-- Expected: '51200' (50 * 1024 = 51200 MB) or bytes equivalent
+   499→```
+   500→
+   501→### T3.6 — Update plan speed → RADIUS group reply updated
+   502→**Endpoint:** `PUT /api/plans/<id>`
+   503→**Method:** PUT
+   504→**Request Body:** `{ "downloadSpeed": 200, "uploadSpeed": 100 }`
+   505→**Expected HTTP Status:** 200
+   506→**Expected Response Validation:** `downloadSpeed: 200`, `uploadSpeed: 100`
+   507→**RADIUS Table Verification SQL:**
+   508→```sql
+   509→SELECT value FROM radgroupreply WHERE groupname = '<plan-group>' AND attribute = 'Mikrotik-Rate-Limit';
+   510→-- Expected: '200M/100M' or updated value
+   511→```
+   512→
+   513→### T3.7 — Deactivate plan (isActive = false)
+   514→**Endpoint:** `PUT /api/plans/<id>`
+   515→**Method:** PUT
+   516→**Request Body:** `{ "isActive": false }`
+   517→**Expected HTTP Status:** 200
+   518→**Expected Response Validation:** `isActive: false`
+   519→**RADIUS Table Verification SQL:** None (group attributes remain, plan just marked inactive)
+   520→
+   521→### T3.8 — Delete plan → RADIUS group cleanup
+   522→**Endpoint:** `DELETE /api/plans/<id>`
+   523→**Method:** DELETE
+   524→**Request Body:** None
+   525→**Expected HTTP Status:** 200
+   526→**Expected Response Validation:** `success: true`
+   527→**RADIUS Table Verification SQL:**
+   528→```sql
+   529→SELECT COUNT(*) FROM radgroupcheck WHERE groupname = '<plan-group>';
+   530→SELECT COUNT(*) FROM radgroupreply WHERE groupname = '<plan-group>';
+   531→-- Expected: Both return 0 (group fully cleaned up)
+   532→```
+   533→
+   534→### T3.9 — Get plan list with filtering
+   535→**Endpoint:** `GET /api/plans?isActive=true&minPrice=200&maxPrice=1500`
+   536→**Method:** GET
+   537→**Request Body:** None
+   538→**Expected HTTP Status:** 200
+   539→**Expected Response Validation:** Array of plans, all `isActive: true`, price in range [200, 1500]
+   540→**RADIUS Table Verification SQL:** None
+   541→
+   542→### T3.10 — Plan reorder (sort order)
+   543→**Endpoint:** `POST /api/plans/reorder`
+   544→**Method:** POST
+   545→**Request Body:** `{ "planIds": ["<id1>", "<id2>", "<id3>"] }`
+   546→**Expected HTTP Status:** 200
+   547→**Expected Response Validation:** `success: true`, plans returned in new order
+   548→**RADIUS Table Verification SQL:** None
+   549→
+   550→---
+   551→
+   552→## Test Suite 4: Plan Migration (9 cases)
+   553→
+   554→### T4.1 — Migrate subscriber between plans
+   555→**Endpoint:** `POST /api/plans/migrate`
+   556→**Method:** POST
+   557→**Request Body:**
+   558→```json
+   559→{
+   560→  "subscriberIds": ["<SUBSCRIBER_ID>"],
+   561→  "sourcePlanId": "<SOURCE_PLAN_ID>",
+   562→  "targetPlanId": "<TARGET_PLAN_ID>"
+   563→}
+   564→```
+   565→**Expected HTTP Status:** 200
+   566→**Expected Response Validation:** `success: true`, `migratedCount: 1`
+   567→**RADIUS Table Verification SQL:**
+   568→```sql
+   569→SELECT p."downloadSpeed", p."uploadSpeed", s."serviceUsername"
+   570→FROM "Subscriber" s
+   571→JOIN "Plan" p ON s."planId" = p.id
+   572→WHERE s.id = '<SUBSCRIBER_ID>';
+   573→-- Expected: target plan speeds
+   574→```
+   575→
+   576→### T4.2 — Migration updates RADIUS group (BUG CHECK)
+   577→**Endpoint:** `POST /api/plans/migrate` (via T4.1)
+   578→**Method:** POST
+   579→**Request Body:** See T4.1
+   580→**Expected HTTP Status:** 200
+   581→**Expected Response Validation:** Migration response
+   582→**RADIUS Table Verification SQL:**
+   583→```sql
+   584→SELECT * FROM radusergroup WHERE username = '<username>';
+   585→-- EXPECTED BUG: Should show new group but may show old group (B2 — migration doesn't update radusergroup)
+   586→
+   587→SELECT * FROM radreply WHERE username = '<username>' AND attribute = 'Mikrotik-Rate-Limit';
+   588→-- EXPECTED BUG: Should show new plan speed but may show old speed (B9)
+   589→```
+   590→
+   591→### T4.3 — Same source/target plan rejected
+   592→**Endpoint:** `POST /api/plans/migrate`
+   593→**Method:** POST
+   594→**Request Body:**
+   595→```json
+   596→{
+   597→  "subscriberIds": ["<SUBSCRIBER_ID>"],
+   598→  "sourcePlanId": "<PLAN_ID>",
+   599→  "targetPlanId": "<PLAN_ID>"
+   600→}
+   601→```
+   602→**Expected HTTP Status:** 400
+   603→**Expected Response Validation:** Error message about same source and target plan
+   604→**RADIUS Table Verification SQL:** None
+   605→
+   606→### T4.4 — Non-existent plan rejected
+   607→**Endpoint:** `POST /api/plans/migrate`
+   608→**Method:** POST
+   609→**Request Body:**
+   610→```json
+   611→{
+   612→  "subscriberIds": ["<SUBSCRIBER_ID>"],
+   613→  "sourcePlanId": "<PLAN_ID>",
+   614→  "targetPlanId": "non-existent-id"
+   615→}
+   616→```
+   617→**Expected HTTP Status:** 404
+   618→**Expected Response Validation:** Error message about plan not found
+   619→**RADIUS Table Verification SQL:** None
+   620→
+   621→### T4.5 — Inactive target plan rejected
+   622→**Endpoint:** `POST /api/plans/migrate`
+   623→**Method:** POST
+   624→**Request Body:** Same as T4.1 with targetPlanId pointing to an inactive plan
+   625→**Expected HTTP Status:** 400
+   626→**Expected Response Validation:** Error message about inactive plan
+   627→**RADIUS Table Verification SQL:** None
+   628→
+   629→### T4.6 — Bulk migrate multiple subscribers
+   630→**Endpoint:** `POST /api/plans/migrate`
+   631→**Method:** POST
+   632→**Request Body:**
+   633→```json
+   634→{
+   635→  "subscriberIds": ["<ID1>", "<ID2>", "<ID3>"],
+   636→  "sourcePlanId": "<SOURCE_PLAN_ID>",
+   637→  "targetPlanId": "<TARGET_PLAN_ID>"
+   638→}
+   639→```
+   640→**Expected HTTP Status:** 200
+   641→**Expected Response Validation:** `migratedCount: 3` (or appropriate count based on valid IDs)
+   642→**RADIUS Table Verification SQL:**
+   643→```sql
+   644→SELECT COUNT(*) FROM radusergroup WHERE username IN ('<user1>', '<user2>', '<user3>') AND groupname = '<target-group>';
+   645→-- Expected: 3 (all migrated to new group)
+   646→```
+   647→
+   648→### T4.7 — Migrate subscriber without RADIUS (no RADIUS tables affected)
+   649→**Endpoint:** `POST /api/plans/migrate`
+   650→**Method:** POST
+   651→**Request Body:** Same as T4.1 but with a subscriber that has `radiusEnabled: false`
+   652→**Expected HTTP Status:** 200
+   653→**Expected Response Validation:** Migration succeeds, planId updated
+   654→**RADIUS Table Verification SQL:**
+   655→```sql
+   656→SELECT COUNT(*) FROM radusergroup WHERE username = '<username>';
+   657→-- Expected: 0 (subscriber never had RADIUS entries)
+   658→```
+   659→
+   660→### T4.8 — Migrate subscriber with concurrent session limit change
+   661→**Endpoint:** `POST /api/plans/migrate`
+   662→**Method:** POST
+   663→**Request Body:** Migrate from plan with `maxConcurrentSessions=1` to plan with `maxConcurrentSessions=3`
+   664→**Expected HTTP Status:** 200
+   665→**Expected Response Validation:** Migration succeeds
+   666→**RADIUS Table Verification SQL:**
+   667→```sql
+   668→SELECT value FROM radcheck WHERE username = '<username>' AND attribute = 'Simultaneous-Use';
+   669→-- EXPECTED BUG: Should be '3' but may remain '1' (B11 — concurrent sessions not updated on migration)
+   670→```
+   671→
+   672→### T4.9 — Migrate subscriber with data limit change
+   673→**Endpoint:** `POST /api/plans/migrate`
+   674→**Method:** POST
+   675→**Request Body:** Migrate from plan with `dataLimitGb=50` to plan with `dataLimitGb=200`
+   676→**Expected HTTP Status:** 200
+   677→**Expected Response Validation:** Migration succeeds
+   678→**RADIUS Table Verification SQL:**
+   679→```sql
+   680→SELECT * FROM radreply WHERE username = '<username>' AND attribute = 'Mikrotik-Rate-Limit';
+   681→-- Expected: Speed updated to new plan's settings
+   682→-- Note: Data limit is enforced at group level, so check group reply
+   683→SELECT * FROM radgroupreply WHERE groupname = '<new-plan-group>' AND attribute = 'ChilliSpot-Max-Total-Octets';
+   684→-- Expected: '204800' (200 * 1024)
+   685→```
+   686→
+   687→---
+   688→
+   689→## Test Suite 5: Invoice / Billing Engine (14 cases)
+   690→
+   691→### T5.1 — Create single invoice with correct tax calculation
+   692→**Endpoint:** `POST /api/invoices`
+   693→**Method:** POST
+   694→**Request Body:**
+   695→```json
+   696→{
+   697→  "subscriberId": "<SUBSCRIBER_ID>",
+   698→  "planId": "<PLAN_ID>",
+   699→  "issueDate": "2025-07-01",
+   700→  "dueDate": "2025-07-10",
+   701→  "items": [{ "description": "Monthly Plan Fee", "amount": 999 }]
+   702→}
+   703→```
+   704→**Expected HTTP Status:** 201
+   705→**Expected Response Validation:**
+   706→- `subtotal: 999`
+   707→- `cgstAmount: 89.91` (999 * 0.09)
+   708→- `sgstAmount: 89.91` (999 * 0.09)
+   709→- `totalTax: 179.82`
+   710→- `grandTotal: 1178.82`
+   711→- `status: "DRAFT"`
+   712→**RADIUS Table Verification SQL:** None
+   713→
+   714→### T5.2 — Pro-rata invoice calculation
+   715→**Endpoint:** `POST /api/invoices`
+   716→**Method:** POST
+   717→**Request Body:** Invoice with `"billingType": "PRO_RATA"` or pro-rata flag for mid-cycle activation (15 days into 30-day cycle)
+   718→**Expected HTTP Status:** 201
+   719→**Expected Response Validation:** `subtotal` ≈ `priceMonthly * (remainingDays / totalDays)` (e.g., 999 * 15/30 = 499.5)
+   720→**RADIUS Table Verification SQL:** None
+   721→
+   722→### T5.3 — Invoice with discount (PERCENTAGE)
+   723→**Endpoint:** `POST /api/invoices`
+   724→**Method:** POST
+   725→**Request Body:**
+   726→```json
+   727→{
+   728→  "subscriberId": "<SUBSCRIBER_ID>",
+   729→  "planId": "<PLAN_ID>",
+   730→  "discountType": "PERCENTAGE",
+   731→  "discountValue": 10,
+   732→  "items": [{ "description": "Monthly Fee", "amount": 999 }]
+   733→}
+   734→```
+   735→**Expected HTTP Status:** 201
+   736→**Expected Response Validation:**
+   737→- `discountAmount: 99.9` (999 * 10%)
+   738→- `subtotalAfterDiscount: 899.1`
+   739→- `cgstAmount: 80.919`
+   740→- `sgstAmount: 80.919`
+   741→- `grandTotal: 1060.938` (approx)
+   742→**RADIUS Table Verification SQL:** None
+   743→
+   744→### T5.4 — Invoice with discount (FLAT)
+   745→**Endpoint:** `POST /api/invoices`
+   746→**Method:** POST
+   747→**Request Body:**
+   748→```json
+   749→{
+   750→  "subscriberId": "<SUBSCRIBER_ID>",
+   751→  "discountType": "FLAT",
+   752→  "discountValue": 100,
+   753→  "items": [{ "description": "Monthly Fee", "amount": 999 }]
+   754→}
+   755→```
+   756→**Expected HTTP Status:** 201
+   757→**Expected Response Validation:**
+   758→- `discountAmount: 100`
+   759→- `subtotalAfterDiscount: 899`
+   760→- `grandTotal: 1074.82` (899 + 80.91 + 80.91 + 14.00)
+   761→**RADIUS Table Verification SQL:** None
+   762→
+   763→### T5.5 — Invoice with multiple line items
+   764→**Endpoint:** `POST /api/invoices`
+   765→**Method:** POST
+   766→**Request Body:**
+   767→```json
+   768→{
+   769→  "subscriberId": "<SUBSCRIBER_ID>",
+   770→  "items": [
+   771→    { "description": "Monthly Plan Fee", "amount": 999 },
+   772→    { "description": "Router Rental", "amount": 100 },
+   773→    { "description": "Installation Charge (one-time)", "amount": 500 }
+   774→  ]
+   775→}
+   776→```
+   777→**Expected HTTP Status:** 201
+   778→**Expected Response Validation:** `subtotal: 1599`, `grandTotal: 1877.82` (1599 + 143.91 + 143.91)
+   779→**RADIUS Table Verification SQL:** None
+   780→
+   781→### T5.6 — Bulk invoice generation for active subscribers
+   782→**Endpoint:** `POST /api/invoices/bulk-generate`
+   783→**Method:** POST
+   784→**Request Body:**
+   785→```json
+   786→{
+   787→  "issueDate": "2025-07-01",
+   788→  "dueDate": "2025-07-10",
+   789→  "planIds": ["<PLAN_ID>"]
+   790→}
+   791→```
+   792→**Expected HTTP Status:** 200
+   793→**Expected Response Validation:** `generatedCount > 0`, each active subscriber with that plan gets one invoice
+   794→**RADIUS Table Verification SQL:** None
+   795→
+   796→### T5.7 — Billing cycle generation (POST /api/billing)
+   797→**Endpoint:** `POST /api/billing`
+   798→**Method:** POST
+   799→**Request Body:**
+   800→```json
+   801→{
+   802→  "action": "generate",
+   803→  "month": "2025-07",
+   804→  "dryRun": false
+   805→}
+   806→```
+   807→**Expected HTTP Status:** 200
+   808→**Expected Response Validation:** DRAFT invoices created for current month, existing invoices skipped
+   809→**RADIUS Table Verification SQL:** None
+   810→
+   811→### T5.8 — Duplicate period prevention
+   812→**Endpoint:** `POST /api/invoices/bulk-generate`
+   813→**Method:** POST
+   814→**Request Body:** Same as T5.6 (run twice)
+   815→**Expected HTTP Status:** 200
+   816→**Expected Response Validation:** Second run shows `generatedCount: 0` or `skippedCount > 0` (no duplicates)
+   817→**RADIUS Table Verification SQL:**
+   818→```sql
+   819→SELECT COUNT(*) FROM "Invoice" WHERE "subscriberId" = '<SUBSCRIBER_ID>' AND "issueDate" = '2025-07-01';
+   820→-- Expected: 1 (only one invoice per subscriber per period)
+   821→```
+   822→
+   823→### T5.9 — Cancel paid invoice → rejected
+   824→**Endpoint:** `PUT /api/invoices/<PAID_INVOICE_ID>`
+   825→**Method:** PUT
+   826→**Request Body:** `{ "status": "CANCELLED" }`
+   827→**Expected HTTP Status:** 400
+   828→**Expected Response Validation:** Error message about cannot cancel paid invoice
+   829→**RADIUS Table Verification SQL:** None
+   830→
+   831→### T5.10 — Delete paid invoice → rejected
+   832→**Endpoint:** `DELETE /api/invoices/<PAID_INVOICE_ID>`
+   833→**Method:** DELETE
+   834→**Request Body:** None
+   835→**Expected HTTP Status:** 400
+   836→**Expected Response Validation:** Error message about cannot delete paid invoice
+   837→**RADIUS Table Verification SQL:** None
+   838→
+   839→### T5.11 — Auto-overdue marking
+   840→**Endpoint:** `GET /api/invoices?status=OVERDUE`
+   841→**Method:** GET
+   842→**Request Body:** None
+   843→**Expected HTTP Status:** 200
+   844→**Expected Response Validation:** Past-due DRAFT/SENT invoices now have `status: "OVERDUE"`
+   845→**RADIUS Table Verification SQL:** None
+   846→
+   847→### T5.12 — Invoice number uniqueness
+   848→**Endpoint:** `POST /api/invoices` (multiple creates)
+   849→**Method:** POST
+   850→**Request Body:** Create 3 invoices
+   851→**Expected HTTP Status:** 201 for all
+   852→**Expected Response Validation:** All 3 have distinct `invoiceNumber` values
+   853→**RADIUS Table Verification SQL:**
+   854→```sql
+   855→SELECT "invoiceNumber", COUNT(*) FROM "Invoice" GROUP BY "invoiceNumber" HAVING COUNT(*) > 1;
+   856→-- Expected: 0 rows (all unique)
+   857→```
+   858→
+   859→### T5.13 — Get invoice by ID
+   860→**Endpoint:** `GET /api/invoices/<id>`
+   861→**Method:** GET
+   862→**Request Body:** None
+   863→**Expected HTTP Status:** 200
+   864→**Expected Response Validation:** Complete invoice object with subscriber, plan, line items, tax breakdown
+   865→**RADIUS Table Verification SQL:** None
+   866→
+   867→### T5.14 — Invoice export (CSV)
+   868→**Endpoint:** `GET /api/export/invoices?format=csv&status=OVERDUE`
+   869→**Method:** GET
+   870→**Request Body:** None
+   871→**Expected HTTP Status:** 200
+   872→**Expected Response Validation:** CSV with headers (Invoice#, Subscriber Name, Plan, Issue Date, Due Date, Subtotal, Tax, Total, Status, Paid Amount, Balance), Content-Type contains 'text/csv'
+   873→**RADIUS Table Verification SQL:** None
+   874→
+   875→---
+   876→
+   877→## Test Suite 6: Payment & Accounting (11 cases)
+   878→
+   879→### T6.1 — Record payment against invoice
+   880→**Endpoint:** `POST /api/payments`
+   881→**Method:** POST
+   882→**Request Body:**
+   883→```json
+   884→{
+   885→  "subscriberId": "<SUBSCRIBER_ID>",
+   886→  "invoiceId": "<INVOICE_ID>",
+   887→  "amount": 500,
+   888→  "paymentMode": "CASH",
+   889→  "notes": "Test payment"
+   890→}
+   891→```
+   892→**Expected HTTP Status:** 201
+   893→**Expected Response Validation:** Payment object with `status: "PENDING"`, `amount: 500`, `receiptNumber` generated
+   894→**RADIUS Table Verification SQL:** None
+   895→
+   896→### T6.2 — Verify payment → invoice balance updated
+   897→**Endpoint:** `POST /api/payments` with action=bulk_verify OR `PUT /api/payments/<id>`
+   898→**Method:** POST
+   899→**Request Body:**
+   900→```json
+   901→{
+   902→  "action": "verify",
+   903→  "paymentIds": ["<PAYMENT_ID>"]
+   904→}
+   905→```
+   906→**Expected HTTP Status:** 200
+   907→**Expected Response Validation:** Payment `status: "VERIFIED"`, linked invoice `paidAmount` increases, `balanceAmount` decreases
+   908→**RADIUS Table Verification SQL:**
+   909→```sql
+   910→SELECT "paidAmount", "balanceAmount", "status" FROM "Invoice" WHERE id = '<INVOICE_ID>';
+   911→-- Expected: paidAmount = 500, balanceAmount = grandTotal - 500, status = "PARTIALLY_PAID"
+   912→```
+   913→
+   914→### T6.3 — Full payment → invoice status = PAID
+   915→**Endpoint:** `POST /api/payments`
+   916→**Method:** POST
+   917→**Request Body:** Payment with `amount` equal to invoice's `balanceAmount`
+   918→**Expected HTTP Status:** 201
+   919→**Expected Response Validation:** After verification: invoice `status: "PAID"`, `paidAt` is non-null
+   920→**RADIUS Table Verification SQL:**
+   921→```sql
+   922→SELECT "status", "paidAt", "balanceAmount" FROM "Invoice" WHERE id = '<INVOICE_ID>';
+   923→-- Expected: status = 'PAID', paidAt IS NOT NULL, balanceAmount = 0
+   924→```
+   925→
+   926→### T6.4 — Partial payment → invoice status = PARTIALLY_PAID
+   927→**Endpoint:** `POST /api/payments`
+   928→**Method:** POST
+   929→**Request Body:** Payment with `amount` less than invoice's `balanceAmount`
+   930→**Expected HTTP Status:** 201
+   931→**Expected Response Validation:** After verification: invoice `status: "PARTIALLY_PAID"`, `balanceAmount > 0`
+   932→**RADIUS Table Verification SQL:**
+   933→```sql
+   934→SELECT "status", "balanceAmount" FROM "Invoice" WHERE id = '<INVOICE_ID>';
+   935→-- Expected: status = 'PARTIALLY_PAID', balanceAmount > 0
+   936→```
+   937→
+   938→### T6.5 — Overpayment protection (BUG CHECK)
+   939→**Endpoint:** `POST /api/payments`
+   940→**Method:** POST
+   941→**Request Body:**
+   942→```json
+   943→{
+   944→  "subscriberId": "<SUBSCRIBER_ID>",
+   945→  "invoiceId": "<INVOICE_ID>",
+   946→  "amount": 99999,
+   947→  "paymentMode": "CASH"
+   948→}
+   949→```
+   950→**Expected HTTP Status:** 400 (should reject)
+   951→**Expected Response Validation:** Error about payment exceeding balance
+   952→**EXPECTED BUG:** No validation exists (B5) — may accept the overpayment
+   953→**RADIUS Table Verification SQL:** None
+   954→
+   955→### T6.6 — Payment via billing endpoint (record_payment action)
+   956→**Endpoint:** `POST /api/billing`
+   957→**Method:** POST
+   958→**Request Body:**
+   959→```json
+   960→{
+   961→  "action": "record_payment",
+   962→  "subscriberId": "<SUBSCRIBER_ID>",
+   963→  "invoiceId": "<INVOICE_ID>",
+   964→  "amount": 1000,
+   965→  "paymentMode": "UPI"
+   966→}
+   967→```
+   968→**Expected HTTP Status:** 200
+   969→**Expected Response Validation:** Atomic transaction: payment created + invoice balance updated in single transaction
+   970→**RADIUS Table Verification SQL:** None
+   971→
+   972→### T6.7 — Bulk verify payments
+   973→**Endpoint:** `POST /api/payments`
+   974→**Method:** POST
+   975→**Request Body:**
+   976→```json
+   977→{
+   978→  "action": "bulk_verify",
+   979→  "paymentIds": ["<ID1>", "<ID2>", "<ID3>"]
+   980→}
+   981→```
+   982→**Expected HTTP Status:** 200
+   983→**Expected Response Validation:** All payments marked `VERIFIED`, all linked invoices updated
+   984→**RADIUS Table Verification SQL:**
+   985→```sql
+   986→SELECT "status" FROM "Payment" WHERE id IN ('<ID1>', '<ID2>', '<ID3>');
+   987→-- Expected: All rows return 'VERIFIED'
+   988→```
+   989→
+   990→### T6.8 — Bulk reject payments
+   991→**Endpoint:** `POST /api/payments`
+   992→**Method:** POST
+   993→**Request Body:**
+   994→```json
+   995→{
+   996→  "action": "bulk_reject",
+   997→  "paymentIds": ["<ID1>"]
+   998→}
+   999→```
+  1000→**Expected HTTP Status:** 200
+  1001→**Expected Response Validation:** Payments marked `FAILED`, invoice balances unchanged
+  1002→**RADIUS Table Verification SQL:**
+  1003→```sql
+  1004→SELECT "balanceAmount" FROM "Invoice" WHERE id = '<INVOICE_ID>';
+  1005→-- Expected: Same balance as before rejection (no change)
+  1006→```
+  1007→
+  1008→### T6.9 — Payment refund
+  1009→**Endpoint:** `POST /api/payments/<id>/refund`
+  1010→**Method:** POST
+  1011→**Request Body:**
+  1012→```json
+  1013→{
+  1014→  "amount": 200,
+  1015→  "reason": "Customer requested refund"
+  1016→}
+  1017→```
+  1018→**Expected HTTP Status:** 200 or 201
+  1019→**Expected Response Validation:** Refund recorded, invoice balance adjusted (increased by refund amount)
+  1020→**RADIUS Table Verification SQL:** None
+  1021→
+  1022→### T6.10 — Payment list with date range filter
+  1023→**Endpoint:** `GET /api/payments?dateFrom=2025-07-01&dateTo=2025-07-31`
+  1024→**Method:** GET
+  1025→**Request Body:** None
+  1026→**Expected HTTP Status:** 200
+  1027→**Expected Response Validation:** Array of payments within date range, ordered by `createdAt` desc
+  1028→**RADIUS Table Verification SQL:** None
+  1029→
+  1030→### T6.11 — Payment by mode (revenue by mode)
+  1031→**Endpoint:** `GET /api/payments/revenue-by-mode`
+  1032→**Method:** GET
+  1033→**Request Body:** None
+  1034→**Expected HTTP Status:** 200
+  1035→**Expected Response Validation:** Object with breakdown by mode (CASH, UPI, BANK_TRANSFER, etc.) with amounts
+  1036→**RADIUS Table Verification SQL:** None
+  1037→
+  1038→---
+  1039→
+  1040→## Test Suite 7: Policy Engine (9 cases)
+  1041→
+  1042→### T7.1 — Login restriction: all (default)
+  1043→**Endpoint:** `PUT /api/subscribers/<id>`
+  1044→**Method:** PUT
+  1045→**Request Body:** `{ "loginRestriction": "all" }`
+  1046→**Expected HTTP Status:** 200
+  1047→**Expected Response Validation:** `loginRestriction: "all"`, no RADIUS changes
+  1048→**RADIUS Table Verification SQL:** None
+  1049→
+  1050→### T7.2 — Login restriction: subnet
+  1051→**Endpoint:** `PUT /api/subscribers/<id>`
+  1052→**Method:** PUT
+  1053→**Request Body:** `{ "loginRestriction": "subnet", "loginRestrictionValue": "<AREA_ID>" }`
+  1054→**Expected HTTP Status:** 200
+  1055→**Expected Response Validation:** `internalNotes` contains `LOGIN_RESTRICTION: subnet=<areaId>`
+  1056→**RADIUS Table Verification SQL:** None (B10 — not enforced in RADIUS)
+  1057→
+  1058→### T7.3 — Login restriction: specific IP
+  1059→**Endpoint:** `PUT /api/subscribers/<id>`
+  1060→**Method:** PUT
+  1061→**Request Body:** `{ "loginRestriction": "ip", "loginRestrictionValue": "192.168.1.100" }`
+  1062→**Expected HTTP Status:** 200
+  1063→**Expected Response Validation:** `internalNotes` contains `LOGIN_RESTRICTION: ip=192.168.1.100`
+  1064→**RADIUS Table Verification SQL:** None (B10 — not enforced in RADIUS)
+  1065→
+  1066→### T7.4 — Concurrent session limit (Simultaneous-Use in radcheck)
+  1067→**Endpoint:** `POST /api/subscribers` with plan having `maxConcurrentSessions: 3`
+  1068→**Method:** POST
+  1069→**Request Body:** See T1.1
+  1070→**Expected HTTP Status:** 201
+  1071→**Expected Response Validation:** Subscriber created
+  1072→**RADIUS Table Verification SQL:**
+  1073→```sql
+  1074→SELECT value FROM radcheck WHERE username = '<username>' AND attribute = 'Simultaneous-Use';
+  1075→-- Expected: '3'
+  1076→```
+  1077→
+  1078→### T7.5 — Session timeout resolution chain
+  1079→**Endpoint:** `GET /api/session-engine/policy/<subscriberId>`
+  1080→**Method:** GET
+  1081→**Request Body:** None (subscriber has `sessionTimeout: 7200`, group has `sessionTimeout: 3600`)
+  1082→**Expected HTTP Status:** 200
+  1083→**Expected Response Validation:** `sessionTimeout: 7200` (subscriber-level takes precedence over group-level)
+  1084→**RADIUS Table Verification SQL:** None (session engine evaluates, doesn't write to RADIUS)
+  1085→
+  1086→### T7.6 — Speed limit resolution chain (Session Engine)
+  1087→**Endpoint:** `GET /api/session-engine/policy/<subscriberId>`
+  1088→**Method:** GET
+  1089→**Request Body:** None
+  1090→**Expected HTTP Status:** 200
+  1091→**Expected Response Validation:**
+  1092→- Chain: subscriber.radiusGroup → plan.group → plan.downloadSpeed → subscriber.currentSpeedDown
+  1093→- Returns resolved `speedDownKbps` and `speedUpKbps`
+  1094→**RADIUS Table Verification SQL:**
+  1095→```sql
+  1096→SELECT value FROM radreply WHERE username = '<username>' AND attribute = 'Mikrotik-Rate-Limit';
+  1097→-- Cross-check resolved speed matches RADIUS reply
+  1098→```
+  1099→
+  1100→### T7.7 — Data limit resolution chain
+  1101→**Endpoint:** `GET /api/session-engine/policy/<subscriberId>`
+  1102→**Method:** GET
+  1103→**Request Body:** None
+  1104→**Expected HTTP Status:** 200
+  1105→**Expected Response Validation:**
+  1106→- Chain: subscriber.radiusGroup.dataLimit → plan.group.dataLimit → plan.dataLimitGb
+  1107→- Returns resolved `dataLimitMb`
+  1108→**RADIUS Table Verification SQL:**
+  1109→```sql
+  1110→SELECT value FROM radgroupreply WHERE groupname = '<group>' AND attribute = 'ChilliSpot-Max-Total-Octets';
+  1111→-- Cross-check with resolved data limit
+  1112→```
+  1113→
+  1114→### T7.8 — Policy enforcement (session engine)
+  1115→**Endpoint:** `POST /api/session-engine?action=policy-enforce`
+  1116→**Method:** POST
+  1117→**Request Body:**
+  1118→```json
+  1119→{
+  1120→  "subscriberId": "<SUBSCRIBER_ID>",
+  1121→  "sessionId": "<SESSION_ID>",
+  1122→  "enforcement": { "speedDownKbps": 10000, "speedUpKbps": 5000 }
+  1123→}
+  1124→```
+  1125→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1126→**Expected Response Validation:** Policy applied to session
+  1127→**RADIUS Table Verification SQL:** None (session engine handles CoA directly)
+  1128→
+  1129→### T7.9 — Speed limit change via subscriber update
+  1130→**Endpoint:** `PUT /api/subscribers/<id>`
+  1131→**Method:** PUT
+  1132→**Request Body:** `{ "currentSpeedDown": 20000, "currentSpeedUp": 10000 }`
+  1133→**Expected HTTP Status:** 200
+  1134→**Expected Response Validation:** Speed values updated on subscriber
+  1135→**RADIUS Table Verification SQL:**
+  1136→```sql
+  1137→SELECT value FROM radreply WHERE username = '<username>' AND attribute = 'Mikrotik-Rate-Limit';
+  1138→-- Expected: May or may not update (depends on implementation — typically requires explicit RADIUS sync)
+  1139→```
+  1140→
+  1141→---
+  1142→
+  1143→## Test Suite 8: Session Engine (9 cases)
+  1144→
+  1145→### T8.1 — Session auth via session engine
+  1146→**Endpoint:** `POST /api/session-engine?action=auth`
+  1147→**Method:** POST
+  1148→**Request Body:**
+  1149→```json
+  1150→{
+  1151→  "username": "<serviceUsername>",
+  1152→  "password": "<servicePassword>",
+  1153→  "nasId": "nas01",
+  1154→  "clientIp": "10.0.0.55",
+  1155→  "macAddress": "AA:BB:CC:DD:EE:FF"
+  1156→}
+  1157→```
+  1158→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1159→**Expected Response Validation:** Session created with `sessionId`, `status: "authenticated"`, subscriber `lastAuthAt` updated
+  1160→**RADIUS Table Verification SQL:**
+  1161→```sql
+  1162→SELECT "lastAuthAt", "lastAuthResult" FROM "Subscriber" WHERE "serviceUsername" = '<username>';
+  1163→-- Expected: lastAuthAt IS NOT NULL, lastAuthResult = 'ACCEPT' or similar
+  1164→```
+  1165→
+  1166→### T8.2 — Session policy evaluation
+  1167→**Endpoint:** `GET /api/session-engine/policy/<subscriberId>`
+  1168→**Method:** GET
+  1169→**Request Body:** None
+  1170→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1171→**Expected Response Validation:** Returns object with:
+  1172→- `speedDownKbps`, `speedUpKbps` (resolved from plan/group/subscriber)
+  1173→- `dataLimitMb` (resolved from plan/group)
+  1174→- `sessionTimeout` (resolved from subscriber/group)
+  1175→- `simultaneousUse` (from plan)
+  1176→**RADIUS Table Verification SQL:** None (read-only evaluation)
+  1177→
+  1178→### T8.3 — Session disconnect
+  1179→**Endpoint:** `POST /api/session-engine/sessions/<id>?action=disconnect`
+  1180→**Method:** POST
+  1181→**Request Body:** `{ "reason": "admin_disconnect" }`
+  1182→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1183→**Expected Response Validation:** Session `status: "disconnected"`, `stopTime` set
+  1184→**RADIUS Table Verification SQL:** None (session engine manages session state)
+  1185→
+  1186→### T8.4 — CoA (Change of Authorization)
+  1187→**Endpoint:** `POST /api/session-engine/sessions/<id>?action=coa`
+  1188→**Method:** POST
+  1189→**Request Body:**
+  1190→```json
+  1191→{
+  1192→  "attributes": {
+  1193→    "Mikrotik-Rate-Limit": "100M/50M"
+  1194→  }
+  1195→}
+  1196→```
+  1197→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1198→**Expected Response Validation:** CoA sent to NAS, session speed updated in real-time
+  1199→**RADIUS Table Verification SQL:** None (CoA is a live RADIUS protocol operation)
+  1200→
+  1201→### T8.5 — Session accounting update
+  1202→**Endpoint:** `POST /api/session-engine/sessions/<id>?action=accounting`
+  1203→**Method:** POST
+  1204→**Request Body:**
+  1205→```json
+  1206→{
+  1207→  "inputOctets": 1073741824,
+  1208→  "outputOctets": 536870912,
+  1209→  "sessionTime": 3600
+  1210→}
+  1211→```
+  1212→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1213→**Expected Response Validation:** Accounting data recorded for the session
+  1214→**RADIUS Table Verification SQL:** None
+  1215→
+  1216→### T8.6 — Session engine stats overview
+  1217→**Endpoint:** `GET /api/session-engine?action=stats`
+  1218→**Method:** GET
+  1219→**Request Body:** None
+  1220→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1221→**Expected Response Validation:** Object with `totalSessions`, `activeSessions`, `totalBandwidth` stats
+  1222→**RADIUS Table Verification SQL:** None
+  1223→
+  1224→### T8.7 — Session engine bandwidth stats
+  1225→**Endpoint:** `GET /api/session-engine?action=bandwidth`
+  1226→**Method:** GET
+  1227→**Request Body:** None
+  1228→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1229→**Expected Response Validation:** Bandwidth utilization data per subscriber/NAS
+  1230→**RADIUS Table Verification SQL:** None
+  1231→
+  1232→### T8.8 — Session engine events log
+  1233→**Endpoint:** `GET /api/session-engine?action=events`
+  1234→**Method:** GET
+  1235→**Request Body:** None
+  1236→**Expected HTTP Status:** 200 (or 503 if session engine not running)
+  1237→**Expected Response Validation:** Array of session events (auth, disconnect, CoA)
+  1238→**RADIUS Table Verification SQL:** None
+  1239→
+  1240→### T8.9 — Session engine unavailable (503)
+  1241→**Endpoint:** Any session-engine endpoint (when service is down)
+  1242→**Method:** GET/POST
+  1243→**Request Body:** N/A
+  1244→**Expected HTTP Status:** 503
+  1245→**Expected Response Validation:** `{ "error": "Session engine service unavailable" }`
+  1246→**RADIUS Table Verification SQL:** None
+  1247→
+  1248→---
+  1249→
+  1250→## Test Suite 9: Subscriber Status Lifecycle (8 cases)
+  1251→
+  1252→### T9.1 — ACTIVE → SUSPENDED → RADIUS check
+  1253→**Endpoint:** `PUT /api/subscribers/<id>` (status change)
+  1254→**Method:** PUT
+  1255→**Request Body:** `{ "status": "SUSPENDED" }`
+  1256→**Expected HTTP Status:** 200
+  1257→**Expected Response Validation:** `status: "SUSPENDED"`
+  1258→**RADIUS Table Verification SQL:**
+  1259→```sql
+  1260→SELECT * FROM radcheck WHERE username = '<username>' AND attribute = 'Auth-Type' AND value = 'Reject';
+  1261→-- EXPECTED BUG (B12): No row added — suspended users can still authenticate via RADIUS
+  1262→```
+  1263→
+  1264→### T9.2 — SUSPENDED subscriber cannot self-care login
+  1265→**Endpoint:** `POST /api/subscriber-auth/login`
+  1266→**Method:** POST
+  1267→**Request Body:** `{ "serviceUsername": "<suspended_user>", "password": "<password>" }`
+  1268→**Expected HTTP Status:** 403
+  1269→**Expected Response Validation:** `{ "success": false, "error": "Account is suspended..." }`
+  1270→**RADIUS Table Verification SQL:** None (self-care login blocked at application level)
+  1271→
+  1272→### T9.3 — PENDING_ACTIVATION subscriber cannot self-care login
+  1273→**Endpoint:** `POST /api/subscriber-auth/login`
+  1274→**Method:** POST
+  1275→**Request Body:** `{ "serviceUsername": "<pending_user>", "password": "<password>" }`
+  1276→**Expected HTTP Status:** 403
+  1277→**Expected Response Validation:** `{ "success": false, "error": "Account is pending activation..." }`
+  1278→**RADIUS Table Verification SQL:** None
+  1279→
+  1280→### T9.4 — DISCONNECTED subscriber cannot self-care login
+  1281→**Endpoint:** `POST /api/subscriber-auth/login`
+  1282→**Method:** POST
+  1283→**Request Body:** `{ "serviceUsername": "<disconnected_user>", "password": "<password>" }`
+  1284→**Expected HTTP Status:** 403
+  1285→**Expected Response Validation:** `{ "success": false, "error": "Account has been disconnected..." }`
+  1286→**RADIUS Table Verification SQL:** None
+  1287→
+  1288→### T9.5 — Wrong password → 401
+  1289→**Endpoint:** `POST /api/subscriber-auth/login`
+  1290→**Method:** POST
+  1291→**Request Body:** `{ "serviceUsername": "testuser1", "password": "WrongPassword" }`
+  1292→**Expected HTTP Status:** 401
+  1293→**Expected Response Validation:** `{ "success": false, "error": "Invalid service username or password" }`
+  1294→**RADIUS Table Verification SQL:** None
+  1295→
+  1296→### T9.6 — Password migration: plain text → bcrypt on login
+  1297→**Endpoint:** `POST /api/subscriber-auth/login`
+  1298→**Method:** POST
+  1299→**Request Body:** `{ "serviceUsername": "<plaintext_user>", "password": "<correct_password>" }`
+  1300→**Expected HTTP Status:** 200
+  1301→**Expected Response Validation:** Login succeeds, session cookie set
+  1302→**RADIUS Table Verification SQL:**
+  1303→```sql
+  1304→SELECT "servicePassword" FROM "Subscriber" WHERE "serviceUsername" = '<plaintext_user>';
+  1305→-- Expected: Password now starts with '$2' (bcrypt hash, migrated from plain text)
+  1306→```
+  1307→
+  1308→### T9.7 — SUSPENDED → ACTIVE reactivation
+  1309→**Endpoint:** `PUT /api/subscribers/<id>`
+  1310→**Method:** PUT
+  1311→**Request Body:** `{ "status": "ACTIVE" }`
+  1312→**Expected HTTP Status:** 200
+  1313→**Expected Response Validation:** `status: "ACTIVE"`
+  1314→**RADIUS Table Verification SQL:**
+  1315→```sql
+  1316→SELECT COUNT(*) FROM radcheck WHERE username = '<username>' AND attribute = 'Auth-Type' AND value = 'Reject';
+  1317→-- EXPECTED BUG: Reject row not removed on reactivation (B12)
+  1318→```
+  1319→
+  1320→### T9.8 — Rate limiting on self-care login
+  1321→**Endpoint:** `POST /api/subscriber-auth/login` (11 rapid requests)
+  1322→**Method:** POST
+  1323→**Request Body:** `{ "serviceUsername": "testuser1", "password": "wrong" }` × 11
+  1324→**Expected HTTP Status:** First 10 → 401, 11th → 429
+  1325→**Expected Response Validation:** 429 response includes `Retry-After` header
+  1326→**RADIUS Table Verification SQL:** None
+  1327→
+  1328→---
+  1329→
+  1330→## Test Suite 10: AAA / RADIUS Groups (10 cases)
+  1331→
+  1332→### T10.1 — Create group with check+reply attributes
+  1333→**Endpoint:** `POST /api/aaa/groups`
+  1334→**Method:** POST
+  1335→**Request Body:**
+  1336→```json
+  1337→{
+  1338→  "name": "TestGroup-100M",
+  1339→  "description": "100 Mbps test group",
+  1340→  "checkAttributes": [
+  1341→    { "attribute": "Auth-Type", "op": "=:", "value": "Accept" }
+  1342→  ],
+  1343→  "replyAttributes": [
+  1344→    { "attribute": "Mikrotik-Rate-Limit", "op": "=:", "value": "100M/50M" },
+  1345→    { "attribute": "ChilliSpot-Max-Total-Octets", "op": "=:", "value": "102400" }
+  1346→  ]
+  1347→}
+  1348→```
+  1349→**Expected HTTP Status:** 201
+  1350→**Expected Response Validation:** Group created with ID, name, check/reply attributes
+  1351→**RADIUS Table Verification SQL:**
+  1352→```sql
+  1353→SELECT * FROM radgroupcheck WHERE groupname = 'TestGroup-100M';
+  1354→-- Expected: 1 row (Auth-Type = Accept)
+  1355→
+  1356→SELECT * FROM radgroupreply WHERE groupname = 'TestGroup-100M';
+  1357→-- Expected: 2 rows (Mikrotik-Rate-Limit, ChilliSpot-Max-Total-Octets)
+  1358→```
+  1359→
+  1360→### T10.2 — Add check attribute to existing group
+  1361→**Endpoint:** `PUT /api/aaa/groups`
+  1362→**Method:** PUT
+  1363→**Request Body:**
+  1364→```json
+  1365→{
+  1366→  "action": "add-check",
+  1367→  "groupname": "TestGroup-100M",
+  1368→  "attribute": "Simultaneous-Use",
+  1369→  "op": ":=",
+  1370→  "value": "2"
+  1371→}
+  1372→```
+  1373→**Expected HTTP Status:** 200
+  1374→**Expected Response Validation:** Attribute added successfully
+  1375→**RADIUS Table Verification SQL:**
+  1376→```sql
+  1377→SELECT * FROM radgroupcheck WHERE groupname = 'TestGroup-100M' AND attribute = 'Simultaneous-Use';
+  1378→-- Expected: 1 row with value = '2'
+  1379→```
+  1380→
+  1381→### T10.3 — Remove reply attribute
+  1382→**Endpoint:** `PUT /api/aaa/groups`
+  1383→**Method:** PUT
+  1384→**Request Body:**
+  1385→```json
+  1386→{
+  1387→  "action": "remove-reply",
+  1388→  "groupname": "TestGroup-100M",
+  1389→  "attribute": "ChilliSpot-Max-Total-Octets"
+  1390→}
+  1391→```
+  1392→**Expected HTTP Status:** 200
+  1393→**Expected Response Validation:** Attribute removed successfully
+  1394→**RADIUS Table Verification SQL:**
+  1395→```sql
+  1396→SELECT COUNT(*) FROM radgroupreply WHERE groupname = 'TestGroup-100M' AND attribute = 'ChilliSpot-Max-Total-Octets';
+  1397→-- Expected: 0
+  1398→```
+  1399→
+  1400→### T10.4 — Update attribute value
+  1401→**Endpoint:** `PUT /api/aaa/groups`
+  1402→**Method:** PUT
+  1403→**Request Body:**
+  1404→```json
+  1405→{
+  1406→  "action": "update-reply",
+  1407→  "groupname": "TestGroup-100M",
+  1408→  "attribute": "Mikrotik-Rate-Limit",
+  1409→  "newValue": "200M/100M"
+  1410→}
+  1411→```
+  1412→**Expected HTTP Status:** 200
+  1413→**Expected Response Validation:** Attribute value updated
+  1414→**RADIUS Table Verification SQL:**
+  1415→```sql
+  1416→SELECT value FROM radgroupreply WHERE groupname = 'TestGroup-100M' AND attribute = 'Mikrotik-Rate-Limit';
+  1417→-- Expected: '200M/100M'
+  1418→```
+  1419→
+  1420→### T10.5 — Rename group (cascades to radgroupcheck/radgroupreply/radusergroup)
+  1421→**Endpoint:** `PUT /api/aaa/groups/<groupname>`
+  1422→**Method:** PUT
+  1423→**Request Body:** `{ "name": "TestGroup-200M-Renamed" }`
+  1424→**Expected HTTP Status:** 200
+  1425→**Expected Response Validation:** Group renamed
+  1426→**RADIUS Table Verification SQL:**
+  1427→```sql
+  1428→SELECT COUNT(*) FROM radgroupcheck WHERE groupname = 'TestGroup-200M-Renamed';
+  1429→SELECT COUNT(*) FROM radgroupreply WHERE groupname = 'TestGroup-200M-Renamed';
+  1430→SELECT COUNT(*) FROM radusergroup WHERE groupname = 'TestGroup-200M-Renamed';
+  1431→-- Expected: All return > 0 (cascaded rename)
+  1432→
+  1433→SELECT COUNT(*) FROM radgroupcheck WHERE groupname = 'TestGroup-100M';
+  1434→-- Expected: 0 (old name gone)
+  1435→```
+  1436→
+  1437→### T10.6 — Duplicate groupname rejected
+  1438→**Endpoint:** `POST /api/aaa/groups`
+  1439→**Method:** POST
+  1440→**Request Body:** `{ "name": "TestGroup-100M", "replyAttributes": [] }` (name already exists)
+  1441→**Expected HTTP Status:** 409
+  1442→**Expected Response Validation:** Error message about group name already exists
+  1443→**RADIUS Table Verification SQL:** None
+  1444→
+  1445→### T10.7 — Invalid operator rejected
+  1446→**Endpoint:** `POST /api/aaa/groups`
+  1447→**Method:** POST
+  1448→**Request Body:**
+  1449→```json
+  1450→{
+  1451→  "name": "BadOpGroup",
+  1452→  "checkAttributes": [
+  1453→    { "attribute": "Test-Attr", "op": "INVALID_OP", "value": "test" }
+  1454→  ]
+  1455→}
+  1456→```
+  1457→**Expected HTTP Status:** 400
+  1458→**Expected Response Validation:** Error about invalid RADIUS operator
+  1459→**RADIUS Table Verification SQL:**
+  1460→```sql
+  1461→SELECT COUNT(*) FROM radgroupcheck WHERE groupname = 'BadOpGroup';
+  1462→-- Expected: 0 (rejected before write)
+  1463→```
+  1464→
+  1465→### T10.8 — Delete group (with cascade cleanup)
+  1466→**Endpoint:** `DELETE /api/aaa/groups/TestGroup-200M-Renamed`
+  1467→**Method:** DELETE
+  1468→**Request Body:** None
+  1469→**Expected HTTP Status:** 200
+  1470→**Expected Response Validation:** Group deleted, all RADIUS tables cleaned
+  1471→**RADIUS Table Verification SQL:**
+  1472→```sql
+  1473→SELECT COUNT(*) FROM radgroupcheck WHERE groupname = 'TestGroup-200M-Renamed';
+  1474→SELECT COUNT(*) FROM radgroupreply WHERE groupname = 'TestGroup-200M-Renamed';
+  1475→-- Expected: Both return 0
+  1476→```
+  1477→
+  1478→### T10.9 — List all AAA groups with attributes
+  1479→**Endpoint:** `GET /api/aaa/groups`
+  1480→**Method:** GET
+  1481→**Request Body:** None
+  1482→**Expected HTTP Status:** 200
+  1483→**Expected Response Validation:** Array of groups, each with `checkAttributes` and `replyAttributes` arrays
+  1484→**RADIUS Table Verification SQL:** None (read-only)
+  1485→
+  1486→### T10.10 — Get group by name with assigned users
+  1487→**Endpoint:** `GET /api/aaa/groups/<groupname>`
+  1488→**Method:** GET
+  1489→**Request Body:** None
+  1490→**Expected HTTP Status:** 200
+  1491→**Expected Response Validation:** Group object with `users` array listing assigned subscribers
+  1492→**RADIUS Table Verification SQL:**
+  1493→```sql
+  1494→SELECT * FROM radusergroup WHERE groupname = '<groupname>';
+  1495→-- Cross-check user count matches API response
+  1496→```
+  1497→
+  1498→---
+  1499→
+  1500→## Test Suite 11: Self-Care Portal (10 cases)
+  1501→
+  1502→### T11.1 — Subscriber login with correct credentials
+  1503→**Endpoint:** `POST /api/subscriber-auth/login`
+  1504→**Method:** POST
+  1505→**Request Body:** `{ "serviceUsername": "testuser1", "password": "TestPass@123" }`
+  1506→**Expected HTTP Status:** 200
+  1507→**Expected Response Validation:** `success: true`, `subscriber` object with plan details, Set-Cookie header present
+  1508→**RADIUS Table Verification SQL:** None
+  1509→
+  1510→### T11.2 — View own usage (data usage history)
+  1511→**Endpoint:** `GET /api/subscriber-auth/usage?days=30`
+  1512→**Method:** GET
+  1513→**Request Body:** None (subscriber cookie required)
+  1514→**Expected HTTP Status:** 200
+  1515→**Expected Response Validation:** Object with `data.currentUsed`, `data.dataLimit`, `data.percentage`, `data.dailyUsage` array, `summary.totalDownload`, `summary.totalUpload`, `weeklyUsage` array
+  1516→**RADIUS Table Verification SQL:** None
+  1517→
+  1518→### T11.3 — View own invoices
+  1519→**Endpoint:** `GET /api/subscriber-auth/invoices`
+  1520→**Method:** GET
+  1521→**Request Body:** None (subscriber cookie required)
+  1522→**Expected HTTP Status:** 200
+  1523→**Expected Response Validation:** Array of invoices for this subscriber only, with `invoiceNumber`, `grandTotal`, `status`, `paidAmount`, `balanceAmount`
+  1524→**RADIUS Table Verification SQL:** None
+  1525→
+  1526→### T11.4 — View plan comparison
+  1527→**Endpoint:** `GET /api/subscriber-auth/plans`
+  1528→**Method:** GET
+  1529→**Request Body:** None (subscriber cookie required)
+  1530→**Expected HTTP Status:** 200
+  1531→**Expected Response Validation:** Array of active plans with `name`, `downloadSpeed`, `uploadSpeed`, `priceMonthly`, `dataLimitGb`, `currentPlan` flag
+  1532→**RADIUS Table Verification SQL:** None
+  1533→
+  1534→### T11.5 — View own profile
+  1535→**Endpoint:** `GET /api/subscriber-auth/me`
+  1536→**Method:** GET
+  1537→**Request Body:** None (subscriber cookie required)
+  1538→**Expected HTTP Status:** 200
+  1539→**Expected Response Validation:** Subscriber profile with name, email, phone, address, plan, connectionType, IP, MAC, status
+  1540→**RADIUS Table Verification SQL:** None
+  1541→
+  1542→### T11.6 — Change own password
+  1543→**Endpoint:** `POST /api/subscriber-auth/password`
+  1544→**Method:** POST
+  1545→**Request Body:**
+  1546→```json
+  1547→{
+  1548→  "currentPassword": "TestPass@123",
+  1549→  "newPassword": "NewSecure@456"
+  1550→}
+  1551→```
+  1552→**Expected HTTP Status:** 200
+  1553→**Expected Response Validation:** `success: true`
+  1554→**RADIUS Table Verification SQL:**
+  1555→```sql
+  1556→SELECT "servicePassword" FROM "Subscriber" WHERE "serviceUsername" = 'testuser1';
+  1557→-- Expected: Password starts with '$2' (bcrypt hash)
+  1558→```
+  1559→
+  1560→### T11.7 — View own payments
+  1561→**Endpoint:** `GET /api/subscriber-auth/payments`
+  1562→**Method:** GET
+  1563→**Request Body:** None (subscriber cookie required)
+  1564→**Expected HTTP Status:** 200
+  1565→**Expected Response Validation:** Array of payments for this subscriber only
+  1566→**RADIUS Table Verification SQL:** None
+  1567→
+  1568→### T11.8 — View service status
+  1569→**Endpoint:** `GET /api/subscriber-auth/service-status`
+  1570→**Method:** GET
+  1571→**Request Body:** None (subscriber cookie required)
+  1572→**Expected HTTP Status:** 200
+  1573→**Expected Response Validation:** Service status with `status`, `plan`, `ipAddress`, `macAddress`, `lastAuthAt`
+  1574→**RADIUS Table Verification SQL:** None
+  1575→
+  1576→### T11.9 — Self-care logout
+  1577→**Endpoint:** `POST /api/subscriber-auth/logout`
+  1578→**Method:** POST
+  1579→**Request Body:** None
+  1580→**Expected HTTP Status:** 200
+  1581→**Expected Response Validation:** `success: true`, subscriber session cookie cleared
+  1582→**RADIUS Table Verification SQL:** None
+  1583→
+  1584→### T11.10 — Unauthorized self-care access (no cookie)
+  1585→**Endpoint:** `GET /api/subscriber-auth/me`
+  1586→**Method:** GET
+  1587→**Request Body:** None (no subscriber cookie)
+  1588→**Expected HTTP Status:** 401
+  1589→**Expected Response Validation:** `{ "success": false, "error": "Unauthorized" }`
+  1590→**RADIUS Table Verification SQL:** None
+  1591→
+  1592→---
+  1593→
+  1594→## Test Suite 12: Edge Cases & Security (9 cases)
+  1595→
+  1596→### T12.1 — SQL injection in serviceUsername
+  1597→**Endpoint:** `POST /api/subscribers`
+  1598→**Method:** POST
+  1599→**Request Body:** `{ "name": "SQL Injection", "phone": "9333444555", "serviceUsername": "'; DROP TABLE radcheck;--", "servicePassword": "test" }`
+  1600→**Expected HTTP Status:** 400 (rejected by validation, not by SQL error)
+  1601→**Expected Response Validation:** Validation error (special characters rejected in username)
+  1602→**RADIUS Table Verification SQL:**
+  1603→```sql
+  1604→SELECT COUNT(*) FROM radcheck;
+  1605→-- Expected: Same count as before (no data loss)
+  1606→```
+  1607→
+  1608→### T12.2 — No-auth access rejected (admin API)
+  1609→**Endpoint:** `GET /api/subscribers` (no Authorization header)
+  1610→**Method:** GET
+  1611→**Request Body:** None
+  1612→**Expected HTTP Status:** 401
+  1613→**Expected Response Validation:** `{ "error": "Authentication required" }` or similar
+  1614→**RADIUS Table Verification SQL:** None
+  1615→
+  1616→### T12.3 — Subscriber cannot access admin APIs
+  1617→**Endpoint:** `GET /api/subscribers` (with subscriber session cookie, not admin token)
+  1618→**Method:** GET
+  1619→**Request Body:** None
+  1620→**Expected HTTP Status:** 401
+  1621→**Expected Response Validation:** Admin endpoints reject subscriber session tokens
+  1622→**RADIUS Table Verification SQL:** None
+  1623→
+  1624→### T12.4 — Invoice number uniqueness (concurrent)
+  1625→**Endpoint:** `POST /api/invoices` (multiple concurrent requests)
+  1626→**Method:** POST
+  1627→**Request Body:** Same invoice data, 3 parallel requests
+  1628→**Expected HTTP Status:** 201 for all
+  1629→**Expected Response Validation:** All 3 invoices have unique `invoiceNumber` values (no race condition)
+  1630→**RADIUS Table Verification SQL:**
+  1631→```sql
+  1632→SELECT "invoiceNumber", COUNT(*) FROM "Invoice" GROUP BY "invoiceNumber" HAVING COUNT(*) > 1;
+  1633→-- Expected: 0 rows
+  1634→```
+  1635→
+  1636→### T12.5 — Empty body / missing required fields
+  1637→**Endpoint:** `POST /api/subscribers`
+  1638→**Method:** POST
+  1639→**Request Body:** `{}`
+  1640→**Expected HTTP Status:** 400
+  1641→**Expected Response Validation:** Validation error listing missing required fields
+  1642→**RADIUS Table Verification SQL:** None
+  1643→
+  1644→### T12.6 — Invalid UUID in path parameter
+  1645→**Endpoint:** `GET /api/subscribers/not-a-valid-uuid`
+  1646→**Method:** GET
+  1647→**Request Body:** None
+  1648→**Expected HTTP Status:** 400 or 404
+  1649→**Expected Response Validation:** Error about invalid ID format or subscriber not found
+  1650→**RADIUS Table Verification SQL:** None
+  1651→
+  1652→### T12.7 — XSS in subscriber name
+  1653→**Endpoint:** `POST /api/subscribers`
+  1654→**Method:** POST
+  1655→**Request Body:** `{ "name": "<script>alert('xss')</script>", "phone": "9555666777", "serviceUsername": "xssuser1" }`
+  1656→**Expected HTTP Status:** 201 (accepted but sanitized) or 400 (rejected)
+  1657→**Expected Response Validation:** Name should be stored escaped or returned as plain text (no script execution)
+  1658→**RADIUS Table Verification SQL:**
+  1659→```sql
+  1660→SELECT name FROM "Subscriber" WHERE "serviceUsername" = 'xssuser1';
+  1661→-- Expected: Name stored, but XSS-neutralized on read
+  1662→```
+  1663→
+  1664→### T12.8 — Very long input strings
+  1665→**Endpoint:** `POST /api/subscribers`
+  1666→**Method:** POST
+  1667→**Request Body:** `{ "name": "A" * 10000, "phone": "9666777888", "serviceUsername": "longuser1" }`
+  1668→**Expected HTTP Status:** 400 (name too long) or 201 (truncated)
+  1669→**Expected Response Validation:** Should not cause 500 internal error
+  1670→**RADIUS Table Verification SQL:** None
+  1671→
+  1672→### T12.9 — Expired/invalid JWT token
+  1673→**Endpoint:** `GET /api/subscribers` (with expired or malformed token)
+  1674→**Method:** GET
+  1675→**Request Body:** None
+  1676→**Expected HTTP Status:** 401
+  1677→**Expected Response Validation:** `{ "error": "Invalid or expired token" }` or similar
+  1678→**RADIUS Table Verification SQL:** None
+  1679→
+  1680→---
+  1681→
+  1682→## Test Suite 13: Time Access Policies (NEW — 10 cases)
+  1683→
+  1684→### T13.1 — Create time access policy (ALLOW)
+  1685→**Endpoint:** `POST /api/time-access-policies`
+  1686→**Method:** POST
+  1687→**Request Body:**
+  1688→```json
+  1689→{
+  1690→  "action": "create-policy",
+  1691→  "name": "Business Hours Only",
+  1692→  "description": "Allow access during business hours Mon-Fri",
+  1693→  "daysOfWeek": [1, 2, 3, 4, 5],
+  1694→  "startTime": "09:00",
+  1695→  "endTime": "18:00",
+  1696→  "action": "ALLOW",
+  1697→  "enabled": true
+  1698→}
+  1699→```
+  1700→**Expected HTTP Status:** 200 or 201
+  1701→**Expected Response Validation:** Policy object with `id`, `name: "Business Hours Only"`, `daysOfWeek: [1,2,3,4,5]`, `action: "ALLOW"`
+  1702→**RADIUS Table Verification SQL:**
+  1703→```sql
+  1704→SELECT * FROM "TimeAccessPolicy" WHERE name = 'Business Hours Only';
+  1705→-- Expected: 1 row with enabled = true
+  1706→```
+  1707→
+  1708→### T13.2 — Create time access policy (BLOCK)
+  1709→**Endpoint:** `POST /api/time-access-policies`
+  1710→**Method:** POST
+  1711→**Request Body:**
+  1712→```json
+  1713→{
+  1714→  "action": "create-policy",
+  1715→  "name": "Night Block",
+  1716→  "description": "Block access 11pm-6am",
+  1717→  "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],
+  1718→  "startTime": "23:00",
+  1719→  "endTime": "06:00",
+  1720→  "action": "BLOCK",
+  1721→  "enabled": true
+  1722→}
+  1723→```
+  1724→**Expected HTTP Status:** 200 or 201
+  1725→**Expected Response Validation:** Policy with `action: "BLOCK"`, overnight schedule (startTime > endTime)
+  1726→**RADIUS Table Verification SQL:** None (application-level policy, not RADIUS)
+  1727→
+  1728→### T13.3 — Create time access policy (RATE_LIMIT with speed override)
+  1729→**Endpoint:** `POST /api/time-access-policies`
+  1730→**Method:** POST
+  1731→**Request Body:**
+  1732→```json
+  1733→{
+  1734→  "action": "create-policy",
+  1735→  "name": "Off-Peak Throttle",
+  1736→  "description": "Throttle to 10M/5M during off-peak",
+  1737→  "daysOfWeek": [0, 6],
+  1738→  "startTime": "00:00",
+  1739→  "endTime": "08:00",
+  1740→  "action": "RATE_LIMIT",
+  1741→  "speedDownKbps": 10240,
+  1742→  "speedUpKbps": 5120,
+  1743→  "enabled": true
+  1744→}
+  1745→```
+  1746→**Expected HTTP Status:** 200 or 201
+  1747→**Expected Response Validation:** Policy with `action: "RATE_LIMIT"`, `speedDownKbps: 10240`, `speedUpKbps: 5120`
+  1748→**RADIUS Table Verification SQL:** None
+  1749→
+  1750→### T13.4 — Duplicate policy name rejected
+  1751→**Endpoint:** `POST /api/time-access-policies`
+  1752→**Method:** POST
+  1753→**Request Body:** `{ "action": "create-policy", "name": "Business Hours Only" }` (duplicate name)
+  1754→**Expected HTTP Status:** 409
+  1755→**Expected Response Validation:** Error message about policy name already exists
+  1756→**RADIUS Table Verification SQL:** None
+  1757→
+  1758→### T13.5 — Assign policy to subscriber
+  1759→**Endpoint:** `POST /api/time-access-policies`
+  1760→**Method:** POST
+  1761→**Request Body:**
+  1762→```json
+  1763→{
+  1764→  "action": "assign",
+  1765→  "subscriberId": "<SUBSCRIBER_ID>",
+  1766→  "timeAccessPolicyId": "<POLICY_ID>",
+  1767→  "priority": 10,
+  1768→  "enabled": true
+  1769→}
+  1770→```
+  1771→**Expected HTTP Status:** 200
+  1772→**Expected Response Validation:** Assignment created with `subscriberId`, `timeAccessPolicyId`, `priority: 10`
+  1773→**RADIUS Table Verification SQL:** None
+  1774→
+  1775→### T13.6 — Duplicate assignment rejected
+  1776→**Endpoint:** `POST /api/time-access-policies`
+  1777→**Method:** POST
+  1778→**Request Body:** Same as T13.5 (same subscriber + policy combination)
+  1779→**Expected HTTP Status:** 409
+  1780→**Expected Response Validation:** Error message about policy already assigned
+  1781→**RADIUS Table Verification SQL:** None
+  1782→
+  1783→### T13.7 — Check subscriber access (current time matches ALLOW policy)
+  1784→**Endpoint:** `GET /api/time-access-policies?action=check&subscriberId=<SUBSCRIBER_ID>`
+  1785→**Method:** GET
+  1786→**Request Body:** None
+  1787→**Expected HTTP Status:** 200
+  1788→**Expected Response Validation:**
+  1789→- `allowed: true` (if current time/day matches an ALLOW policy)
+  1790→- `matchedPolicy: "Business Hours Only"` (or null if no match)
+  1791→- `totalPolicies: 1` (number of active assigned policies)
+  1792→**RADIUS Table Verification SQL:** None
+  1793→
+  1794→### T13.8 — Check subscriber access (current time matches BLOCK policy)
+  1795→**Endpoint:** `GET /api/time-access-policies?action=check&subscriberId=<SUBSCRIBER_ID>`
+  1796→**Method:** GET
+  1797→**Request Body:** None
+  1798→**Expected HTTP Status:** 200
+  1799→**Expected Response Validation:**
+  1800→- `allowed: false` (if current time matches a BLOCK policy)
+  1801→- `action: "BLOCK"`
+  1802→- `matchedPolicy: "Night Block"`
+  1803→**RADIUS Table Verification SQL:** None
+  1804→
+  1805→### T13.9 — Unassign policy from subscriber
+  1806→**Endpoint:** `POST /api/time-access-policies`
+  1807→**Method:** POST
+  1808→**Request Body:**
+  1809→```json
+  1810→{
+  1811→  "action": "unassign",
+  1812→  "subscriberId": "<SUBSCRIBER_ID>",
+  1813→  "timeAccessPolicyId": "<POLICY_ID>"
+  1814→}
+  1815→```
+  1816→**Expected HTTP Status:** 200
+  1817→**Expected Response Validation:** `success: true`, `message: "Policy unassigned from subscriber"`
+  1818→**RADIUS Table Verification SQL:** None
+  1819→
+  1820→### T13.10 — Update and delete policy
+  1821→**Endpoint:** `POST /api/time-access-policies`
+  1822→**Method:** POST
+  1823→**Request Body (update):**
+  1824→```json
+  1825→{
+  1826→  "action": "update-policy",
+  1827→  "id": "<POLICY_ID>",
+  1828→  "startTime": "10:00",
+  1829→  "endTime": "19:00"
+  1830→}
+  1831→```
+  1832→**Expected HTTP Status:** 200
+  1833→**Expected Response Validation:** Updated policy with new time range
+  1834→
+  1835→**Request Body (delete):** `{ "action": "delete-policy", "id": "<POLICY_ID>" }`
+  1836→**Expected HTTP Status:** 200
+  1837→**Expected Response Validation:** `success: true`
+  1838→**RADIUS Table Verification SQL:**
+  1839→```sql
+  1840→SELECT COUNT(*) FROM "TimeAccessPolicy" WHERE id = '<POLICY_ID>';
+  1841→-- Expected: 0 (deleted)
+  1842→
+  1843→SELECT COUNT(*) FROM "SubscriberTimeAccess" WHERE "timeAccessPolicyId" = '<POLICY_ID>';
+  1844→-- Expected: 0 (cascade deleted)
+  1845→```
+  1846→
+  1847→---
+  1848→
+  1849→## Test Suite 14: Top-Ups & Balance (NEW — 10 cases)
+  1850→
+  1851→### T14.1 — Create top-up product (DATA type)
+  1852→**Endpoint:** `POST /api/top-ups?action=create-product`
+  1853→**Method:** POST
+  1854→**Request Body:**
+  1855→```json
+  1856→{
+  1857→  "name": "10GB Data Booster",
+  1858→  "description": "Add 10GB to current cycle",
+  1859→  "type": "DATA",
+  1860→  "value": 10240,
+  1861→  "validityHours": 168,
+  1862→  "price": 99,
+  1863→  "isActive": true,
+  1864→  "sortOrder": 1
+  1865→}
+  1866→```
+  1867→**Expected HTTP Status:** 201
+  1868→**Expected Response Validation:** Product with `id`, `name: "10GB Data Booster"`, `type: "DATA"`, `value: 10240`, `price: 99`
+  1869→**RADIUS Table Verification SQL:** None (top-up is application-level, not RADIUS)
+  1870→
+  1871→### T14.2 — Create top-up product (TIME type)
+  1872→**Endpoint:** `POST /api/top-ups?action=create-product`
+  1873→**Method:** POST
+  1874→**Request Body:**
+  1875→```json
+  1876→{
+  1877→  "name": "24 Hour Unlimited",
+  1878→  "type": "TIME",
+  1879→  "value": 24,
+  1880→  "validityHours": 24,
+  1881→  "price": 49,
+  1882→  "isActive": true
+  1883→}
+  1884→```
+  1885→**Expected HTTP Status:** 201
+  1886→**Expected Response Validation:** Product with `type: "TIME"`, `value: 24`, `validityHours: 24`
+  1887→**RADIUS Table Verification SQL:** None
+  1888→
+  1889→### T14.3 — Create top-up product (SPEED_BOOST type)
+  1890→**Endpoint:** `POST /api/top-ups?action=create-product`
+  1891→**Method:** POST
+  1892→**Request Body:**
+  1893→```json
+  1894→{
+  1895→  "name": "2x Speed Boost 4hrs",
+  1896→  "type": "SPEED_BOOST",
+  1897→  "value": 2,
+  1898→  "validityHours": 4,
+  1899→  "price": 29,
+  1900→  "isActive": true
+  1901→}
+  1902→```
+  1903→**Expected HTTP Status:** 201
+  1904→**Expected Response Validation:** Product with `type: "SPEED_BOOST"`
+  1905→**RADIUS Table Verification SQL:** None
+  1906→
+  1907→### T14.4 — Invalid top-up type rejected
+  1908→**Endpoint:** `POST /api/top-ups?action=create-product`
+  1909→**Method:** POST
+  1910→**Request Body:** `{ "name": "Bad Type", "type": "VOICE", "price": 10 }`
+  1911→**Expected HTTP Status:** 400
+  1912→**Expected Response Validation:** Error message: `"Invalid type. Must be one of: DATA, TIME, SPEED_BOOST"`
+  1913→**RADIUS Table Verification SQL:** None
+  1914→
+  1915→### T14.5 — Purchase top-up for subscriber
+  1916→**Endpoint:** `POST /api/top-ups?action=purchase`
+  1917→**Method:** POST
+  1918→**Request Body:**
+  1919→```json
+  1920→{
+  1921→  "subscriberId": "<SUBSCRIBER_ID>",
+  1922→  "topUpProductId": "<PRODUCT_ID>",
+  1923→  "transactionId": "TXN-TEST-001"
+  1924→}
+  1925→```
+  1926→**Expected HTTP Status:** 201
+  1927→**Expected Response Validation:** Purchase with `status: "ACTIVE"`, `remainingAmount: 10240`, `expiresAt` set to now + validityHours, `topUpProduct` included
+  1928→**RADIUS Table Verification SQL:** None
+  1929→
+  1930→### T14.6 — Purchase inactive top-up product → rejected
+  1931→**Endpoint:** `POST /api/top-ups?action=purchase`
+  1932→**Method:** POST
+  1933→**Request Body:** Same as T14.5 but with `topUpProductId` of an inactive product
+  1934→**Expected HTTP Status:** 400
+  1935→**Expected Response Validation:** Error: `"This top-up product is currently inactive."`
+  1936→**RADIUS Table Verification SQL:** None
+  1937→
+  1938→### T14.7 — Consume from top-up (partial)
+  1939→**Endpoint:** `POST /api/top-ups?action=consume`
+  1940→**Method:** POST
+  1941→**Request Body:**
+  1942→```json
+  1943→{
+  1944→  "id": "<PURCHASE_ID>",
+  1945→  "usedAmount": 3072
+  1946→}
+  1947→```
+  1948→**Expected HTTP Status:** 200
+  1949→**Expected Response Validation:**
+  1950→- `topUp.usedAmount: 3072`
+  1951→- `topUp.remainingAmount: 7168` (10240 - 3072)
+  1952→- `topUp.status: "ACTIVE"`
+  1953→- `fullyConsumed: false`
+  1954→**RADIUS Table Verification SQL:** None
+  1955→
+  1956→### T14.8 — Consume from top-up (full → USED)
+  1957→**Endpoint:** `POST /api/top-ups?action=consume`
+  1958→**Method:** POST
+  1959→**Request Body:** `{ "id": "<PURCHASE_ID>", "usedAmount": 10240 }` (consume remaining)
+  1960→**Expected HTTP Status:** 200
+  1961→**Expected Response Validation:**
+  1962→- `topUp.remainingAmount: 0`
+  1963→- `topUp.status: "USED"`
+  1964→- `fullyConsumed: true`
+  1965→**RADIUS Table Verification SQL:** None
+  1966→
+  1967→### T14.9 — List subscriber's active top-ups (with auto-expiry)
+  1968→**Endpoint:** `GET /api/top-ups?action=active&subscriberId=<SUBSCRIBER_ID>`
+  1969→**Method:** GET
+  1970→**Request Body:** None
+  1971→**Expected HTTP Status:** 200
+  1972→**Expected Response Validation:** Array of `activeTopUps` (status=ACTIVE, not expired), `expiredCount` indicating how many were just marked EXPIRED
+  1973→**RADIUS Table Verification SQL:**
+  1974→```sql
+  1975→SELECT * FROM "SubscriberTopUp" WHERE "subscriberId" = '<SUBSCRIBER_ID>' AND "expiresAt" < NOW() AND "status" = 'ACTIVE';
+  1976→-- Expected: 0 (auto-expired during the API call)
+  1977→```
+  1978→
+  1979→### T14.10 — Get subscriber balance (outstanding invoices)
+  1980→**Endpoint:** `GET /api/subscribers/<id>/balance`
+  1981→**Method:** GET
+  1982→**Request Body:** None
+  1983→**Expected HTTP Status:** 200
+  1984→**Expected Response Validation:**
+  1985→- `outstandingBalance: <sum of all unpaid invoice balances>`
+  1986→- `pendingInvoiceCount: <count>`
+  1987→- `pendingInvoices` array with `invoiceNumber`, `grandTotal`, `paidAmount`, `balanceAmount`, `status`
+  1988→**RADIUS Table Verification SQL:**
+  1989→```sql
+  1990→SELECT SUM("balanceAmount") FROM "Invoice" WHERE "subscriberId" = '<SUBSCRIBER_ID>' AND "status" IN ('DRAFT', 'SENT', 'PARTIALLY_PAID', 'OVERDUE');
+  1991→-- Cross-check with response's outstandingBalance
+  1992→```
+  1993→
+  1994→---
+  1995→
+  1996→## Test Suite 15: Export/Report APIs (NEW — 13 cases)
+  1997→
+  1998→### T15.1 — Export subscribers (CSV format)
+  1999→**Endpoint:** `GET /api/export/subscribers?format=csv`
+  2000→**Method:** GET
+  2001→**Request Body:** None
+  2002→**Expected HTTP Status:** 200
+  2003→**Expected Response Validation:**
+  2004→- Content-Type contains `text/csv`
+  2005→- Content-Disposition header with filename containing `subscribers` and `.csv`
+  2006→- CSV has headers: Code, Name, Email, Phone, Status, Plan, Area, Connection Type, Activation Date, Monthly Price, IP Address, MAC Address, Address
+  2007→- At least 1 data row
+  2008→**RADIUS Table Verification SQL:** None
+  2009→
+  2010→### T15.2 — Export subscribers (JSON format)
+  2011→**Endpoint:** `GET /api/export/subscribers?format=json`
+  2012→**Method:** GET
+  2013→**Request Body:** None
+  2014→**Expected HTTP Status:** 200
+  2015→**Expected Response Validation:** `{ "total": <n>, "data": [...] }` where each object has `code`, `name`, `status`, `plan`, `area`
+  2016→**RADIUS Table Verification SQL:** None
+  2017→
+  2018→### T15.3 — Export subscribers with status filter
+  2019→**Endpoint:** `GET /api/export/subscribers?status=ACTIVE&connectionType=FTTH`
+  2020→**Method:** GET
+  2021→**Request Body:** None
+  2022→**Expected HTTP Status:** 200
+  2023→**Expected Response Validation:** All returned subscribers have `status: "ACTIVE"` and `connectionType: "FTTH"`
+  2024→**RADIUS Table Verification SQL:** None
+  2025→
+  2026→### T15.4 — Export subscribers with search filter
+  2027→**Endpoint:** `GET /api/export/subscribers?search=testuser&format=json`
+  2028→**Method:** GET
+  2029→**Request Body:** None
+  2030→**Expected HTTP Status:** 200
+  2031→**Expected Response Validation:** All returned subscribers contain "testuser" in name, code, email, or phone
+  2032→**RADIUS Table Verification SQL:** None
+  2033→
+  2034→### T15.5 — Export invoices (CSV with date range)
+  2035→**Endpoint:** `GET /api/export/invoices?format=csv&dateFrom=2025-07-01&dateTo=2025-07-31`
+  2036→**Method:** GET
+  2037→**Request Body:** None
+  2038→**Expected HTTP Status:** 200
+  2039→**Expected Response Validation:**
+  2040→- CSV with headers: Invoice#, Subscriber Name, Plan, Issue Date, Due Date, Subtotal, Tax, Total, Status, Paid Amount, Balance
+  2041→- All invoices have `issueDate` within July 2025
+  2042→**RADIUS Table Verification SQL:** None
+  2043→
+  2044→### T15.6 — Export invoices (JSON with status + search filter)
+  2045→**Endpoint:** `GET /api/export/invoices?format=json&status=OVERDUE&search=testuser1`
+  2046→**Method:** GET
+  2047→**Request Body:** None
+  2048→**Expected HTTP Status:** 200
+  2049→**Expected Response Validation:** All invoices have `status: "OVERDUE"`, subscriber name/code contains "testuser1"
+  2050→**RADIUS Table Verification SQL:** None
+  2051→
+  2052→### T15.7 — Export payments (CSV with mode + date filter)
+  2053→**Endpoint:** `GET /api/export/payments?format=csv&mode=CASH&dateFrom=2025-07-01`
+  2054→**Method:** GET
+  2055→**Request Body:** None
+  2056→**Expected HTTP Status:** 200
+  2057→**Expected Response Validation:**
+  2058→- CSV with headers: Receipt#, Subscriber Name, Amount, Mode, Transaction Ref, Status, Date, Invoice#, Notes
+  2059→- All payments have `paymentMode: "CASH"` and date >= 2025-07-01
+  2060→**RADIUS Table Verification SQL:** None
+  2061→
+  2062→### T15.8 — Export payments (JSON format)
+  2063→**Endpoint:** `GET /api/export/payments?format=json&status=VERIFIED`
+  2064→**Method:** GET
+  2065→**Request Body:** None
+  2066→**Expected HTTP Status:** 200
+  2067→**Expected Response Validation:** `{ "total": <n>, "data": [...] }`, all payments have `status: "VERIFIED"`
+  2068→**RADIUS Table Verification SQL:** None
+  2069→
+  2070→### T15.9 — Export complaints (CSV)
+  2071→**Endpoint:** `GET /api/complaints/export?format=csv`
+  2072→**Method:** GET
+  2073→**Request Body:** None
+  2074→**Expected HTTP Status:** 200
+  2075→**Expected Response Validation:** CSV content with complaint data, Content-Type contains `text/csv`
+  2076→**RADIUS Table Verification SQL:** None
+  2077→
+  2078→### T15.10 — Export without auth → rejected
+  2079→**Endpoint:** `GET /api/export/subscribers?format=csv` (no Authorization header)
+  2080→**Method:** GET
+  2081→**Request Body:** None
+  2082→**Expected HTTP Status:** 401
+  2083→**Expected Response Validation:** Authentication error
+  2084→**RADIUS Table Verification SQL:** None
+  2085→
+  2086→### T15.11 — Revenue report
+  2087→**Endpoint:** `GET /api/reports/revenue?period=monthly&year=2025`
+  2088→**Method:** GET
+  2089→**Request Body:** None
+  2090→**Expected HTTP Status:** 200
+  2091→**Expected Response Validation:** Revenue data with monthly breakdown, totals, MRR, collection percentage
+  2092→**RADIUS Table Verification SQL:** None
+  2093→
+  2094→### T15.12 — Expenses report
+  2095→**Endpoint:** `GET /api/reports/expenses?period=monthly&year=2025`
+  2096→**Method:** GET
+  2097→**Request Body:** None
+  2098→**Expected HTTP Status:** 200
+  2099→**Expected Response Validation:** Expense data with category breakdown and totals
+  2100→**RADIUS Table Verification SQL:** None
+  2101→
+  2102→### T15.13 — Custom report with KPI targets
+  2103→**Endpoint:** `GET /api/reports/kpi-targets`
+  2104→**Method:** GET
+  2105→**Request Body:** None
+  2106→**Expected HTTP Status:** 200
+  2107→**Expected Response Validation:** KPI targets for subscriber growth, revenue, collection efficiency, churn rate
+  2108→**RADIUS Table Verification SQL:** None
+  2109→
+  2110→---
+  2111→
+  2112→## Known Bugs / Gaps (Identified During Code Review)
+  2113→
+  2114→| # | Area | Issue | Severity | Status | Related Tests |
+  2115→|---|------|-------|----------|--------|---------------|
+  2116→| B1 | Subscriber POST | IPv6 validation runs even when ipStackType=IPV4_ONLY, blocking creation | CRITICAL | TODO | T1.7 |
+  2117→| B2 | Plan Migration | Does NOT update radusergroup entries for migrated subscribers | CRITICAL | TODO | T4.2, T4.6 |
+  2118→| B3 | Subscriber DELETE | Does NOT cleanup radcheck/radreply/radusergroup | HIGH | TODO | T1.11, T2.8 |
+  2119→| B4 | Invoice GET | Auto-overdue runs on every GET request (performance + race) | MEDIUM | TODO | T5.11 |
+  2120→| B5 | Payment POST | No validation that payment doesn't exceed invoice balance | HIGH | TODO | T6.5 |
+  2121→| B6 | Subscriber Password | Stored in plain text, only hashed on self-care login | MEDIUM | TODO | T9.6 |
+  2122→| B7 | Billing | No automatic billing cycle / renewal logic | MEDIUM | TODO | T5.7 |
+  2123→| B8 | Prepaid | No balance-based billing / deduction system | MEDIUM | TODO | T14.7, T14.8 |
+  2124→| B9 | RADIUS sync | Plan migration doesn't update Mikrotik-Rate-Limit in radreply | HIGH | TODO | T4.2, T4.9 |
+  2125→| B10 | Login Restriction | Stored in internalNotes as string, not enforced in RADIUS/auth | MEDIUM | TODO | T7.2, T7.3 |
+  2126→| B11 | Concurrent Sessions | Simultaneous-Use set in radcheck but not enforced when plan changes | HIGH | TODO | T4.8 |
+  2127→| B12 | Subscriber Status | Changing status to SUSPENDED doesn't disable RADIUS auth | CRITICAL | TODO | T9.1, T9.7 |
+  2128→
+  2129→---
+  2130→
+  2131→## Test Execution Log
+  2132→
+  2133→| # | Suite | Test ID | Test Description | Executed | HTTP Status | Pass/Fail | Notes | RADIUS Verified | Date |
+  2134→|---|-------|---------|-----------------|----------|-------------|-----------|-------|-----------------|------|
+  2135→| 1 | M1 | T1.1 | Create subscriber with plan (full registration) | | | | | | |
+  2136→| 2 | M1 | T1.2 | Duplicate phone rejection | | | | | | |
+  2137→| 3 | M1 | T1.3 | Duplicate serviceUsername rejection | | | | | | |
+  2138→| 4 | M1 | T1.4 | Invalid phone format (too short) | | | | | | |
+  2139→| 5 | M1 | T1.4b | Invalid phone format (starts with 5) | | | | | | |
+  2140→| 6 | M1 | T1.4c | Invalid phone format (contains alpha) | | | | | | |
+  2141→| 7 | M1 | T1.5 | Create without plan → PENDING_ACTIVATION | | | | | | |
+  2142→| 8 | M1 | T1.6 | Create without RADIUS → no radcheck entries | | | | | | |
+  2143→| 9 | M1 | T1.7 | IPv6 validation bug check (IPV4_ONLY) | | | | | | |
+  2144→| 10 | M1 | T1.8 | Auto-generate serviceUsername | | | | | | |
+  2145→| 11 | M1 | T1.9 | Update subscriber with plan change | | | | | | |
+  2146→| 12 | M1 | T1.10 | Update subscriber status to SUSPENDED | | | | | | |
+  2147→| 13 | M1 | T1.11 | Delete subscriber → RADIUS cleanup | | | | | | |
+  2148→| 14 | M1 | T1.12 | Get subscriber list with pagination | | | | | | |
+  2149→| 15 | M1 | T1.13 | Search subscriber by name or code | | | | | | |
+  2150→| 16 | M2 | T2.1 | radcheck entry on creation | | | | | | |
+  2151→| 17 | M2 | T2.2 | radusergroup assignment | | | | | | |
+  2152→| 18 | M2 | T2.3 | Mikrotik-Rate-Limit in radreply | | | | | | |
+  2153→| 19 | M2 | T2.4 | Create RADIUS user manually | | | | | | |
+  2154→| 20 | M2 | T2.5 | Update RADIUS password | | | | | | |
+  2155→| 21 | M2 | T2.6 | Change RADIUS group | | | | | | |
+  2156→| 22 | M2 | T2.7 | Delete RADIUS user → cleanup | | | | | | |
+  2157→| 23 | M2 | T2.8 | Simultaneous-Use in radcheck | | | | | | |
+  2158→| 24 | M2 | T2.9 | ChilliSpot-Max-Total-Octets in group reply | | | | | | |
+  2159→| 25 | M2 | T2.10 | Toggle RADIUS enabled/disabled | | | | | | |
+  2160→| 26 | M2 | T2.11 | Bulk import RADIUS users | | | | | | |
+  2161→| 27 | M2 | T2.12 | Export RADIUS users list | | | | | | |
+  2162→| 28 | M2 | T2.13 | RADIUS sync status check | | | | | | |
+  2163→| 29 | M3 | T3.1 | Create plan → auto RadiusGroup | | | | | | |
+  2164→| 30 | M3 | T3.2 | Create plan with existing groupId | | | | | | |
+  2165→| 31 | M3 | T3.3a | Validation: name required | | | | | | |
+  2166→| 32 | M3 | T3.3b | Validation: speed > 0 | | | | | | |
+  2167→| 33 | M3 | T3.3c | Validation: price >= 0 | | | | | | |
+  2168→| 34 | M3 | T3.4 | maxConcurrentSessions defaults to 1 | | | | | | |
+  2169→| 35 | M3 | T3.5 | Data limit GB → MB conversion | | | | | | |
+  2170→| 36 | M3 | T3.6 | Update plan speed → RADIUS sync | | | | | | |
+  2171→| 37 | M3 | T3.7 | Deactivate plan | | | | | | |
+  2172→| 38 | M3 | T3.8 | Delete plan → RADIUS group cleanup | | | | | | |
+  2173→| 39 | M3 | T3.9 | Plan list with filtering | | | | | | |
+  2174→| 40 | M3 | T3.10 | Plan reorder | | | | | | |
+  2175→| 41 | M4 | T4.1 | Migrate subscriber between plans | | | | | | |
+  2176→| 42 | M4 | T4.2 | Migration updates RADIUS group (BUG) | | | | | | |
+  2177→| 43 | M4 | T4.3 | Same source/target plan rejected | | | | | | |
+  2178→| 44 | M4 | T4.4 | Non-existent plan rejected | | | | | | |
+  2179→| 45 | M4 | T4.5 | Inactive target plan rejected | | | | | | |
+  2180→| 46 | M4 | T4.6 | Bulk migrate multiple subscribers | | | | | | |
+  2181→| 47 | M4 | T4.7 | Migrate non-RADIUS subscriber | | | | | | |
+  2182→| 48 | M4 | T4.8 | Migrate with session limit change (BUG) | | | | | | |
+  2183→| 49 | M4 | T4.9 | Migrate with data limit change | | | | | | |
+  2184→| 50 | M5 | T5.1 | Invoice with correct tax (CGST 9% + SGST 9%) | | | | | | |
+  2185→| 51 | M5 | T5.2 | Pro-rata invoice calculation | | | | | | |
+  2186→| 52 | M5 | T5.3 | Invoice with PERCENTAGE discount | | | | | | |
+  2187→| 53 | M5 | T5.4 | Invoice with FLAT discount | | | | | | |
+  2188→| 54 | M5 | T5.5 | Invoice with multiple line items | | | | | | |
+  2189→| 55 | M5 | T5.6 | Bulk invoice generation | | | | | | |
+  2190→| 56 | M5 | T5.7 | Billing cycle generation | | | | | | |
+  2191→| 57 | M5 | T5.8 | Duplicate period prevention | | | | | | |
+  2192→| 58 | M5 | T5.9 | Cancel paid invoice → rejected | | | | | | |
+  2193→| 59 | M5 | T5.10 | Delete paid invoice → rejected | | | | | | |
+  2194→| 60 | M5 | T5.11 | Auto-overdue marking | | | | | | |
+  2195→| 61 | M5 | T5.12 | Invoice number uniqueness | | | | | | |
+  2196→| 62 | M5 | T5.13 | Get invoice by ID | | | | | | |
+  2197→| 63 | M5 | T5.14 | Invoice export (CSV) | | | | | | |
+  2198→| 64 | M6 | T6.1 | Record payment against invoice | | | | | | |
+  2199→| 65 | M6 | T6.2 | Verify payment → balance update | | | | | | |
+
+[showing lines 200-2199 of 2319; use offset=2200 with limit to continue reading]

@@ -1,0 +1,730 @@
+     1→#!/usr/bin/env bash
+     2→# ╔══════════════════════════════════════════════════════════════════════════╗
+     3→# ║  Cryptsk ISP Platform — Full Deploy Script for Debian 12/13           ║
+     4→# ║  Rerunnable: cleans existing DB & node_modules on re-run             ║
+     5→# ║  No Caddy — Next.js UI runs directly on port 3000                    ║
+     6→# ╚══════════════════════════════════════════════════════════════════════════╝
+     7→
+     8→set -euo pipefail
+     9→
+    10→# ─── Configuration ──────────────────────────────────────────────────────
+    11→INSTALL_DIR="/opt/cryptsk-isp"
+    12→APP_USER="cryptsk"
+    13→APP_GROUP="cryptsk"
+    14→DB_NAME="ispplatform"
+    15→DB_USER="cryptsk"
+    16→DB_PASS="Cryptsk2026"
+    17→DB_PORT="5432"
+    18→PG_VERSION="17"
+    19→NODE_MAJOR="22"
+    20→BUN_VERSION="1.2.4"
+    21→SESSION_SECRET="cryptsk_session_secret_key_2026_isp_platform"
+    22→
+    23→# ─── Colors ─────────────────────────────────────────────────────────────
+    24→RED='\033[0;31m'
+    25→GREEN='\033[0;32m'
+    26→YELLOW='\033[1;33m'
+    27→CYAN='\033[0;36m'
+    28→NC='\033[0m' # No Color
+    29→
+    30→info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
+    31→ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
+    32→warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+    33→fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
+    34→
+    35→# ─── Pre-flight Checks ──────────────────────────────────────────────────
+    36→if [ "$(id -u)" -ne 0 ]; then
+    37→  fail "This script must be run as root. Use: sudo bash deploy.sh"
+    38→fi
+    39→
+    40→# ─── Step 0: Clean Previous Installation (rerunnable) ─────────────────
+    41→clean_previous() {
+    42→  info "Cleaning previous installation (if any)..."
+    43→  
+    44→  # Stop PM2 processes
+    45→  npx pm2 delete all 2>/dev/null || true
+    46→  
+    47→  # Drop old database and user if they exist
+    48→  if command -v psql &>/dev/null; then
+    49→    sudo -u postgres psql -c "DROP DATABASE IF EXISTS ${DB_NAME};" 2>/dev/null || true
+    50→    sudo -u postgres psql -c "DROP USER IF EXISTS ${DB_USER};" 2>/dev/null || true
+    51→  fi
+    52→  
+    53→  # Remove old install dir
+    54→  if [ -d "$INSTALL_DIR" ]; then
+    55→    warn "Removing ${INSTALL_DIR}..."
+    56→    rm -rf "$INSTALL_DIR"
+    57→  fi
+    58→  
+    59→  # Remove old user
+    60→  if id "$APP_USER" &>/dev/null; then
+    61→    warn "Removing user ${APP_USER}..."
+    62→    userdel -r "$APP_USER" 2>/dev/null || true
+    63→  fi
+    64→  
+    65→  ok "Cleanup complete"
+    66→}
+    67→
+    68→# ─── Step 1: System Dependencies ───────────────────────────────────────
+    69→install_system_deps() {
+    70→  info "Installing system dependencies..."
+    71→  
+    72→  # Ensure repos are up to date
+    73→  export DEBIAN_FRONTEND=noninteractive
+    74→  
+    75→  # Add NodeSource repository for Node.js 22
+    76→  if [ ! -f "/etc/apt/sources.list.d/nodesource.list" ]; then
+    77→    info "Adding NodeSource repository for Node.js ${NODE_MAJOR}..."
+    78→    mkdir -p /etc/apt/keyrings
+    79→    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+    80→      gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    81→    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+    82→      > /etc/apt/sources.list.d/nodesource.list
+    83→  fi
+    84→  
+    85→  # Add PostgreSQL APT repository
+    86→  if [ ! -f "/etc/apt/sources.list.d/pgdg.list" ]; then
+    87→    info "Adding PostgreSQL APT repository..."
+    88→    apt-get install -y gnupg2 lsb-release wget ca-certificates \
+    89→      curl apt-transport-https software-properties-common \
+    90→      build-essential git libssl-dev pkg-config libvips-dev \
+    91→      python3 python3-pip python3-venv 2>/dev/null
+    92→    
+    93→    # Install PostgreSQL GPG key and repo
+    94→    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    95→    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
+    96→      apt-key add - 2>/dev/null || \
+    97→      gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg 2>/dev/null
+    98→  fi
+    99→  
+   100→  apt-get update -y
+   101→  
+   102→  # Install PostgreSQL
+   103→  info "Installing PostgreSQL ${PG_VERSION}..."
+   104→  apt-get install -y \
+   105→    postgresql-${PG_VERSION} \
+   106→    postgresql-client-${PG_VERSION} \
+   107→    postgresql-contrib-${PG_VERSION}
+   108→  
+   109→  # Install Node.js
+   110→  info "Installing Node.js ${NODE_MAJOR}..."
+   111→  apt-get install -y nodejs
+   112→  
+   113→  # Install PM2 globally
+   114→  npm install -g pm2@latest
+   115→  
+   116→  # Install tsx for seed script
+   117→  npm install -g tsx@latest
+   118→  
+   119→  ok "System dependencies installed"
+   120→}
+   121→
+   122→# ─── Step 2: Install Bun ────────────────────────────────────────────────
+   123→install_bun() {
+   124→  if command -v bun &>/dev/null; then
+   125→    ok "Bun already installed: $(bun --version)"
+   126→    return
+   127→  fi
+   128→  info "Installing Bun runtime..."
+   129→  curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
+   130→  # Make available system-wide
+   131→  export BUN_INSTALL="$HOME/.bun"
+   132→  export PATH="$BUN_INSTALL/bin:$PATH"
+   133→  
+   134→  # Add to profile for all users
+   135→  echo 'export BUN_INSTALL="$HOME/.bun"' > /etc/profile.d/bun.sh
+   136→  echo 'export PATH="$BUN_INSTALL/bin:$PATH"' >> /etc/profile.d/bun.sh
+   137→  chmod +x /etc/profile.d/bun.sh
+   138→  
+   139→  ok "Bun $(bun --version) installed"
+   140→}
+   141→
+   142→# ─── Step 3: Create Application User ─────────────────────────────────────
+   143→create_app_user() {
+   144→  info "Creating application user: ${APP_USER}..."
+   145→  
+   146→  if ! id "$APP_USER" &>/dev/null; then
+   147→    useradd -r -m -d "$INSTALL_DIR" -s /bin/bash "$APP_USER"
+   148→  fi
+   149→  
+   150→  usermod -aG postgres "$APP_USER" 2>/dev/null || true
+   151→  
+   152→  ok "User ${APP_USER} created"
+   153→}
+   154→
+   155→# ─── Step 4: Clone / Copy Application ────────────────────────────────────
+   156→setup_app_files() {
+   157→  info "Setting up application files in ${INSTALL_DIR}..."
+   158→  
+   159→  mkdir -p "$INSTALL_DIR"
+   160→  
+   161→  # Check if running from the repo directory
+   162→  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+   163→  
+   164→  if [ -f "$SCRIPT_DIR/package.json" ] && [ -d "$SCRIPT_DIR/src" ]; then
+   165→    # Copy from current directory (repo already cloned)
+   166→    info "Copying from ${SCRIPT_DIR}..."
+   167→    rsync -a --delete \
+   168→      --exclude='.next' \
+   169→      --exclude='node_modules' \
+   170→      --exclude='.git' \
+   171→      --exclude='runtime-applications' \
+   172→      --exclude='tool-results' \
+   173→      --exclude='.logs' \
+   174→      --exclude='dev.log' \
+   175→      --exclude='*.db' \
+   176→      --exclude='upload' \
+   177→      --exclude='source-code' \
+   178→      --exclude='test_results' \
+   179→      --exclude='e2e_results.json' \
+   180→      --exclude='*.png' \
+   181→      --exclude='download' \
+   182→      --exclude='*.bak' \
+   183→      --exclude='*.bak2' \
+   184→      "$SCRIPT_DIR/" "$INSTALL_DIR/"
+   185→  else
+   186→    fail "Cannot find application source. Run this script from the project root directory."
+   187→  fi
+   188→  
+   189→  chown -R ${APP_USER}:${APP_GROUP} "$INSTALL_DIR"
+   190→  ok "Application files set up"
+   191→}
+   192→
+   193→# ─── Step 5: Configure PostgreSQL ───────────────────────────────────────
+   194→configure_postgresql() {
+   195→  info "Configuring PostgreSQL..."
+   196→  
+   197→  # Ensure PostgreSQL is running
+   198→  systemctl enable postgresql
+   199→  systemctl start postgresql
+   200→  
+   201→  # Wait for PostgreSQL to be ready
+   202→  for i in $(seq 1 30); do
+   203→    if sudo -u postgres pg_isready -q; then
+   204→      break
+   205→    fi
+   206→    sleep 1
+   207→  done
+   208→  
+   209→  sudo -u postgres pg_isready -q || fail "PostgreSQL failed to start"
+   210→  
+   211→  # Create user and database
+   212→  info "Creating database user: ${DB_USER}..."
+   213→  sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}' SUPERUSER;" 2>/dev/null || \
+   214→    sudo -u postgres psql -c "ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}' SUPERUSER;"
+   215→  
+   216→  info "Creating database: ${DB_NAME}..."
+   217→  sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};" 2>/dev/null || \
+   218→    sudo -u postgres psql -c "ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER};"
+   219→  
+   220→  # Install extensions
+   221→  info "Installing PostgreSQL extensions..."
+   222→  for ext in pgcrypto pg_stat_statements citext btree_gin btree_gist pg_trgm; do
+   223→    sudo -u postgres psql -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS $ext;" > /dev/null 2>&1
+   224→  done
+   225→  
+   226→  # Configure pg_hba.conf for password auth
+   227→  PG_HBA="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+   228→  if [ -f "$PG_HBA" ]; then
+   229→    info "Configuring pg_hba.conf for md5 authentication..."
+   230→    # Backup original
+   231→    cp "$PG_HBA" "${PG_HBA}.bak"
+   232→    # Write new config
+   233→    cat > "$PG_HBA" << 'HBAEOF'
+   234→# PostgreSQL Client Authentication Configuration
+   235→# TYPE  DATABASE        USER            ADDRESS                 METHOD
+   236→local   all             all                                     md5
+   237→host    all             all             127.0.0.1/32            md5
+   238→host    all             all             ::1/128                 md5
+   239→host    all             all             0.0.0.0/0               md5
+   240→host    all             all             ::/0                    md5
+   241→HBAEOF
+   242→    
+   243→    # Also allow trust for local unix socket (for sudo -u postgres)
+   244→    # This is needed for some maintenance operations
+   245→    sed -i '1i local   all             postgres                                peer' "$PG_HBA"
+   246→    
+   247→    systemctl reload postgresql
+   248→  fi
+   249→  
+   250→  # Configure postgresql.conf
+   251→  PG_CONF="/etc/postgresql/${PG_VERSION}/main/postgresql.conf"
+   252→  if [ -f "$PG_CONF" ]; then
+   253→    # Increase shared buffers and work mem for ISP workload
+   254→    if ! rg -q 'shared_buffers.*256MB' "$PG_CONF"; then
+   255→      echo "shared_buffers = 256MB" >> "$PG_CONF"
+   256→    fi
+   257→    if ! rg -q 'work_mem.*64MB' "$PG_CONF"; then
+   258→      echo "work_mem = 64MB" >> "$PG_CONF"
+   259→    fi
+   260→    if ! rg -q 'effective_cache_size.*1GB' "$PG_CONF"; then
+   261→      echo "effective_cache_size = 1GB" >> "$PG_CONF"
+   262→    fi
+   263→    systemctl reload postgresql
+   264→  fi
+   265→  
+   266→  # Test connection
+   267→  PGPASSWORD="$DB_PASS" psql -U "$DB_USER" -d "$DB_NAME" -h 127.0.0.1 -c "SELECT 1;" > /dev/null 2>&1 \
+   268→    || fail "Database connection test failed"
+   269→  
+   270→  ok "PostgreSQL configured (${DB_NAME} on port ${DB_PORT})"
+   271→}
+   272→
+   273→# ─── Step 6: Create Environment File ─────────────────────────────────────
+   274→create_env_file() {
+   275→  info "Creating .env file..."
+   276→  cat > "$INSTALL_DIR/.env" << ENVEOF
+   277→DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${DB_PORT}/${DB_NAME}
+   278→SESSION_SECRET=${SESSION_SECRET}
+   279→NODE_ENV=production
+   280→ENVEOF
+   281→  
+   282→  chown ${APP_USER}:${APP_GROUP} "$INSTALL_DIR/.env"
+   283→  chmod 600 "$INSTALL_DIR/.env"
+   284→  ok ".env file created"
+   285→}
+   286→
+   287→# ─── Step 7: Install Node.js Dependencies ────────────────────────────────
+   288→install_node_deps() {
+   289→  info "Installing main application dependencies..."
+   290→  cd "$INSTALL_DIR"
+   291→  
+   292→  sudo -u ${APP_USER} npm install --production=false 2>&1 | tail -5
+   293→  
+   294→  ok "Node.js dependencies installed"
+   295→}
+   296→
+   297→# ─── Step 8: Install Mini-Service Dependencies ───────────────────────────
+   298→install_mini_service_deps() {
+   299→  info "Installing mini-service dependencies..."
+   300→  cd "$INSTALL_DIR"
+   301→  
+   302→  # Install shared deps first
+   303→  if [ -d "mini-services/shared" ]; then
+   304→    cd mini-services/shared
+   305→    sudo -u ${APP_USER} npm install --production=false 2>/dev/null || true
+   306→    cd "$INSTALL_DIR"
+   307→  fi
+   308→  
+   309→  # Install deps for each mini-service
+   310→  for svc_dir in mini-services/*/; do
+   311→    [ -f "$svc_dir/package.json" ] || continue
+   312→    svc_name=$(basename "$svc_dir")
+   313→    [ "$svc_name" = "shared" ] && continue
+   314→    
+   315→    info "  Installing ${svc_name}..."
+   316→    cd "$svc_dir"
+   317→    # Generate Prisma client for services that use it
+   318→    if [ -f "package.json" ] && rg -q '@prisma/client' package.json 2>/dev/null; then
+   319→      sudo -u ${APP_USER} npm install --production=false 2>&1 | tail -2
+   320→      # Generate Prisma client using the main schema
+   321→      sudo -u ${APP_USER} npx prisma generate --schema="$INSTALL_DIR/prisma/schema.prisma" 2>&1 | tail -2
+   322→    else
+   323→      sudo -u ${APP_USER} npm install --production=false 2>&1 | tail -2
+   324→    fi
+   325→    cd "$INSTALL_DIR"
+   326→  done
+   327→  
+   328→  ok "Mini-service dependencies installed"
+   329→}
+   330→
+   331→# ─── Step 9: Push Prisma Schema & Seed ───────────────────────────────────
+   332→setup_database() {
+   333→  info "Pushing Prisma schema to database..."
+   334→  cd "$INSTALL_DIR"
+   335→  
+   336→  # Push schema (creates 100+ tables)
+   337→  DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
+   338→    sudo -u ${APP_USER} npx prisma db push --skip-generate 2>&1 | tail -5
+   339→  
+   340→  # Generate Prisma client
+   341→   DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
+   342→    sudo -u ${APP_USER} npx prisma generate 2>&1 | tail -3
+   343→  
+   344→  ok "Schema pushed to database"
+   345→  
+   346→  # Seed data
+   347→  info "Seeding database (600+ records)..."
+   348→  DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
+   349→    sudo -u ${APP_USER} npx tsx prisma/seed.ts 2>&1 | tail -10
+   350→  
+   351→  ok "Database seeded"
+   352→}
+   353→
+   354→# ─── Step 10: Build Next.js for Production ───────────────────────────────
+   355→build_nextjs() {
+   356→  info "Building Next.js for production..."
+   357→  cd "$INSTALL_DIR"
+   358→  
+   359→  DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:${DB_PORT}/${DB_NAME}" \
+   360→    SESSION_SECRET="$SESSION_SECRET" \
+   361→    sudo -u ${APP_USER} npx next build 2>&1 | tail -10
+   362→  
+   363→  ok "Next.js build complete"
+   364→}
+   365→
+   366→# ─── Step 11: Create PM2 Ecosystem Config ───────────────────────────────
+   367→create_ecosystem_config() {
+   368→  info "Creating PM2 ecosystem config..."
+   369→  
+   370→  cat > "$INSTALL_DIR/ecosystem.config.cjs" << 'ECOSEOF'
+   371→module.exports = {
+   372→  apps: [
+   373→    // ─── 1. Main Next.js Application (Port 3000) ─────────────
+   374→    {
+   375→      name: 'cryptsk-isp',
+   376→      script: 'node_modules/.bin/next',
+   377→      args: 'start -H 0.0.0.0 -p 3000',
+   378→      cwd: '/opt/cryptsk-isp',
+   379→      env: {
+   380→        NODE_ENV: 'production',
+   381→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   382→        SESSION_SECRET: 'cryptsk_session_secret_key_2026_isp_platform',
+   383→        PORT: '3000',
+   384→        HOSTNAME: '0.0.0.0',
+   385→      },
+   386→      instances: 1,
+   387→      exec_mode: 'fork',
+   388→      watch: false,
+   389→      max_memory_restart: '4G',
+   390→      restart_delay: 5000,
+   391→      exp_backoff_restart_delay: 5000,
+   392→      max_restarts: 50,
+   393→      listen_timeout: 120000,
+   394→      kill_timeout: 15000,
+   395→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   396→      error_file: '/opt/cryptsk-isp/.logs/cryptsk-isp-error.log',
+   397→      out_file: '/opt/cryptsk-isp/.logs/cryptsk-isp-out.log',
+   398→      merge_logs: true,
+   399→      time: true,
+   400→      autorestart: true,
+   401→    },
+   402→
+   403→    // ─── 2. RADIUS Service (Port 3799) ──────────────────────
+   404→    {
+   405→      name: 'cryptsk-radius-service',
+   406→      script: 'index.ts',
+   407→      interpreter: '/root/.bun/bin/bun',
+   408→      cwd: '/opt/cryptsk-isp/mini-services/radius-service',
+   409→      env: {
+   410→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   411→      },
+   412→      watch: false,
+   413→      restart_delay: 5000,
+   414→      max_restarts: 30,
+   415→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   416→      error_file: '/opt/cryptsk-isp/.logs/radius-service-error.log',
+   417→      out_file: '/opt/cryptsk-isp/.logs/radius-service-out.log',
+   418→      merge_logs: true,
+   419→      time: true,
+   420→    },
+   421→
+   422→    // ─── 3. IPS Daemon (Port 3030) ───────────────────────────
+   423→    {
+   424→      name: 'cryptsk-ips-daemon',
+   425→      script: 'index.ts',
+   426→      interpreter: '/root/.bun/bin/bun',
+   427→      cwd: '/opt/cryptsk-isp/mini-services/ips-daemon',
+   428→      env: {
+   429→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   430→      },
+   431→      watch: false,
+   432→      restart_delay: 5000,
+   433→      max_restarts: 30,
+   434→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   435→      error_file: '/opt/cryptsk-isp/.logs/ips-daemon-error.log',
+   436→      out_file: '/opt/cryptsk-isp/.logs/ips-daemon-out.log',
+   437→      merge_logs: true,
+   438→      time: true,
+   439→    },
+   440→
+   441→    // ─── 4. nDPI Service (Port 3031) ─────────────────────────
+   442→    {
+   443→      name: 'cryptsk-ndpi-service',
+   444→      script: 'index.ts',
+   445→      interpreter: '/root/.bun/bin/bun',
+   446→      cwd: '/opt/cryptsk-isp/mini-services/ndpi-service',
+   447→      env: {
+   448→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   449→      },
+   450→      watch: false,
+   451→      restart_delay: 5000,
+   452→      max_restarts: 30,
+   453→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   454→      error_file: '/opt/cryptsk-isp/.logs/ndpi-service-error.log',
+   455→      out_file: '/opt/cryptsk-isp/.logs/ndpi-service-out.log',
+   456→      merge_logs: true,
+   457→      time: true,
+   458→    },
+   459→
+   460→    // ─── 5. Gateway Service (Port 3005) ───────────────────────
+   461→    {
+   462→      name: 'cryptsk-gateway-service',
+   463→      script: 'index.ts',
+   464→      interpreter: '/root/.bun/bin/bun',
+   465→      cwd: '/opt/cryptsk-isp/mini-services/gateway-service',
+   466→      env: {
+   467→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   468→      },
+   469→      watch: false,
+   470→      restart_delay: 5000,
+   471→      max_restarts: 30,
+   472→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   473→      error_file: '/opt/cryptsk-isp/.logs/gateway-service-error.log',
+   474→      out_file: '/opt/cryptsk-isp/.logs/gateway-service-out.log',
+   475→      merge_logs: true,
+   476→      time: true,
+   477→    },
+   478→
+   479→    // ─── 6. Multi-WAN Monitor (Port 3006) ────────────────────
+   480→    {
+   481→      name: 'cryptsk-multiwan-monitor',
+   482→      script: 'index.ts',
+   483→      interpreter: '/root/.bun/bin/bun',
+   484→      cwd: '/opt/cryptsk-isp/mini-services/multiwan-monitor',
+   485→      env: {
+   486→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   487→      },
+   488→      watch: false,
+   489→      restart_delay: 5000,
+   490→      max_restarts: 30,
+   491→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   492→      error_file: '/opt/cryptsk-isp/.logs/multiwan-monitor-error.log',
+   493→      out_file: '/opt/cryptsk-isp/.logs/multiwan-monitor-out.log',
+   494→      merge_logs: true,
+   495→      time: true,
+   496→    },
+   497→
+   498→    // ─── 7. Syslog Service (UDP Port 1514) ───────────────────
+   499→    {
+   500→      name: 'cryptsk-syslog-service',
+   501→      script: 'index.ts',
+   502→      interpreter: '/root/.bun/bin/bun',
+   503→      cwd: '/opt/cryptsk-isp/mini-services/syslog-service',
+   504→      env: {
+   505→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   506→      },
+   507→      watch: false,
+   508→      restart_delay: 5000,
+   509→      max_restarts: 30,
+   510→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   511→      error_file: '/opt/cryptsk-isp/.logs/syslog-service-error.log',
+   512→      out_file: '/opt/cryptsk-isp/.logs/syslog-service-out.log',
+   513→      merge_logs: true,
+   514→      time: true,
+   515→    },
+   516→
+   517→    // ─── 8. Diameter Service (Port 3870) ─────────────────────
+   518→    {
+   519→      name: 'cryptsk-diameter-service',
+   520→      script: 'index.ts',
+   521→      interpreter: '/root/.bun/bin/bun',
+   522→      cwd: '/opt/cryptsk-isp/mini-services/diameter-service',
+   523→      env: {},
+   524→      watch: false,
+   525→      restart_delay: 5000,
+   526→      max_restarts: 30,
+   527→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   528→      error_file: '/opt/cryptsk-isp/.logs/diameter-service-error.log',
+   529→      out_file: '/opt/cryptsk-isp/.logs/diameter-service-out.log',
+   530→      merge_logs: true,
+   531→      time: true,
+   532→    },
+   533→
+   534→    // ─── 9. SNMP Service (Port 3020) ──────────────────────────
+   535→    {
+   536→      name: 'cryptsk-snmp-service',
+   537→      script: 'index.ts',
+   538→      interpreter: '/root/.bun/bin/bun',
+   539→      cwd: '/opt/cryptsk-isp/mini-services/snmp-service',
+   540→      env: {},
+   541→      watch: false,
+   542→      restart_delay: 5000,
+   543→      max_restarts: 30,
+   544→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   545→      error_file: '/opt/cryptsk-isp/.logs/snmp-service-error.log',
+   546→      out_file: '/opt/cryptsk-isp/.logs/snmp-service-out.log',
+   547→      merge_logs: true,
+   548→      time: true,
+   549→    },
+   550→
+   551→    // ─── 10. Network Monitor (no port, polling only) ────────
+   552→    {
+   553→      name: 'cryptsk-network-monitor',
+   554→      script: 'index.ts',
+   555→      interpreter: '/root/.bun/bin/bun',
+   556→      cwd: '/opt/cryptsk-isp/mini-services/network-monitor',
+   557→      env: {
+   558→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   559→      },
+   560→      watch: false,
+   561→      restart_delay: 5000,
+   562→      max_restarts: 30,
+   563→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   564→      error_file: '/opt/cryptsk-isp/.logs/network-monitor-error.log',
+   565→      out_file: '/opt/cryptsk-isp/.logs/network-monitor-out.log',
+   566→      merge_logs: true,
+   567→      time: true,
+   568→    },
+   569→
+   570→    // ─── 11. Billing Cron (no port, scheduled tasks) ────────
+   571→    {
+   572→      name: 'cryptsk-billing-cron',
+   573→      script: 'index.ts',
+   574→      interpreter: '/root/.bun/bin/bun',
+   575→      cwd: '/opt/cryptsk-isp/mini-services/billing-cron',
+   576→      env: {
+   577→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   578→      },
+   579→      watch: false,
+   580→      restart_delay: 5000,
+   581→      max_restarts: 30,
+   582→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   583→      error_file: '/opt/cryptsk-isp/.logs/billing-cron-error.log',
+   584→      out_file: '/opt/cryptsk-isp/.logs/billing-cron-out.log',
+   585→      merge_logs: true,
+   586→      time: true,
+   587→    },
+   588→
+   589→    // ─── 12. WhatsApp Bot (no port, webhook receiver) ────────
+   590→    {
+   591→      name: 'cryptsk-whatsapp-bot',
+   592→      script: 'index.ts',
+   593→      interpreter: '/root/.bun/bin/bun',
+   594→      cwd: '/opt/cryptsk-isp/mini-services/whatsapp-bot',
+   595→      env: {
+   596→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   597→      },
+   598→      watch: false,
+   599→      restart_delay: 5000,
+   600→      max_restarts: 30,
+   601→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   602→      error_file: '/opt/cryptsk-isp/.logs/whatsapp-bot-error.log',
+   603→      out_file: '/opt/cryptsk-isp/.logs/whatsapp-bot-out.log',
+   604→      merge_logs: true,
+   605→      time: true,
+   606→    },
+   607→
+   608→    // ─── 13. Session Engine (no port, internal) ──────────────
+   609→    {
+   610→      name: 'cryptsk-session-engine',
+   611→      script: 'index.ts',
+   612→      interpreter: '/root/.bun/bin/bun',
+   613→      cwd: '/opt/cryptsk-isp/mini-services/session-engine',
+   614→      env: {
+   615→        DATABASE_URL: 'postgresql://cryptsk:Cryptsk2026@127.0.0.1:5432/ispplatform',
+   616→      },
+   617→      watch: false,
+   618→      restart_delay: 5000,
+   619→      max_restarts: 30,
+   620→      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+   621→      error_file: '/opt/cryptsk-isp/.logs/session-engine-error.log',
+   622→      out_file: '/opt/cryptsk-isp/.logs/session-engine-out.log',
+   623→      merge_logs: true,
+   624→      time: true,
+   625→    },
+   626→  ],
+   627→};
+   628→ECOSEOF
+   629→
+   630→  # Fix bun interpreter path dynamically
+   631→  BUN_PATH=$(which bun 2>/dev/null || echo "/root/.bun/bin/bun")
+   632→  sed -i "s|/root/.bun/bin/bun|${BUN_PATH}|g" "$INSTALL_DIR/ecosystem.config.cjs"
+   633→  
+   634→  chown ${APP_USER}:${APP_GROUP} "$INSTALL_DIR/ecosystem.config.cjs"
+   635→  ok "PM2 ecosystem config created (13 services)"
+   636→}
+   637→
+   638→# ─── Step 12: Create Log Directory & Start Services ─────────────────────
+   639→start_services() {
+   640→  info "Creating log directory..."
+   641→  mkdir -p "$INSTALL_DIR/.logs"
+   642→  chown ${APP_USER}:${APP_GROUP} "$INSTALL_DIR/.logs"
+   643→  
+   644→  info "Starting all services with PM2..."
+   645→  cd "$INSTALL_DIR"
+   646→  
+   647→  # Start all services
+   648→  pm2 start ecosystem.config.cjs 2>&1 | tail -20
+   649→  
+   650→  # Save PM2 process list for auto-restart on reboot
+   651→   pm2 save 2>/dev/null
+   652→  pm2 startup systemd -u root --hp /root 2>/dev/null || true
+   653→  
+   654→  ok "All services started"
+   655→}
+   656→
+   657→# ─── Step 13: Verify Installation ───────────────────────────────────────
+   658→verify() {
+   659→  echo ""
+   660→  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+   661→  echo -e "${GREEN}  CRYPTSK ISP PLATFORM — Deployment Complete!${NC}"
+   662→  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+   663→  echo ""
+   664→  
+   665→  # Show service status
+   666→  pm2 status 2>/dev/null
+   667→  
+   668→  echo ""
+   669→  echo -e "${CYAN}── Access Information ──────────────────────────────────────${NC}"
+   670→  echo -e "  UI:            ${GREEN}http://<server-ip>:3000${NC}"
+   671→  echo -e "  Login Email:    ${GREEN}admin@cryptsk.com${NC}"
+   672→  echo -e "  Login Password: ${GREEN}Admin@2026${NC}"
+   673→  echo -e "  Database:       PostgreSQL ${PG_VERSION} (${DB_NAME})"
+   674→  echo -e "  User:           ${DB_USER}"
+   675→  echo -e "  Install Dir:    ${INSTALL_DIR}"
+   676→  echo ""
+   677→  echo -e "${CYAN}── Service Ports ────────────────────────────────────────────${NC}"
+   678→  echo "  :3000  — Next.js UI (Main Application)"
+   679→  echo "  :3005  — Gateway Service (TC/QoS, DHCP, DNS, Firewall)"
+   680→  echo "  :3006  — Multi-WAN Monitor"
+   681→  echo "  :3020  — SNMP Service"
+   682→  echo "  :3030  — IPS Daemon (Intrusion Prevention)"
+   683→  echo "  :3031  — nDPI Service (Traffic Classification)"
+   684→  echo "  :3799  — RADIUS Service (Authentication)"
+   685→  echo "  :3870  — Diameter Service (Wi-Fi Offload)"
+   686→  echo "  :1514  — Syslog Server (UDP)"
+   687→  echo ""
+   688→  echo -e "${CYAN}── Useful Commands ──────────────────────────────────────────${NC}"
+   689→  echo "  pm2 status                           # View all services"
+   690→  echo "  pm2 logs                              # Tail all logs"
+   691→  echo "  pm2 logs cryptsk-isp                  # Tail main app logs"
+   692→  echo "  pm2 restart all                       # Restart all services"
+   693→  echo "  pm2 stop all                          # Stop all services"
+   694→  echo "  sudo -u postgres psql -d ${DB_NAME}    # Connect to database"
+   695→  echo ""
+   696→}
+   697→
+   698→# ─── Main ───────────────────────────────────────────────────────────────
+   699→main() {
+   700→  echo ""
+   701→  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+   702→  echo -e "${CYAN}║  Cryptsk ISP Platform — Full Deploy Script                ║${NC}"
+   703→  echo -e "${CYAN}║  OS: Debian 12/13  |  DB: PostgreSQL ${PG_VERSION}  |  Runtime: Bun + Node  ║${NC}"
+   704→  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+   705→  echo ""
+   706→  
+   707→  STEP=1
+   708→  TOTAL=13
+   709→  
+   710→  clean_previous && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   711→  install_system_deps && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   712→  install_bun && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   713→  create_app_user && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   714→  setup_app_files && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   715→  configure_postgresql && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   716→  create_env_file && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   717→  install_node_deps && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   718→  install_mini_service_deps && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   719→  setup_database && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   720→  build_nextjs && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   721→  create_ecosystem_config && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   722→  start_services && echo "[$STEP/$TOTAL] Done" && STEP=$((STEP+1))
+   723→  verify
+   724→  
+   725→  echo -e "${GREEN}Deploy complete! Access the platform at http://<server-ip>:3000${NC}"
+   726→}
+   727→
+   728→# Run main
+   729→main "$@"
+   730→

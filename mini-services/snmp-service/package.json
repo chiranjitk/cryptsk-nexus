@@ -1,0 +1,12 @@
+{
+  "name": "snmp-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "net-snmp": "^3.26.1"
+  }
+}
