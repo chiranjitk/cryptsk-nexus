@@ -1,293 +1,417 @@
-import type { NextAuthOptions } from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
-import { db } from "@/lib/db";
-import { auditLogin } from "@/lib/audit";
-import { resolvePermissionsForRoles } from "@/lib/permissions";
+/**
+ * Cryptsk - Authentication Utility Functions
+ * Provides login, user retrieval, and role-based permission checks
+ */
+
+import { compare } from 'bcryptjs'
+import { db } from './db'
+import type { UserRole, UserStatus } from '@prisma/client'
+
+// In-memory brute-force protection (reset on server restart)
+// In development mode, brute-force lockout is disabled to prevent testing friction.
+// In production, 5 failed attempts triggers a 15-minute lockout.
+const failedAttempts = new Map<string, { count: number; lockedUntil: number }>()
+
+function isBruteForceEnabled(): boolean {
+  return process.env.NODE_ENV === 'production'
+}
 
 // ============================================================
-// CRYPTSK Nexus — NextAuth v4 Configuration
-// Per: docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
-// - bcryptjs password hashing
-// - HMAC-SHA256 session tokens (NextAuth default)
-// - Secure cookies (cryptsk_session)
-// - JWT session strategy (stateless, no DB session store needed)
-// - Credentials provider (email + password)
-//
-// Two account kinds share this login (single login form):
-//   • staff     → users table, roles + permissions (RBAC)
-//   • customer  → portal_users table (Self-Care portal), strictly
-//                 scoped to their own customer's data via
-//                 requireSelfcareAccess() — never any staff permission
-// The lookup falls back portal-ward only when the staff user is not
-// found, so staff authentication behavior is unchanged.
+// TYPES
 // ============================================================
 
-export const authOptions: NextAuthOptions = {
-  providers: [
-    CredentialsProvider({
-      name: "credentials",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials, req) {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  phone: string
+  role: UserRole
+  status: UserStatus
+  avatarUrl: string
+  twoFactorEnabled: boolean
+  lastLoginAt: Date | null
+  createdAt: Date
+}
+
+export interface LoginResult {
+  success: boolean
+  user?: AuthUser
+  error?: string
+}
+
+// ============================================================
+// ROLE HIERARCHY (higher number = more permissions)
+// ============================================================
+
+const ROLE_LEVELS: Record<UserRole, number> = {
+  SUPER_ADMIN: 100,
+  ADMIN: 80,
+  OPERATOR: 60,
+  TECHNICIAN: 40,
+  AGENT: 30,
+  VIEWER: 10,
+  CUSTOMER: 5,
+}
+
+// ============================================================
+// HELPER: Transform Prisma user to AuthUser
+// ============================================================
+
+function toAuthUser(user: {
+  id: string
+  email: string
+  name: string
+  phone: string
+  role: UserRole
+  status: UserStatus
+  avatarUrl: string
+  twoFactorEnabled: boolean
+  lastLoginAt: Date | null
+  createdAt: Date
+}): AuthUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    phone: user.phone,
+    role: user.role,
+    status: user.status,
+    avatarUrl: user.avatarUrl,
+    twoFactorEnabled: user.twoFactorEnabled,
+    lastLoginAt: user.lastLoginAt,
+    createdAt: user.createdAt,
+  }
+}
+
+// ============================================================
+// AUTH FUNCTIONS
+// ============================================================
+
+/**
+ * Authenticate user with email and password
+ */
+export async function login(email: string, password: string): Promise<LoginResult> {
+  try {
+    if (!email || !password) {
+      return { success: false, error: 'Email and password are required' }
+    }
+
+    const user = await db.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    })
+
+    if (!user) {
+      return { success: false, error: 'Invalid email or password' }
+    }
+
+    if (user.status === 'LOCKED') {
+      return { success: false, error: 'Account is locked. Contact administrator.' }
+    }
+
+    if (user.status === 'INACTIVE') {
+      return { success: false, error: 'Account is inactive. Contact administrator.' }
+    }
+
+    if (user.status === 'SUSPENDED') {
+      return { success: false, error: 'Account is suspended. Contact administrator.' }
+    }
+
+    // Check if account is temporarily locked due to brute-force attempts (production only)
+    if (isBruteForceEnabled()) {
+      const attempts = failedAttempts.get(user.email)
+      if (attempts && attempts.lockedUntil > Date.now()) {
+        return { success: false, error: 'Account temporarily locked due to too many failed attempts. Try again later.' }
+      }
+    }
+
+    const isPasswordValid = await compare(password, user.password)
+    if (!isPasswordValid) {
+      // Track failed attempt (production only — skip in dev to avoid accidental lockouts)
+      if (isBruteForceEnabled()) {
+        const current = failedAttempts.get(user.email) || { count: 0, lockedUntil: 0 }
+        current.count += 1
+        if (current.count >= 5) {
+          current.lockedUntil = Date.now() + 15 * 60 * 1000 // 15 min lockout
         }
+        failedAttempts.set(user.email, current)
+      }
+      return { success: false, error: 'Invalid email or password' }
+    }
 
-        const email = credentials.email.toLowerCase().trim();
-        const ip = req?.headers?.["x-forwarded-for"]?.toString() || "unknown";
+    // Successful login - clear failed attempts
+    failedAttempts.delete(user.email)
 
-        // Find user (role names only — permissions are resolved per-session
-        // in the session() callback; embedding them bloated the JWT to ~8KB,
-        // which chunked into 3 cookies and breached the preview gateway's
-        // 8KB response-header limit → 502 on every successful login).
-        const user = await db.user.findUnique({
-          where: { email },
-          include: {
-            roles: {
-              include: {
-                role: { select: { name: true } },
-              },
-            },
-          },
-        });
+    // Update last login (best-effort, don't fail if DB is readonly)
+    try {
+      await db.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      })
+    } catch {
+      // Ignore write errors (e.g., readonly DB in sandbox)
+    }
 
-        // ------------------------------------------------------
-        // Customer Self-Care portal login (portal_users table).
-        // Reached only when no staff user matches the email — the
-        // staff path above/below stays byte-for-byte identical.
-        // auditLogin userId stays null: audit_events.user_id is an FK
-        // to the staff users table, so portal logins are identified
-        // by email (resourceName) instead.
-        // ------------------------------------------------------
-        if (!user) {
-          const portalUser = await db.portalUser.findUnique({
-            where: { email },
-            include: { customer: { select: { displayName: true } } },
-          });
+    return {
+      success: true,
+      user: toAuthUser(user),
+    }
+  } catch (error) {
+    console.error('[Auth] Login error:', error)
+    return { success: false, error: 'Internal server error' }
+  }
+}
 
-          if (!portalUser) {
-            await auditLogin({ userId: null, email, ip, success: false, errorMessage: "user not found" });
-            return null;
-          }
+/**
+ * Get user by ID
+ */
+export async function getUserById(id: string): Promise<AuthUser | null> {
+  try {
+    const user = await db.user.findUnique({
+      where: { id },
+    })
 
-          // Portal account must be active (staff can disable it)
-          if (portalUser.status !== "active") {
-            await auditLogin({ userId: null, email, ip, success: false, errorMessage: "account disabled" });
-            return null;
-          }
+    if (!user) return null
 
-          // Check if portal account is locked
-          if (portalUser.lockedUntil && portalUser.lockedUntil > new Date()) {
-            await auditLogin({ userId: null, email, ip, success: false, errorMessage: "account locked" });
-            return null;
-          }
+    return toAuthUser(user)
+  } catch (error) {
+    console.error('[Auth] getUserById error:', error)
+    return null
+  }
+}
 
-          // Verify password (mirror of staff lockout: 5 attempts → 15 min)
-          const portalValid = await bcrypt.compare(credentials.password, portalUser.passwordHash);
-          if (!portalValid) {
-            const attempts = portalUser.loginAttempts + 1;
-            const lockDuration = attempts >= 5 ? 15 * 60 * 1000 : null;
+/**
+ * Get user by email
+ */
+export async function getUserByEmail(email: string): Promise<AuthUser | null> {
+  try {
+    const user = await db.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    })
 
-            await db.portalUser.update({
-              where: { id: portalUser.id },
-              data: {
-                loginAttempts: attempts,
-                lockedUntil: lockDuration ? new Date(Date.now() + lockDuration) : null,
-              },
-            });
+    if (!user) return null
 
-            await auditLogin({ userId: null, email, ip, success: false, errorMessage: "invalid password" });
-            return null;
-          }
+    return toAuthUser(user)
+  } catch (error) {
+    console.error('[Auth] getUserByEmail error:', error)
+    return null
+  }
+}
 
-          // Success — reset counters + stamp last login
-          await db.portalUser.update({
-            where: { id: portalUser.id },
-            data: {
-              loginAttempts: 0,
-              lockedUntil: null,
-              lastLoginAt: new Date(),
-              lastLoginIp: ip,
-            },
-          });
+// ============================================================
+// ROLE & PERMISSION FUNCTIONS
+// ============================================================
 
-          await auditLogin({ userId: null, email, ip, success: true });
+/**
+ * Check if a user has a specific role
+ */
+export function hasRole(userRole: UserRole, requiredRole: UserRole): boolean {
+  return userRole === requiredRole
+}
 
-          return {
-            id: portalUser.id,
-            email: portalUser.email,
-            name: portalUser.name || portalUser.customer.displayName,
-            userType: "customer",
-            customerId: portalUser.customerId,
-            customerName: portalUser.customer.displayName,
-          } as any;
-        }
+/**
+ * Check if a user's role is at or above the required level
+ */
+export function hasMinRole(userRole: UserRole, requiredRole: UserRole): boolean {
+  const userLevel = ROLE_LEVELS[userRole] ?? 0
+  const requiredLevel = ROLE_LEVELS[requiredRole] ?? 0
+  return userLevel >= requiredLevel
+}
 
-        // Check if account is locked
-        if (user.lockedUntil && user.lockedUntil > new Date()) {
-          await auditLogin({ userId: user.id, email, ip, success: false, errorMessage: "account locked" });
-          return null;
-        }
+/**
+ * Check if user is an admin (SUPER_ADMIN or ADMIN)
+ */
+export function isAdmin(userRole: UserRole): boolean {
+  return userRole === 'SUPER_ADMIN' || userRole === 'ADMIN'
+}
 
-        // Check if account is active
-        if (user.status !== "active") {
-          await auditLogin({ userId: user.id, email, ip, success: false, errorMessage: `account ${user.status}` });
-          return null;
-        }
+/**
+ * Check if user is a super admin
+ */
+export function isSuperAdmin(userRole: UserRole): boolean {
+  return userRole === 'SUPER_ADMIN'
+}
 
-        // Verify password
-        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!isValid) {
-          // Increment failed login attempts
-          const attempts = user.loginAttempts + 1;
-          const lockDuration = attempts >= 5 ? 15 * 60 * 1000 : null; // lock 15min after 5 attempts
+/**
+ * Check if user is staff (any internal role except CUSTOMER)
+ */
+export function isStaff(userRole: UserRole): boolean {
+  return ['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'TECHNICIAN', 'AGENT', 'VIEWER'].includes(userRole)
+}
 
-          await db.user.update({
-            where: { id: user.id },
-            data: {
-              loginAttempts: attempts,
-              failedLoginAt: new Date(),
-              lockedUntil: lockDuration ? new Date(Date.now() + lockDuration) : null,
-            },
-          });
-
-          await auditLogin({ userId: user.id, email, ip, success: false, errorMessage: "invalid password" });
-          return null;
-        }
-
-        // Success — reset counters
-        await db.user.update({
-          where: { id: user.id },
-          data: {
-            loginAttempts: 0,
-            lockedUntil: null,
-            lastLoginAt: new Date(),
-            lastLoginIp: ip,
-          },
-        });
-
-        await auditLogin({ userId: user.id, email, ip, success: true });
-
-        // Return user object (will be in JWT token) — staff.
-        // Roles only: the permission list made the JWT chunk into 3 cookies
-        // and the preview gateway 502'd the login response. Permissions are
-        // resolved from roles in the session() callback instead.
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name || user.username,
-          userType: "staff",
-          roles: user.roles.map((ur) => ur.role.name),
-        } as any;
-      },
-    }),
+/**
+ * Define permission sets for each role
+ */
+export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  SUPER_ADMIN: [
+    // Subscribers
+    'subscribers.read', 'subscribers.create', 'subscribers.update', 'subscribers.delete',
+    // Plans
+    'plans.read', 'plans.create', 'plans.update', 'plans.delete',
+    // Invoices
+    'invoices.read', 'invoices.create', 'invoices.update', 'invoices.delete',
+    // Payments
+    'payments.read', 'payments.create', 'payments.update', 'payments.delete', 'payments.verify',
+    // Complaints
+    'complaints.read', 'complaints.create', 'complaints.update', 'complaints.delete', 'complaints.assign',
+    // Network
+    'network.read', 'network.create', 'network.update', 'network.delete', 'network.backup',
+    // Areas
+    'areas.read', 'areas.create', 'areas.update', 'areas.delete',
+    // Users
+    'users.read', 'users.create', 'users.update', 'users.delete',
+    // Settings
+    'settings.read', 'settings.update',
+    // Reports
+    'reports.read', 'reports.export',
+    // Technicians
+    'technicians.read', 'technicians.create', 'technicians.update', 'technicians.delete',
+    // Agents
+    'agents.read', 'agents.create', 'agents.update', 'agents.delete',
+    // Equipment
+    'equipment.read', 'equipment.create', 'equipment.update', 'equipment.delete',
+    // Installations
+    'installations.read', 'installations.create', 'installations.update', 'installations.delete',
+    // Vouchers
+    'vouchers.read', 'vouchers.create', 'vouchers.update', 'vouchers.delete',
+    // Promotions
+    'promotions.read', 'promotions.create', 'promotions.update', 'promotions.delete',
+    // Dashboard
+    'dashboard.read',
   ],
+  ADMIN: [
+    'subscribers.read', 'subscribers.create', 'subscribers.update', 'subscribers.delete',
+    'plans.read', 'plans.create', 'plans.update', 'plans.delete',
+    'invoices.read', 'invoices.create', 'invoices.update', 'invoices.delete',
+    'payments.read', 'payments.create', 'payments.update', 'payments.delete', 'payments.verify',
+    'complaints.read', 'complaints.create', 'complaints.update', 'complaints.delete', 'complaints.assign',
+    'network.read', 'network.create', 'network.update', 'network.delete', 'network.backup',
+    'areas.read', 'areas.create', 'areas.update', 'areas.delete',
+    'users.read', 'users.create', 'users.update',
+    'settings.read', 'settings.update',
+    'reports.read', 'reports.export',
+    'technicians.read', 'technicians.create', 'technicians.update',
+    'agents.read', 'agents.create', 'agents.update',
+    'equipment.read', 'equipment.create', 'equipment.update', 'equipment.delete',
+    'installations.read', 'installations.create', 'installations.update',
+    'vouchers.read', 'vouchers.create', 'vouchers.update',
+    'promotions.read', 'promotions.create', 'promotions.update',
+    'dashboard.read',
+  ],
+  OPERATOR: [
+    'subscribers.read', 'subscribers.create', 'subscribers.update',
+    'plans.read',
+    'invoices.read', 'invoices.create', 'invoices.update',
+    'payments.read', 'payments.create', 'payments.update',
+    'complaints.read', 'complaints.create', 'complaints.update', 'complaints.assign',
+    'network.read',
+    'areas.read',
+    'users.read',
+    'settings.read',
+    'reports.read',
+    'technicians.read',
+    'agents.read',
+    'equipment.read',
+    'installations.read', 'installations.create', 'installations.update',
+    'vouchers.read', 'vouchers.create',
+    'promotions.read',
+    'dashboard.read',
+  ],
+  TECHNICIAN: [
+    'subscribers.read',
+    'plans.read',
+    'invoices.read',
+    'complaints.read', 'complaints.update',
+    'network.read',
+    'areas.read',
+    'equipment.read', 'equipment.update',
+    'installations.read', 'installations.update',
+    'dashboard.read',
+  ],
+  AGENT: [
+    'subscribers.read',
+    'invoices.read',
+    'payments.read', 'payments.create',
+    'areas.read',
+    'reports.read',
+    'dashboard.read',
+  ],
+  VIEWER: [
+    'subscribers.read',
+    'plans.read',
+    'invoices.read',
+    'payments.read',
+    'complaints.read',
+    'network.read',
+    'areas.read',
+    'reports.read',
+    'dashboard.read',
+  ],
+  CUSTOMER: [
+    'subscribers.read:own',
+    'invoices.read:own',
+    'payments.read:own',
+    'complaints.read:own', 'complaints.create',
+  ],
+}
 
-  session: { strategy: "jwt", maxAge: 8 * 60 * 60 }, // 8 hours
+/**
+ * Check if a user has a specific permission
+ */
+export function hasPermission(userRole: UserRole, permission: string): boolean {
+  const permissions = ROLE_PERMISSIONS[userRole] || []
 
-  jwt: {
-    maxAge: 8 * 60 * 60, // 8 hours
-  },
+  // Check if permission already has :own scope
+  if (permissions.includes(permission)) return true;
 
-  cookies: {
-    sessionToken: {
-      name: "cryptsk_session",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        // Secure only when HTTPS is configured (Caddy TLS in Phase 1+)
-        // For now: HTTP on prod VM, so secure=false
-        secure: process.env.NEXTAUTH_URL?.startsWith("https") ?? false,
-      },
-    },
-  },
-
-  callbacks: {
-    async jwt({ token, user, trigger }) {
-      // Initial sign-in — branch on account kind
-      if (user) {
-        if ((user as any).userType === "customer") {
-          // Customer portal session — token.id = portalUser.id
-          token.userType = "customer";
-          token.id = user.id;
-          token.customerId = (user as any).customerId;
-          token.customerName = (user as any).customerName;
-        } else {
-          // Staff session (default — also covers legacy tokens w/o userType).
-          // Roles only — permissions resolved per-session (see session()).
-          token.userType = "staff";
-          token.id = user.id;
-          token.roles = (user as any).roles || [];
-        }
+  // Handle :own scope
+  const colonIdx = permission.lastIndexOf(':');
+  if (colonIdx > 0) {
+    const scope = permission.substring(colonIdx + 1);
+    if (scope === 'own') {
+      const base = permission.substring(0, colonIdx);
+      // Check if user has the base permission (e.g., "subscribers.read" grants "subscribers.read:own")
+      if (permissions.includes(base)) return true;
+      // Also check wildcard
+      const dotIdx = base.lastIndexOf('.');
+      if (dotIdx > 0) {
+        const wildcard = base.substring(0, dotIdx) + '.*';
+        if (permissions.includes(wildcard)) return true;
       }
+    }
+  }
 
-      // Refresh data on session update
-      if (trigger === "update") {
-        if (token.userType === "customer") {
-          // Re-fetch the portal user (token.id = portalUser.id).
-          // Only display fields are refreshed here — if the account was
-          // disabled since login the token is left as-is and the API
-          // route guard (requireSelfcareAccess) re-checks DB status → 403.
-          const portalUser = await db.portalUser.findUnique({
-            where: { id: token.id as string },
-            include: { customer: { select: { displayName: true } } },
-          });
-          if (portalUser && portalUser.customerId === token.customerId) {
-            token.name = portalUser.name || portalUser.customer.displayName;
-            token.customerName = portalUser.customer.displayName;
-          }
-        } else {
-          const dbUser = await db.user.findUnique({
-            where: { id: token.id as string },
-            include: {
-              roles: {
-                include: { role: { select: { name: true } } },
-              },
-            },
-          });
-          if (dbUser) {
-            token.roles = dbUser.roles.map((ur) => ur.role.name);
-          }
-        }
-      }
+  // Check wildcard (e.g., "subscribers.read" matches "subscribers.*")
+  const dotIdx = permission.lastIndexOf('.');
+  if (dotIdx > 0) {
+    const wildcard = permission.substring(0, dotIdx) + '.*';
+    if (permissions.includes(wildcard)) return true;
+  }
 
-      return token;
-    },
+  return false
+}
 
-    async session({ session, token }) {
-      if (session.user) {
-        const userType = (token.userType as string | undefined) ?? "staff";
-        (session.user as any).userType = userType;
-        (session.user as any).id = token.id;
-        if (userType === "customer") {
-          // Customer portal session — no roles/permissions ever leave
-          (session.user as any).customerId = token.customerId;
-          (session.user as any).customerName = token.customerName;
-        } else {
-          // Staff — identical output shape as before, plus additive userType.
-          // Permissions are resolved live from the session's role list (DB +
-          // 60s in-memory cache) so the session JWT stays tiny and the login
-          // response stays far below the preview gateway's 8KB header cap.
-          (session.user as any).roles = token.roles;
-          (session.user as any).permissions = await resolvePermissionsForRoles(
-            (token.roles as string[] | undefined) ?? []
-          );
-        }
-      }
-      return session;
-    },
-  },
+/**
+ * Get all permissions for a role
+ */
+export function getPermissions(userRole: UserRole): string[] {
+  return ROLE_PERMISSIONS[userRole] || []
+}
 
-  pages: {
-    // We use an AuthGate pattern — login renders at / when unauthenticated
-    // No custom login route needed
-    signIn: "/",
-    error: "/",
-  },
+/**
+ * Verify user session (placeholder for future JWT/session implementation)
+ * For now, simply checks if user exists and is active
+ */
+export async function verifySession(userId: string): Promise<AuthUser | null> {
+  try {
+    const user = await db.user.findUnique({
+      where: { id: userId },
+    })
 
-  secret: process.env.NEXTAUTH_SECRET,
-};
+    if (!user || user.status !== 'ACTIVE') return null
+
+    return toAuthUser(user)
+  } catch (error) {
+    console.error('[Auth] verifySession error:', error)
+    return null
+  }
+}
