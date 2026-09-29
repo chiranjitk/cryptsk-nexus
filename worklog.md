@@ -953,3 +953,32 @@ Stage Summary:
 - DB currently holds zero tickets/installations/inventory rows (seed untouched per instructions) → panel shows real empty states; chips/badges light up from real data as soon as records are created via the UI
 - Lint: PASS (exit 0). Dev server left running on :3000 with fresh PrismaClient (has all new models)
 Final message: created 7 API files (tickets, tickets/[id], tickets/[id]/replies, installations, installations/[id], inventory, inventory/[id]) + operations-panel.tsx; edited health/route.ts, page.tsx, app-sidebar.tsx. All endpoints RBAC-guarded (ticket/installation/inventory × list/create/read/update/delete) + audit-logged; workflow state machines enforced server-side; stats are real parallel Prisma counts; lint exit 0; unauth smoke = clean 401s.
+
+---
+Task ID: T3-QA-ROUND (orchestrator — cron review round)
+Agent: Z.ai Code (orchestrator)
+Task: QA sweep + Operations & Support module (Menu v4.0 §09) + styling details
+
+Work Log:
+- Reconciled with other agent's remote work: merged origin/main (their VPP-SUCCESS report + my worklog entry), resolved worklog.md conflict keeping both entries
+- Merged tree now includes their VPP/9-services milestone + my full-stack work
+- QA sweep: all views load clean; no runtime errors; dialogs a11y verified
+- Built Operations & Support module end-to-end (schema additive push → 4 new tables: tickets, ticket_replies, installations, inventory_items)
+- APIs: tickets (SLA per priority: critical 4h/high 8h/medium 24h/low 72h), ticket workflow state machine (resolve requires text → 400 otherwise; closed only from resolved; reopen clears), replies + internal notes, installations (validated transitions, today/upcoming stats), inventory (quantityDelta negative-guard, lowStock via Prisma field-reference, real stockValue Σqty×price), /api/health extended (openTickets, upcomingInstallations)
+- UI: operations-panel (3 tabs: Tickets w/ SLA countdown + priority pulse + workflow-aware dialogs; Installations w/ schedule/complete/fail/reschedule; Inventory w/ stock bars, low-stock amber rows, ±delta adjust); sidebar Operations group w/ live red open-ticket badge; dashboard "Operational Pulse" card (support queue, field installs w/ real distinct-technician count, warehouse ₹ value + low/out chips)
+- Real data via real APIs: 2 tickets (1 closed w/ resolution, 1 open w/ SLA countdown verified in UI), 1 internal note, 1 installation (scheduled→in_progress), 3 inventory items (stockValue ₹1,50,892 verified = 42×2450+8×5999)
+- Fixed: Radix DialogTitle warning on ticket detail (sr-only always-present title), dashboard stats raw SQL column quoting ("unitPrice"), db:push script env pinning, breadcrumb operations label
+- lint: PASS exit 0
+
+Stage Summary:
+- Menu v4.0 module #09 (Operations & Support) now REAL end-to-end; only operations_support status flipped to active in seed
+- Dashboard now surfaces cross-module ops health
+- Verified inventory stats math and SLA math exact
+- lint PASS; commit pushed to origin/main
+
+Unresolved/risks & next-phase priorities:
+1. Monitoring module (Menu #10) still not_installed — needs syslog/NAT-log ingestion design (external input source required)
+2. Reports & Analytics (Menu #11) — real-data reports (revenue, growth, ARPU) + CSV export; good next feature
+3. VPP panel still expects VPP service (other agent's VM :3015) — in this sandbox /api/vpp health 502 is expected; consider env-based VPP_ADAPTER_URL graceful degrade UI banner
+4. Self-Care portal (spec §18) untouched
+5. Customer 360 could link tickets (customerId now on Ticket model) — small enhancement
