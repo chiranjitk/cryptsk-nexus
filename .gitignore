@@ -95,3 +95,10 @@ skills/
 # --- Bun lockfile cache (keep bun.lock, ignore cache) ---
 .bun/
 
+
+# Backup files from v2 sandbox migration
+*.v2bak
+src.v2bak/
+prisma.v2bak/
+public.v2bak/
+.tmp-build-keepset.py
