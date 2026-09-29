@@ -33,20 +33,36 @@ export function LoginCard() {
     setLoading(true);
     setError(null);
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    try {
+      // Explicit absolute same-origin callbackUrl: the auth server replies
+      // with a redirect target on THIS origin (preview-proxy / iframe safe).
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+        callbackUrl: `${window.location.origin}/`,
+      });
 
-    if (result?.error) {
-      setError("Invalid email or password");
-      setLoading(false);
-    } else if (result?.ok || result?.url) {
-      // Force a full page reload so SessionProvider picks up the new cookie
-      window.location.href = "/";
-    } else {
-      setError("Login failed. Please try again.");
+      if (result?.error) {
+        setError(
+          result.error === "CredentialsSignin"
+            ? "Invalid email or password"
+            : "Login failed. Please try again."
+        );
+        setLoading(false);
+      } else if (result?.ok || result?.url) {
+        // Full page reload so SessionProvider + server components pick up the
+        // new session cookie. replace() keeps the login POST out of history.
+        window.location.replace("/");
+      } else {
+        setError("Login failed. Please try again.");
+        setLoading(false);
+      }
+    } catch {
+      // next-auth v4 can throw raw TypeErrors (e.g. "Failed to construct
+      // 'URL': Invalid URL") when the auth endpoint replies unexpectedly —
+      // never let that crash the UI as an unhandled rejection.
+      setError("Login service is unreachable. Please try again in a moment.");
       setLoading(false);
     }
   }

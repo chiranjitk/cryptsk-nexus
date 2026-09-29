@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { auditLogin } from "@/lib/audit";
+import { resolvePermissionsForRoles } from "@/lib/permissions";
 
 // ============================================================
 // CRYPTSK Nexus — NextAuth v4 Configuration
@@ -38,17 +39,16 @@ export const authOptions: NextAuthOptions = {
         const email = credentials.email.toLowerCase().trim();
         const ip = req?.headers?.["x-forwarded-for"]?.toString() || "unknown";
 
-        // Find user
+        // Find user (role names only — permissions are resolved per-session
+        // in the session() callback; embedding them bloated the JWT to ~8KB,
+        // which chunked into 3 cookies and breached the preview gateway's
+        // 8KB response-header limit → 502 on every successful login).
         const user = await db.user.findUnique({
           where: { email },
           include: {
             roles: {
               include: {
-                role: {
-                  include: {
-                    permissions: { include: { permission: true } },
-                  },
-                },
+                role: { select: { name: true } },
               },
             },
           },
@@ -171,16 +171,16 @@ export const authOptions: NextAuthOptions = {
 
         await auditLogin({ userId: user.id, email, ip, success: true });
 
-        // Return user object (will be in JWT token) — staff
+        // Return user object (will be in JWT token) — staff.
+        // Roles only: the permission list made the JWT chunk into 3 cookies
+        // and the preview gateway 502'd the login response. Permissions are
+        // resolved from roles in the session() callback instead.
         return {
           id: user.id,
           email: user.email,
           name: user.name || user.username,
           userType: "staff",
           roles: user.roles.map((ur) => ur.role.name),
-          permissions: user.roles.flatMap((ur) =>
-            ur.role.permissions.map((rp) => `${rp.permission.resource}.${rp.permission.action}`)
-          ),
         } as any;
       },
     }),
@@ -217,11 +217,11 @@ export const authOptions: NextAuthOptions = {
           token.customerId = (user as any).customerId;
           token.customerName = (user as any).customerName;
         } else {
-          // Staff session (default — also covers legacy tokens w/o userType)
+          // Staff session (default — also covers legacy tokens w/o userType).
+          // Roles only — permissions resolved per-session (see session()).
           token.userType = "staff";
           token.id = user.id;
           token.roles = (user as any).roles || [];
-          token.permissions = (user as any).permissions || [];
         }
       }
 
@@ -245,19 +245,12 @@ export const authOptions: NextAuthOptions = {
             where: { id: token.id as string },
             include: {
               roles: {
-                include: {
-                  role: {
-                    include: { permissions: { include: { permission: true } } },
-                  },
-                },
+                include: { role: { select: { name: true } } },
               },
             },
           });
           if (dbUser) {
             token.roles = dbUser.roles.map((ur) => ur.role.name);
-            token.permissions = dbUser.roles.flatMap((ur) =>
-              ur.role.permissions.map((rp) => `${rp.permission.resource}.${rp.permission.action}`)
-            );
           }
         }
       }
@@ -275,9 +268,14 @@ export const authOptions: NextAuthOptions = {
           (session.user as any).customerId = token.customerId;
           (session.user as any).customerName = token.customerName;
         } else {
-          // Staff — identical shape to before, plus additive userType
+          // Staff — identical output shape as before, plus additive userType.
+          // Permissions are resolved live from the session's role list (DB +
+          // 60s in-memory cache) so the session JWT stays tiny and the login
+          // response stays far below the preview gateway's 8KB header cap.
           (session.user as any).roles = token.roles;
-          (session.user as any).permissions = token.permissions;
+          (session.user as any).permissions = await resolvePermissionsForRoles(
+            (token.roles as string[] | undefined) ?? []
+          );
         }
       }
       return session;

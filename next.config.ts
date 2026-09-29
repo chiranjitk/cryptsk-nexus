@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // Preview panel serves the app from https://preview-*.space-z.ai — allow the
+  // dev server to serve /_next assets cross-origin to those hosts.
+  allowedDevOrigins: ["*.space-z.ai"],
 };
 
 export default nextConfig;
