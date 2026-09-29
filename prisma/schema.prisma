@@ -461,7 +461,7 @@ model CaptivePortal {
   createdAt                                                     DateTime             @default(now())
   updatedAt DateTime @updatedAt
   SystemInterface                                               SystemInterface?     @relation(fields: [interfaceId], references: [id])
-  Area                                                          Area?                @relation(fields: [locationId], references: [id])
+  location                                                      Area?                @relation(fields: [locationId], references: [id])
   CollectionAgent                                               CollectionAgent?     @relation(fields: [partnerId], references: [id])
   DhcpSubnet                                                    DhcpSubnet[]
   DnsRecord                                                     DnsRecord[]
@@ -2928,7 +2928,7 @@ model QosConfig {
   enabled          Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt DateTime @updatedAt
-  Plan             Plan?    @relation(fields: [targetPlanId], references: [id])
+  targetPlan       Plan?    @relation(fields: [targetPlanId], references: [id])
 
   @@index([enabled])
   @@index([priority])
@@ -4026,7 +4026,7 @@ model UptimeTarget {
   timeout     Int           @default(10)
   paused      Boolean       @default(false)
   createdAt   DateTime      @default(now())
-  UptimeCheck UptimeCheck[]
+  checks      UptimeCheck[]
 
   @@index([paused])
   @@index([type])
