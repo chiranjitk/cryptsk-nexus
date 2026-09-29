@@ -462,7 +462,7 @@ model CaptivePortal {
   updatedAt DateTime @updatedAt
   SystemInterface                                               SystemInterface?     @relation(fields: [interfaceId], references: [id])
   location                                                      Area?                @relation(fields: [locationId], references: [id])
-  CollectionAgent                                               CollectionAgent?     @relation(fields: [partnerId], references: [id])
+  partner                                                       CollectionAgent?     @relation(fields: [partnerId], references: [id])
   DhcpSubnet                                                    DhcpSubnet[]
   DnsRecord                                                     DnsRecord[]
   PortalAccessRule                                              PortalAccessRule[]
@@ -4009,7 +4009,7 @@ model UptimeCheck {
   statusCode   Int?
   message      String?
   createdAt    DateTime     @default(now())
-  UptimeTarget UptimeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  target       UptimeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([status])
