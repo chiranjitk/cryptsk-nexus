@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
     const { searchParams } = req.nextUrl;
-    const action = searchParams.get("action");
+    const action = searchParams.get("action") || "list";
 
     // ── List all grace periods (with pagination, status filter) ──
     if (action === "list") {

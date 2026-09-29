@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
         where,
         include: {
           User: { select: { id: true, email: true, status: true } },
-          Area: { select: { id: true, name: true, code: true } },
+          areasManaged: { select: { id: true, name: true, code: true } },
           _count: {
             select: {
               Complaint: true,

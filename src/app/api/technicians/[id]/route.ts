@@ -27,7 +27,7 @@ export async function GET(
           take: 20,
           include: {
             Subscriber: { select: { id: true, name: true, code: true } },
-            Area: { select: { id: true, name: true } },
+            areasManaged: { select: { id: true, name: true } },
           },
         },
         installations: {
@@ -35,7 +35,7 @@ export async function GET(
           take: 20,
           include: {
             Subscriber: { select: { id: true, name: true, code: true } },
-            Area: { select: { id: true, name: true } },
+            areasManaged: { select: { id: true, name: true } },
           },
         },
       },

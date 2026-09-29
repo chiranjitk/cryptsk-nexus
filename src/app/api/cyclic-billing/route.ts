@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
     const { searchParams } = req.nextUrl;
-    const action = searchParams.get("action");
+    const action = searchParams.get("action") || "list";
 
     // ── List milestones for a plan ──
     if (action === "list-milestones") {

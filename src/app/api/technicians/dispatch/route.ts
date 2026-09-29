@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         assignedToId: true,
         createdAt: true,
         areaId: true,
-        Area: { select: { id: true, name: true } },
+        areasManaged: { select: { id: true, name: true } },
         Subscriber: { select: { id: true, name: true, phone: true } },
       },
       orderBy: { createdAt: "desc" },
