@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, FileText, IndianRupee, CheckCircle, Clock,
   AlertCircle, TrendingUp, Wallet, Gift, MoreHorizontal, Eye,
-  Ticket, TicketCheck, RefreshCw, Ban, Copy, Check, Loader2, Download,
+  Ticket, TicketCheck, RefreshCw, Ban, Copy, Check, Loader2, Download, Printer,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { relTime } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { VoucherPrintDialog } from "@/components/admin/voucher-print-dialog";
 
 type Invoice = {
   id: string; invoiceNumber: string; issueDate: string; dueDate: string;
@@ -78,6 +79,7 @@ export function BillingPanel() {
   const [voucherStatus, setVoucherStatus] = React.useState("");
   const [showGenerate, setShowGenerate] = React.useState(false);
   const [batchResult, setBatchResult] = React.useState<GenerateVouchersResult | null>(null);
+  const [showPrint, setShowPrint] = React.useState(false);
 
   const { data: invData, isLoading: invLoading } = useQuery({
     queryKey: ["invoices", search, statusFilter],
@@ -369,6 +371,14 @@ export function BillingPanel() {
                   >
                     {exportingCsv ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Export CSV
                   </Button>
+                  <Button
+                    variant="outline" size="sm" className="h-9 gap-1.5 px-3"
+                    onClick={() => setShowPrint(true)}
+                    disabled={vouchers.length === 0}
+                    aria-label="Print voucher handout sheet"
+                  >
+                    <Printer className="size-3.5" /> Print
+                  </Button>
                 </>
               ) : (
                 <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status" className="h-9 rounded-md border border-input bg-background px-3 text-sm">
@@ -514,6 +524,13 @@ export function BillingPanel() {
         />
       )}
       {batchResult && <VoucherBatchResultDialog result={batchResult} onClose={() => setBatchResult(null)} />}
+      {showPrint && (
+        <VoucherPrintDialog
+          search={voucherSearch}
+          status={voucherStatus}
+          onClose={() => setShowPrint(false)}
+        />
+      )}
     </div>
   );
 }

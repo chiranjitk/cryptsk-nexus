@@ -4,7 +4,7 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, UserPlus, Wifi, CreditCard, Activity, RefreshCw, AlertTriangle, Info,
-  FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Settings, Zap,
+  FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Link2, Settings, Zap,
   MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy, Copy, Check, Loader2,
 } from "lucide-react";
 import { relTime, formatINR } from "@/lib/format";
@@ -34,6 +34,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { ResetLinkDialog } from "@/components/admin/reset-link-dialog";
 
 // ============================================================
 // Customer 360° — full-detail dialog (overview, subscribers,
@@ -909,6 +910,7 @@ function PortalAccessSection({ customerId }: { customerId: string }) {
   const { toast } = useToast();
   const [showAdd, setShowAdd] = React.useState(false);
   const [resetUser, setResetUser] = React.useState<PortalUserRow | null>(null);
+  const [linkUser, setLinkUser] = React.useState<PortalUserRow | null>(null);
   const [deleteUser, setDeleteUser] = React.useState<PortalUserRow | null>(null);
 
   const query = useQuery<PortalUsersResponse>({
@@ -1051,6 +1053,16 @@ function PortalAccessSection({ customerId }: { customerId: string }) {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="size-7"
+                          onClick={() => setLinkUser(u)}
+                          aria-label={`Generate reset link for ${u.email}`}
+                          title="Generate one-time reset link"
+                        >
+                          <Link2 className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="size-7 text-rose-600 hover:text-rose-600"
                           onClick={() => setDeleteUser(u)}
                           aria-label={`Remove portal access for ${u.email}`}
@@ -1080,6 +1092,15 @@ function PortalAccessSection({ customerId }: { customerId: string }) {
           user={resetUser}
           onClose={() => setResetUser(null)}
           onSaved={() => { setResetUser(null); invalidate(); toast({ title: "Password reset" }); }}
+        />
+      )}
+      {linkUser && (
+        <ResetLinkDialog
+          title="Generate reset link"
+          description="One-time portal sign-in reset link — the customer sets a new password themselves."
+          endpoint={`/api/portal-users/${linkUser.id}/reset-link`}
+          email={linkUser.email}
+          onClose={() => setLinkUser(null)}
         />
       )}
 

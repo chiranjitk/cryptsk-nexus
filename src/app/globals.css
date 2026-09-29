@@ -433,3 +433,47 @@
     animation: none !important;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   PRINT — voucher handout sheet (T10-c). Everything but the
+   .print-area sheet is hidden on paper; voucher cards never
+   split across page breaks.
+   ───────────────────────────────────────────────────────────── */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 12px; }
+  .print-no-repeat-break { break-inside: avoid; }
+}
+
+/* T10-c print support: neutralize the shadcn dialog shell (fixed
+   positioning + centering transform + screen-only scroll clamp)
+   so the absolute .print-area is anchored to the page itself and
+   the full sheet flows across printed pages. Screen styles are
+   untouched — these rules only apply under @media print. */
+@media print {
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    translate: none !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+  .print-area {
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    color: #111827 !important;
+  }
+}

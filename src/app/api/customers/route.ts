@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         displayName: true, email: true, phone: true,
         companyName: true, gstin: true, pan: true, kycVerified: true,
         createdAt: true, updatedAt: true,
-        _count: { select: { subscribers: true, subscriptions: true } },
+        _count: { select: { subscribers: true, subscriptions: true, portalUsers: true } },
       },
     });
 

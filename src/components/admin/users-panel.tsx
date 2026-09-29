@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, MoreHorizontal, Trash2, Edit, Lock, Unlock, Shield } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Trash2, Edit, KeyRound, Lock, Unlock, Shield } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { ResetLinkDialog } from "@/components/admin/reset-link-dialog";
 
 type Role = { id: string; name: string; slug: string };
 type UserRow = {
@@ -34,6 +35,7 @@ export function UsersPanel() {
   const [search, setSearch] = React.useState("");
   const [showCreate, setShowCreate] = React.useState(false);
   const [editUser, setEditUser] = React.useState<UserRow | null>(null);
+  const [resetLinkUser, setResetLinkUser] = React.useState<UserRow | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["users"],
@@ -191,6 +193,9 @@ export function UsersPanel() {
                             <DropdownMenuItem onClick={() => setEditUser(user)}>
                               <Edit className="mr-2 size-4" /> Edit
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setResetLinkUser(user)}>
+                              <KeyRound className="mr-2 size-4" /> Generate reset link
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-rose-600 focus:text-rose-600 focus:bg-rose-500/10"
@@ -222,6 +227,16 @@ export function UsersPanel() {
             setEditUser(null);
             qc.invalidateQueries({ queryKey: ["users"] });
           }}
+        />
+      )}
+
+      {resetLinkUser && (
+        <ResetLinkDialog
+          title="Generate reset link"
+          description="One-time sign-in reset link — the user sets a new password themselves. No password is displayed here."
+          endpoint={`/api/users/${resetLinkUser.id}/reset-link`}
+          email={resetLinkUser.email}
+          onClose={() => setResetLinkUser(null)}
         />
       )}
     </div>

@@ -2,20 +2,31 @@
 
 import * as React from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { ForgotPasswordDialog } from "@/components/auth/forgot-password-dialog";
+import { ResetPasswordCard } from "@/components/auth/reset-password-card";
 
 export function LoginCard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = React.useState("admin@cryptsk.com");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [showForgot, setShowForgot] = React.useState(false);
+
+  // One-time reset link landing (?reset=<token>) replaces the
+  // sign-in form entirely — same wrapper, different card.
+  const resetToken = searchParams.get("reset");
+  if (resetToken) {
+    return <ResetPasswordCard token={resetToken} />;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -86,7 +97,11 @@ export function LoginCard() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-xs font-medium">Password</Label>
-                <button type="button" className="text-[10px] text-muted-foreground hover:text-primary">
+                <button
+                  type="button"
+                  onClick={() => setShowForgot(true)}
+                  className="text-[10px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                >
                   Forgot?
                 </button>
               </div>
@@ -146,6 +161,10 @@ export function LoginCard() {
           </div>
         </CardContent>
       </Card>
+
+      {showForgot && (
+        <ForgotPasswordDialog email={email} onClose={() => setShowForgot(false)} />
+      )}
     </div>
   );
 }

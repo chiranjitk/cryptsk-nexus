@@ -62,6 +62,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PasswordResetsTab } from "@/components/admin/password-resets-tab";
 import { useToast } from "@/hooks/use-toast";
 
 // ============================================================
@@ -1202,6 +1203,7 @@ export function AdminPanel() {
     { value: "settings", label: "System Settings", icon: Settings2 },
     { value: "modules", label: "Modules", icon: Blocks },
     { value: "feature-flags", label: "Feature Flags", icon: Flag },
+    { value: "password-resets", label: "Password Resets", icon: KeyRound },
     { value: "notifications", label: "Notifications", icon: Bell },
   ];
 
@@ -1240,6 +1242,9 @@ export function AdminPanel() {
         </TabsContent>
         <TabsContent value="feature-flags" className="mt-0">
           <FeatureFlagsTab />
+        </TabsContent>
+        <TabsContent value="password-resets" className="mt-0">
+          <PasswordResetsTab />
         </TabsContent>
         <TabsContent value="notifications" className="mt-0">
           <NotificationsTab />

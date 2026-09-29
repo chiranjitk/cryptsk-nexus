@@ -132,6 +132,7 @@ model User {
   notifications   Notification[]
   sessions        Session[]
   settings        UserSetting[]
+  passwordResetTokens PasswordResetToken[]
 
   @@index([status])
   @@index([email])
@@ -630,6 +631,7 @@ model PortalUser {
 
   // Relations
   customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  passwordResetTokens PasswordResetToken[]
 
   @@index([customerId])
   @@index([status])
@@ -1935,4 +1937,45 @@ model ServiceProbeLog {
 
   @@index([service, checkedAt])
   @@map("service_probe_logs")
+}
+
+// ============================================================
+// T10 — Password reset tokens (self-service forgot-password +
+// staff-assisted reset links, helpdesk handover flow).
+// SECURITY: the RAW token (64-hex from 32 random bytes) is NEVER
+// persisted — only its SHA-256 hex hash is stored, and reset
+// links carry the raw token. A token is valid for 60 minutes,
+// single-use (usedAt), and rate-limited at creation
+// (≤3 unused tokens per actor per 60 minutes).
+// Exactly ONE of userId / portalUserId is set, per actorType.
+// ============================================================
+
+enum PasswordResetActor {
+  staff
+  portal
+}
+
+model PasswordResetToken {
+  id           String              @id @default(cuid())
+  tokenHash    String              @unique // sha256 hex of the raw token — raw NEVER stored
+  actorType    PasswordResetActor
+  userId       String?             // staff Users.id (actorType = staff)
+  portalUserId String?             // PortalUsers.id (actorType = portal)
+  expiresAt    DateTime
+  usedAt       DateTime?
+  deliveredAt  DateTime?           // when the helpdesk handed over the link
+  deliveredBy  String?             // staff users.id who delivered/issued the link
+  requestIp    String?             // x-forwarded-for at request time
+  createdBy    String?             // staff users.id (null = self-service forgot-password)
+  createdAt    DateTime            @default(now())
+
+  // Relations
+  user        User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portalUser  PortalUser?  @relation(fields: [portalUserId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([portalUserId])
+  @@index([actorType, createdAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
