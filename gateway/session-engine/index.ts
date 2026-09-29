@@ -346,6 +346,168 @@ const server = Bun.serve({
       });
     }
 
+    // ── Policy Evaluate (Phase 5 deliverable) ──
+    // GET /policy/evaluate/:subscriberId — resolve effective policy for a subscriber
+    // Returns: resolved policy (speeds, data limit, timeouts) + compiled RADIUS attributes + explanation
+    const policyMatch = path.match(/^\/policy\/evaluate\/([^/]+)$/);
+    if (policyMatch && method === "GET") {
+      const subscriberId = policyMatch[1];
+      const client = new Client({ connectionString: DB_URL });
+      try {
+        await client.connect();
+        // Fetch subscriber with plan + radiusGroup + plan.group
+        const result = await client.query(`
+          SELECT
+            s.id, s.name, s."serviceUsername",
+            s."currentSpeedDown", s."currentSpeedUp",
+            s."sessionTimeout" as sub_session_timeout,
+            s."idleTimeout" as sub_idle_timeout,
+            p.id as plan_id, p.name as plan_name,
+            p."downloadSpeed", p."uploadSpeed", p."dataLimitGb",
+            p."maxConcurrentSessions", p."burstSpeed", p."burstDuration",
+            rg.id as rg_id, rg.name as rg_name,
+            rg."speedLimitDown", rg."speedLimitUp", rg."dataLimit" as rg_data_limit,
+            rg."sessionTimeout" as rg_session_timeout,
+            pg.id as pg_id, pg.name as pg_name,
+            pg."speedLimitDown" as pg_speed_down, pg."speedLimitUp" as pg_speed_up,
+            pg."dataLimit" as pg_data_limit, pg."sessionTimeout" as pg_session_timeout
+          FROM "Subscriber" s
+          LEFT JOIN "Plan" p ON p.id = s."planId"
+          LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
+          LEFT JOIN "RadiusGroup" pg ON pg.id = p."groupId"
+          WHERE s.id = $1
+        `, [subscriberId]);
+
+        if (result.rows.length === 0) {
+          return json({ error: "Subscriber not found" }, 404);
+        }
+
+        const row = result.rows[0];
+
+        // Build policy input for compiler
+        const input = {
+          radiusGroup: row.rg_id ? {
+            name: row.rg_name,
+            speedLimitDown: row.speedLimitDown || 0,
+            speedLimitUp: row.speedLimitUp || 0,
+            dataLimit: row.rg_data_limit,
+            sessionTimeout: row.rg_session_timeout,
+          } : null,
+          plan: row.plan_id ? {
+            name: row.plan_name,
+            downloadSpeed: row.downloadSpeed || 0,
+            uploadSpeed: row.uploadSpeed || 0,
+            dataLimitGb: row.dataLimitGb,
+            maxConcurrentSessions: row.maxConcurrentSessions || 1,
+            burstSpeed: row.burstSpeed,
+            burstDuration: row.burstDuration,
+            sessionTimeout: row.rg_session_timeout,
+            group: row.pg_id ? {
+              name: row.pg_name,
+              speedLimitDown: row.pg_speed_down || 0,
+              speedLimitUp: row.pg_speed_up || 0,
+              dataLimit: row.pg_data_limit,
+              sessionTimeout: row.pg_session_timeout,
+            } : null,
+          } : null,
+          currentSpeedDown: row.currentSpeedDown || 0,
+          currentSpeedUp: row.currentSpeedUp || 0,
+          sessionTimeout: row.sub_session_timeout,
+          idleTimeout: row.sub_idle_timeout,
+        };
+
+        // Resolve policy (deterministic, testable)
+        // Inline the resolution for the v2 session engine (no import dependency)
+        const chain: Array<any> = [];
+        if (input.radiusGroup?.speedLimitDown) {
+          chain.push({
+            source: `radiusGroup (${input.radiusGroup.name})`,
+            speedDown: input.radiusGroup.speedLimitDown * 1000,
+            speedUp: input.radiusGroup.speedLimitUp * 1000,
+            dataLimitMb: input.radiusGroup.dataLimit,
+            sessionTimeout: input.radiusGroup.sessionTimeout,
+            idleTimeout: null,
+          });
+        }
+        if (input.plan?.group?.speedLimitDown) {
+          chain.push({
+            source: `plan.group (${input.plan.group.name})`,
+            speedDown: input.plan.group.speedLimitDown * 1000,
+            speedUp: input.plan.group.speedLimitUp * 1000,
+            dataLimitMb: input.plan.group.dataLimit,
+            sessionTimeout: input.plan.group.sessionTimeout,
+            idleTimeout: null,
+          });
+        }
+        if (input.plan?.downloadSpeed) {
+          chain.push({
+            source: `plan (${input.plan.name})`,
+            speedDown: input.plan.downloadSpeed,
+            speedUp: input.plan.uploadSpeed,
+            dataLimitMb: input.plan.dataLimitGb ? Math.round(input.plan.dataLimitGb * 1024) : null,
+            sessionTimeout: input.plan.sessionTimeout ?? null,
+            idleTimeout: null,
+          });
+        }
+        if (input.currentSpeedDown) {
+          chain.push({
+            source: `subscriber.currentSpeed`,
+            speedDown: input.currentSpeedDown * 1000,
+            speedUp: (input.currentSpeedUp || 0) * 1000,
+            dataLimitMb: null,
+            sessionTimeout: input.sessionTimeout ?? null,
+            idleTimeout: input.idleTimeout ?? null,
+          });
+        }
+
+        const effective = chain[0] || { source: "default", speedDown: 0, speedUp: 0, dataLimitMb: null, sessionTimeout: null, idleTimeout: null };
+
+        // Compile to RADIUS attributes
+        const attributes: Array<{ name: string; value: string; op: string }> = [];
+        if (effective.sessionTimeout) {
+          attributes.push({ name: "Session-Timeout", value: String(effective.sessionTimeout), op: ":=" });
+        }
+        if (effective.idleTimeout) {
+          attributes.push({ name: "Idle-Timeout", value: String(effective.idleTimeout), op: ":=" });
+        }
+        let mikrotikRateLimit = "";
+        if (effective.speedDown > 0) {
+          mikrotikRateLimit = `${effective.speedDown}K/${effective.speedUp}K 0K/0K 0 0K/0K`;
+          attributes.push({ name: "Mikrotik-Rate-Limit", value: mikrotikRateLimit, op: ":=" });
+        }
+        if (effective.dataLimitMb) {
+          attributes.push({ name: "Filter-Id", value: `data_limit_${effective.dataLimitMb}MB`, op: ":=" });
+        }
+
+        return json({
+          subscriberId,
+          subscriberName: row.name,
+          serviceUsername: row.serviceUsername,
+          plan: input.plan ? { id: row.plan_id, name: row.plan_name } : null,
+          radiusGroup: input.radiusGroup ? { id: row.rg_id, name: row.rg_name } : null,
+          resolved: {
+            speedDownKbps: effective.speedDown,
+            speedUpKbps: effective.speedUp,
+            dataLimitMb: effective.dataLimitMb,
+            sessionTimeoutSec: effective.sessionTimeout,
+            idleTimeoutSec: effective.idleTimeout,
+            maxConcurrentSessions: input.plan?.maxConcurrentSessions ?? 1,
+            chain,
+          },
+          compiled: {
+            attributes,
+            mikrotikRateLimit,
+          },
+          explanation: `Effective policy resolved from ${chain.length} source(s). Top priority: ${effective.source}. Speed: ↓${effective.speedDown}Kbps ↑${effective.speedUp}Kbps. Data limit: ${effective.dataLimitMb ? effective.dataLimitMb + "MB" : "unlimited"}. Session timeout: ${effective.sessionTimeout ? effective.sessionTimeout + "s" : "none"}.`,
+          deterministic: true,
+        });
+      } catch (err: any) {
+        return json({ error: "Policy evaluation failed", message: err.message }, 500);
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
     // ── 404 ──
     return json({ error: "Not found", path }, 404);
   },
