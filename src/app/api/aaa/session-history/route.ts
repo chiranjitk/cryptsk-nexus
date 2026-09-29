@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
       `SELECT CAST(COUNT(*) AS int) as total FROM radacct a ${where}`,
       ...params
     ) as any[];
-    const total = countResult[0]?.total || 0;
+    const total = Number(countResult[0]?.total || 0);
 
     // Rows
     const rows = await db.$queryRawUnsafe(
@@ -88,8 +88,15 @@ export async function GET(req: NextRequest) {
       total_data: Number(statsRaw.total_data),
     };
 
+    // Convert BigInt fields to Number (PostgreSQL bigint comes as BigInt, can't be JSON serialized)
+    const safeRows = rows.map((r: any) => ({
+      ...r,
+      inputOctets: Number(r.inputOctets || 0),
+      outputOctets: Number(r.outputOctets || 0),
+      sessionTime: Number(r.sessionTime || 0),
+    }));
     return NextResponse.json({
-      data: rows,
+      data: safeRows,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       stats: {
         totalSessions: stats.total_sessions,

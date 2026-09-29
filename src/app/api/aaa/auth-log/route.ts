@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
     const activeSessions = activeResult[0]?.active || 0;
 
     return NextResponse.json({
-      data: rows,
+      data: rows.map((r: any) => ({ ...r, id: Number(r.id) })),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       stats: {
         totalToday: stats.total_today,
