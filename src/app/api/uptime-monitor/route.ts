@@ -179,7 +179,7 @@ export async function GET(request: NextRequest) {
   if (action === "status") {
     const targets = await db.uptimeTarget.findMany({
       include: {
-        UptimeCheck: { orderBy: { createdAt: "desc" }, take: 1 },
+        checks: { orderBy: { createdAt: "desc" }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
     });

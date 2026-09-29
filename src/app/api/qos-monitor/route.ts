@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     const qosConfigs = await db.qosConfig.findMany({
       where: { enabled: true },
       include: {
-        Plan: {
+        targetPlan: {
           select: { name: true, downloadSpeed: true, uploadSpeed: true, Subscriber: { where: { status: "ACTIVE" }, select: { id: true } } },
         },
       },
