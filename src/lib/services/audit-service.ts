@@ -25,6 +25,7 @@ import { db } from "@/lib/db";
 import { optionalAuth } from "@/lib/api-auth";
 import type { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
+import { logger } from "@/lib/logger";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -216,7 +217,7 @@ export async function auditLog(
   if (silent) {
     // Fire-and-forget — don't block the response
     db.auditLog.create({ data: logData }).catch((err) => {
-      console.error("Audit log write failed (silent):", err);
+      logger.error("audit_log_write_failed_silent", { error: err instanceof Error ? err.message : String(err), action, resource, resourceId });
     });
     return;
   }
@@ -225,7 +226,7 @@ export async function auditLog(
     await db.auditLog.create({ data: logData });
   } catch (error) {
     // Audit log failure should never break the main operation
-    console.error("Audit log write failed:", error);
+    logger.error("audit_log_write_failed", { error: error instanceof Error ? error.message : String(error), action, resource, resourceId });
   }
 }
 
