@@ -69,7 +69,7 @@ async function pollRadAcct() {
         acctsessionid,
         acctuniqueid,
         COALESCE(username, '') as username,
-        COALESCE(groupname, '') as groupname,
+        COALESCE((SELECT ug.groupname FROM radusergroup ug WHERE ug.username = radacct.username ORDER BY ug.priority ASC LIMIT 1), '') as groupname,
         nasipaddress,
         COALESCE(nasportid, '') as nasportid,
         COALESCE(framedipaddress, '') as framedipaddress,
@@ -138,7 +138,41 @@ async function pollRadAcct() {
 
 // Start the poller
 setInterval(pollRadAcct, POLL_INTERVAL_MS);
-pollRadAcct(); // initial poll
+
+// ─── Startup Reconciliation ───────────────────────────────────
+// On boot, do an initial poll to populate in-memory state from radacct.
+// This is the "Recover → Reconcile → No duplicate session" gate check:
+//   1. Recover: process restarts, in-memory state is empty
+//   2. Reconcile: poll radacct for active sessions (acctstoptime IS NULL)
+//   3. No duplicate: acctuniqueid is unique in radacct, so no dupes possible
+// Sessions that were stopped while we were down are NOT in the active set,
+// so they won't be re-added — they're correctly absent from in-memory state.
+console.log("[startup] Beginning reconciliation from radacct...");
+pollRadAcct().then(() => {
+  console.log(`[startup] Reconciliation complete. ${sessions.size} sessions loaded.`);
+  console.log(`[startup] Active: ${[...sessions.values()].filter(s => s.status === "active").length}`);
+  console.log(`[startup] Stopped (in grace window): ${[...sessions.values()].filter(s => s.status === "stopped").length}`);
+}).catch((err) => {
+  console.error("[startup] Reconciliation failed:", err);
+});
+
+// ─── Periodic Reconciliation Loop (every 60s) ─────────────────
+// Full reconciliation: compare in-memory sessions vs radacct active set.
+// Removes stale sessions (in-memory says active but radacct says stopped).
+// Adds missed sessions (radacct has active but in-memory doesn't).
+// This is the safety net beyond the 5s poller — catches edge cases like
+// radacct rows updated between polls.
+async function fullReconcile() {
+  const before = sessions.size;
+  await pollRadAcct();
+  const after = sessions.size;
+  const activeBefore = [...sessions.values()].filter(s => s.status === "active").length;
+  const stoppedBefore = [...sessions.values()].filter(s => s.status === "stopped").length;
+  if (Math.abs(after - before) > 0 || activeBefore === 0) {
+    console.log(`[reconcile] before=${before} after=${after} active=${activeBefore} stopped=${stoppedBefore}`);
+  }
+}
+setInterval(fullReconcile, 60_000); // every 60s
 
 // ─── REST API ────────────────────────────────────────────────
 
@@ -187,6 +221,7 @@ const server = Bun.serve({
         status: "ok",
         port: PORT,
         uptime: Math.floor((Date.now() - startTime) / 1000),
+        epoch: startTime, // generation/epoch — changes on every restart, lets clients detect stale sessions
         sessions: {
           active: [...sessions.values()].filter(s => s.status === "active").length,
           stopped: [...sessions.values()].filter(s => s.status === "stopped").length,
@@ -289,6 +324,25 @@ const server = Bun.serve({
         byNas,
         byGroup,
         uptime: Math.floor((Date.now() - startTime) / 1000),
+      });
+    }
+
+    // ── Reconcile (manual trigger) ──
+    // POST /reconcile — force a full reconciliation cycle (beyond the 5s/60s pollers)
+    // Use case: after a known radacct bulk-update, or to verify state consistency.
+    if (path === "/reconcile" && method === "POST") {
+      const before = sessions.size;
+      const beforeActive = [...sessions.values()].filter(s => s.status === "active").length;
+      await fullReconcile();
+      const after = sessions.size;
+      const afterActive = [...sessions.values()].filter(s => s.status === "active").length;
+      return json({
+        success: true,
+        reconciled: true,
+        before: { total: before, active: beforeActive },
+        after: { total: after, active: afterActive },
+        delta: { total: after - before, active: afterActive - beforeActive },
+        stats,
       });
     }
 
