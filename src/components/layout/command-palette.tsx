@@ -7,7 +7,8 @@ import { create } from "zustand";
 import {
   LayoutDashboard, Users, Building2, Package, CreditCard, Shield, Activity,
   Radio, KeyRound, Server, Network, Router, Brain, ScrollText, ShieldCheck,
-  Settings, UserPlus, FileText, Stethoscope, SunMoon, type LucideIcon,
+  Settings, UserPlus, FileText, Stethoscope, SunMoon, FileBarChart, IndianRupee,
+  FileDown, type LucideIcon,
 } from "lucide-react";
 import {
   CommandDialog, CommandInput, CommandList, CommandEmpty,
@@ -58,6 +59,11 @@ const NAV_ITEMS: PaletteNavItem[] = [
   { title: "NAS", href: "/?view=nas", icon: Server },
   { title: "Network", href: "/?view=network", icon: Network },
   { title: "VPP Gateway", href: "/?view=vpp", icon: Router },
+  { title: "Report Center", href: "/?view=reports", icon: FileBarChart },
+  { title: "Revenue & Collection Report", href: "/?view=reports&tab=revenue", icon: IndianRupee },
+  { title: "Usage & Bandwidth Report", href: "/?view=reports&tab=usage", icon: Activity },
+  { title: "Compliance & SLA Report", href: "/?view=reports&tab=sla", icon: ShieldCheck },
+  { title: "Data Export (CSV)", href: "/?view=reports&tab=export", icon: FileDown },
   { title: "AI Assistant", href: "/?view=ai", icon: Brain },
   { title: "Audit Log", href: "/?view=audit", icon: ScrollText },
   { title: "Roles", href: "/?view=roles", icon: ShieldCheck },

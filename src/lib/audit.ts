@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import type { AuditAction } from "@prisma/client";
+import type { AuditAction, Prisma } from "@prisma/client";
 
 // ============================================================
 // CRYPTSK Nexus — Audit Service
@@ -9,7 +9,7 @@ import type { AuditAction } from "@prisma/client";
 
 type AuditInput = {
   userId?: string | null;
-  action: AuditAction;
+  action?: AuditAction; // optional — helper wrappers (auditUpdate etc.) force their own action
   resource: string;
   resourceId?: string | null;
   resourceName?: string | null;
@@ -37,7 +37,7 @@ export async function auditCreate(input: AuditInput) {
     await db.auditEvent.create({
       data: {
         userId: input.userId || null,
-        action: input.action,
+        action: input.action ?? "update",
         resource: input.resource,
         resourceId: input.resourceId || null,
         resourceName: input.resourceName || null,
@@ -137,15 +137,16 @@ export async function getAuditEvents(params: {
   const pageSize = params.pageSize || 50;
   const skip = (page - 1) * pageSize;
 
-  const where: Record<string, unknown> = {};
+  const where: Prisma.AuditEventWhereInput = {};
   if (params.userId) where.userId = params.userId;
   if (params.action) where.action = params.action;
   if (params.resource) where.resource = params.resource;
   if (params.result) where.result = params.result;
   if (params.startDate || params.endDate) {
-    where.createdAt = {};
-    if (params.startDate) where.createdAt.gte = params.startDate;
-    if (params.endDate) where.createdAt.lte = params.endDate;
+    where.createdAt = {
+      ...(params.startDate ? { gte: params.startDate } : {}),
+      ...(params.endDate ? { lte: params.endDate } : {}),
+    };
   }
 
   const [events, total] = await Promise.all([

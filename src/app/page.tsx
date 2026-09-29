@@ -16,6 +16,8 @@ import { VppPanel } from "@/components/admin/vpp-panel";
 import { BillingPanel } from "@/components/admin/billing-panel";
 import { NetworkPanel } from "@/components/admin/network-panel";
 import { OperationsPanel } from "@/components/admin/operations-panel";
+import { MonitoringPanel } from "@/components/admin/monitoring-panel";
+import { ReportsPanel } from "@/components/admin/reports-panel";
 import { AiPanel } from "@/components/admin/ai-panel";
 import { AdminPanel } from "@/components/admin/admin-panel";
 import { DashboardHome } from "@/components/dashboard/dashboard-home";
@@ -44,6 +46,8 @@ export default function DashboardPage() {
   if (view === "billing") return <BillingPanel />;
   if (view === "network") return <NetworkPanel />;
   if (view === "operations") return <OperationsPanel />;
+  if (view === "monitoring") return <MonitoringPanel />;
+  if (view === "reports") return <ReportsPanel />;
   if (view === "ai") return <AiPanel />;
   if (view === "admin") return <AdminPanel />;
 

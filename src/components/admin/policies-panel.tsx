@@ -17,7 +17,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useToast } from "@/hooks/use-toast";
 
 type Policy = {
-  id: string; policyCode: string; name: string; type: string; status: string;
+  id: string; policyCode: string; name: string; description: string | null;
+  type: string; status: string;
   version: number; precedence: number; config: string; radiusGroupName: string | null;
   publishedAt: string | null; createdAt: string;
   _count: { versions: number; planMappings: number };

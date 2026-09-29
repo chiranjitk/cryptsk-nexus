@@ -221,7 +221,7 @@ function ApiKeysTab() {
         body: JSON.stringify(input),
       }),
     onSuccess: (result: { apiKey: ApiKeyRow; key: string; oneTimeView: boolean }) => {
-      setCreated({ name: result.apiKey.name, key: result.key, prefix: result.apiKey.prefix });
+      setCreated({ name: result.apiKey.name, key: result.key, prefix: result.apiKey.keyPrefix });
       setConfirmed(false);
       setNewName("");
       setNewExpiry("");

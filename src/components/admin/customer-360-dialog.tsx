@@ -5,8 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, UserPlus, Wifi, CreditCard, Activity, RefreshCw, AlertTriangle, Info,
   FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Settings, Zap,
-  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet,
+  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy, Copy, Check, Loader2,
 } from "lucide-react";
+import { relTime, formatINR } from "@/lib/format";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -27,6 +28,11 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 // ============================================================
@@ -87,6 +93,7 @@ type ContactRow = {
 type AddressRow = {
   id: string; type: string; line1: string; line2: string | null; city: string;
   state: string | null; postalCode: string | null; country: string; landmark: string | null;
+  isPrimary: boolean;
 };
 
 type Customer360Data = {
@@ -109,6 +116,86 @@ type Customer360Data = {
     subscriberCount: number; activeSubscriptions: number;
     lifetimeRevenue: number; outstanding: number;
   };
+};
+
+// Support tickets (via /api/selfcare/support — same contract the
+// customer-facing portal uses; internal notes are filtered server-side)
+type Ticket360Row = {
+  id: string; ticketNumber: string; subject: string; status: string; priority: string;
+  category: string | null; description: string; createdAt: string;
+  slaDueAt: string | null; resolvedAt: string | null;
+  replies: { authorName: string; message: string; createdAt: string }[];
+};
+type Support360Response = { tickets: Ticket360Row[] };
+
+// Portal access (customer self-service logins) — T6-a contract via
+// /api/portal-users. Staff-only management surface inside Customer 360.
+type PortalUserRow = {
+  id: string; email: string; name: string | null;
+  status: string; // "active" | "disabled"
+  lastLoginAt: string | null; lastLoginIp: string | null; createdAt: string;
+};
+type PortalUsersResponse = { portalUsers: PortalUserRow[] };
+
+type PortalUserRecord = {
+  portalUser: {
+    id: string; email: string; name: string | null;
+    status: string; createdAt: string;
+  };
+};
+
+// Wallet (prepaid balance + ledger) — /api/selfcare/wallet?customerId=
+// staff contract (same endpoint the customer Payments tab uses). A
+// customer without a wallet is a normal state, never an error.
+type WalletTxnRow = {
+  id: string; amount: number; type: string; // recharge|payment|refund|adjustment|cashback
+  description: string; balanceAfter: number; createdAt: string; invoiceId: string | null;
+};
+type WalletData = {
+  wallet: { id: string; balance: number; currency: string; minBalance: number; autoRecharge: boolean } | null;
+  transactions: WalletTxnRow[];
+};
+
+// POST /api/wallet/topup (staff cash top-up) response
+type TopUpResponse = {
+  wallet: { balance: number; currency: string };
+  transaction: { id: string; amount: number; type: string; balanceAfter: number };
+};
+
+const PORTAL_USER_STATUS_BADGE: Record<string, string> = {
+  active: "border-emerald-500/30 bg-emerald-500/5 text-emerald-600",
+  disabled: "border-slate-400/30 bg-slate-500/5 text-slate-500",
+};
+
+// Cryptographically random base62 password (rejection-sampled, no modulo
+// bias) — prefilled in the create / reset dialogs, shown once to staff.
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const max = Math.floor(256 / chars.length) * chars.length;
+  const buf = new Uint8Array(length * 2);
+  const out: string[] = [];
+  while (out.length < length) {
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < buf.length && out.length < length; i++) {
+      if (buf[i] < max) out.push(chars[buf[i] % chars.length]);
+    }
+  }
+  return out.join("");
+}
+
+const TICKET_360_STATUS_BADGE: Record<string, string> = {
+  open: "border-red-500/30 text-red-600",
+  in_progress: "border-amber-500/30 text-amber-600",
+  pending: "border-violet-500/30 text-violet-600",
+  resolved: "border-emerald-500/30 text-emerald-600",
+  closed: "border-slate-400/30 text-slate-500",
+};
+
+const TICKET_360_PRIORITY_BADGE: Record<string, string> = {
+  critical: "border-red-500/40 text-red-600",
+  high: "border-orange-500/40 text-orange-600",
+  medium: "border-amber-500/40 text-amber-600",
+  low: "border-slate-400/40 text-slate-500",
 };
 
 // ---------- formatting helpers ----------
@@ -209,6 +296,22 @@ export function Customer360Dialog({
       return res.json();
     },
     enabled: open && !!customerId,
+  });
+
+  // Linked support tickets — same endpoint the Self-Care portal uses,
+  // so staff see exactly the customer-visible ticket list.
+  const ticketsQuery = useQuery<Support360Response>({
+    queryKey: ["selfcare-support", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/selfcare/support?customerId=${encodeURIComponent(customerId ?? "")}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load tickets");
+      }
+      return res.json();
+    },
+    enabled: open && !!customerId,
+    staleTime: 30000,
   });
 
   const customer = data?.customer;
@@ -388,6 +491,18 @@ export function Customer360Dialog({
                     </Card>
                   </div>
                 </div>
+
+                {/* Support tickets — customer-visible list (no internal notes) */}
+                <SupportTicketsSection
+                  query={ticketsQuery}
+                  onRetry={() => ticketsQuery.refetch()}
+                />
+
+                {/* Portal access — customer self-service logins (staff-managed) */}
+                <PortalAccessSection customerId={customer.id} />
+
+                {/* Wallet — prepaid balance, recent activity + staff cash top-up */}
+                <WalletSection customerId={customer.id} enabled={open && !!customerId} />
               </TabsContent>
 
               {/* Subscribers */}
@@ -733,6 +848,706 @@ function EmptyState({ icon, title, text, compact }: { icon: React.ReactNode; tit
       <p className="text-sm font-medium">{title}</p>
       <p className="text-xs text-muted-foreground max-w-sm mt-1">{text}</p>
     </div>
+  );
+}
+
+// Support tickets card (Overview tab) — mirrors the customer-facing
+// Self-Care Support list: ticket number, subject, status/priority
+// badges, created relTime. Internal notes are filtered by the backend.
+function SupportTicketsSection({ query, onRetry }: {
+  query: { data?: Support360Response; isLoading: boolean; isError: boolean };
+  onRetry: () => void;
+}) {
+  const tickets = query.data?.tickets ?? [];
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <LifeBuoy className="size-4 text-muted-foreground" /> Support Tickets ({tickets.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load support tickets.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={onRetry}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : tickets.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-2">No support requests.</p>
+        ) : (
+          <ul className="max-h-64 divide-y overflow-y-auto cryptsk-scrollbar" role="list" aria-label="Support tickets">
+            {tickets.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-2 py-2 first:pt-0 last:pb-0">
+                <span className="font-mono text-xs font-medium text-muted-foreground">{t.ticketNumber}</span>
+                <span className="min-w-0 flex-1 truncate text-sm" title={t.subject}>{t.subject}</span>
+                <Badge variant="outline" className={`text-[10px] ${TICKET_360_STATUS_BADGE[t.status] || TICKET_360_STATUS_BADGE.closed}`}>
+                  {t.status.replace(/_/g, " ")}
+                </Badge>
+                <Badge variant="outline" className={`text-[10px] capitalize ${TICKET_360_PRIORITY_BADGE[t.priority] || TICKET_360_PRIORITY_BADGE.low}`}>
+                  {t.priority}
+                </Badge>
+                <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">{relTime(t.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Portal access card (Overview tab) — manage the customer's self-service
+// portal logins (CustomerUser accounts). Real data via /api/portal-users.
+function PortalAccessSection({ customerId }: { customerId: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = React.useState(false);
+  const [resetUser, setResetUser] = React.useState<PortalUserRow | null>(null);
+  const [deleteUser, setDeleteUser] = React.useState<PortalUserRow | null>(null);
+
+  const query = useQuery<PortalUsersResponse>({
+    queryKey: ["portal-users", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/portal-users?customerId=${encodeURIComponent(customerId)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load portal access");
+      }
+      return res.json();
+    },
+    enabled: !!customerId, // this section only mounts while the dialog is open
+    staleTime: 15000,
+  });
+
+  const users = query.data?.portalUsers ?? [];
+
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ["portal-users", customerId] });
+  }
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const res = await fetch(`/api/portal-users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update portal access");
+      }
+      return res.json() as Promise<PortalUserRecord>;
+    },
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.status === "active" ? "Portal access enabled" : "Portal access disabled" });
+      invalidate();
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/portal-users/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to remove portal access");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Portal access removed" });
+      invalidate();
+      setDeleteUser(null);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <KeyRound className="size-4 text-muted-foreground" /> Portal Access ({users.length})
+          </CardTitle>
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setShowAdd(true)}>
+            <Plus className="size-3" /> Add portal access
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load portal access.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => query.refetch()}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : users.length === 0 ? (
+          <p className="py-2 text-xs text-muted-foreground">
+            No portal access yet — create one to give the customer self-service login.
+          </p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto cryptsk-scrollbar rounded-lg border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background">
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead className="hidden sm:table-cell">Name</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Last login</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {users.map((u) => (
+                  <TableRow key={u.id} className="hover:bg-muted/50">
+                    <TableCell className="font-mono text-xs font-medium">{u.email}</TableCell>
+                    <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">{u.name || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={`text-[10px] ${PORTAL_USER_STATUS_BADGE[u.status] || PORTAL_USER_STATUS_BADGE.disabled}`}>
+                        {u.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="hidden text-xs md:table-cell">
+                      {u.lastLoginAt ? (
+                        <div>
+                          <p title={fmtDateTime(u.lastLoginAt)}>{relTime(u.lastLoginAt)}</p>
+                          {u.lastLoginIp && <p className="font-mono text-[10px] text-muted-foreground">{u.lastLoginIp}</p>}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">never</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Switch
+                          checked={u.status === "active"}
+                          disabled={statusMutation.isPending && statusMutation.variables?.id === u.id}
+                          onCheckedChange={(checked) =>
+                            statusMutation.mutate({ id: u.id, status: checked ? "active" : "disabled" })
+                          }
+                          aria-label={u.status === "active" ? `Disable portal access for ${u.email}` : `Enable portal access for ${u.email}`}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          onClick={() => setResetUser(u)}
+                          aria-label={`Reset password for ${u.email}`}
+                          title="Reset password"
+                        >
+                          <KeyRound className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-rose-600 hover:text-rose-600"
+                          onClick={() => setDeleteUser(u)}
+                          aria-label={`Remove portal access for ${u.email}`}
+                          title="Remove access"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+
+      {showAdd && (
+        <PortalUserDialog
+          customerId={customerId}
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); invalidate(); toast({ title: "Portal access created" }); }}
+        />
+      )}
+      {resetUser && (
+        <ResetPortalPasswordDialog
+          user={resetUser}
+          onClose={() => setResetUser(null)}
+          onSaved={() => { setResetUser(null); invalidate(); toast({ title: "Password reset" }); }}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteUser} onOpenChange={(o) => { if (!o) setDeleteUser(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove portal access?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteUser?.email} will no longer be able to sign in to the customer portal. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-600/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => { e.preventDefault(); if (deleteUser) deleteMutation.mutate(deleteUser.id); }}
+            >
+              {deleteMutation.isPending ? "Removing…" : "Remove access"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+// Wallet card (Overview tab) — prepaid balance, recent activity and the
+// staff cash top-up action. Real data via /api/selfcare/wallet (staff mode,
+// ?customerId=) + POST /api/wallet/topup. A missing wallet is a normal
+// state — it comes to life on the first voucher redemption or top-up.
+function WalletSection({ customerId, enabled }: { customerId: string; enabled: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [showTopUp, setShowTopUp] = React.useState(false);
+
+  const query = useQuery<WalletData>({
+    queryKey: ["wallet", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/selfcare/wallet?customerId=${encodeURIComponent(customerId)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load wallet");
+      }
+      return res.json();
+    },
+    enabled,
+    staleTime: 15000,
+  });
+
+  const wallet = query.data?.wallet ?? null;
+  const transactions = query.data?.transactions ?? [];
+
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ["wallet", customerId] });
+    // The Customer Information card also shows the wallet balance — keep it in sync.
+    qc.invalidateQueries({ queryKey: ["customer-360", customerId] });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Wallet className="size-4 text-muted-foreground" /> Wallet
+          </CardTitle>
+          <Button
+            size="sm"
+            className="h-7 gap-1 bg-emerald-600 px-2.5 text-xs text-white hover:bg-emerald-600/90"
+            onClick={() => setShowTopUp(true)}
+          >
+            <Plus className="size-3" /> Add top-up
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            <Skeleton className="h-10 w-44" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load wallet.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => query.refetch()}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : !wallet ? (
+          <p className="py-2 text-xs text-muted-foreground">
+            No wallet activated yet — it is created when the customer redeems a voucher or receives a top-up.
+          </p>
+        ) : (
+          <>
+            <div>
+              <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Prepaid balance</p>
+              <div className="flex items-center gap-2">
+                <span className="text-3xl font-bold tabular-nums tracking-tight">{formatINR(wallet.balance)}</span>
+                <Badge variant="outline" className="text-[9px] uppercase">{wallet.currency}</Badge>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Minimum balance {formatINR(wallet.minBalance)}</span>
+                {wallet.autoRecharge && (
+                  <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/5 text-[9px] text-emerald-600">
+                    <CheckCircle2 className="size-3" /> Auto-recharge on
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Recent activity</p>
+              {transactions.length === 0 ? (
+                <p className="py-1 text-xs text-muted-foreground">No wallet transactions yet.</p>
+              ) : (
+                <ul className="max-h-44 divide-y overflow-y-auto cryptsk-scrollbar" role="list" aria-label="Wallet transactions">
+                  {transactions.slice(0, 5).map((tx) => (
+                    <li key={tx.id} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                      <Badge variant="outline" className="shrink-0 text-[9px] capitalize">{tx.type}</Badge>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={tx.description}>{tx.description}</span>
+                      <span
+                        className={`shrink-0 text-xs font-medium tabular-nums ${tx.amount >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                        title={`Balance after: ${formatINR(tx.balanceAfter)}`}
+                      >
+                        {tx.amount >= 0 ? "+" : "−"}{formatINR(Math.abs(tx.amount))}
+                      </span>
+                      <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">{relTime(tx.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+
+      {showTopUp && (
+        <TopUpDialog
+          customerId={customerId}
+          walletBalance={wallet?.balance ?? null}
+          onClose={() => setShowTopUp(false)}
+          onSaved={(amount) => {
+            setShowTopUp(false);
+            invalidate();
+            toast({ title: "Wallet topped up", description: `${formatINR(amount)} added` });
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+// Staff cash top-up dialog — POST /api/wallet/topup { customerId, amount, notes? }.
+// Works when no wallet exists yet (the top-up activates it); server error
+// strings surface verbatim in a destructive toast.
+function TopUpDialog({ customerId, walletBalance, onClose, onSaved }: {
+  customerId: string;
+  walletBalance: number | null;
+  onClose: () => void;
+  onSaved: (amount: number) => void;
+}) {
+  const { toast } = useToast();
+  const [amount, setAmount] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+
+  const amountNum = Number(amount);
+  const amountInvalid = amount.trim() === "" || !Number.isFinite(amountNum) || amountNum <= 0;
+  const newBalance = (walletBalance ?? 0) + (Number.isFinite(amountNum) && amountNum > 0 ? amountNum : 0);
+
+  const topUp = useMutation<TopUpResponse, Error>({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { customerId, amount: amountNum };
+      if (notes.trim()) body.notes = notes.trim();
+      const res = await fetch("/api/wallet/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to top up wallet");
+      }
+      return res.json();
+    },
+    onSuccess: () => onSaved(amountNum),
+    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (amountInvalid || topUp.isPending) return;
+    topUp.mutate();
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Add wallet top-up</DialogTitle>
+          <DialogDescription>
+            Records a cash top-up against this customer&apos;s prepaid wallet
+            {walletBalance === null
+              ? " — this also activates the wallet."
+              : ` · current balance ${formatINR(walletBalance)}.`}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor="topup-amount">Amount (₹) *</Label>
+            <Input
+              id="topup-amount"
+              type="number"
+              min={1}
+              step={0.01}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+              className="h-10"
+              placeholder="e.g. 500"
+              aria-label="Top-up amount in rupees"
+              aria-invalid={amount !== "" && amountInvalid ? true : undefined}
+              aria-describedby={amount !== "" && amountInvalid ? "topup-amount-error" : undefined}
+            />
+            {amount !== "" && amountInvalid && (
+              <p id="topup-amount-error" className="text-xs font-medium text-red-600" role="alert">
+                Enter an amount greater than zero
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor="topup-notes">Notes</Label>
+            <Input
+              id="topup-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="h-10"
+              placeholder="Optional — e.g. cash received at counter"
+              maxLength={200}
+              aria-label="Top-up notes (optional)"
+            />
+          </div>
+          {Number.isFinite(amountNum) && amountNum > 0 && (
+            <div className="rounded-lg border bg-muted/50 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">New wallet balance</span>
+                <span className="font-semibold tabular-nums">{formatINR(newBalance)}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={topUp.isPending}>Cancel</Button>
+            <Button
+              type="submit"
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
+              disabled={amountInvalid || topUp.isPending}
+            >
+              {topUp.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+              {topUp.isPending ? "Topping up…" : "Add top-up"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Shared password field for the create / reset dialogs — generated
+// prefill, regenerate and copy actions, "shown once" warning.
+function PortalPasswordField({ password, onChange }: {
+  password: string;
+  onChange: (value: string) => void;
+}) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard blocked (permissions/insecure context) — value stays selectable
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Temporary password *</Label>
+      <div className="flex items-center gap-2">
+        <Input
+          value={password}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-9 font-mono text-xs"
+          aria-label="Temporary password"
+          required
+          minLength={8}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={() => onChange(generatePassword())}
+          aria-label="Generate a new password"
+          title="Generate a new password"
+        >
+          <RefreshCw className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={copyPassword}
+          aria-label="Copy password"
+          title="Copy password"
+        >
+          {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+        </Button>
+      </div>
+      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400" role="note">
+        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span>This password is shown only once — copy it and share it with the customer now. It cannot be viewed again.</span>
+      </div>
+    </div>
+  );
+}
+
+function PortalUserDialog({ customerId, onClose, onSaved }: {
+  customerId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [email, setEmail] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [password, setPassword] = React.useState(() => generatePassword());
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const passwordOk = password.length >= 8;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!emailOk || !passwordOk) {
+      toast({
+        title: "Check the form",
+        description: !emailOk ? "Enter a valid email address." : "Password must be at least 8 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/portal-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId, email: email.trim(), password, name: name.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error
+            || (res.status === 409 ? "That email already has portal access." : "Failed to create portal access"),
+        );
+      }
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Add portal access</DialogTitle>
+          <DialogDescription>
+            Creates a self-service login so this customer can sign in to the portal with their own email.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Email *</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="h-9"
+              placeholder="customer@example.com"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} className="h-9" placeholder="Optional display name" />
+          </div>
+          <PortalPasswordField password={password} onChange={setPassword} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={submitting || !emailOk || !passwordOk}>
+              {submitting ? "Creating…" : "Create access"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ResetPortalPasswordDialog({ user, onClose, onSaved }: {
+  user: PortalUserRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [password, setPassword] = React.useState(() => generatePassword());
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const passwordOk = password.length >= 8;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!passwordOk) {
+      toast({ title: "Check the form", description: "Password must be at least 8 characters.", variant: "destructive" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/portal-users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to reset password");
+      }
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Reset password</DialogTitle>
+          <DialogDescription>
+            Replaces the portal password for <span className="font-mono">{user.email}</span>. The current password stops working immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <PortalPasswordField password={password} onChange={setPassword} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={submitting || !passwordOk}>
+              {submitting ? "Resetting…" : "Reset password"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

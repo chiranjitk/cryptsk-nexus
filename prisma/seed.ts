@@ -42,7 +42,7 @@ const RESOURCES = [
   "feature_flag", "api_key", "system_setting", "audit", "report",
   "ticket", "installation", "inventory", "whatsapp", "sms", "email",
   "mikrotik", "snmp", "tr069", "ssh", "captive_portal", "dhcp", "dns",
-  "ai_advisor", "ai_diagnosis", "ai_churn", "ai_forecast",
+  "ai_advisor", "ai_diagnosis", "ai_churn", "ai_forecast", "monitoring",
 ];
 
 const ACTIONS = ["read", "list", "create", "update", "delete", "approve", "execute", "export", "manage"] as const;
@@ -179,8 +179,9 @@ async function main() {
     { name: "VPP Gateway", slug: "vpp_gateway", description: "DPDK/VPP dataplane", status: "active", sortOrder: 6 },
     { name: "Billing & Finance", slug: "billing_finance", description: "Invoices, payments, collections", status: "active", sortOrder: 7 },
     { name: "Operations & Support", slug: "operations_support", description: "Tickets, installations, inventory", status: "active", sortOrder: 8 },
-    { name: "Monitoring", slug: "monitoring", description: "Live monitoring, syslog, alerts", status: "not_installed", sortOrder: 9 },
-    { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "active", sortOrder: 10 },
+    { name: "Reports & Analytics", slug: "reporting", description: "Revenue, usage, SLA reports and data export", status: "active", sortOrder: 9 },
+    { name: "Monitoring", slug: "monitoring", description: "Live monitoring, syslog, alerts", status: "active", sortOrder: 10 },
+    { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "active", sortOrder: 11 },
   ];
   for (const m of modules) {
     await db.module.upsert({

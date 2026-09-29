@@ -9,7 +9,8 @@ import { auditUpdate, auditDelete } from "@/lib/audit";
 // Transitions: open→in_progress|pending · in_progress→pending|resolved
 //              pending→in_progress|resolved · resolved→closed|open(reopen)
 // closed is terminal (only reachable from resolved). Resolve requires
-// resolution text; reopen clears resolution/resolvedAt/closedAt.
+// resolution text; reopen clears resolution/resolvedAt/closedAt and stamps
+// reopenedAt (cleared again on resolve/close).
 // ============================================================
 
 const VALID_CATEGORIES = ["complaint", "technical", "billing", "installation", "other"];
@@ -55,6 +56,7 @@ export async function GET(
     }
 
     // Related context: invoices count for the linked customer (real, optional)
+    // NOTE: include returns all scalar fields, so reopenedAt rides along.
     const invoiceCount = ticket.customerId
       ? await db.invoice.count({ where: { customerId: ticket.customerId } })
       : 0;
@@ -128,18 +130,21 @@ export async function PATCH(
         data.resolution = resolutionText;
         data.resolvedAt = new Date();
         data.closedAt = null;
+        data.reopenedAt = null; // resolved — no longer "reopened"
       }
 
       if (status === "closed") {
         // Only reachable from resolved (transition map enforces this)
         data.closedAt = new Date();
+        data.reopenedAt = null; // closed — no longer "reopened"
       }
 
       if (status === "open") {
-        // Reopen — clear resolution artifacts
+        // Reopen — clear resolution artifacts, stamp reopen time
         data.resolution = null;
         data.resolvedAt = null;
         data.closedAt = null;
+        data.reopenedAt = new Date();
       }
     }
 

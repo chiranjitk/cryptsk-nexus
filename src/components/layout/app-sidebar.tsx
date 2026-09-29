@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Users, Package, CreditCard, KeyRound, Radio, ScrollText,
   Gauge, Network, Server, Brain, ShieldCheck, UserCog, Settings, ListChecks, Wifi, Wrench,
+  FileBarChart, IndianRupee, Activity, FileDown, Smartphone,
 } from "lucide-react";
 import { canClient } from "@/lib/rbac";
 
@@ -27,8 +28,9 @@ type NavLeaf = {
   title: string;
   href: string;            // real destination
   view: string;            // ?view= key used for active matching
+  tab?: string;            // optional ?tab= refinement for shared views
   icon: React.ComponentType<{ className?: string }>;
-  perm?: { resource: string; action: "read" | "list" | "manage" };
+  perm?: { resource: string; action: "read" | "list" | "manage" | "export" };
   badgeKey?: "activeSessions" | "openTickets";   // key into /api/health counts
 };
 
@@ -43,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Core",
     items: [
       { title: "Dashboard", href: "/", view: "dashboard", icon: LayoutDashboard },
+      { title: "Self-Care Portal", href: "/?view=selfcare", view: "selfcare", icon: Smartphone, perm: { resource: "subscriber", action: "list" } },
     ],
   },
   {
@@ -78,6 +81,24 @@ const NAV_GROUPS: NavGroup[] = [
     module: "operations_support",
     items: [
       { title: "Tickets & Support", href: "/?view=operations", view: "operations", icon: Wrench, perm: { resource: "ticket", action: "list" }, badgeKey: "openTickets" },
+    ],
+  },
+  {
+    label: "Monitoring",
+    module: "monitoring",
+    items: [
+      { title: "Monitoring & Diagnostics", href: "/?view=monitoring", view: "monitoring", icon: Activity, perm: { resource: "monitoring", action: "list" } },
+    ],
+  },
+  {
+    label: "Reports & Analytics",
+    module: "reporting",
+    items: [
+      { title: "Report Center", href: "/?view=reports", view: "reports", icon: FileBarChart, perm: { resource: "report", action: "list" } },
+      { title: "Revenue & Collection", href: "/?view=reports&tab=revenue", view: "reports", tab: "revenue", icon: IndianRupee, perm: { resource: "report", action: "list" } },
+      { title: "Usage & Bandwidth", href: "/?view=reports&tab=usage", view: "reports", tab: "usage", icon: Activity, perm: { resource: "report", action: "list" } },
+      { title: "Compliance & SLA", href: "/?view=reports&tab=sla", view: "reports", tab: "sla", icon: ShieldCheck, perm: { resource: "report", action: "list" } },
+      { title: "Data Export", href: "/?view=reports&tab=export", view: "reports", tab: "export", icon: FileDown, perm: { resource: "report", action: "export" } },
     ],
   },
   {
@@ -161,7 +182,8 @@ export function AppSidebar() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   {visibleItems.map((item) => {
-                    const active = item.view === activeView;
+                    const activeTab = searchParams.get("tab");
+                    const active = item.view === activeView && (!item.tab || item.tab === activeTab);
                     // Generalized badge: any badgeKey resolves against /api/health counts
                     const badgeValue = item.badgeKey
                       ? healthCounts[item.badgeKey as keyof NonNullable<HealthCounts["counts"]>]
@@ -171,7 +193,7 @@ export function AppSidebar() {
                       ? "bg-red-500/15 text-red-600 dark:text-red-400"
                       : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
                     return (
-                      <SidebarMenuItem key={item.view}>
+                      <SidebarMenuItem key={item.href}>
                         <SidebarMenuButton asChild isActive={active} tooltip={item.title}
                           className={active
                             ? "border-l-[3px] border-l-primary rounded-l-none bg-primary/10 text-sidebar-accent-foreground font-semibold"

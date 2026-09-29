@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac";
 import { auditConfigChange } from "@/lib/audit";
+import type { $Enums } from "@prisma/client";
 
 // ============================================================
 // System Settings — global key/value config store
@@ -123,7 +124,7 @@ export async function PATCH(req: NextRequest) {
       data: {
         key: key.trim(),
         value: stored,
-        type: newType,
+        type: newType as $Enums.FeatureFlagType,
         category: typeof category === "string" && category.trim() ? category.trim() : "general",
         description: typeof description === "string" && description ? description : null,
         isPublic: false,

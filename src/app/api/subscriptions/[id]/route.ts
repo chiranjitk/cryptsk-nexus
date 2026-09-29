@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac";
 import { auditUpdate, auditDelete } from "@/lib/audit";
+import type { $Enums } from "@prisma/client";
 
 // PATCH /api/subscriptions/[id] — changePlan / suspend / resume / cancel / extend expiry
 export async function PATCH(
@@ -136,8 +137,8 @@ export async function PATCH(
       await db.serviceLifecycle.create({
         data: {
           subscriptionId: id,
-          state: lifecycleState,
-          previousState: existing.status,
+          state: lifecycleState as $Enums.ServiceState,
+          previousState: existing.status as $Enums.ServiceState,
           reason: action || status || "Admin action",
           changedBy: user.id,
         },

@@ -25,10 +25,10 @@ export async function GET(req: NextRequest) {
 
     const where: Record<string, unknown> = {};
     if (status) {
-      if (!Object.values(WanLinkStatus).includes(status)) {
+      if (!Object.values(WanLinkStatus).includes(status as WanLinkStatus)) {
         return NextResponse.json({ error: "Invalid status — must be up, down, degraded or backup" }, { status: 400 });
       }
-      where.status = status;
+      where.status = status as WanLinkStatus;
     }
 
     const links = await db.wanLink.findMany({

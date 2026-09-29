@@ -56,6 +56,10 @@ export async function POST(req: NextRequest) {
     const count = await db.invoice.count();
     const invoiceNumber = `INV-2026-${String(count + 1).padStart(5, "0")}`;
 
+    // Money rounding — 2 decimals, kills float dust like
+    // 1178.8199999999999 before it reaches the ledger or the DB
+    const round2 = (v: number) => Math.round(v * 100) / 100;
+
     // Calculate totals
     const tr = taxRate || 18.0;
     const dp = discountPercent || 0;
@@ -65,18 +69,18 @@ export async function POST(req: NextRequest) {
     let totalAmount = 0;
 
     for (const line of lines) {
-      const amount = (line.quantity || 1) * line.unitPrice;
-      const taxAmt = amount * (tr / 100);
-      const lineTotal = amount + taxAmt;
-      subtotal += amount;
-      totalTax += taxAmt;
-      totalAmount += lineTotal;
+      const amount = round2((line.quantity || 1) * line.unitPrice);
+      const taxAmt = round2(amount * (tr / 100));
+      const lineTotal = round2(amount + taxAmt);
+      subtotal = round2(subtotal + amount);
+      totalTax = round2(totalTax + taxAmt);
+      totalAmount = round2(totalAmount + lineTotal);
     }
 
-    const discountAmt = subtotal * (dp / 100);
-    const taxableAmt = subtotal - discountAmt;
-    const taxAmt = taxableAmt * (tr / 100);
-    const grandTotal = taxableAmt + taxAmt;
+    const discountAmt = round2(subtotal * (dp / 100));
+    const taxableAmt = round2(subtotal - discountAmt);
+    const taxAmt = round2(taxableAmt * (tr / 100));
+    const grandTotal = round2(taxableAmt + taxAmt);
 
     // Create invoice + lines in a transaction
     const invoice = await db.invoice.create({
@@ -85,14 +89,14 @@ export async function POST(req: NextRequest) {
         customerId,
         subscriptionId: subscriptionId || null,
         dueDate: new Date(dueDate),
-        subtotal,
+        subtotal: round2(subtotal),
         discountPercent: dp,
-        discountAmount: discountAmt,
-        taxableAmount: taxableAmt,
+        discountAmount: round2(discountAmt),
+        taxableAmount: round2(taxableAmt),
         taxRate: tr,
-        taxAmount: taxAmt,
-        total: grandTotal,
-        balanceDue: grandTotal,
+        taxAmount: round2(taxAmt),
+        total: round2(grandTotal),
+        balanceDue: round2(grandTotal),
         status: "issued",
         paymentStatus: "unpaid",
         notes,
@@ -103,10 +107,10 @@ export async function POST(req: NextRequest) {
             description: l.description,
             quantity: l.quantity || 1,
             unitPrice: l.unitPrice,
-            amount: (l.quantity || 1) * l.unitPrice,
+            amount: round2((l.quantity || 1) * l.unitPrice),
             taxRate: tr,
-            taxAmount: (l.quantity || 1) * l.unitPrice * (tr / 100),
-            total: (l.quantity || 1) * l.unitPrice * (1 + tr / 100),
+            taxAmount: round2((l.quantity || 1) * l.unitPrice * (tr / 100)),
+            total: round2((l.quantity || 1) * l.unitPrice * (1 + tr / 100)),
             lineType: l.lineType || "charge",
             planId: l.planId || null,
             sortOrder: i,

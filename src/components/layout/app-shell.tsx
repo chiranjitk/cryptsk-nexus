@@ -1,10 +1,12 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppHeader } from "@/components/layout/app-header";
 import { AppFooter } from "@/components/layout/app-footer";
 import { LoginCard } from "@/components/auth/login-card";
+import { SelfCarePortal } from "@/components/selfcare/selfcare-portal";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 
 // ============================================================
@@ -12,11 +14,15 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 // Wraps the entire app shell (sidebar + header + footer + content)
 // in an auth gate. If unauthenticated → shows ONLY login card
 // (no sidebar, no header, no footer). If authenticated → shows
-// the full dashboard shell.
+// the full dashboard shell — UNLESS ?view=selfcare, in which case
+// the customer-facing Self-Care portal REPLACES the admin chrome
+// entirely (own header + nav + footer; children never render).
 // ============================================================
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
+  const searchParams = useSearchParams();
+  const isSelfCare = searchParams.get("view") === "selfcare";
 
   // Loading state — full-screen spinner
   if (status === "loading") {
@@ -38,6 +44,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Unauthenticated → login only (no shell)
   if (!session) {
     return <LoginCard />;
+  }
+
+  // Authenticated + ?view=selfcare → customer portal replaces the
+  // admin chrome entirely. Returning here (before SidebarProvider)
+  // means <AppSidebar/>, <AppHeader/>, <AppFooter/> and {children}
+  // never mount — the page's view router is bypassed too.
+  // Customer sessions (portal login) are ALWAYS routed to the
+  // self-care portal — spec §18: customers must never see internal
+  // administration, even with an RBAC-empty sidebar.
+  if (isSelfCare || (session.user as { userType?: string })?.userType === "customer") {
+    return <SelfCarePortal />;
   }
 
   // Authenticated → full app shell

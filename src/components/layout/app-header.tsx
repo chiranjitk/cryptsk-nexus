@@ -277,18 +277,28 @@ export function AppHeader() {
     "radius-postauth": "Authentication Logs", sessions: "Active Sessions", policies: "Policies & Rules",
     vpp: "VPP Gateway", billing: "Invoices & Payments", network: "Network Manager",
     ai: "AI Advisor & Insights", audit: "Audit Log", admin: "System Administration",
-    operations: "Tickets & Support",
+    operations: "Tickets & Support", monitoring: "Monitoring & Diagnostics",
+  };
+  const reportTabLabels: Record<string, string> = {
+    center: "Report Center", revenue: "Revenue & Collection", usage: "Usage & Bandwidth",
+    sla: "Compliance & SLA", export: "Data Export",
   };
   const viewParam = searchParams.get("view");
-  const crumb = viewParam ? breadcrumbLabels[viewParam] ?? "Dashboard" : "Dashboard";
+  const tabParam = searchParams.get("tab");
+  const crumb =
+    viewParam === "reports"
+      ? `Reports & Analytics${tabParam && reportTabLabels[tabParam] ? ` · ${reportTabLabels[tabParam]}` : ""}`
+      : viewParam
+        ? breadcrumbLabels[viewParam] ?? "Dashboard"
+        : "Dashboard";
 
   return (
     <header className="sticky top-0 z-50 flex h-14 items-center gap-2 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4">
       <SidebarTrigger className="-ml-1" />
-      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-muted-foreground">
         <span className="hidden sm:inline font-semibold text-foreground">CRYPTSK Nexus</span>
         <span className="hidden sm:inline text-muted-foreground/40">/</span>
-        <span className="hidden sm:inline">{crumb}</span>
+        <span className="hidden sm:inline max-w-[16rem] truncate whitespace-nowrap md:max-w-[24rem]" title={crumb}>{crumb}</span>
       </div>
 
       <div className="ml-auto flex items-center gap-2">

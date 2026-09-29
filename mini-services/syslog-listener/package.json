@@ -1,0 +1,8 @@
+{
+  "name": "syslog-listener",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus bun --hot index.ts"
+  }
+}

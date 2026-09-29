@@ -26,7 +26,7 @@ import { Customer360Dialog } from "@/components/admin/customer-360-dialog";
 type Customer = {
   id: string; customerCode: string; type: string; status: string;
   displayName: string; email: string | null; phone: string | null;
-  companyName: string | null; gstin: string | null; kycVerified: boolean;
+  companyName: string | null; gstin: string | null; pan: string | null; kycVerified: boolean;
   createdAt: string; _count: { subscribers: number; subscriptions: number };
 };
 

@@ -67,17 +67,23 @@ export async function requirePermission(
   const user = await requireAuth();
 
   if (!hasPermission(user, resource, action)) {
-    // Log the denied access
-    await db.auditEvent.create({
-      data: {
-        userId: user.id,
-        action: "execute",
-        resource: resource,
-        result: "denied",
-        errorMessage: `Permission denied: ${resource}.${action}`,
-        ipAddress: "server",
-      },
-    });
+    // Log the denied access. Never let audit failures change the response —
+    // e.g. a Self-Care portal (customer) session has a portal_users id here,
+    // which is not a staff users FK, so the insert can legitimately fail.
+    try {
+      await db.auditEvent.create({
+        data: {
+          userId: user.id,
+          action: "execute",
+          resource: resource,
+          result: "denied",
+          errorMessage: `Permission denied: ${resource}.${action}`,
+          ipAddress: "server",
+        },
+      });
+    } catch (err) {
+      console.error("[rbac] failed to audit denied access:", err);
+    }
 
     // Throw a 403
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
