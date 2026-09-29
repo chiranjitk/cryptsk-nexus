@@ -52,8 +52,6 @@ export async function GET(req: NextRequest) {
     // Rows
     const rows = await db.$queryRawUnsafe(
       `SELECT id, username, reply, authdate, 
-              CAST(clientipaddress AS text) as "clientIp", 
-              CAST(nasipaddress AS text) as "nasIp",
               calledstationid as "calledStationId",
               callingstationid as "callingStationId"
        FROM radpostauth ${where}

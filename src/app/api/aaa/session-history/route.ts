@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
         a.acctterminatecause as "terminateCause",
         CAST(a.framedipaddress AS text) as "framedIp",
         a.callingstationid as "callingStationId",
-        a."group_name" as "groupName",
-        a.nas_type as "nasType"
+        (SELECT groupname FROM radusergroup ug WHERE ug.username = a.username LIMIT 1) as "groupName",
+        (SELECT type FROM nas n WHERE n.nasname = a.nasipaddress LIMIT 1) as "nasType"
        FROM radacct a ${where}
        ORDER BY a.acctstoptime DESC NULLS LAST
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,

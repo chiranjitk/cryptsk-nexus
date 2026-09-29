@@ -107,10 +107,10 @@ export async function GET(req: NextRequest) {
         s.name         AS sub_name,
         s.code         AS sub_code,
         s.status       AS sub_status,
-        s.connectiontype AS sub_connection_type,
+        s."connectionType" AS sub_connection_type,
         rg.name        AS group_name,
-        rg.speedLimitDown AS group_speed_down,
-        rg.speedLimitUp   AS group_speed_up,
+        rg."speedLimitDown" AS group_speed_down,
+        rg."speedLimitUp"   AS group_speed_up,
         nd.name        AS nas_name,
         nd.type        AS nas_type,
         nd.status      AS nas_status
