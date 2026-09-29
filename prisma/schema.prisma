@@ -191,6 +191,7 @@ model Area {
   RecurringInvoiceTemplate RecurringInvoiceTemplate[]
   Subnet                   Subnet[]
   Subscriber               Subscriber[]
+  ProvisioningTemplate     ProvisioningTemplate[]
 
   @@index([assignedAgentId])
   @@index([assignedTechnicianId])
@@ -358,7 +359,8 @@ model BatchProvisioningJob {
   errorDetail          String               @default("")
   createdAt            DateTime             @default(now())
   updatedAt DateTime @updatedAt
-  ProvisioningTemplate ProvisioningTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template             ProvisioningTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  StartedBy            User?                 @relation(fields: [startedBy], references: [id])
 
   @@index([createdAt])
   @@index([status])
@@ -2560,6 +2562,7 @@ model Plan {
   RecurringInvoiceTemplate RecurringInvoiceTemplate[]
   Subscriber               Subscriber[]
   Voucher                  Voucher[]
+  ProvisioningTemplate     ProvisioningTemplate[]
 
   @@index([category])
   @@index([groupId])
@@ -2871,7 +2874,9 @@ model ProvisioningTemplate {
   isActive             Boolean                @default(true)
   createdAt            DateTime               @default(now())
   updatedAt DateTime @updatedAt
-  BatchProvisioningJob BatchProvisioningJob[]
+  jobs                 BatchProvisioningJob[]
+  Plan                 Plan?                  @relation(fields: [planId], references: [id])
+  Area                 Area?                  @relation(fields: [areaId], references: [id])
 
   @@index([isActive])
 }
@@ -4074,6 +4079,7 @@ model User {
   Refund                               Refund[]
   Technician                           Technician?
   UserSession                          UserSession[]
+  BatchProvisioningJob                 BatchProvisioningJob[]
 
   @@index([email])
   @@index([role])
