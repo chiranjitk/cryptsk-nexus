@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   LifeBuoy, HardHat, Package, PackageOpen, Boxes, Plus, Search, AlertOctagon, AlertTriangle,
   ArrowDown, Circle, Clock, Lock, MessageSquare, Play, CheckCircle2, XCircle, CalendarClock,
-  CalendarX, Pencil, Send, Loader2, RefreshCw, Trash2, Inbox, Minus,
+  CalendarX, Pencil, Send, Loader2, RefreshCw, Trash2, Inbox, Minus, RotateCcw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -357,7 +357,7 @@ export function OperationsPanel() {
 // Tab 1 — Tickets & Complaints
 // ============================================================
 
-const EMPTY_TICKET_STATS = { open: 0, inProgress: 0, pending: 0, resolved: 0, closed: 0, critical: 0, unassigned: 0 };
+const EMPTY_TICKET_STATS = { open: 0, inProgress: 0, pending: 0, resolved: 0, closed: 0, critical: 0, unassigned: 0, reopened: 0 };
 
 function TicketsTab() {
   const qc = useQueryClient();
@@ -408,11 +408,16 @@ function TicketsTab() {
       </CardHeader>
       <CardContent className="space-y-3 p-4 pt-0">
         {/* Live queue stats */}
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Ticket queue statistics">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-7" aria-label="Ticket queue statistics">
           <StatChip label="Open" value={stats.open} className="border-red-500/30 bg-red-500/5" />
           <StatChip label="In Progress" value={stats.inProgress} className="border-amber-500/30 bg-amber-500/5" />
           <StatChip label="Pending" value={stats.pending} className="border-cyan-500/30 bg-cyan-500/5" />
           <StatChip label="Resolved" value={stats.resolved} className="border-emerald-500/30 bg-emerald-500/5" />
+          <StatChip
+            label="Reopened"
+            value={stats.reopened ?? 0}
+            className={`border-amber-500/30 bg-amber-500/5 ${(stats.reopened ?? 0) > 0 ? "text-amber-600" : ""}`}
+          />
           <StatChip
             label="Critical"
             value={stats.critical}
@@ -507,7 +512,20 @@ function TicketsTab() {
                       )}
                     </TableCell>
                     <TableCell><SlaCell slaDueAt={t.slaDueAt} status={t.status} /></TableCell>
-                    <TableCell><StatusBadge status={t.status} styles={TICKET_STATUS_STYLES} /></TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge status={t.status} styles={TICKET_STATUS_STYLES} />
+                        {t.reopenedAt != null && t.status === "open" && (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/40 bg-amber-500/5 text-[9px] text-amber-600"
+                            title="Customer replied after resolution — ticket returned to open"
+                          >
+                            Reopened
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{relTime(t.createdAt)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Button
@@ -657,6 +675,17 @@ function TicketDetailDialog({ ticketId, onClose }: { ticketId: string; onClose: 
                 {ticket.customer ? ` · Customer invoices: ${invoiceCount}` : ""}
               </DialogDescription>
             </DialogHeader>
+
+            {/* Reopen notice — customer replied after resolution (reopenedAt set by backend) */}
+            {ticket.reopenedAt && (
+              <div
+                className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+                role="status"
+              >
+                <RotateCcw className="size-3.5 shrink-0" aria-hidden="true" />
+                <span>Customer reopened this ticket {relTime(ticket.reopenedAt)}</span>
+              </div>
+            )}
 
             {/* Info grid */}
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-3 text-xs sm:grid-cols-3">

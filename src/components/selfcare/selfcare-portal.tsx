@@ -12,7 +12,7 @@ import {
   RefreshCw, AlertTriangle, Inbox, FileText, Banknote, Landmark, Wallet,
   IndianRupee, LogOut, Sun, Moon, Info, Download, Upload, Smartphone, Ticket,
   Loader2, Plus, Send, KeyRound, Pencil, Eye, EyeOff, ShieldCheck, Check, X,
-  MessageSquare,
+  MessageSquare, Gauge,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +56,14 @@ import { cn } from "@/lib/utils";
 // per-ticket replies (Support tab), editable contact details and a
 // sign-in & security card with password change (Profile tab). Every
 // write UI is gated on isCustomer — staff preview stays read-only.
+//
+// Service Status + Payments tabs (T8): service-status is
+// subscriber-scoped read-only (staff ?subscriberId=, customer mode
+// sends no params — the backend auto-picks their subscriber); the
+// wallet summary and transactions read in both modes while voucher
+// redemption and pay-invoice-from-wallet are customer-only writes
+// (POST /api/selfcare/vouchers/redeem, POST /api/selfcare/wallet/pay)
+// via apiMutate with verbatim server error strings.
 // ============================================================
 
 // ---------- API contract types (T5-a) ----------
@@ -153,6 +161,48 @@ interface ScProfileUpdateResponse {
   customer: { id: string; email: string | null; phone: string | null; whatsappNumber: string | null };
 }
 
+// ---------- service-status + wallet types (T8-a contract) ----------
+
+interface ServiceStatusData {
+  subscriber: {
+    id: string; subscriberCode: string; fullName: string; status: string;
+    radiusUsername: string; staticIp: string | null; vlanId: number | null;
+    activatedAt: string | null; expiresAt: string | null;
+    plan: { id: string; name: string; billingCycle: string; dataLimitGb: number | null; status: string } | null;
+  };
+  online: boolean;
+  activeSession: null | {
+    startedAt: string; durationSeconds: number; ipAddress: string | null;
+    nas: string | null; calledStationId: string | null;
+    inputOctets: number; outputOctets: number;
+  };
+  recentSessions: {
+    startedAt: string; stoppedAt: string | null; durationSeconds: number;
+    ipAddress: string | null; inputOctets: number; outputOctets: number;
+    terminateCause: string | null;
+  }[];
+  lifecycle: { id: string; state: string; previousState: string | null; reason: string | null; changedAt: string }[];
+}
+
+interface WalletData {
+  wallet: null | { id: string; balance: number; currency: string; minBalance: number; autoRecharge: boolean };
+  transactions: {
+    id: string; amount: number; type: string; description: string | null;
+    balanceAfter: number; createdAt: string; invoiceId: string | null;
+  }[];
+}
+
+interface ScVoucherRedeemResponse {
+  voucher: { code: string; faceValue: number };
+  wallet: { balance: number };
+}
+
+interface ScWalletPayResponse {
+  payment: { id: string; paymentNumber: string; amount: number; method: string; status: string; paidAt: string | null };
+  invoice: { id: string; invoiceNumber: string; status: string; paidAmount: number; balanceDue: number; paymentStatus: string };
+  wallet: { balance: number };
+}
+
 // ---------- shared helpers ----------
 
 async function apiRequest(url: string): Promise<unknown> {
@@ -202,6 +252,13 @@ function fmtDateTime(iso: string | null | undefined): string {
 
 function cycleLabel(cycle: string): string {
   return (cycle || "").replace(/_/g, " ").toLowerCase();
+}
+
+// RADIUS Acct-Terminate-Cause values arrive hyphenated ("User-Request",
+// "Idle-Timeout") — display them as plain words.
+function terminateCauseLabel(cause: string | null | undefined): string {
+  if (!cause) return "—";
+  return cause.replace(/[-_]+/g, " ");
 }
 
 function initialsOf(name: string): string {
@@ -267,6 +324,16 @@ const SERVICE_STATUS_BADGE: Record<string, string> = {
   expired: "border-slate-400/30 text-slate-500",
   inactive: "border-slate-400/30 text-slate-500",
   pending_activation: "border-amber-500/30 text-amber-600 dark:text-amber-400",
+};
+
+// Wallet ledger types (T8-a WalletTxnType enum) — credits lean emerald,
+// debits neutral violet, manual corrections amber; unknown falls back slate.
+const WALLET_TXN_BADGE: Record<string, string> = {
+  recharge: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+  refund: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+  cashback: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+  payment: "border-violet-500/30 text-violet-600 dark:text-violet-400",
+  adjustment: "border-amber-500/30 text-amber-600 dark:text-amber-400",
 };
 
 function moneyBadge(status: string): string {
@@ -368,7 +435,7 @@ function StatusBadge({ status, map }: { status: string; map: Record<string, stri
 
 // ---------- root component ----------
 
-type Tab = "dashboard" | "usage" | "billing" | "support" | "profile" | "plans";
+type Tab = "dashboard" | "usage" | "billing" | "support" | "profile" | "service-status" | "payments" | "plans";
 
 const STORAGE_KEY = "selfcare.subscriberId";
 
@@ -386,6 +453,8 @@ const NAV_TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "support", label: "Support", icon: LifeBuoy },
   { id: "profile", label: "Profile", icon: UserRound },
+  { id: "service-status", label: "Service Status", icon: Gauge },
+  { id: "payments", label: "Payments", icon: Wallet },
   { id: "plans", label: "Plans", icon: PackageCheck },
 ];
 
@@ -514,6 +583,10 @@ export function SelfCarePortal() {
         return <SupportTab customerId={customerId} openTickets={overview?.openTickets ?? 0} isCustomer={ctx.mode === "customer"} />;
       case "profile":
         return <ProfileTab subscriberId={ctxSubscriberId} isCustomer={ctx.mode === "customer"} portalEmail={sessionUser?.email ?? null} />;
+      case "service-status":
+        return <ServiceStatusTab subscriberId={ctxSubscriberId} />;
+      case "payments":
+        return <PaymentsTab customerId={customerId} isCustomer={ctx.mode === "customer"} />;
       case "plans":
         return <PlansTab subscriberId={ctxSubscriberId} />;
       case "dashboard":
@@ -2104,7 +2177,562 @@ function InfoField({ label, value, mono }: { label: string; value: string | null
 }
 
 // ============================================================
-// TAB 6 — Plans
+// TAB 6 — Service Status (T8-a: GET /api/selfcare/service-status)
+// Subscriber-scoped and always read-only: staff preview passes the
+// picked ?subscriberId= (mirrors usage/profile/plans), customer
+// sessions send no params (the backend auto-picks their subscriber).
+// Live RADIUS session, recent history and the lifecycle trail.
+// Byte mapping follows the codebase convention (sessions/serialize.ts):
+// acctinputoctets = UP, acctoutputoctets = DOWN.
+// ============================================================
+
+function ServiceStatusTab({ subscriberId }: { subscriberId: string | null }) {
+  const query = useQuery<ServiceStatusData>({
+    // staff: scoped to the picked subscriber — customer (subscriberId null):
+    // NO subscriberId param, the backend auto-picks their own subscriber.
+    queryKey: ["selfcare", "service-status", subscriberId ?? "self"],
+    queryFn: () =>
+      (subscriberId
+        ? apiRequest(`/api/selfcare/service-status?subscriberId=${encodeURIComponent(subscriberId)}`)
+        : apiRequest("/api/selfcare/service-status")) as Promise<ServiceStatusData>,
+    enabled: subscriberId !== "",
+    refetchInterval: 60000,
+    staleTime: 50000,
+    retry: 1,
+  });
+
+  if (query.isLoading) return <TabSkeleton />;
+  if (query.isError) {
+    return <ScErrorState onRetry={() => query.refetch()} message={query.error instanceof Error ? query.error.message : undefined} />;
+  }
+
+  const data = query.data;
+  if (!data) return null;
+  const { subscriber, activeSession } = data;
+  const staticIp = subscriber.staticIp && subscriber.staticIp.trim() !== "" ? subscriber.staticIp : null;
+
+  return (
+    <div className="space-y-4">
+      {/* Hero — identity + subscriber status + live connection indicator */}
+      <Card className="cryptsk-card-load">
+        <CardContent className="p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Connection status</p>
+              <h2 className="mt-1 truncate text-lg font-bold tracking-tight">
+                {subscriber.fullName || subscriber.radiusUsername}
+              </h2>
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground">{subscriber.subscriberCode}</p>
+              <div className="mt-2">
+                <StatusBadge status={subscriber.status} map={SERVICE_STATUS_BADGE} />
+              </div>
+            </div>
+            {data.online ? (
+              <div
+                className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5"
+                role="status"
+                aria-label="Connection status: online now"
+              >
+                <span className="size-2.5 rounded-full bg-emerald-500 cryptsk-pulse-dot" aria-hidden="true" />
+                <span className="text-base font-semibold text-emerald-600 dark:text-emerald-400">Online now</span>
+              </div>
+            ) : (
+              <div
+                className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-slate-400/40 bg-slate-500/10 px-4 py-2.5"
+                role="status"
+                aria-label="Connection status: offline"
+              >
+                <span className="size-2.5 rounded-full bg-slate-400" aria-hidden="true" />
+                <span className="text-base font-semibold text-slate-600 dark:text-slate-400">Offline</span>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Plan + connection details */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Broadband plan</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className={cn("font-semibold", subscriber.plan ? "text-base" : "text-sm text-muted-foreground")}>
+              {subscriber.plan ? subscriber.plan.name : "No plan assigned to this connection yet"}
+            </p>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <InfoField label="Billing cycle" value={subscriber.plan ? cycleLabel(subscriber.plan.billingCycle) : null} />
+              <InfoField
+                label="Data limit"
+                value={subscriber.plan ? (subscriber.plan.dataLimitGb ? `${subscriber.plan.dataLimitGb} GB` : "Unlimited") : null}
+              />
+              <InfoField label="Username" value={subscriber.radiusUsername} mono />
+              {staticIp && <InfoField label="Static IP" value={staticIp} mono />}
+              {subscriber.vlanId != null && <InfoField label="VLAN" value={String(subscriber.vlanId)} mono />}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Live session — or an honest offline state */}
+        {activeSession ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Wifi className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                Live session
+              </CardTitle>
+              <CardDescription className="text-xs">Connected since {relTime(activeSession.startedAt)}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <InfoField label="Duration" value={formatDuration(num(activeSession.durationSeconds))} />
+              <InfoField label="IP address" value={activeSession.ipAddress} mono />
+              <InfoField label="Access node" value={activeSession.nas} />
+              <InfoField label="Data down" value={humanBytes(num(activeSession.outputOctets))} />
+              <InfoField label="Data up" value={humanBytes(num(activeSession.inputOctets))} />
+              {activeSession.calledStationId && (
+                <InfoField label="Called station" value={activeSession.calledStationId} mono />
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <ScEmptyState
+              icon={WifiOff}
+              title="No active session"
+              hint="When your router connects, live session details appear here."
+            />
+          </Card>
+        )}
+      </div>
+
+      {/* Recent sessions */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Recent sessions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(data.recentSessions ?? []).length === 0 ? (
+            <ScEmptyState
+              icon={WifiOff}
+              title="No recent sessions"
+              hint="Session history appears here once your connection has been active."
+            />
+          ) : (
+            <div className="max-h-96 overflow-y-auto cryptsk-scrollbar rounded-lg border">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background">
+                  <TableRow>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead className="hidden sm:table-cell">IP address</TableHead>
+                    <TableHead className="text-right">Down / Up</TableHead>
+                    <TableHead className="hidden md:table-cell">Ended</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.recentSessions.map((s, i) => (
+                    <TableRow key={`${s.startedAt}-${i}`} className="hover:bg-muted/50">
+                      <TableCell>
+                        <p className="text-xs font-medium">{fmtDateTime(s.startedAt)}</p>
+                        <p className="text-[10px] text-muted-foreground">{relTime(s.startedAt)}</p>
+                      </TableCell>
+                      <TableCell className="text-xs tabular-nums">
+                        {s.stoppedAt ? formatDuration(num(s.durationSeconds)) : (
+                          <Badge variant="outline" className="gap-1 border-emerald-500/30 text-[10px] text-emerald-600 dark:text-emerald-400">
+                            <span className="size-1.5 rounded-full bg-emerald-500 cryptsk-pulse-dot" aria-hidden="true" />
+                            Live
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">
+                        {s.ipAddress || "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        <span className="text-red-600 dark:text-red-400">{humanBytes(num(s.outputOctets))}</span>
+                        <span className="text-muted-foreground"> / </span>
+                        <span className="text-emerald-600 dark:text-emerald-400">{humanBytes(num(s.inputOctets))}</span>
+                      </TableCell>
+                      <TableCell className="hidden text-[10px] text-muted-foreground md:table-cell">
+                        {terminateCauseLabel(s.terminateCause)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Lifecycle timeline */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Service lifecycle</CardTitle>
+          <CardDescription className="text-xs">Status changes recorded for your connection</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {(data.lifecycle ?? []).length === 0 ? (
+            <ScEmptyState
+              icon={Hourglass}
+              title="No status changes yet"
+              hint="Lifecycle events appear here whenever your service status changes."
+            />
+          ) : (
+            <ol className="relative space-y-4 border-l pl-5">
+              {data.lifecycle.map((ev) => (
+                <li key={ev.id} className="relative">
+                  <span
+                    className="absolute -left-[25px] top-1.5 size-2.5 rounded-full bg-slate-400 ring-4 ring-background"
+                    aria-hidden="true"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge status={ev.state} map={SERVICE_STATUS_BADGE} />
+                    <span className="text-xs text-muted-foreground">
+                      {ev.previousState
+                        ? `${ev.previousState.replace(/_/g, " ")} → ${ev.state.replace(/_/g, " ")}`
+                        : "Initial state"}
+                    </span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">{relTime(ev.changedAt)}</span>
+                  </div>
+                  {ev.reason && <p className="mt-1 text-xs text-muted-foreground">{ev.reason}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================
+// TAB 7 — Payments (T8-a: GET /api/selfcare/wallet,
+// POST /api/selfcare/vouchers/redeem, POST /api/selfcare/wallet/pay)
+// The wallet summary and ledger read in both modes (staff preview is
+// read-only); voucher redemption and paying invoices from the wallet
+// are customer-only writes — gated on isCustomer exactly like T7
+// (the backend 403s staff sessions regardless).
+// ============================================================
+
+// Invoice statuses the backend accepts for wallet payment — keep in
+// sync with PAYABLE_STATUSES in /api/selfcare/wallet/pay (T8-a).
+const PAYABLE_INVOICE_STATUSES = ["issued", "sent", "partial", "overdue"];
+
+function PaymentsTab({ customerId, isCustomer }: { customerId: string | null; isCustomer: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const walletQuery = useQuery<WalletData>({
+    queryKey: isCustomer ? ["selfcare", "wallet", "self", customerId] : ["selfcare", "wallet", customerId],
+    queryFn: () =>
+      (isCustomer
+        ? apiRequest("/api/selfcare/wallet")
+        : apiRequest(`/api/selfcare/wallet?customerId=${encodeURIComponent(customerId ?? "")}`)) as Promise<WalletData>,
+    enabled: !!customerId,
+    refetchInterval: 60000,
+    staleTime: 50000,
+    retry: 1,
+  });
+
+  // Outstanding invoices reuse the SAME billing query the Billing tab
+  // uses (shared key → shared cache; no separate endpoint invented).
+  const billingQuery = useQuery<BillingData>({
+    queryKey: ["selfcare", "billing", customerId],
+    queryFn: () => apiRequest(`/api/selfcare/billing?customerId=${encodeURIComponent(customerId ?? "")}`) as Promise<BillingData>,
+    enabled: !!customerId,
+    refetchInterval: 60000,
+    staleTime: 50000,
+    retry: 1,
+  });
+
+  // Pay an invoice in full from the wallet (customer mode only —
+  // staff sessions never see the button, the backend 403s them too).
+  const payMutation = useMutation({
+    mutationFn: (invoiceId: string) =>
+      apiMutate("/api/selfcare/wallet/pay", "POST", { invoiceId }) as Promise<ScWalletPayResponse>,
+    onSuccess: (data) => {
+      toast({ title: "Payment successful", description: `${data.invoice.invoiceNumber} settled` });
+      // Wallet balance, the billing invoice list and the overview's
+      // outstanding figure all move together after a payment.
+      qc.invalidateQueries({ queryKey: ["selfcare", "wallet"] });
+      qc.invalidateQueries({ queryKey: ["selfcare", "billing"] });
+      qc.invalidateQueries({ queryKey: ["selfcare", "overview"] });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Payment failed", description: err.message, variant: "destructive" }),
+  });
+
+  if (!customerId) return null;
+
+  const wallet = walletQuery.data?.wallet ?? null;
+  const walletBalance = num(wallet?.balance);
+  const transactions = walletQuery.data?.transactions ?? [];
+  const outstanding = (billingQuery.data?.invoices ?? []).filter(
+    (inv) => num(inv.balanceDue) > 0 && PAYABLE_INVOICE_STATUSES.includes((inv.status || "").toLowerCase()),
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className={cn("grid gap-4", isCustomer && "lg:grid-cols-2")}>
+        {/* Wallet summary */}
+        <Card className="cryptsk-card-load">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Wallet className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+              Wallet
+            </CardTitle>
+            <CardDescription className="text-xs">Prepaid balance for instant invoice payments</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {walletQuery.isLoading ? (
+              <div className="space-y-2" aria-busy="true">
+                <Skeleton className="h-9 w-40" />
+                <Skeleton className="h-4 w-56" />
+              </div>
+            ) : walletQuery.isError ? (
+              <ScErrorState onRetry={() => walletQuery.refetch()} message={walletQuery.error instanceof Error ? walletQuery.error.message : undefined} />
+            ) : wallet ? (
+              <>
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-3xl font-bold tabular-nums">{formatINR(walletBalance)}</span>
+                  {wallet.currency && (
+                    <Badge variant="outline" className="text-[10px] font-medium">{wallet.currency}</Badge>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+                  <span>Minimum balance {formatINR(num(wallet.minBalance))}</span>
+                  {wallet.autoRecharge && (
+                    <Badge variant="outline" className="gap-1 border-emerald-500/30 text-[10px] text-emerald-600 dark:text-emerald-400">
+                      <RefreshCw className="size-3" aria-hidden="true" />
+                      Auto-recharge on
+                    </Badge>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="py-2 text-sm text-muted-foreground">
+                {isCustomer
+                  ? "Your wallet is not activated yet — redeem a voucher to activate it."
+                  : "This customer hasn\u2019t activated a wallet yet."}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Voucher redemption — customer-only write action */}
+        {isCustomer && <ScVoucherRedeemCard />}
+      </div>
+
+      {/* Outstanding invoices */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Outstanding invoices</CardTitle>
+          <CardDescription className="text-xs">Settle bills instantly from your wallet balance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {billingQuery.isLoading ? (
+            <div className="space-y-2" aria-busy="true">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+          ) : billingQuery.isError ? (
+            <ScErrorState onRetry={() => billingQuery.refetch()} message={billingQuery.error instanceof Error ? billingQuery.error.message : undefined} />
+          ) : outstanding.length === 0 ? (
+            <ScEmptyState
+              icon={CheckCircle2}
+              title="No outstanding invoices"
+              hint="You're all caught up — new bills appear here as soon as they're issued."
+            />
+          ) : (
+            <ul className="divide-y rounded-lg border">
+              {outstanding.map((inv) => {
+                const due = num(inv.balanceDue);
+                const isOverdue = (inv.status || "").toLowerCase() === "overdue";
+                // No wallet (or a balance below the due amount) → the
+                // backend would reject with "Insufficient wallet balance",
+                // so the button is disabled up-front with a hint.
+                const canAfford = wallet !== null && walletBalance >= due;
+                const payingThis = payMutation.isPending && payMutation.variables === inv.id;
+                return (
+                  <li key={inv.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-xs font-semibold">{inv.invoiceNumber}</p>
+                      <p className={cn("text-[10px] text-muted-foreground", isOverdue && "font-medium text-red-600 dark:text-red-400")}>
+                        Due {fmtDate(inv.dueDate)}
+                      </p>
+                    </div>
+                    <StatusBadge status={inv.status} map={MONEY_STATUS_BADGE} />
+                    <p className="text-sm font-semibold tabular-nums">{formatINR(due)}</p>
+                    {isCustomer && canAfford && (
+                      <Button
+                        size="sm"
+                        className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                        disabled={payMutation.isPending}
+                        onClick={() => payMutation.mutate(inv.id)}
+                        aria-label={`Pay invoice ${inv.invoiceNumber} from wallet`}
+                      >
+                        {payingThis
+                          ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                          : <Wallet className="size-3.5" aria-hidden="true" />}
+                        Pay from wallet
+                      </Button>
+                    )}
+                    {isCustomer && !canAfford && (
+                      <span className="inline-flex flex-col items-end gap-0.5" title="Insufficient balance">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-11 gap-1.5"
+                          disabled
+                          aria-label={`Pay invoice ${inv.invoiceNumber} from wallet — insufficient balance`}
+                        >
+                          <Wallet className="size-3.5" aria-hidden="true" />
+                          Pay from wallet
+                        </Button>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400" role="status">Insufficient balance</span>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Wallet ledger */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Wallet transactions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {walletQuery.isLoading ? (
+            <div className="space-y-2" aria-busy="true">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
+          ) : walletQuery.isError ? (
+            <ScErrorState onRetry={() => walletQuery.refetch()} message={walletQuery.error instanceof Error ? walletQuery.error.message : undefined} />
+          ) : transactions.length === 0 ? (
+            <ScEmptyState
+              icon={Wallet}
+              title="No wallet transactions yet"
+              hint="Recharges, payments and refunds will appear here."
+            />
+          ) : (
+            <div className="max-h-96 overflow-y-auto cryptsk-scrollbar rounded-lg border">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background">
+                  <TableRow>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="hidden sm:table-cell">When</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Balance after</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transactions.map((t) => {
+                    const amt = num(t.amount);
+                    const positive = amt >= 0;
+                    return (
+                      <TableRow key={t.id} className="hover:bg-muted/50">
+                        <TableCell>
+                          <StatusBadge status={t.type} map={WALLET_TXN_BADGE} />
+                          {t.description && (
+                            <p className="mt-0.5 max-w-56 truncate text-[10px] text-muted-foreground" title={t.description}>
+                              {t.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
+                          {relTime(t.createdAt)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right text-xs font-semibold tabular-nums",
+                            positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                          )}
+                        >
+                          {positive ? "+" : "-"}{formatINR(Math.abs(amt))}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">{formatINR(num(t.balanceAfter))}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Voucher redemption (T8-a contract: POST /api/selfcare/vouchers/redeem,
+// customer mode only). The input is uppercased as the user types — the
+// backend stores voucher codes uppercase — and server error strings
+// ("Invalid or already used voucher code", "This voucher has expired")
+// surface verbatim in the destructive toast via apiMutate.
+function ScVoucherRedeemCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [code, setCode] = React.useState("");
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiMutate("/api/selfcare/vouchers/redeem", "POST", { code: code.trim() }) as Promise<ScVoucherRedeemResponse>,
+    onSuccess: (data) => {
+      toast({
+        title: "Voucher redeemed",
+        description: `${formatINR(num(data.voucher.faceValue))} added to your wallet`,
+      });
+      setCode("");
+      qc.invalidateQueries({ queryKey: ["selfcare", "wallet"] });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Could not redeem voucher", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Redeem a voucher</CardTitle>
+        <CardDescription className="text-xs">
+          Have a recharge voucher? Enter its code to top up your wallet.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          noValidate
+          onSubmit={(e) => { e.preventDefault(); if (code.trim() !== "" && !mutation.isPending) mutation.mutate(); }}
+          className="flex flex-col gap-2 sm:flex-row"
+        >
+          <Label htmlFor="sc-voucher-code" className="sr-only">Voucher code</Label>
+          <Input
+            id="sc-voucher-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="Enter voucher code"
+            className="h-11 flex-1 font-mono uppercase"
+            autoComplete="off"
+            maxLength={40}
+            aria-label="Voucher code"
+            disabled={mutation.isPending}
+          />
+          <Button
+            type="submit"
+            className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            disabled={mutation.isPending || code.trim().length === 0}
+            aria-label="Redeem voucher"
+          >
+            {mutation.isPending
+              ? <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              : <Ticket className="size-4" aria-hidden="true" />}
+            Redeem
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+// TAB 8 — Plans
 // ============================================================
 
 function PlansTab({ subscriberId }: { subscriberId: string | null }) {

@@ -1802,6 +1802,7 @@ model Ticket {
   resolution    String?
   resolvedAt    DateTime?
   closedAt      DateTime?
+  reopenedAt    DateTime? // last time the ticket returned to open from resolved/closed via customer reply or staff reopen; cleared on resolve/close
   createdBy     String?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt

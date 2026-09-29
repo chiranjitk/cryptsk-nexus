@@ -19,7 +19,8 @@ import { isRedirectError } from "../../../common";
 // userId is stored null (ticket_replies.user_id is a staff users FK);
 // authorship is the denormalized authorName from the session.
 // Behavior: replying to a resolved/closed ticket REOPENS it
-// (status → open, resolvedAt/closedAt cleared, updatedAt bumps).
+// (status → open, resolvedAt/closedAt cleared, reopenedAt stamped,
+// updatedAt bumps).
 // ============================================================
 
 export const dynamic = "force-dynamic";
@@ -82,7 +83,7 @@ export async function POST(
     if (ticket.status === "closed" || ticket.status === "resolved") {
       const updated = await db.ticket.update({
         where: { id },
-        data: { status: "open", resolvedAt: null, closedAt: null },
+        data: { status: "open", resolvedAt: null, closedAt: null, reopenedAt: new Date() },
         select: { status: true },
       });
       reopened = true;

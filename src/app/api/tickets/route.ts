@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    const [tickets, open, inProgress, pending, resolved, closed, critical, unassigned] =
+    const [tickets, open, inProgress, pending, resolved, closed, critical, unassigned, reopened] =
       await Promise.all([
         db.ticket.findMany({
           where,
@@ -74,11 +74,15 @@ export async function GET(req: NextRequest) {
         db.ticket.count({ where: { status: "closed" } }),
         db.ticket.count({ where: { priority: "critical", status: { in: ["open", "in_progress", "pending"] } } }),
         db.ticket.count({ where: { assignedTo: null, status: { in: ["open", "in_progress", "pending"] } } }),
+        // Reopened = back to open from resolved/closed (customer reply or staff reopen);
+        // Ticket.reopenedAt is stamped on reopen and cleared on resolve/close. The list
+        // above uses include (all scalars), so each ticket carries reopenedAt too.
+        db.ticket.count({ where: { status: "open", reopenedAt: { not: null } } }),
       ]);
 
     return NextResponse.json({
       tickets,
-      stats: { open, inProgress, pending, resolved, closed, critical, unassigned },
+      stats: { open, inProgress, pending, resolved, closed, critical, unassigned, reopened },
     });
   } catch (err: any) {
     if (err instanceof Response) return err;
