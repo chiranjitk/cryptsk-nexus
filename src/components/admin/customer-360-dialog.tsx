@@ -5,8 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, UserPlus, Wifi, CreditCard, Activity, RefreshCw, AlertTriangle, Info,
   FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Settings, Zap,
-  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet,
+  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy,
 } from "lucide-react";
+import { relTime } from "@/lib/format";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -112,6 +113,31 @@ type Customer360Data = {
   };
 };
 
+// Support tickets (via /api/selfcare/support — same contract the
+// customer-facing portal uses; internal notes are filtered server-side)
+type Ticket360Row = {
+  id: string; ticketNumber: string; subject: string; status: string; priority: string;
+  category: string | null; description: string; createdAt: string;
+  slaDueAt: string | null; resolvedAt: string | null;
+  replies: { authorName: string; message: string; createdAt: string }[];
+};
+type Support360Response = { tickets: Ticket360Row[] };
+
+const TICKET_360_STATUS_BADGE: Record<string, string> = {
+  open: "border-red-500/30 text-red-600",
+  in_progress: "border-amber-500/30 text-amber-600",
+  pending: "border-violet-500/30 text-violet-600",
+  resolved: "border-emerald-500/30 text-emerald-600",
+  closed: "border-slate-400/30 text-slate-500",
+};
+
+const TICKET_360_PRIORITY_BADGE: Record<string, string> = {
+  critical: "border-red-500/40 text-red-600",
+  high: "border-orange-500/40 text-orange-600",
+  medium: "border-amber-500/40 text-amber-600",
+  low: "border-slate-400/40 text-slate-500",
+};
+
 // ---------- formatting helpers ----------
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
@@ -210,6 +236,22 @@ export function Customer360Dialog({
       return res.json();
     },
     enabled: open && !!customerId,
+  });
+
+  // Linked support tickets — same endpoint the Self-Care portal uses,
+  // so staff see exactly the customer-visible ticket list.
+  const ticketsQuery = useQuery<Support360Response>({
+    queryKey: ["selfcare-support", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/selfcare/support?customerId=${encodeURIComponent(customerId ?? "")}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load tickets");
+      }
+      return res.json();
+    },
+    enabled: open && !!customerId,
+    staleTime: 30000,
   });
 
   const customer = data?.customer;
@@ -389,6 +431,12 @@ export function Customer360Dialog({
                     </Card>
                   </div>
                 </div>
+
+                {/* Support tickets — customer-visible list (no internal notes) */}
+                <SupportTicketsSection
+                  query={ticketsQuery}
+                  onRetry={() => ticketsQuery.refetch()}
+                />
               </TabsContent>
 
               {/* Subscribers */}
@@ -734,6 +782,57 @@ function EmptyState({ icon, title, text, compact }: { icon: React.ReactNode; tit
       <p className="text-sm font-medium">{title}</p>
       <p className="text-xs text-muted-foreground max-w-sm mt-1">{text}</p>
     </div>
+  );
+}
+
+// Support tickets card (Overview tab) — mirrors the customer-facing
+// Self-Care Support list: ticket number, subject, status/priority
+// badges, created relTime. Internal notes are filtered by the backend.
+function SupportTicketsSection({ query, onRetry }: {
+  query: { data?: Support360Response; isLoading: boolean; isError: boolean };
+  onRetry: () => void;
+}) {
+  const tickets = query.data?.tickets ?? [];
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <LifeBuoy className="size-4 text-muted-foreground" /> Support Tickets ({tickets.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load support tickets.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={onRetry}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : tickets.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-2">No support requests.</p>
+        ) : (
+          <ul className="max-h-64 divide-y overflow-y-auto cryptsk-scrollbar" role="list" aria-label="Support tickets">
+            {tickets.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-2 py-2 first:pt-0 last:pb-0">
+                <span className="font-mono text-xs font-medium text-muted-foreground">{t.ticketNumber}</span>
+                <span className="min-w-0 flex-1 truncate text-sm" title={t.subject}>{t.subject}</span>
+                <Badge variant="outline" className={`text-[10px] ${TICKET_360_STATUS_BADGE[t.status] || TICKET_360_STATUS_BADGE.closed}`}>
+                  {t.status.replace(/_/g, " ")}
+                </Badge>
+                <Badge variant="outline" className={`text-[10px] capitalize ${TICKET_360_PRIORITY_BADGE[t.priority] || TICKET_360_PRIORITY_BADGE.low}`}>
+                  {t.priority}
+                </Badge>
+                <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">{relTime(t.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

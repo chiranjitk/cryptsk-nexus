@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Users, Package, CreditCard, KeyRound, Radio, ScrollText,
   Gauge, Network, Server, Brain, ShieldCheck, UserCog, Settings, ListChecks, Wifi, Wrench,
-  FileBarChart, IndianRupee, Activity, FileDown,
+  FileBarChart, IndianRupee, Activity, FileDown, Smartphone,
 } from "lucide-react";
 import { canClient } from "@/lib/rbac";
 
@@ -45,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Core",
     items: [
       { title: "Dashboard", href: "/", view: "dashboard", icon: LayoutDashboard },
+      { title: "Self-Care Portal", href: "/?view=selfcare", view: "selfcare", icon: Smartphone, perm: { resource: "subscriber", action: "list" } },
     ],
   },
   {
