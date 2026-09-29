@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
+
+// Prevent static generation of all pages (required because layout uses useSession)
+export const dynamic = 'force-dynamic';
 import { Providers } from "@/components/providers";
 import { AppShell } from "@/components/layout/app-shell";
 
