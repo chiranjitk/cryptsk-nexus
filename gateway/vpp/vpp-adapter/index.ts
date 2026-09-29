@@ -51,7 +51,8 @@ async function generateVPPConfig(): Promise<string> {
 
     // Get active subscribers with framed IPs
     const subResult = await client.query(`
-      SELECT ra.username, ra.framedipaddress, ra.nasipaddress, ra.groupname
+      SELECT ra.username, ra.framedipaddress, ra.nasipaddress,
+             COALESCE((SELECT ug.groupname FROM radusergroup ug WHERE ug.username = ra.username ORDER BY ug.priority ASC LIMIT 1), '') as groupname
       FROM radacct ra
       WHERE ra.acctstoptime IS NULL
       AND ra.framedipaddress != ''
@@ -149,11 +150,11 @@ async function generateSubscriberConfig(subscriberId: string): Promise<string> {
 
     // Get subscriber data
     const subResult = await client.query(`
-      SELECT s.radiusUsername, s.staticIp, s.vlanId,
-             p.name as planName, p.radiusGroupName,
+      SELECT s."serviceUsername", s."ipAddress" as staticIp,
+             p.name as "planName", p."groupId" as "radiusGroupName",
              ra.framedipaddress, ra.nasipaddress, ra.callingstationid
       FROM "Subscriber" s
-      LEFT JOIN plans p ON s.planId = p.id
+      LEFT JOIN "Plan" p ON s."planId" = p.id
       LEFT JOIN radacct ra ON ra.username = s.radiusUsername AND ra.acctstoptime IS NULL
       WHERE s.id = $1
       LIMIT 1
