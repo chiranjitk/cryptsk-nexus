@@ -12,7 +12,7 @@ import {
   RefreshCw, AlertTriangle, Inbox, FileText, Banknote, Landmark, Wallet,
   IndianRupee, LogOut, Sun, Moon, Info, Download, Upload, Smartphone, Ticket,
   Loader2, Plus, Send, KeyRound, Pencil, Eye, EyeOff, ShieldCheck, Check, X,
-  MessageSquare, Gauge,
+  MessageSquare, Gauge, Activity, TrendingUp, ArrowDownUp,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +64,13 @@ import { cn } from "@/lib/utils";
 // redemption and pay-invoice-from-wallet are customer-only writes
 // (POST /api/selfcare/vouchers/redeem, POST /api/selfcare/wallet/pay)
 // via apiMutate with verbatim server error strings.
+//
+// Speed History tab (T9 — the 9th and final §7.11 item): average
+// session throughput DERIVED FROM RADIUS ACCOUNTING — this is NOT a
+// speed test and the copy says so. Subscriber-scoped read-only in
+// BOTH modes (staff preview passes ?subscriberId= like Service
+// Status; customer sessions send no params). Empty state is honest:
+// no recorded sessions → nothing charted.
 // ============================================================
 
 // ---------- API contract types (T5-a) ----------
@@ -203,6 +210,20 @@ interface ScWalletPayResponse {
   wallet: { balance: number };
 }
 
+// ---------- speed-history types (T9-a contract) ----------
+// Byte mapping follows sessions/serialize.ts: bytesUp = UP (upload),
+// bytesDown = DOWN (download). days = only days WITH completed
+// sessions, ascending — an empty array is the honest no-data state.
+
+interface SpeedHistoryData {
+  plan: { name: string } | null;
+  days: { date: string; sessions: number; bytesUp: number; bytesDown: number; avgKbps: number }[];
+  sessions: {
+    startedAt: string; stoppedAt: string; durationSeconds: number;
+    bytesUp: number; bytesDown: number; avgKbps: number;
+  }[];
+}
+
 // ---------- shared helpers ----------
 
 async function apiRequest(url: string): Promise<unknown> {
@@ -259,6 +280,14 @@ function cycleLabel(cycle: string): string {
 function terminateCauseLabel(cause: string | null | undefined): string {
   if (!cause) return "—";
   return cause.replace(/[-_]+/g, " ");
+}
+
+// Throughput formatting (T9): <1000 kbps → "N kbps", else "X.X Mbps"
+// (kbps / 1000). `decimals` keeps 1-decimal precision for aggregates.
+function fmtKbps(kbps: number, decimals = 0): string {
+  const k = num(kbps);
+  if (k < 1000) return `${k.toFixed(decimals)} kbps`;
+  return `${(k / 1000).toFixed(1)} Mbps`;
 }
 
 function initialsOf(name: string): string {
@@ -435,7 +464,7 @@ function StatusBadge({ status, map }: { status: string; map: Record<string, stri
 
 // ---------- root component ----------
 
-type Tab = "dashboard" | "usage" | "billing" | "support" | "profile" | "service-status" | "payments" | "plans";
+type Tab = "dashboard" | "usage" | "billing" | "support" | "profile" | "service-status" | "payments" | "speed" | "plans";
 
 const STORAGE_KEY = "selfcare.subscriberId";
 
@@ -455,6 +484,7 @@ const NAV_TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "profile", label: "Profile", icon: UserRound },
   { id: "service-status", label: "Service Status", icon: Gauge },
   { id: "payments", label: "Payments", icon: Wallet },
+  { id: "speed", label: "Speed History", icon: Activity },
   { id: "plans", label: "Plans", icon: PackageCheck },
 ];
 
@@ -587,6 +617,8 @@ export function SelfCarePortal() {
         return <ServiceStatusTab subscriberId={ctxSubscriberId} />;
       case "payments":
         return <PaymentsTab customerId={customerId} isCustomer={ctx.mode === "customer"} />;
+      case "speed":
+        return <SpeedHistoryTab subscriberId={ctxSubscriberId} />;
       case "plans":
         return <PlansTab subscriberId={ctxSubscriberId} />;
       case "dashboard":
@@ -956,10 +988,14 @@ function UsageTab({ subscriberId }: { subscriberId: string | null }) {
   });
 
   const data = query.data;
+  // Chart series follow the sessions/serialize.ts convention (T9-b label
+  // fix): inBytes (acctinputoctets) = UP (upload), outBytes
+  // (acctoutputoctets) = DOWN (download) — so the red "Download" series
+  // plots outBytes and the emerald "Upload" series plots inBytes.
   const chartData = (data?.daily ?? []).map((d) => ({
     day: d.day,
-    down: num(d.inBytes),
-    up: num(d.outBytes),
+    down: num(d.outBytes),
+    up: num(d.inBytes),
   }));
 
   const maxMbps = React.useMemo(() => {
@@ -990,8 +1026,10 @@ function UsageTab({ subscriberId }: { subscriberId: string | null }) {
       </div>
 
       <div className="grid grid-cols-3 gap-3">
-        <ScStatChip label="Download" value={humanBytes(num(data?.totals?.inBytes))} icon={Download} />
-        <ScStatChip label="Upload" value={humanBytes(num(data?.totals?.outBytes))} icon={Upload} />
+        {/* Display-label fix (T9-b): inBytes = UP, outBytes = DOWN per
+            sessions/serialize.ts — labels now match the fields. */}
+        <ScStatChip label="Download" value={humanBytes(num(data?.totals?.outBytes))} icon={Download} />
+        <ScStatChip label="Upload" value={humanBytes(num(data?.totals?.inBytes))} icon={Upload} />
         <ScStatChip label="Sessions" value={formatNumber(num(data?.totals?.sessions))} icon={Wifi} />
       </div>
 
@@ -2732,7 +2770,215 @@ function ScVoucherRedeemCard() {
 }
 
 // ============================================================
-// TAB 8 — Plans
+// TAB 8 — Speed History (T9-a: GET /api/selfcare/speed-history)
+// The 9th and final §7.11 tab. Average session throughput DERIVED
+// FROM RADIUS ACCOUNTING — NOT a speed test, and the copy states how
+// the numbers are computed. Read-only in BOTH modes (staff preview
+// passes ?subscriberId= exactly like Service Status; customer
+// sessions send no params — the backend auto-picks their subscriber).
+// days[] contains only days WITH completed sessions, so an empty
+// chart is the honest no-data state (expected while the connection
+// has no recorded RADIUS sessions). Byte labels follow
+// sessions/serialize.ts: bytesUp = UP, bytesDown = DOWN.
+// ============================================================
+
+// Custom tooltip for the speed chart — full date, the day's average
+// throughput, session count and total data moved (recharts injects
+// active/payload at render time).
+function ScSpeedChartTooltip({ active, payload }: {
+  active?: boolean;
+  payload?: { payload?: { date: string; avgKbps: number; sessions: number; moved: number } }[];
+}) {
+  const row = active && payload && payload.length > 0 ? payload[0]?.payload : undefined;
+  if (!row) return null;
+  return (
+    <div style={tooltipStyle} className="px-2.5 py-2 shadow-sm">
+      <p className="text-xs font-semibold">{fmtDate(row.date)}</p>
+      <p className="mt-0.5 text-xs tabular-nums">Avg {fmtKbps(row.avgKbps, 1)}</p>
+      <p className="text-xs tabular-nums text-muted-foreground">
+        {formatNumber(row.sessions)} session{row.sessions === 1 ? "" : "s"} · {humanBytes(row.moved)} moved
+      </p>
+    </div>
+  );
+}
+
+function SpeedHistoryTab({ subscriberId }: { subscriberId: string | null }) {
+  const query = useQuery<SpeedHistoryData>({
+    // staff: scoped to the picked subscriber — customer (subscriberId null):
+    // NO subscriberId param, the backend auto-picks their own subscriber.
+    queryKey: ["selfcare", "speed-history", subscriberId ?? "self"],
+    queryFn: () =>
+      (subscriberId
+        ? apiRequest(`/api/selfcare/speed-history?subscriberId=${encodeURIComponent(subscriberId)}`)
+        : apiRequest("/api/selfcare/speed-history")) as Promise<SpeedHistoryData>,
+    enabled: subscriberId !== "",
+    refetchInterval: 60000,
+    staleTime: 50000,
+    retry: 1,
+  });
+
+  if (query.isLoading) return <TabSkeleton />;
+  if (query.isError) {
+    return <ScErrorState onRetry={() => query.refetch()} message={query.error instanceof Error ? query.error.message : undefined} />;
+  }
+
+  const data = query.data;
+  if (!data) return null;
+
+  const days = data.days ?? [];
+  const sessions = data.sessions ?? [];
+
+  // Summary aggregates — computed only from real recorded days.
+  const avgKbps = days.length > 0
+    ? days.reduce((acc, d) => acc + num(d.avgKbps), 0) / days.length
+    : 0;
+  const peakDay = days.length > 0
+    ? days.reduce((best, d) => (num(d.avgKbps) > num(best.avgKbps) ? d : best), days[0])
+    : null;
+  const totalMoved = days.reduce((acc, d) => acc + num(d.bytesUp) + num(d.bytesDown), 0);
+
+  const chartData = days.map((d) => ({
+    date: d.date,
+    avgKbps: num(d.avgKbps),
+    sessions: num(d.sessions),
+    moved: num(d.bytesUp) + num(d.bytesDown),
+  }));
+
+  return (
+    <div className="space-y-4">
+      {/* Header — the subtitle states exactly how the numbers are derived */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Activity className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold tracking-tight">Speed History</h2>
+          <p className="text-xs text-muted-foreground">
+            Average session throughput — derived from RADIUS accounting
+          </p>
+        </div>
+        {data.plan?.name && (
+          <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">{data.plan.name}</Badge>
+        )}
+      </div>
+
+      {/* Summary stats — only when there is recorded history */}
+      {days.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <Activity className="size-3" aria-hidden="true" />
+              30-day average
+            </div>
+            <div className="mt-1 text-lg font-semibold leading-none tabular-nums">{fmtKbps(avgKbps, 1)}</div>
+          </div>
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <TrendingUp className="size-3" aria-hidden="true" />
+              Peak day
+            </div>
+            <div className="mt-1 text-lg font-semibold leading-none tabular-nums">{fmtKbps(num(peakDay?.avgKbps), 1)}</div>
+            <div className="mt-1 text-[10px] text-muted-foreground">{peakDay ? fmtDate(peakDay.date) : "—"}</div>
+          </div>
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <ArrowDownUp className="size-3" aria-hidden="true" />
+              Total data moved
+            </div>
+            <div className="mt-1 text-lg font-semibold leading-none tabular-nums">{humanBytes(totalMoved)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Throughput chart — only real days with sessions, no fabricated zero-fill */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Average throughput by day</CardTitle>
+          <CardDescription className="text-xs">Days with completed sessions only</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {days.length === 0 ? (
+            <ScEmptyState
+              icon={WifiOff}
+              title="No connection history yet"
+              hint="Throughput appears here once RADIUS sessions are recorded for your connection — if the line has been offline, this is expected."
+            />
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                <defs>
+                  {/* Unique gradient id — must never collide with UsageTab's scDlGrad/scUlGrad */}
+                  <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#16a34a" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#16a34a" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  className="text-xs"
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v: string) => (typeof v === "string" && v.length >= 8 ? v.slice(8) : v)}
+                />
+                <YAxis className="text-xs" tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtKbps(v)} width={70} />
+                <Tooltip content={<ScSpeedChartTooltip />} />
+                <Area type="monotone" dataKey="avgKbps" name="Avg speed" stroke="#16a34a" strokeWidth={2} fill="url(#speedGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Session ledger — last 10 completed sessions (desc) */}
+      {sessions.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Recent sessions</CardTitle>
+            <CardDescription className="text-xs">
+              Last {sessions.length} completed session{sessions.length === 1 ? "" : "s"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-96 overflow-y-auto cryptsk-scrollbar rounded-lg border">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background">
+                  <TableRow>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Avg speed</TableHead>
+                    <TableHead className="text-right">Data down</TableHead>
+                    <TableHead className="text-right">Data up</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.map((s, i) => (
+                    <TableRow key={`${s.startedAt}-${i}`} className="hover:bg-muted/50">
+                      <TableCell>
+                        <p className="text-xs font-medium">{fmtDateTime(s.startedAt)}</p>
+                        <p className="text-[10px] text-muted-foreground">{relTime(s.startedAt)}</p>
+                      </TableCell>
+                      <TableCell className="text-xs tabular-nums">{formatDuration(num(s.durationSeconds))}</TableCell>
+                      <TableCell className="text-xs tabular-nums">{fmtKbps(num(s.avgKbps))}</TableCell>
+                      {/* bytesDown = DOWN (red) / bytesUp = UP (emerald) — same palette as UsageTab */}
+                      <TableCell className="text-right text-xs tabular-nums text-red-600 dark:text-red-400">
+                        {humanBytes(num(s.bytesDown))}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {humanBytes(num(s.bytesUp))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// TAB 9 — Plans
 // ============================================================
 
 function PlansTab({ subscriberId }: { subscriberId: string | null }) {

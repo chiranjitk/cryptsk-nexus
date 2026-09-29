@@ -5,9 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, UserPlus, Wifi, CreditCard, Activity, RefreshCw, AlertTriangle, Info,
   FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Settings, Zap,
-  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy, Copy, Check,
+  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy, Copy, Check, Loader2,
 } from "lucide-react";
-import { relTime } from "@/lib/format";
+import { relTime, formatINR } from "@/lib/format";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -142,6 +142,24 @@ type PortalUserRecord = {
     id: string; email: string; name: string | null;
     status: string; createdAt: string;
   };
+};
+
+// Wallet (prepaid balance + ledger) — /api/selfcare/wallet?customerId=
+// staff contract (same endpoint the customer Payments tab uses). A
+// customer without a wallet is a normal state, never an error.
+type WalletTxnRow = {
+  id: string; amount: number; type: string; // recharge|payment|refund|adjustment|cashback
+  description: string; balanceAfter: number; createdAt: string; invoiceId: string | null;
+};
+type WalletData = {
+  wallet: { id: string; balance: number; currency: string; minBalance: number; autoRecharge: boolean } | null;
+  transactions: WalletTxnRow[];
+};
+
+// POST /api/wallet/topup (staff cash top-up) response
+type TopUpResponse = {
+  wallet: { balance: number; currency: string };
+  transaction: { id: string; amount: number; type: string; balanceAfter: number };
 };
 
 const PORTAL_USER_STATUS_BADGE: Record<string, string> = {
@@ -482,6 +500,9 @@ export function Customer360Dialog({
 
                 {/* Portal access — customer self-service logins (staff-managed) */}
                 <PortalAccessSection customerId={customer.id} />
+
+                {/* Wallet — prepaid balance, recent activity + staff cash top-up */}
+                <WalletSection customerId={customer.id} enabled={open && !!customerId} />
               </TabsContent>
 
               {/* Subscribers */}
@@ -1084,6 +1105,245 @@ function PortalAccessSection({ customerId }: { customerId: string }) {
         </AlertDialogContent>
       </AlertDialog>
     </Card>
+  );
+}
+
+// Wallet card (Overview tab) — prepaid balance, recent activity and the
+// staff cash top-up action. Real data via /api/selfcare/wallet (staff mode,
+// ?customerId=) + POST /api/wallet/topup. A missing wallet is a normal
+// state — it comes to life on the first voucher redemption or top-up.
+function WalletSection({ customerId, enabled }: { customerId: string; enabled: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [showTopUp, setShowTopUp] = React.useState(false);
+
+  const query = useQuery<WalletData>({
+    queryKey: ["wallet", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/selfcare/wallet?customerId=${encodeURIComponent(customerId)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load wallet");
+      }
+      return res.json();
+    },
+    enabled,
+    staleTime: 15000,
+  });
+
+  const wallet = query.data?.wallet ?? null;
+  const transactions = query.data?.transactions ?? [];
+
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ["wallet", customerId] });
+    // The Customer Information card also shows the wallet balance — keep it in sync.
+    qc.invalidateQueries({ queryKey: ["customer-360", customerId] });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Wallet className="size-4 text-muted-foreground" /> Wallet
+          </CardTitle>
+          <Button
+            size="sm"
+            className="h-7 gap-1 bg-emerald-600 px-2.5 text-xs text-white hover:bg-emerald-600/90"
+            onClick={() => setShowTopUp(true)}
+          >
+            <Plus className="size-3" /> Add top-up
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            <Skeleton className="h-10 w-44" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load wallet.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => query.refetch()}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : !wallet ? (
+          <p className="py-2 text-xs text-muted-foreground">
+            No wallet activated yet — it is created when the customer redeems a voucher or receives a top-up.
+          </p>
+        ) : (
+          <>
+            <div>
+              <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Prepaid balance</p>
+              <div className="flex items-center gap-2">
+                <span className="text-3xl font-bold tabular-nums tracking-tight">{formatINR(wallet.balance)}</span>
+                <Badge variant="outline" className="text-[9px] uppercase">{wallet.currency}</Badge>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Minimum balance {formatINR(wallet.minBalance)}</span>
+                {wallet.autoRecharge && (
+                  <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/5 text-[9px] text-emerald-600">
+                    <CheckCircle2 className="size-3" /> Auto-recharge on
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Recent activity</p>
+              {transactions.length === 0 ? (
+                <p className="py-1 text-xs text-muted-foreground">No wallet transactions yet.</p>
+              ) : (
+                <ul className="max-h-44 divide-y overflow-y-auto cryptsk-scrollbar" role="list" aria-label="Wallet transactions">
+                  {transactions.slice(0, 5).map((tx) => (
+                    <li key={tx.id} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                      <Badge variant="outline" className="shrink-0 text-[9px] capitalize">{tx.type}</Badge>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={tx.description}>{tx.description}</span>
+                      <span
+                        className={`shrink-0 text-xs font-medium tabular-nums ${tx.amount >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                        title={`Balance after: ${formatINR(tx.balanceAfter)}`}
+                      >
+                        {tx.amount >= 0 ? "+" : "−"}{formatINR(Math.abs(tx.amount))}
+                      </span>
+                      <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">{relTime(tx.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+
+      {showTopUp && (
+        <TopUpDialog
+          customerId={customerId}
+          walletBalance={wallet?.balance ?? null}
+          onClose={() => setShowTopUp(false)}
+          onSaved={(amount) => {
+            setShowTopUp(false);
+            invalidate();
+            toast({ title: "Wallet topped up", description: `${formatINR(amount)} added` });
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+// Staff cash top-up dialog — POST /api/wallet/topup { customerId, amount, notes? }.
+// Works when no wallet exists yet (the top-up activates it); server error
+// strings surface verbatim in a destructive toast.
+function TopUpDialog({ customerId, walletBalance, onClose, onSaved }: {
+  customerId: string;
+  walletBalance: number | null;
+  onClose: () => void;
+  onSaved: (amount: number) => void;
+}) {
+  const { toast } = useToast();
+  const [amount, setAmount] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+
+  const amountNum = Number(amount);
+  const amountInvalid = amount.trim() === "" || !Number.isFinite(amountNum) || amountNum <= 0;
+  const newBalance = (walletBalance ?? 0) + (Number.isFinite(amountNum) && amountNum > 0 ? amountNum : 0);
+
+  const topUp = useMutation<TopUpResponse, Error>({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { customerId, amount: amountNum };
+      if (notes.trim()) body.notes = notes.trim();
+      const res = await fetch("/api/wallet/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to top up wallet");
+      }
+      return res.json();
+    },
+    onSuccess: () => onSaved(amountNum),
+    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (amountInvalid || topUp.isPending) return;
+    topUp.mutate();
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Add wallet top-up</DialogTitle>
+          <DialogDescription>
+            Records a cash top-up against this customer&apos;s prepaid wallet
+            {walletBalance === null
+              ? " — this also activates the wallet."
+              : ` · current balance ${formatINR(walletBalance)}.`}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor="topup-amount">Amount (₹) *</Label>
+            <Input
+              id="topup-amount"
+              type="number"
+              min={1}
+              step={0.01}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+              className="h-10"
+              placeholder="e.g. 500"
+              aria-label="Top-up amount in rupees"
+              aria-invalid={amount !== "" && amountInvalid ? true : undefined}
+              aria-describedby={amount !== "" && amountInvalid ? "topup-amount-error" : undefined}
+            />
+            {amount !== "" && amountInvalid && (
+              <p id="topup-amount-error" className="text-xs font-medium text-red-600" role="alert">
+                Enter an amount greater than zero
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor="topup-notes">Notes</Label>
+            <Input
+              id="topup-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="h-10"
+              placeholder="Optional — e.g. cash received at counter"
+              maxLength={200}
+              aria-label="Top-up notes (optional)"
+            />
+          </div>
+          {Number.isFinite(amountNum) && amountNum > 0 && (
+            <div className="rounded-lg border bg-muted/50 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">New wallet balance</span>
+                <span className="font-semibold tabular-nums">{formatINR(newBalance)}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={topUp.isPending}>Cancel</Button>
+            <Button
+              type="submit"
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
+              disabled={amountInvalid || topUp.isPending}
+            >
+              {topUp.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+              {topUp.isPending ? "Topping up…" : "Add top-up"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

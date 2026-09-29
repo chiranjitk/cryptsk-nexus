@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, FileText, IndianRupee, CheckCircle, Clock,
   AlertCircle, TrendingUp, Wallet, Gift, MoreHorizontal, Eye,
-  Ticket, TicketCheck, RefreshCw, Ban, Copy, Check, Loader2,
+  Ticket, TicketCheck, RefreshCw, Ban, Copy, Check, Loader2, Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -137,6 +137,53 @@ export function BillingPanel() {
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
+
+  // Voucher CSV export — plain fetch (same credentials as every request in
+  // this file) → blob → programmatic <a download> click. The status filter
+  // always rides along; batchNumber only when the search text is a batch
+  // number (otherwise the search box matches code substrings, which the
+  // export does not filter on). No query keys — this is not cached.
+  const [exportingCsv, setExportingCsv] = React.useState(false);
+
+  async function handleExportCsv() {
+    if (exportingCsv || vouchers.length === 0) return;
+    setExportingCsv(true);
+    try {
+      const params = new URLSearchParams();
+      if (voucherStatus) params.set("status", voucherStatus);
+      const batchMatch = /^VCH-/i.test(voucherSearch.trim());
+      if (batchMatch) params.set("batchNumber", voucherSearch.trim());
+      const res = await fetch(`/api/vouchers/export?${params}`);
+      if (!res.ok) throw new Error("export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // Prefer the server's attachment filename; derive a truthful fallback
+      // in the same vouchers-<batch|all>-<YYYYMMDD>.csv shape.
+      const cd = res.headers.get("content-disposition");
+      const serverName = cd?.match(/filename\*?="?([^";]+)"?/i)?.[1];
+      const now = new Date();
+      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+      a.download = serverName || `vouchers-${batchMatch ? voucherSearch.trim() : "all"}-${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      // Row count is only derivable when no filters are active — kpis.total
+      // is the whole-table aggregate, so it equals the unfiltered export.
+      const noFilters = !voucherStatus && !batchMatch;
+      if (noFilters && voucherKpis) {
+        toast({ title: "Voucher CSV exported", description: `${voucherKpis.total} rows` });
+      } else {
+        toast({ title: "Voucher CSV exported" });
+      }
+    } catch {
+      toast({ title: "Could not export vouchers", variant: "destructive" });
+    } finally {
+      setExportingCsv(false);
+    }
+  }
 
   // Stats
   const totalIssued = invoices.reduce((sum, i) => sum + i.total, 0);
@@ -313,6 +360,14 @@ export function BillingPanel() {
                   </select>
                   <Button variant="outline" size="sm" className="h-9 gap-1.5 px-3" onClick={() => refetchVouchers()} disabled={vouchersLoading} aria-label="Refresh vouchers">
                     <RefreshCw className={`size-3.5 ${vouchersLoading ? "animate-spin" : ""}`} /> Refresh
+                  </Button>
+                  <Button
+                    variant="outline" size="sm" className="h-9 gap-1.5 px-3"
+                    onClick={handleExportCsv}
+                    disabled={exportingCsv || vouchers.length === 0}
+                    aria-label="Export vouchers as CSV"
+                  >
+                    {exportingCsv ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Export CSV
                   </Button>
                 </>
               ) : (
