@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 // ============================================================
 // CRYPTSK Nexus — GET /api/health
 // Authenticated system health probe: live DB counts + uptime.
-// Used by the header health indicator (30s poll) and ops tooling.
+// Used by the header health indicator (30s poll), sidebar badges
+// (activeSessions, openTickets) and ops tooling.
 // ============================================================
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,8 @@ export async function GET() {
       unreadNotifications,
       nasTotal,
       nasUp,
+      openTickets,
+      upcomingInstallations,
     ] = await Promise.all([
       db.user.count(),
       db.customer.count(),
@@ -42,6 +45,10 @@ export async function GET() {
       db.nas.count(),
       // NAS model has no `status` field — `isActive` is the liveness flag
       db.nas.count({ where: { isActive: true } }),
+      // Operations & Support — open support tickets (sidebar badge)
+      db.ticket.count({ where: { status: "open" } }),
+      // Scheduled installations still pending (scheduledAt in the future)
+      db.installation.count({ where: { status: "scheduled", scheduledAt: { gte: new Date() } } }),
     ]);
 
     return NextResponse.json({
@@ -54,6 +61,8 @@ export async function GET() {
         activeSessions,
         unreadNotifications,
         nas: { total: nasTotal, up: nasUp },
+        openTickets,
+        upcomingInstallations,
       },
       serverTime: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),

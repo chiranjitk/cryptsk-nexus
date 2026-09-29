@@ -871,6 +871,28 @@ Stage Summary:
 - Pending: PG 18 build → initdb → db push → seed → dev server → agent-browser QA
 
 ---
+Task ID: T2-DEPLOY-VERIFY (orchestrator)
+Agent: Z.ai Code (orchestrator)
+Task: PostgreSQL 18 bring-up, schema push, seed, E2E verification, commit/push
+
+Work Log:
+- Built PostgreSQL 18.6 from source (userspace bison/flex via dpkg-deb extraction, BISON_PKGDATADIR env; foreground chunked make after sandbox killed detached procs; -j2 OOM'd at 4GB → ran with dev server stopped)
+- Cluster at /home/z/pgsql-data, socket /tmp, port 5432; roles: pgadmin / cryptsknexus (nexus_pg_2026); DB cryptsknexus
+- Discovered sandbox exports GLOBAL DATABASE_URL=file:... custom.db which overrides .env (Next never overrides existing env) → pinned DATABASE_URL/NEXTAUTH_URL/NEXTAUTH_SECRET in package.json dev script
+- prisma db push: 51 tables on PostgreSQL 18.6; seed: 15 roles, 333 permissions, 499 role-permission links, admin@cryptsk.com/Admin@2026, 11 modules (status synced to implementation reality)
+- Debugged NextAuth JWEInvalid: NOT an app bug — curl caps outgoing Cookie header (~8KB) and silently drops cryptsk_session.2 chunk; manual full header decodes fine server-side; browsers unaffected
+- Created REAL data via real APIs: 3 customers, 2 products, 2 plans, 1 subscriber (+RadCheck), 1 subscription, 1 invoice (GST math verified), 1 payment (auto status update), 2 firewall rules, 2 WAN links, 1 VPN tunnel, DHCP subnet+reservation, DNS zone+record, 1 notification
+- agent-browser QA: login page ✓, dashboard real widgets ✓ (fixed ₹179.8199… float → ₹179.82), ⌘K palette ✓, customers list + Customer 360 (stats/tabs/billing) ✓, network Firewall tab ✓, admin panel ✓, dynamic breadcrumb ✓, sidebar active state ✓, notification badge ✓
+- Fixed: formatINR rounding, dashboard/stats AuditEvent description field + groupBy null filter, Customer360 DialogTitle a11y
+- bun run lint: PASS exit 0; committed 3cdba84 and pushed to origin/main
+
+Stage Summary:
+- Full stack LIVE in sandbox: Next.js 16 + PostgreSQL 18.6 (source-built) + 51 tables + all APIs real
+- All 26 API endpoints smoke-tested (25×200; VPP 502 expected — VPP service runs on the other agent's VM)
+- Known accepted: VPP panel needs the VPP service host (other agent's domain); operations_support + monitoring modules intentionally "not_installed" (no code yet)
+- Credentials: admin@cryptsk.com / Admin@2026
+
+---
 Task ID: VPP-SUCCESS
 Agent: orchestrator (sandbox main)
 Task: VPP compiled from source + running on Rocky 10
@@ -902,3 +924,61 @@ ALL 9 BACKEND SERVICES RUNNING:
 9. VPP v23.06 (systemd) ✅
 
 PLATFORM COMPLETE — ALL PHASES 0-9 + VPP RUNNING!
+
+
+---
+Task ID: T3-a
+Agent: full-stack-developer
+Task: Operations & Support module — tickets/replies, installations, inventory APIs + panel + sidebar/health wiring
+
+Work Log:
+- Read worklog tail, schema (Ticket/TicketReply/Installation/InventoryItem + 4 enums), src/lib/audit.ts, src/lib/rbac.ts (requirePermission returns AuthUser, throws Response on 403; requireAuth uses redirect() → NEXT_REDIRECT throw), customers/subscribers/users route patterns, network-panel.tsx shared helpers (apiRequest/TableSkeleton/StatChip/StatusFilterBar/DeleteRowButton), format.ts (formatINR/relTime)
+- Found dev server DOWN on arrival (nothing on :3000) → started `bun run dev` detached (same pinned env as package.json); fresh process also fixed a transient 503 on /api/health caused by a stale in-memory PrismaClient instance from the previous process lacking the new models
+- Built src/app/api/tickets/route.ts — GET (?status ?priority ?category ?search over subject/ticketNumber/customer.displayName ?limit, include customer/subscriber/assignee/_count.replies) + stats via 8 parallel db.ticket.counts (open/inProgress/pending/resolved/closed/critical[active-only]/unassigned[active-only]); POST create → TKT-2026-{count+1 pad5}, slaDueAt per priority (critical+4h/high+8h/medium+24h/low+72h), relation existence checks, audit create
+- Built src/app/api/tickets/[id]/route.ts — GET full detail (replies asc + customer + subscriber + assignee + real invoiceCount for linked customer); PATCH workflow state machine (open→in_progress|pending; in_progress→pending|resolved; pending→in_progress|resolved; resolved→closed|open-reopen; closed terminal): resolve 400s without resolution text + sets resolvedAt, close sets closedAt (only reachable from resolved), reopen nulls resolution/resolvedAt/closedAt, priority change on non-resolved ticket recomputes slaDueAt, assignedTo validated against User table; full audit before/after; DELETE only when closed (409 with reason otherwise)
+- Built src/app/api/tickets/[id]/replies/route.ts — GET asc; POST {message, isInternal} with authorName = session user.name||email, permission ticket.update
+- Built src/app/api/installations/route.ts — GET (?status ?search installNumber/technicianName ?upcoming=1 → scheduled+future, asc, limit 10, include customer/subscriber) + stats 7 parallel counts (scheduled/inProgress/completed/failed/rescheduled/today = scheduledAt within today 00:00–24:00); POST → INS-2026-{count+1 pad5}, customer required, scheduledAt ISO required
+- Built src/app/api/installations/[id]/route.ts — PATCH transitions (scheduled→in_progress|completed|failed|rescheduled; in_progress→completed|failed|rescheduled; rescheduled→in_progress|completed|failed|scheduled; failed→rescheduled|scheduled; completed terminal), completed sets completedAt (cleared on any other status); DELETE only when scheduled/rescheduled/failed (409 otherwise)
+- Built src/app/api/inventory/route.ts — GET (?search sku/name ?category ?lowStock=1 via Prisma field-reference quantity<=minQuantity, quantity asc; default updatedAt desc) + stats (total, lowStock, outOfStock, stockValue = Σ qty×unitPrice over real rows); POST sku unique (409, normalized uppercase), quantity/minQuantity integer ≥0 guards
+- Built src/app/api/inventory/[id]/route.ts — PATCH quantityDelta ±int (result <0 → 409 with stock message) + name/category/minQuantity/unitPrice/location; DELETE any; both audited as inventory_item
+- Extended src/app/api/health/route.ts — added openTickets + upcomingInstallations (status scheduled, scheduledAt ≥ now) to the same Promise.all and counts payload; existing keys/shape untouched
+- Unauth UX fix: requireAuth's redirect() surfaced as 500 through my catch blocks → added isRedirectError(NEXT_REDIRECT digest) guard in all 7 new route files mapping to clean 401 JSON (health already had its own)
+- Built src/components/admin/operations-panel.tsx (~1770 lines, "use client") in network-panel visual language: Tickets tab (6 tinted stat chips incl. pulsing critical, status pills w/ live counts, priority+category selects, debounced search, 9-col table: mono ticket# / subject+category badge+reply count / priority badge w/ icon (critical AlertOctagon pulse) / customer avatar-initials / assignee or dashed Unassigned chip / SLA "due in Xh" emerald vs "overdue Xh" red (active statuses only) / status badge w/ dot (open pulsing) / relTime; row click or action opens Detail Dialog max-w-3xl: badges header, info grid (customer+code, subscriber, assignee, SLA absolute+relative, resolved, updated, invoice count), description + emerald resolution block, reply thread (internal notes amber-tint w/ Lock), composer w/ internal-note Checkbox, workflow-aware status select + resolve dialog (required textarea) + assignee select from /api/users (graceful degradation when user.list missing) + DeleteRowButton (closed only); New Ticket dialog: customer select, subscriber select filtered via /api/subscribers?customerId=, category/priority, subject, description w/ hint); Installations tab (5 chips incl. violet today, pills, table w/ HardHat technician, date+relTime, action icons Play/CheckCircle2/XCircle/CalendarClock gated by transition map, Reschedule dialog (datetime-local + notes → status rescheduled), Schedule dialog w/ filtered subscriber select + client guards); Inventory tab (4 chips incl. formatINR stock value, search+category+lowStock Switch, table w/ amber left border + red/green StockBar vs minQuantity on low rows, Stock ±dialog w/ quick ±1/±5/±10 chips + live new-qty preview + ≥0 guard, Edit dialog, Add Item dialog w/ SKU uppercase); TanStack useQuery (30s tickets, 60s installs/inventory) keyed on filters, useMutation+invalidate ["tickets"]/["ticket",id]/["installations"]/["inventory"], toasts, layout-stable skeletons, ErrorState w/ retry, real EmptyStates w/ CTA, aria-labels on all icon buttons/switch/progressbar
+- Wired src/app/page.tsx (import + `view === "operations"` branch) and src/components/layout/app-sidebar.tsx (new "Operations" group between Policy & Network and Intelligence with Tickets & Support leaf, Wrench icon, ticket.list perm, badgeKey "openTickets"; badgeKey union extended, badge logic generalized over /api/health counts, red tone for openTickets vs emerald for sessions)
+- Verify: bun run lint → exit 0 (fixed 1 missing-icon + 1 stray-prop); tsc --noEmit → 0 errors in all T3-a files (pre-existing errors elsewhere untouched); curl smoke: all methods on all 7 endpoints → 401 unauth (expected) / 405 undefined-methods; /?view=operations → 200; Prisma-level round-trip script (temp row create→transitions→cascade-delete, installation reschedule, inventory delta, all 4 stats queries incl. field-reference lowStock count) passed with ZERO residual data
+
+Stage Summary:
+- Operations & Support module is complete end-to-end and 100% real-data: 7 new RBAC-guarded, audit-logged API routes + health extension + premium 3-tab panel + sidebar wiring
+- API contract: tickets GET {tickets[], stats{open,inProgress,pending,resolved,closed,critical,unassigned}} · POST 201 {ticket} · [id] GET {ticket, invoiceCount} · PATCH {ticket} (400 invalid transition / 400 resolve-without-resolution / 404) · DELETE 409 unless closed · replies GET {replies[]} POST 201 {reply} · installations GET {installations[], stats{scheduled,inProgress,completed,failed,rescheduled,today}} · POST 201 · [id] PATCH/DELETE (409 non-deletable status) · inventory GET {items[], stats{total,lowStock,outOfStock,stockValue}} · POST 409 dup-SKU · [id] PATCH 409 negative-stock / DELETE · health counts += {openTickets, upcomingInstallations}
+- DB currently holds zero tickets/installations/inventory rows (seed untouched per instructions) → panel shows real empty states; chips/badges light up from real data as soon as records are created via the UI
+- Lint: PASS (exit 0). Dev server left running on :3000 with fresh PrismaClient (has all new models)
+Final message: created 7 API files (tickets, tickets/[id], tickets/[id]/replies, installations, installations/[id], inventory, inventory/[id]) + operations-panel.tsx; edited health/route.ts, page.tsx, app-sidebar.tsx. All endpoints RBAC-guarded (ticket/installation/inventory × list/create/read/update/delete) + audit-logged; workflow state machines enforced server-side; stats are real parallel Prisma counts; lint exit 0; unauth smoke = clean 401s.
+
+---
+Task ID: T3-QA-ROUND (orchestrator — cron review round)
+Agent: Z.ai Code (orchestrator)
+Task: QA sweep + Operations & Support module (Menu v4.0 §09) + styling details
+
+Work Log:
+- Reconciled with other agent's remote work: merged origin/main (their VPP-SUCCESS report + my worklog entry), resolved worklog.md conflict keeping both entries
+- Merged tree now includes their VPP/9-services milestone + my full-stack work
+- QA sweep: all views load clean; no runtime errors; dialogs a11y verified
+- Built Operations & Support module end-to-end (schema additive push → 4 new tables: tickets, ticket_replies, installations, inventory_items)
+- APIs: tickets (SLA per priority: critical 4h/high 8h/medium 24h/low 72h), ticket workflow state machine (resolve requires text → 400 otherwise; closed only from resolved; reopen clears), replies + internal notes, installations (validated transitions, today/upcoming stats), inventory (quantityDelta negative-guard, lowStock via Prisma field-reference, real stockValue Σqty×price), /api/health extended (openTickets, upcomingInstallations)
+- UI: operations-panel (3 tabs: Tickets w/ SLA countdown + priority pulse + workflow-aware dialogs; Installations w/ schedule/complete/fail/reschedule; Inventory w/ stock bars, low-stock amber rows, ±delta adjust); sidebar Operations group w/ live red open-ticket badge; dashboard "Operational Pulse" card (support queue, field installs w/ real distinct-technician count, warehouse ₹ value + low/out chips)
+- Real data via real APIs: 2 tickets (1 closed w/ resolution, 1 open w/ SLA countdown verified in UI), 1 internal note, 1 installation (scheduled→in_progress), 3 inventory items (stockValue ₹1,50,892 verified = 42×2450+8×5999)
+- Fixed: Radix DialogTitle warning on ticket detail (sr-only always-present title), dashboard stats raw SQL column quoting ("unitPrice"), db:push script env pinning, breadcrumb operations label
+- lint: PASS exit 0
+
+Stage Summary:
+- Menu v4.0 module #09 (Operations & Support) now REAL end-to-end; only operations_support status flipped to active in seed
+- Dashboard now surfaces cross-module ops health
+- Verified inventory stats math and SLA math exact
+- lint PASS; commit pushed to origin/main
+
+Unresolved/risks & next-phase priorities:
+1. Monitoring module (Menu #10) still not_installed — needs syslog/NAT-log ingestion design (external input source required)
+2. Reports & Analytics (Menu #11) — real-data reports (revenue, growth, ARPU) + CSV export; good next feature
+3. VPP panel still expects VPP service (other agent's VM :3015) — in this sandbox /api/vpp health 502 is expected; consider env-based VPP_ADAPTER_URL graceful degrade UI banner
+4. Self-Care portal (spec §18) untouched
+5. Customer 360 could link tickets (customerId now on Ticket model) — small enhancement

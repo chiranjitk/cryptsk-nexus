@@ -126,6 +126,7 @@ model User {
 
   // Relations
   roles           UserRole[]
+  assignedTickets Ticket[]   @relation("AssignedTickets")
   auditEvents     AuditEvent[]
   apiKeys         ApiKey[]
   notifications   Notification[]
@@ -536,6 +537,8 @@ model Customer {
   subscribers     Subscriber[]
   subscriptions   Subscription[]
   invoices        Invoice[]
+  tickets         Ticket[]
+  installations   Installation[]
   payments        Payment[]
   wallet          Wallet?
   // Audit
@@ -589,6 +592,8 @@ model Subscriber {
   customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan            Plan?            @relation(fields: [planId], references: [id], onDelete: SetNull)
   subscriptions  Subscription[]
+  tickets         Ticket[]
+  installations   Installation[]
 
   @@index([customerId])
   @@index([status])
@@ -1710,4 +1715,127 @@ model AiInsight {
   @@index([status])
   @@index([createdAt])
   @@map("ai_insights")
+}
+
+// ============================================================
+// Phase 10: Operations & Support (spec 04_FEATURE §8.4 / 11 §9)
+// Tickets & Complaints · Installations · Inventory
+// ============================================================
+
+enum TicketCategory {
+  complaint
+  technical
+  billing
+  installation
+  other
+}
+
+enum TicketPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum TicketStatus {
+  open
+  in_progress
+  pending
+  resolved
+  closed
+}
+
+enum InstallationStatus {
+  scheduled
+  in_progress
+  completed
+  failed
+  rescheduled
+}
+
+model Ticket {
+  id            String          @id @default(cuid())
+  ticketNumber  String          @unique // TKT-2026-00001
+  customerId    String?
+  subscriberId  String?
+  category      TicketCategory  @default(complaint)
+  priority      TicketPriority  @default(medium)
+  status        TicketStatus    @default(open)
+  subject       String
+  description   String
+  assignedTo    String? // userId (technician / support agent)
+  slaDueAt      DateTime? // SLA deadline (per priority policy)
+  resolution    String?
+  resolvedAt    DateTime?
+  closedAt      DateTime?
+  createdBy     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  subscriber Subscriber?   @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+  assignee   User?         @relation("AssignedTickets", fields: [assignedTo], references: [id], onDelete: SetNull)
+  replies    TicketReply[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([category])
+  @@index([customerId])
+  @@map("tickets")
+}
+
+model TicketReply {
+  id         String   @id @default(cuid())
+  ticketId   String
+  userId     String? // author userId (null = system)
+  authorName String   // denormalized display name
+  message    String
+  isInternal Boolean  @default(false) // internal note vs customer-visible
+  createdAt  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_replies")
+}
+
+model Installation {
+  id             String            @id @default(cuid())
+  installNumber  String            @unique // INS-2026-00001
+  customerId     String
+  subscriberId   String?
+  type           String            @default("new") // new | upgrade | relocation | maintenance
+  status         InstallationStatus @default(scheduled)
+  scheduledAt    DateTime
+  completedAt    DateTime?
+  technicianName String? // free-text field technician
+  address        String?
+  notes          String?
+  createdBy      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  customer   Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriber Subscriber? @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@map("installations")
+}
+
+model InventoryItem {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  category    String? // router | onu | cable | tool | other
+  quantity    Int      @default(0)
+  minQuantity Int      @default(0) // low-stock threshold
+  unitPrice   Float?
+  location    String? // warehouse / van
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@map("inventory_items")
 }

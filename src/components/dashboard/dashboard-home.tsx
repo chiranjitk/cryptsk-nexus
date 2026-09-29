@@ -7,7 +7,7 @@ import {
   Users, Wifi, DollarSign, Wallet, TrendingUp, TrendingDown, Activity,
   AlertCircle, Server, ShieldCheck, Zap, Radio, Eye, Settings2, UserPlus,
   FileText, Network, Brain, RefreshCw, Info, AlertTriangle, ListChecks,
-  Globe, Boxes, Clock, Gauge, Bell,
+  Globe, Boxes, Clock, Gauge, Bell, Wrench, LifeBuoy, HardHat, Package2, ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,11 @@ type DashboardStats = {
   billing: { revenueMtd: number; revenueToday: number; outstanding: number; overdue: number; invoices: { draft: number; issued: number; paid: number; partial: number }; paymentsPending: number };
   network: { nasTotal: number; nasActive: number; dhcpLeases: number; dhcpSubnets: number; dnsZones: number; dnsRecords: number; firewallRules: number };
   modules: { active: number; total: number };
+  operations: {
+    tickets: { open: number; inProgress: number; pending: number; critical: number; unassigned: number };
+    installations: { today: number; upcoming: number; technicians: number };
+    inventory: { lowStock: number; outOfStock: number; stockValue: number };
+  };
   planDistribution: Array<{ name: string; value: number; color: string }>;
   topSubscribers: Array<{ username: string; plan: string | null; trafficBytes: number; sessions: number }>;
   hourlyThroughput: Array<{ hour: string; down: number; up: number }>;
@@ -462,7 +467,101 @@ export function DashboardHome() {
         />
       </div>
 
+
+      {/* ── Operational pulse (tickets / field ops / stock) ── */}
+      <Card className="cryptsk-card-load" style={{ animationDelay: "680ms" }}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Wrench className="size-4 text-primary" />
+                Operational Pulse
+              </CardTitle>
+              <CardDescription>Live support queue, field operations and warehouse health</CardDescription>
+            </div>
+            <Button asChild variant="ghost" size="sm" className="text-xs h-7 gap-1">
+              <Link href="/?view=operations">Open Operations <ChevronRight className="size-3" /></Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {/* Support queue */}
+            <Link href="/?view=operations" className="group rounded-lg border bg-card/50 p-4 hover:border-primary/30 hover:bg-accent/40 transition-all">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                  <LifeBuoy className="size-3.5 text-rose-500" /> Support Queue
+                </p>
+                {data.operations.tickets.critical > 0 && (
+                  <Badge variant="destructive" className="text-[9px] gap-1">
+                    <span className="size-1.5 rounded-full bg-red-400 animate-pulse" /> {data.operations.tickets.critical} critical
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-3 flex items-end gap-2">
+                <span className="text-3xl font-bold tabular-nums">{formatNumber(data.operations.tickets.open + data.operations.tickets.inProgress + data.operations.tickets.pending)}</span>
+                <span className="text-xs text-muted-foreground mb-1">active tickets</span>
+              </div>
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                {[
+                  { label: "Open", v: data.operations.tickets.open, dot: "bg-red-500" },
+                  { label: "Working", v: data.operations.tickets.inProgress, dot: "bg-amber-500" },
+                  { label: "Waiting", v: data.operations.tickets.pending, dot: "bg-cyan-500" },
+                  { label: "Unassigned", v: data.operations.tickets.unassigned, dot: "bg-stone-400" },
+                ].map((c) => (
+                  <div key={c.label} className="rounded-md bg-muted/50 py-1.5">
+                    <p className="text-sm font-bold tabular-nums leading-none">{c.v}</p>
+                    <p className="mt-1 flex items-center justify-center gap-1 text-[9px] text-muted-foreground leading-none">
+                      <span className={`size-1.5 rounded-full ${c.dot}`} />{c.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </Link>
+            {/* Field ops */}
+            <Link href="/?view=operations" className="group rounded-lg border bg-card/50 p-4 hover:border-primary/30 hover:bg-accent/40 transition-all">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <HardHat className="size-3.5 text-violet-500" /> Field Installations
+              </p>
+              <div className="mt-3 flex items-end gap-2">
+                <span className="text-3xl font-bold tabular-nums">{formatNumber(data.operations.installations.today)}</span>
+                <span className="text-xs text-muted-foreground mb-1">scheduled today</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">Upcoming</span>
+                  <span className="font-semibold tabular-nums">{formatNumber(data.operations.installations.upcoming)}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">Technicians on job</span>
+                  <span className="font-semibold tabular-nums">{formatNumber(data.operations.installations.technicians)}</span>
+                </div>
+              </div>
+            </Link>
+            {/* Inventory */}
+            <Link href="/?view=operations" className="group rounded-lg border bg-card/50 p-4 hover:border-primary/30 hover:bg-accent/40 transition-all">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <Package2 className="size-3.5 text-emerald-500" /> Warehouse & Stock
+              </p>
+              <div className="mt-3 flex items-end gap-2">
+                <span className="text-3xl font-bold tabular-nums">{formatINR(data.operations.inventory.stockValue, { compact: true })}</span>
+                <span className="text-xs text-muted-foreground mb-1">stock value</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className={`rounded-md px-2.5 py-1.5 text-xs ${data.operations.inventory.lowStock > 0 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : "bg-muted/50 text-muted-foreground"}`}>
+                  <span className="font-bold tabular-nums">{data.operations.inventory.lowStock}</span> low stock
+                </div>
+                <div className={`rounded-md px-2.5 py-1.5 text-xs ${data.operations.inventory.outOfStock > 0 ? "bg-rose-500/10 text-rose-600 dark:text-rose-400" : "bg-muted/50 text-muted-foreground"}`}>
+                  <span className="font-bold tabular-nums">{data.operations.inventory.outOfStock}</span> out of stock
+                </div>
+              </div>
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── Recent activity + subscriber lifecycle ── */}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="cryptsk-card-load" style={{ animationDelay: "700ms" }}>
           <CardHeader>

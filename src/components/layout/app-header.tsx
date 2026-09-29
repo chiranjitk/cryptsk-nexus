@@ -277,6 +277,7 @@ export function AppHeader() {
     "radius-postauth": "Authentication Logs", sessions: "Active Sessions", policies: "Policies & Rules",
     vpp: "VPP Gateway", billing: "Invoices & Payments", network: "Network Manager",
     ai: "AI Advisor & Insights", audit: "Audit Log", admin: "System Administration",
+    operations: "Tickets & Support",
   };
   const viewParam = searchParams.get("view");
   const crumb = viewParam ? breadcrumbLabels[viewParam] ?? "Dashboard" : "Dashboard";
