@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -11,7 +11,8 @@ import {
   CheckCircle2, Clock, Pause, CircleSlash, Hourglass, Wifi, WifiOff,
   RefreshCw, AlertTriangle, Inbox, FileText, Banknote, Landmark, Wallet,
   IndianRupee, LogOut, Sun, Moon, Info, Download, Upload, Smartphone, Ticket,
-  Loader2,
+  Loader2, Plus, Send, KeyRound, Pencil, Eye, EyeOff, ShieldCheck, Check, X,
+  MessageSquare,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,10 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import { formatINR, humanBytes, formatDuration, formatNumber, relTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +51,11 @@ import { cn } from "@/lib/utils";
 //    support use the session's own customerId.
 //  - Staff session: preview mode with the subscriber picker
 //    (unchanged behavior).
+//
+// Write actions (T7): customer sessions get a new-ticket dialog and
+// per-ticket replies (Support tab), editable contact details and a
+// sign-in & security card with password change (Profile tab). Every
+// write UI is gated on isCustomer — staff preview stays read-only.
 // ============================================================
 
 // ---------- API contract types (T5-a) ----------
@@ -128,10 +138,41 @@ interface PickerSubscriber {
   customer: { id: string; customerCode: string; displayName: string };
 }
 
+// ---------- write-action response types (T7-a contract) ----------
+
+interface ScNewTicketResponse {
+  ticket: {
+    id: string; ticketNumber: string; subject: string; status: string;
+    category: string; priority: string; createdAt: string; slaDueAt: string | null;
+  };
+}
+interface ScReplyResponse {
+  reply: { id: string; authorName: string; message: string; createdAt: string; ticketStatus: string };
+}
+interface ScProfileUpdateResponse {
+  customer: { id: string; email: string | null; phone: string | null; whatsappNumber: string | null };
+}
+
 // ---------- shared helpers ----------
 
 async function apiRequest(url: string): Promise<unknown> {
   const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(err.error || `Request failed (${res.status})`);
+  }
+  return res.json();
+}
+
+// Write-request variant (T7): sends a JSON body, returns parsed JSON.
+// Non-2xx responses surface the backend { error } message so toasts can
+// show the real reason (e.g. "This email is already in use").
+async function apiMutate(url: string, method: string, body: unknown): Promise<unknown> {
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "Request failed" }));
     throw new Error(err.error || `Request failed (${res.status})`);
@@ -165,6 +206,18 @@ function cycleLabel(cycle: string): string {
 
 function initialsOf(name: string): string {
   return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+}
+
+// Tiny strength heuristic for the password form (T7): no libraries —
+// length (>=8 / >=12) + letter/digit/symbol variety → Weak / Fair / Good.
+function passwordStrength(pw: string): { label: string; filled: number; className: string } {
+  const hasLetter = /[A-Za-z]/.test(pw);
+  const hasDigit = /[0-9]/.test(pw);
+  const hasSymbol = /[^A-Za-z0-9]/.test(pw);
+  const variety = [hasLetter, hasDigit, hasSymbol].filter(Boolean).length;
+  if (pw.length >= 12 && variety >= 3) return { label: "Good", filled: 3, className: "bg-emerald-500" };
+  if (pw.length >= 8 && variety >= 2) return { label: "Fair", filled: 2, className: "bg-amber-500" };
+  return { label: "Weak", filled: 1, className: "bg-red-500" };
 }
 
 const tooltipStyle = { backgroundColor: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 10, fontSize: "12px" };
@@ -351,7 +404,7 @@ export function SelfCarePortal() {
   // Customer session detection (T6 contract: session.user gains the
   // additive userType/customerId/customerName fields on customer logins).
   const sessionUser = session?.user as
-    | { userType?: string; customerId?: string; customerName?: string; name?: string | null }
+    | { email?: string | null; userType?: string; customerId?: string; customerName?: string; name?: string | null }
     | undefined;
   const isCustomer = sessionStatus !== "loading" && sessionUser?.userType === "customer";
   const sessionCustomerId = isCustomer ? sessionUser?.customerId || "" : "";
@@ -458,9 +511,9 @@ export function SelfCarePortal() {
       case "billing":
         return <BillingTab customerId={customerId} />;
       case "support":
-        return <SupportTab customerId={customerId} openTickets={overview?.openTickets ?? 0} />;
+        return <SupportTab customerId={customerId} openTickets={overview?.openTickets ?? 0} isCustomer={ctx.mode === "customer"} />;
       case "profile":
-        return <ProfileTab subscriberId={ctxSubscriberId} />;
+        return <ProfileTab subscriberId={ctxSubscriberId} isCustomer={ctx.mode === "customer"} portalEmail={sessionUser?.email ?? null} />;
       case "plans":
         return <PlansTab subscriberId={ctxSubscriberId} />;
       case "dashboard":
@@ -1185,7 +1238,11 @@ function BreakRow({ label, value, strong, danger }: {
 // TAB 4 — Support
 // ============================================================
 
-function SupportTab({ customerId, openTickets }: { customerId: string | null; openTickets: number }) {
+function SupportTab({ customerId, openTickets, isCustomer }: {
+  customerId: string | null; openTickets: number; isCustomer: boolean;
+}) {
+  const [newTicketOpen, setNewTicketOpen] = React.useState(false);
+
   const query = useQuery<SupportData>({
     queryKey: ["selfcare", "support", customerId],
     queryFn: () => apiRequest(`/api/selfcare/support?customerId=${encodeURIComponent(customerId ?? "")}`) as Promise<SupportData>,
@@ -1201,6 +1258,29 @@ function SupportTab({ customerId, openTickets }: { customerId: string | null; op
 
   return (
     <div className="space-y-4">
+      {isCustomer && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <MessageSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Support requests</h2>
+              <p className="text-xs text-muted-foreground">
+                {tickets.length === 0
+                  ? "Raise a request and our team will follow up here."
+                  : `${tickets.length} request${tickets.length === 1 ? "" : "s"} · ${openTickets} open`}
+              </p>
+            </div>
+          </div>
+          <Button
+            className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={() => setNewTicketOpen(true)}
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            New support request
+          </Button>
+        </div>
+      )}
+
       {openTickets > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-700 dark:text-amber-400" role="status">
           <Clock className="size-4 shrink-0" aria-hidden="true" />
@@ -1261,10 +1341,252 @@ function SupportTab({ customerId, openTickets }: { customerId: string | null; op
                     ))}
                   </div>
                 )}
+
+                {isCustomer && (
+                  <div className="border-t pt-3">
+                    <ScTicketReplyBox ticketId={t.id} ticketStatus={t.status} />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {isCustomer && <ScNewTicketDialog open={newTicketOpen} onOpenChange={setNewTicketOpen} />}
+    </div>
+  );
+}
+
+// ---------- Support write actions (T7 — customer mode only) ----------
+
+// New support request dialog (T7-a contract: POST /api/selfcare/support).
+// Category/priority choices deliberately exclude "critical".
+function ScNewTicketDialog({ open, onOpenChange }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [subject, setSubject] = React.useState("");
+  const [category, setCategory] = React.useState("technical");
+  const [priority, setPriority] = React.useState("medium");
+  const [description, setDescription] = React.useState("");
+  const [showErrors, setShowErrors] = React.useState(false);
+
+  const subjectTrimmed = subject.trim();
+  const descriptionTrimmed = description.trim();
+  const subjectError = subjectTrimmed !== "" && subjectTrimmed.length < 3
+    ? "Subject must be at least 3 characters."
+    : null;
+  const descriptionError = descriptionTrimmed !== "" && descriptionTrimmed.length < 5
+    ? "Please describe the issue in at least 5 characters."
+    : null;
+  const formValid = subjectTrimmed.length >= 3 && descriptionTrimmed.length >= 5;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiMutate("/api/selfcare/support", "POST", {
+        subject: subjectTrimmed,
+        category,
+        priority,
+        description: descriptionTrimmed,
+      }) as Promise<ScNewTicketResponse>,
+    onSuccess: (data) => {
+      toast({
+        title: "Request submitted",
+        description: `${data.ticket.ticketNumber} — our team will respond.`,
+      });
+      onOpenChange(false);
+      setSubject("");
+      setCategory("technical");
+      setPriority("medium");
+      setDescription("");
+      setShowErrors(false);
+      qc.invalidateQueries({ queryKey: ["selfcare", "support"] });
+      qc.invalidateQueries({ queryKey: ["selfcare", "overview"] });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Could not submit request", description: err.message, variant: "destructive" }),
+  });
+
+  function handleSubmit() {
+    setShowErrors(true);
+    if (!formValid || mutation.isPending) return;
+    mutation.mutate();
+  }
+
+  function handleOpenChange(next: boolean) {
+    onOpenChange(next);
+    if (!next) setShowErrors(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>New support request</DialogTitle>
+          <DialogDescription>
+            Describe the issue and our team will respond in this thread.
+          </DialogDescription>
+        </DialogHeader>
+        <form noValidate onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="sc-ticket-subject">Subject</Label>
+            <Input
+              id="sc-ticket-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              maxLength={150}
+              required
+              autoComplete="off"
+              placeholder="e.g. Wi-Fi keeps disconnecting every evening"
+              className="h-11"
+              aria-label="Subject"
+              aria-invalid={showErrors && !!subjectError}
+              disabled={mutation.isPending}
+            />
+            {showErrors && subjectError && (
+              <p className="text-xs text-red-600 dark:text-red-400" role="alert">{subjectError}</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="sc-ticket-category">Category</Label>
+              <Select value={category} onValueChange={setCategory} disabled={mutation.isPending}>
+                <SelectTrigger id="sc-ticket-category" className="h-11" aria-label="Category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="complaint">Complaint</SelectItem>
+                  <SelectItem value="technical">Technical</SelectItem>
+                  <SelectItem value="billing">Billing</SelectItem>
+                  <SelectItem value="installation">Installation</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="sc-ticket-priority">Priority</Label>
+              <Select value={priority} onValueChange={setPriority} disabled={mutation.isPending}>
+                <SelectTrigger id="sc-ticket-priority" className="h-11" aria-label="Priority">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="sc-ticket-description">Description</Label>
+              <span className="text-[10px] tabular-nums text-muted-foreground">{description.length} / 4000</span>
+            </div>
+            <Textarea
+              id="sc-ticket-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={4000}
+              rows={5}
+              required
+              placeholder="What's happening, since when, and anything you've already tried…"
+              aria-label="Description"
+              aria-invalid={showErrors && !!descriptionError}
+              disabled={mutation.isPending}
+            />
+            {showErrors && descriptionError && (
+              <p className="text-xs text-red-600 dark:text-red-400" role="alert">{descriptionError}</p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending
+                ? <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                : <Send className="size-4" aria-hidden="true" />}
+              {mutation.isPending ? "Submitting…" : "Submit request"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Per-ticket reply composer — own state per ticket so each conversation
+// composes independently (T7-a contract: POST /api/selfcare/support/{id}/replies).
+function ScTicketReplyBox({ ticketId, ticketStatus }: { ticketId: string; ticketStatus: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [message, setMessage] = React.useState("");
+  const trimmed = message.trim();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiMutate(`/api/selfcare/support/${encodeURIComponent(ticketId)}/replies`, "POST", {
+        message: trimmed,
+      }) as Promise<ScReplyResponse>,
+    onSuccess: () => {
+      toast({ title: "Reply sent", description: "Your message was added to the conversation." });
+      setMessage("");
+      // A reply to a resolved/closed ticket reopens it — openTickets may change.
+      qc.invalidateQueries({ queryKey: ["selfcare", "support"] });
+      qc.invalidateQueries({ queryKey: ["selfcare", "overview"] });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Could not send reply", description: err.message, variant: "destructive" }),
+  });
+
+  const willReopen = ticketStatus === "resolved" || ticketStatus === "closed";
+
+  return (
+    <div className="rounded-md border bg-card p-2.5">
+      <form
+        noValidate
+        onSubmit={(e) => { e.preventDefault(); if (trimmed && !mutation.isPending) mutation.mutate(); }}
+        className="space-y-2"
+      >
+        <Textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          maxLength={4000}
+          rows={2}
+          placeholder="Write a reply to our team…"
+          aria-label="Write a reply"
+          disabled={mutation.isPending}
+        />
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] tabular-nums text-muted-foreground">{message.length} / 4000</span>
+          <Button
+            type="submit"
+            size="sm"
+            className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            disabled={mutation.isPending || trimmed.length === 0}
+          >
+            {mutation.isPending
+              ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              : <Send className="size-3.5" aria-hidden="true" />}
+            Send reply
+          </Button>
+        </div>
+      </form>
+      {willReopen && (
+        <p className="mt-1.5 flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400" role="status">
+          <Info className="size-3 shrink-0" aria-hidden="true" />
+          Sending a reply will reopen this request.
+        </p>
       )}
     </div>
   );
@@ -1274,7 +1596,9 @@ function SupportTab({ customerId, openTickets }: { customerId: string | null; op
 // TAB 5 — Profile
 // ============================================================
 
-function ProfileTab({ subscriberId }: { subscriberId: string | null }) {
+function ProfileTab({ subscriberId, isCustomer, portalEmail }: {
+  subscriberId: string | null; isCustomer: boolean; portalEmail: string | null;
+}) {
   const query = useQuery<ProfileData>({
     // staff: scoped to the picked subscriber — customer (subscriberId null):
     // NO subscriberId param, the backend auto-picks their own subscriber.
@@ -1324,11 +1648,19 @@ function ProfileTab({ subscriberId }: { subscriberId: string | null }) {
             </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <InfoField label="Email" value={customer.email} />
-            <InfoField label="Phone" value={customer.phone} />
-            <InfoField label="WhatsApp" value={customer.whatsappNumber} />
-          </div>
+          {isCustomer ? (
+            <ScContactEditor
+              email={customer.email}
+              phone={customer.phone}
+              whatsappNumber={customer.whatsappNumber}
+            />
+          ) : (
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <InfoField label="Email" value={customer.email} />
+              <InfoField label="Phone" value={customer.phone} />
+              <InfoField label="WhatsApp" value={customer.whatsappNumber} />
+            </div>
+          )}
 
           {hasCompany && (
             <>
@@ -1420,6 +1752,344 @@ function ProfileTab({ subscriberId }: { subscriberId: string | null }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Sign-in & security — customer write action (T7), 5th card */}
+      {isCustomer && <ScSecurityCard portalEmail={portalEmail} />}
+    </div>
+  );
+}
+
+// ---------- Profile write actions (T7 — customer mode only) ----------
+
+// Contact details block — read view + inline edit form (T7-a contract:
+// PATCH /api/selfcare/profile). Customer mode only; staff keeps the
+// plain read-only InfoFields.
+function ScContactEditor({ email, phone, whatsappNumber }: {
+  email: string | null; phone: string | null; whatsappNumber: string | null;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [editing, setEditing] = React.useState(false);
+  const [emailDraft, setEmailDraft] = React.useState("");
+  const [phoneDraft, setPhoneDraft] = React.useState("");
+  const [whatsappDraft, setWhatsappDraft] = React.useState("");
+  const [showErrors, setShowErrors] = React.useState(false);
+
+  const trimmedEmail = emailDraft.trim();
+  const emailFormatError = trimmedEmail !== "" && !/^\S+@\S+\.\S+$/.test(trimmedEmail)
+    ? "Enter a valid email address."
+    : null;
+  const formValid = emailFormatError === null;
+
+  const mutation = useMutation({
+    // Always send all three fields (phone/WhatsApp may be cleared to "").
+    mutationFn: () =>
+      apiMutate("/api/selfcare/profile", "PATCH", {
+        email: trimmedEmail,
+        phone: phoneDraft.trim(),
+        whatsappNumber: whatsappDraft.trim(),
+      }) as Promise<ScProfileUpdateResponse>,
+    onSuccess: () => {
+      toast({ title: "Contact details updated", description: "Your contact information has been saved." });
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ["selfcare", "profile"] });
+      qc.invalidateQueries({ queryKey: ["selfcare", "overview"] });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Could not update contact details", description: err.message, variant: "destructive" }),
+  });
+
+  function startEdit() {
+    setEmailDraft(email ?? "");
+    setPhoneDraft(phone ?? "");
+    setWhatsappDraft(whatsappNumber ?? "");
+    setShowErrors(false);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setShowErrors(false);
+  }
+
+  function handleSave() {
+    setShowErrors(true);
+    if (!formValid || mutation.isPending) return;
+    mutation.mutate();
+  }
+
+  if (!editing) {
+    return (
+      <div className="mt-5">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Contact details</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-11 gap-1.5 px-3 text-xs"
+            onClick={startEdit}
+            aria-label="Edit contact details"
+          >
+            <Pencil className="size-3.5" aria-hidden="true" /> Edit
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <InfoField label="Email" value={email} />
+          <InfoField label="Phone" value={phone} />
+          <InfoField label="WhatsApp" value={whatsappNumber} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-5">
+      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Edit contact details</p>
+      <form noValidate onSubmit={(e) => { e.preventDefault(); handleSave(); }} className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <Label htmlFor="sc-contact-email">Email</Label>
+            <Input
+              id="sc-contact-email"
+              type="email"
+              value={emailDraft}
+              onChange={(e) => setEmailDraft(e.target.value)}
+              className="mt-1 h-11"
+              placeholder="you@example.com"
+              autoComplete="email"
+              aria-label="Email"
+              aria-invalid={showErrors && !!emailFormatError}
+              disabled={mutation.isPending}
+            />
+            {showErrors && emailFormatError && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{emailFormatError}</p>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="sc-contact-phone">Phone</Label>
+            <Input
+              id="sc-contact-phone"
+              type="tel"
+              value={phoneDraft}
+              onChange={(e) => setPhoneDraft(e.target.value)}
+              className="mt-1 h-11"
+              placeholder="Optional"
+              autoComplete="tel"
+              aria-label="Phone"
+              disabled={mutation.isPending}
+            />
+          </div>
+          <div>
+            <Label htmlFor="sc-contact-whatsapp">WhatsApp</Label>
+            <Input
+              id="sc-contact-whatsapp"
+              type="tel"
+              value={whatsappDraft}
+              onChange={(e) => setWhatsappDraft(e.target.value)}
+              className="mt-1 h-11"
+              placeholder="Optional"
+              aria-label="WhatsApp number"
+              disabled={mutation.isPending}
+            />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="submit"
+            className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending
+              ? <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              : <Check className="size-4" aria-hidden="true" />}
+            Save
+          </Button>
+          <Button type="button" variant="outline" className="h-11 gap-1.5" onClick={cancelEdit} disabled={mutation.isPending}>
+            <X className="size-4" aria-hidden="true" /> Cancel
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// Sign-in & security — portal identity + password change (T7-a contract:
+// POST /api/selfcare/account/password). Customer mode only.
+function ScSecurityCard({ portalEmail }: { portalEmail: string | null }) {
+  const { toast } = useToast();
+  const [currentPassword, setCurrentPassword] = React.useState("");
+  const [newPassword, setNewPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [showPasswords, setShowPasswords] = React.useState(false);
+  const [submitAttempted, setSubmitAttempted] = React.useState(false);
+
+  const currentError = submitAttempted && currentPassword === ""
+    ? "Enter your current password."
+    : null;
+  const shortError = newPassword !== "" && newPassword.length < 8
+    ? "New password must be at least 8 characters."
+    : null;
+  const sameError = currentPassword !== "" && newPassword !== "" && newPassword === currentPassword
+    ? "New password must be different from the current password."
+    : null;
+  const confirmError = confirmPassword !== "" && newPassword !== confirmPassword
+    ? "Passwords do not match."
+    : null;
+  const formValid =
+    currentPassword !== "" &&
+    newPassword.length >= 8 &&
+    newPassword !== currentPassword &&
+    newPassword === confirmPassword;
+
+  const strength = passwordStrength(newPassword);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiMutate("/api/selfcare/account/password", "POST", {
+        currentPassword,
+        newPassword,
+      }) as Promise<{ ok: boolean }>,
+    onSuccess: () => {
+      toast({ title: "Password updated", description: "Use your new password next time you sign in." });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPasswords(false);
+      setSubmitAttempted(false);
+    },
+    onError: (err: Error) =>
+      toast({ title: "Could not update password", description: err.message, variant: "destructive" }),
+  });
+
+  function handleSubmit() {
+    setSubmitAttempted(true);
+    if (!formValid || mutation.isPending) return;
+    mutation.mutate();
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          Sign-in &amp; security
+        </CardTitle>
+        <CardDescription className="text-xs">
+          {portalEmail ? (
+            <>Signed in as <span className="font-medium text-foreground">{portalEmail}</span> — change your portal password below.</>
+          ) : (
+            "Change the password you use to sign in to this portal."
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form noValidate onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="max-w-md space-y-3">
+          <div>
+            <ScPasswordInput
+              id="sc-pw-current"
+              label="Current password"
+              value={currentPassword}
+              onChange={setCurrentPassword}
+              show={showPasswords}
+              onToggle={() => setShowPasswords((v) => !v)}
+              disabled={mutation.isPending}
+              autoComplete="current-password"
+              placeholder="Enter your current password"
+            />
+            {currentError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{currentError}</p>}
+          </div>
+
+          <div>
+            <ScPasswordInput
+              id="sc-pw-new"
+              label="New password"
+              value={newPassword}
+              onChange={setNewPassword}
+              show={showPasswords}
+              onToggle={() => setShowPasswords((v) => !v)}
+              disabled={mutation.isPending}
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
+            />
+            {newPassword !== "" && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="flex h-1.5 flex-1 gap-1" aria-hidden="true">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className={cn("h-full flex-1 rounded-full", i < strength.filled ? strength.className : "bg-muted")}
+                    />
+                  ))}
+                </div>
+                <span className="w-10 text-right text-[10px] font-medium text-muted-foreground">{strength.label}</span>
+              </div>
+            )}
+            {shortError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{shortError}</p>}
+            {sameError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{sameError}</p>}
+          </div>
+
+          <div>
+            <ScPasswordInput
+              id="sc-pw-confirm"
+              label="Confirm new password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              show={showPasswords}
+              onToggle={() => setShowPasswords((v) => !v)}
+              disabled={mutation.isPending}
+              autoComplete="new-password"
+              placeholder="Repeat the new password"
+            />
+            {confirmError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{confirmError}</p>}
+          </div>
+
+          <Button
+            type="submit"
+            className="h-11 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending
+              ? <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              : <KeyRound className="size-4" aria-hidden="true" />}
+            Update password
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ScPasswordInput({ id, label, value, onChange, show, onToggle, disabled, autoComplete, placeholder }: {
+  id: string; label: string; value: string; onChange: (value: string) => void;
+  show: boolean; onToggle: () => void; disabled: boolean; autoComplete: string; placeholder?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={show ? "text" : "password"}
+          className="h-11 pr-11"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          required
+          aria-label={label}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          className="absolute right-1 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={onToggle}
+          aria-label={show ? "Hide passwords" : "Show passwords"}
+          aria-pressed={show}
+          disabled={disabled}
+        >
+          {show ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+        </button>
+      </div>
     </div>
   );
 }
