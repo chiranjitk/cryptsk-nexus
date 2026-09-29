@@ -67,3 +67,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 })
   }
 }
+
+// ─── PATCH /api/subscriber-auth/profile ─────────────────────
+// Alias for PUT — partial update of subscriber's own profile
+// Some HTTP clients prefer PATCH for partial updates; we support both
+export async function PATCH(request: NextRequest) {
+  return PUT(request);
+}

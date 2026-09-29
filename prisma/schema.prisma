@@ -3737,6 +3737,9 @@ model Subscriber {
   notes                                                    String                     @default("")
   internalNotes                                            String                     @default("")
   referredById                                             String?
+  /// Prepaid wallet balance. > 0 means subscriber has prepaid credit (prepaid mode).
+  /// = 0 with billingStartDate set means postpaid mode (billed via Invoice).
+  /// Top-ups via SubscriberTopUp + Voucher increase this balance; billing cycles decrease it.
   balance                                                  Float                      @default(0)
   routerRented                                             Boolean                    @default(false)
   routerSerial                                             String                     @default("")

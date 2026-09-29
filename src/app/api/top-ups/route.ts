@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
     const { searchParams } = req.nextUrl;
-    const action = searchParams.get("action");
+    const action = searchParams.get("action") || "list-products";
 
     // ── List all top-up products ───────────────────────────
     if (action === "list-products") {

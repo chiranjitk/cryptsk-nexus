@@ -557,7 +557,7 @@ async function main() {
         try {
           await prisma.$executeRawUnsafe(
             `INSERT INTO radcheck (UserName, Attribute, op, Value, subscriber_id)
-             VALUES ($1, 'Cleartext-Password', '==', $2, $3)
+             VALUES ($1, 'Cleartext-Password', ':=', $2, $3)
              ON CONFLICT DO NOTHING`,
             serviceUsername, servicePassword, subscriber.id
           );
