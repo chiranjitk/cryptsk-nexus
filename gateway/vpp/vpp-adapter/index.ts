@@ -155,7 +155,7 @@ async function generateSubscriberConfig(subscriberId: string): Promise<string> {
              ra.framedipaddress, ra.nasipaddress, ra.callingstationid
       FROM "Subscriber" s
       LEFT JOIN "Plan" p ON s."planId" = p.id
-      LEFT JOIN radacct ra ON ra.username = s.radiusUsername AND ra.acctstoptime IS NULL
+      LEFT JOIN radacct ra ON ra.username = s."serviceUsername" AND ra.acctstoptime IS NULL
       WHERE s.id = $1
       LIMIT 1
     `, [subscriberId]);
@@ -167,10 +167,10 @@ async function generateSubscriberConfig(subscriberId: string): Promise<string> {
     const sub = subResult.rows[0];
 
     lines.push(`# ============================================================`);
-    lines.push(`# VPP Config for Subscriber: ${sub.radiusUsername}`);
+    lines.push(`# VPP Config for Subscriber: ${sub.serviceUsername}`);
     lines.push(`# ============================================================`);
     lines.push("");
-    lines.push(`# RADIUS Username: ${sub.radiusUsername}`);
+    lines.push(`# RADIUS Username: ${sub.serviceUsername}`);
     lines.push(`# Plan: ${sub.planName || "—"}`);
     lines.push(`# RADIUS Group: ${sub.radiusGroupName || "—"}`);
     lines.push(`# Framed IP: ${sub.framedipaddress || "—"}`);
@@ -191,7 +191,7 @@ async function generateSubscriberConfig(subscriberId: string): Promise<string> {
       for (const attr of policyResult.rows) {
         if (attr.attribute === "Mikrotik-Rate-Limit") {
           lines.push(`# QoS: ${attr.value}`);
-          lines.push(`policer add name ${sub.radiusUsername} cir ${attr.value.split("/")[0]} bc 4096`);
+          lines.push(`policer add name ${sub.serviceUsername} cir ${attr.value.split("/")[0]} bc 4096`);
         }
       }
     }
