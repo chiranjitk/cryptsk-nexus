@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
       `SELECT CAST(COUNT(*) AS int) AS total FROM radacct a ${whereClause}`,
       ...params
     )) as any[];
-    const total = countResult[0]?.total ?? 0;
+    const total = Number(countResult[0]?.total ?? 0);
 
     // ── Session rows with enrichment ──
     const sessions = (await db.$queryRawUnsafe(
@@ -195,12 +195,19 @@ export async function GET(req: NextRequest) {
       WHERE acctstoptime IS NULL
     `)) as any[];
 
-    const stats = statsResult[0] ?? {
+    const statsRaw = statsResult[0] ?? {
       active_count: 0,
       total_bandwidth: 0,
       avg_session_time: 0,
       nas_count: 0,
       user_count: 0,
+    };
+    const stats = {
+      active_count: Number(statsRaw.active_count),
+      total_bandwidth: Number(statsRaw.total_bandwidth),
+      avg_session_time: Number(statsRaw.avg_session_time),
+      nas_count: Number(statsRaw.nas_count),
+      user_count: Number(statsRaw.user_count),
     };
 
     // ── Per-NAS breakdown ──

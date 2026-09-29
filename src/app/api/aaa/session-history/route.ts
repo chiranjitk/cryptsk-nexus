@@ -80,7 +80,13 @@ export async function GET(req: NextRequest) {
       FROM radacct
       WHERE acctstoptime IS NOT NULL
     `) as any[];
-    const stats = statsResult[0] || { total_sessions: 0, unique_users: 0, avg_duration: 0, total_data: 0 };
+    const statsRaw = statsResult[0] || { total_sessions: 0, unique_users: 0, avg_duration: 0, total_data: 0 };
+    const stats = {
+      total_sessions: Number(statsRaw.total_sessions),
+      unique_users: Number(statsRaw.unique_users),
+      avg_duration: Number(statsRaw.avg_duration),
+      total_data: Number(statsRaw.total_data),
+    };
 
     return NextResponse.json({
       data: rows,

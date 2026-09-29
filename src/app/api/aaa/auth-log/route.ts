@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
       `SELECT CAST(COUNT(*) AS int) as total FROM radpostauth ${where}`,
       ...params
     ) as any[];
-    const total = countResult[0]?.total || 0;
+    const total = Number(countResult[0]?.total || 0);
 
     // Rows
     const rows = await db.$queryRawUnsafe(
@@ -69,7 +69,12 @@ export async function GET(req: NextRequest) {
       FROM radpostauth
       WHERE authdate >= CURRENT_DATE
     `) as any[];
-    const stats = statsResult[0] || { total_today: 0, accept_count: 0, reject_count: 0 };
+    const statsRaw = statsResult[0] || { total_today: 0, accept_count: 0, reject_count: 0 };
+    const stats = {
+      total_today: Number(statsRaw.total_today),
+      accept_count: Number(statsRaw.accept_count),
+      reject_count: Number(statsRaw.reject_count),
+    };
 
     // Active sessions count (from radacct where stop is null)
     const activeResult = await db.$queryRawUnsafe(`
