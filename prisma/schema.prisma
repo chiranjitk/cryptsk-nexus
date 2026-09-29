@@ -1656,3 +1656,58 @@ model CaptivePortalSession {
   @@index([lastSeen])
   @@map("captive_portal_sessions")
 }
+
+// ============================================================
+// PHASE 9 — AI Intelligence
+// Per: docs/architecture/10_AI_AGENT, ADR-030
+// Advisory-only AI (never packet-path, never autonomous action)
+// Uses z-ai-web-dev-sdk (backend-only)
+// ============================================================
+
+enum AiInsightType {
+  advisor
+  diagnosis
+  churn
+  forecast
+  recommendation
+  competitor
+}
+
+enum AiInsightStatus {
+  pending
+  accepted
+  rejected
+  actioned
+}
+
+/// Phase 9 — AI Insight (saved AI-generated recommendations)
+/// Per spec 10_AI_AGENT §12: AI outputs must be traceable to source data,
+/// advisory only, any action must follow normal authorization + audit workflows.
+model AiInsight {
+  id              String          @id @default(cuid())
+  type            AiInsightType
+  title           String
+  content         String  // the AI-generated insight text
+  confidence      Float           @default(0.5)  // 0.0-1.0
+  // Data source (what was analyzed)
+  dataSource      String?  // "radacct", "invoices", "subscribers", etc.
+  dataSnapshot    String?  // JSON of the data that was analyzed
+  // Status (human review)
+  status          AiInsightStatus @default(pending)
+  actionTaken     String?  // what action was taken (if any)
+  actionedBy     String?  // userId
+  actionedAt      DateTime?
+  // Metadata
+  modelProvider   String          @default("z-ai-web-dev-sdk")
+  modelVersion    String?
+  tokensUsed      Int?
+  // Audit
+  createdBy       String?  // userId who triggered the AI
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("ai_insights")
+}
