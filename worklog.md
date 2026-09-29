@@ -869,3 +869,25 @@ Stage Summary:
 - Dashboard is now 100% real-data driven; zero mock constants remain in page.tsx
 - Sidebar shows only modules the user has permissions for; no dead links
 - Pending: PG 18 build → initdb → db push → seed → dev server → agent-browser QA
+
+---
+Task ID: T2-DEPLOY-VERIFY (orchestrator)
+Agent: Z.ai Code (orchestrator)
+Task: PostgreSQL 18 bring-up, schema push, seed, E2E verification, commit/push
+
+Work Log:
+- Built PostgreSQL 18.6 from source (userspace bison/flex via dpkg-deb extraction, BISON_PKGDATADIR env; foreground chunked make after sandbox killed detached procs; -j2 OOM'd at 4GB → ran with dev server stopped)
+- Cluster at /home/z/pgsql-data, socket /tmp, port 5432; roles: pgadmin / cryptsknexus (nexus_pg_2026); DB cryptsknexus
+- Discovered sandbox exports GLOBAL DATABASE_URL=file:... custom.db which overrides .env (Next never overrides existing env) → pinned DATABASE_URL/NEXTAUTH_URL/NEXTAUTH_SECRET in package.json dev script
+- prisma db push: 51 tables on PostgreSQL 18.6; seed: 15 roles, 333 permissions, 499 role-permission links, admin@cryptsk.com/Admin@2026, 11 modules (status synced to implementation reality)
+- Debugged NextAuth JWEInvalid: NOT an app bug — curl caps outgoing Cookie header (~8KB) and silently drops cryptsk_session.2 chunk; manual full header decodes fine server-side; browsers unaffected
+- Created REAL data via real APIs: 3 customers, 2 products, 2 plans, 1 subscriber (+RadCheck), 1 subscription, 1 invoice (GST math verified), 1 payment (auto status update), 2 firewall rules, 2 WAN links, 1 VPN tunnel, DHCP subnet+reservation, DNS zone+record, 1 notification
+- agent-browser QA: login page ✓, dashboard real widgets ✓ (fixed ₹179.8199… float → ₹179.82), ⌘K palette ✓, customers list + Customer 360 (stats/tabs/billing) ✓, network Firewall tab ✓, admin panel ✓, dynamic breadcrumb ✓, sidebar active state ✓, notification badge ✓
+- Fixed: formatINR rounding, dashboard/stats AuditEvent description field + groupBy null filter, Customer360 DialogTitle a11y
+- bun run lint: PASS exit 0; committed 3cdba84 and pushed to origin/main
+
+Stage Summary:
+- Full stack LIVE in sandbox: Next.js 16 + PostgreSQL 18.6 (source-built) + 51 tables + all APIs real
+- All 26 API endpoints smoke-tested (25×200; VPP 502 expected — VPP service runs on the other agent's VM)
+- Known accepted: VPP panel needs the VPP service host (other agent's domain); operations_support + monitoring modules intentionally "not_installed" (no code yet)
+- Credentials: admin@cryptsk.com / Admin@2026
