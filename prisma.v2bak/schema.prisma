@@ -1,0 +1,1981 @@
+// ============================================================
+// CRYPTSK Nexus — Prisma Schema (Phase 0 + Phase 1 + Phase 2)
+// ============================================================
+// Per: docs/architecture/06_DATABASE_DATA_MODEL_SPECIFICATION.md
+//      docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
+//      docs/architecture/12_IMPLEMENTATION_PHASE_ROADMAP.md
+//
+// Provider: SQLite (dev per ADR-041) — prod switches to PostgreSQL (ADR-004)
+// Phase 0: Foundation models (SchemaMeta, SystemSetting, Module, FeatureFlag)
+// Phase 1: Identity + RBAC (User, Role, Permission, AuditEvent, ApiKey, etc.)
+// Phase 2: Customer / Subscriber / Product / Plan / Subscription
+//          (RADIUS Users = Subscribers, RADIUS Groups = Plans — single source)
+// ============================================================
+//        Notification, Session (optional, for NextAuth DB sessions)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // DEV: sqlite (DATABASE_URL="file:./db/cryptsk.db")
+  // PROD: change to "postgresql" (DATABASE_URL="postgresql://cryptsknexus:...@localhost:5432/cryptsknexus")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS — per spec 04_FEATURE §9.3 (99 enums total, Phase 0+1 subset)
+// ============================================================
+
+enum PermissionAction {
+  read
+  list
+  create
+  update
+  delete
+  approve
+  execute
+  export
+  manage
+}
+
+enum ModuleStatus {
+  active
+  inactive
+  maintenance
+  error
+  not_installed
+}
+
+enum FeatureFlagType {
+  boolean
+  string
+  number
+  json
+}
+
+enum NotificationType {
+  info
+  success
+  warning
+  error
+  system
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+  login
+  logout
+  login_failed
+  export
+  approve
+  execute
+  config_change
+  permission_change
+  role_change
+  module_toggle
+  feature_flag_toggle
+}
+
+enum ApiKeyStatus {
+  active
+  revoked
+  expired
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+  locked
+  pending
+}
+
+// ============================================================
+// MODELS
+// ============================================================
+
+/// Phase 1 — User identity (admin/staff users, not subscribers yet)
+/// Per spec 08_SEC §6: bcryptjs passwords, HMAC-SHA256 session tokens
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  username        String       @unique
+  name            String?
+  passwordHash    String
+  status          UserStatus   @default(active)
+  mfaSecret       String?      // TOTP secret (encrypted at rest — Phase 1+)
+  mfaEnabled      Boolean      @default(false)
+  lastLoginAt     DateTime?
+  lastLoginIp     String?
+  lastLoginAgent  String?      // User-Agent string
+  loginAttempts   Int          @default(0) // for rate limiting / lockout
+  lockedUntil     DateTime?
+  failedLoginAt   DateTime?
+  passwordChangedAt DateTime?
+  forcePasswordChange Boolean   @default(false)
+  avatarUrl       String?
+  timezone        String       @default("Asia/Kolkata")
+  locale          String       @default("en")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  roles           UserRole[]
+  assignedTickets Ticket[]   @relation("AssignedTickets")
+  auditEvents     AuditEvent[]
+  apiKeys         ApiKey[]
+  notifications   Notification[]
+  sessions        Session[]
+  settings        UserSetting[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([status])
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+/// Phase 1 — RBAC role (e.g. "Super Admin", "NOC Operator", "Billing Manager")
+/// Per spec 08_SEC §8: 15 roles defined (Super Admin, Platform Admin, NOC Operator,
+/// Network Engineer, AAA Operator, Billing Manager, Finance Operator, Support Lead,
+/// Support Agent, Field/Technician, Sales/Collection Agent, Reseller/Partner,
+/// Read-only Auditor, Scope Administrator, LCO/Partner Operator)
+model Role {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  slug            String           @unique
+  description     String?
+  isSystem        Boolean          @default(false) // system roles can't be deleted
+  isBreakGlass    Boolean          @default(false) // super-admin role per 08_SEC §10
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  users           UserRole[]
+  permissions     RolePermission[]
+
+  @@index([slug])
+  @@map("roles")
+}
+
+/// Phase 1 — Permission (resource + action, e.g. "subscriber.read")
+/// Per spec 08_SEC §7: Permission verbs: read, list, create, update, delete,
+/// approve, execute, export, manage
+model Permission {
+  id              String           @id @default(cuid())
+  resource        String           // e.g. "subscriber", "session", "billing.invoice"
+  action          PermissionAction // e.g. read, create, delete, manage
+  description     String?
+  isSystem        Boolean          @default(true) // system permissions seeded, not deleted
+  createdAt       DateTime         @default(now())
+
+  // Relations
+  roles           RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
+}
+
+/// Phase 1 — User ↔ Role join (many-to-many)
+model UserRole {
+  id              String           @id @default(cuid())
+  userId          String
+  roleId          String
+  assignedAt      DateTime         @default(now())
+  assignedBy      String?          // userId of admin who assigned
+  expiresAt       DateTime?        // for temporary role grants
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+/// Phase 1 — Role ↔ Permission join (many-to-many)
+model RolePermission {
+  id              String           @id @default(cuid())
+  roleId          String
+  permissionId    String
+  createdAt       DateTime         @default(now())
+
+  role            Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission      Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// Phase 1 — Audit event log (IMMUTABLE per spec 08_SEC §24)
+/// Per spec: userId, action, resource, resourceId, before, after, ip, userAgent, timestamp
+model AuditEvent {
+  id              String           @id @default(cuid())
+  userId          String?          // null for system/anonymous actions
+  action          AuditAction
+  resource        String           // e.g. "user", "role", "module", "system_setting"
+  resourceId      String?          // ID of affected entity
+  resourceName    String?          // human-readable name of affected entity
+  before          String?          // JSON string of state before change
+  after           String?          // JSON string of state after change
+  ipAddress       String?
+  userAgent       String?
+  sessionId       String?          // session token (HMAC hash) for traceability
+  result          String           @default("success") // success | failure | denied
+  errorMessage    String?
+  metadata        String?          // JSON string of additional context
+  createdAt       DateTime         @default(now())
+
+  // Relations
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([resourceId])
+  @@index([createdAt])
+  @@index([result])
+  @@map("audit_events")
+}
+
+/// Phase 0 — System settings (key-value config store)
+/// Per spec: key, value, type, category, description
+model SystemSetting {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  value           String           // stored as string, typed via `type`
+  type            FeatureFlagType  @default(string) // boolean/string/number/json
+  category        String           @default("general") // general/security/billing/network/ai
+  description     String?
+  isPublic        Boolean          @default(false) // visible to non-admin users?
+  isSensitive     Boolean          @default(false) // mask in UI (API keys, secrets)
+  updatedAt       DateTime         @updatedAt
+  updatedBy       String?
+
+  @@index([category])
+  @@index([key])
+  @@map("system_settings")
+}
+
+/// Phase 1 — Module manager (per spec 04_FEATURE §5.8: module registry)
+/// Tracks which modules are installed/enabled (AAA, Billing, Network, AI, etc.)
+model Module {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  slug            String           @unique
+  description     String?
+  version         String           @default("1.0.0")
+  status          ModuleStatus     @default(not_installed)
+  isLicensed      Boolean          @default(false)
+  isRequired      Boolean          @default(false) // can't be disabled
+  config         String?          // JSON string of module config
+  installedAt     DateTime?
+  enabledAt       DateTime?
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  featureFlags    FeatureFlag[]
+
+  @@index([slug])
+  @@index([status])
+  @@map("modules")
+}
+
+/// Phase 1 — Feature flags (per spec 04_FEATURE §5.8)
+model FeatureFlag {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  name            String
+  description     String?
+  type            FeatureFlagType  @default(boolean)
+  value           String           @default("false") // stored as string, parsed by type
+  isEnabled       Boolean          @default(false)
+  moduleSlug      String?          // associated module
+  isSystem        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  module          Module?          @relation(fields: [moduleSlug], references: [slug], onDelete: SetNull)
+
+  @@index([key])
+  @@index([moduleSlug])
+  @@map("feature_flags")
+}
+
+/// Phase 1 — API keys (for service-to-service auth + external integrations)
+/// Per spec 08_SEC §6: signed service-identity tokens, short-lived credentials
+model ApiKey {
+  id              String           @id @default(cuid())
+  name            String
+  key             String           @unique // the actual API key (hashed)
+  keyPrefix       String           // first 8 chars for identification (e.g. "cryptsk-")
+  userId          String?
+  scopes          String           @default("[]") // JSON array of permission slugs
+  status          ApiKeyStatus     @default(active)
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+  lastUsedIp      String?
+  createdAt       DateTime         @default(now())
+  revokedAt       DateTime?
+  revokedBy       String?
+
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([key])
+  @@index([keyPrefix])
+  @@index([userId])
+  @@index([status])
+  @@map("api_keys")
+}
+
+/// Phase 1 — Notifications (in-app notifications for users)
+model Notification {
+  id              String           @id @default(cuid())
+  userId          String
+  type            NotificationType  @default(info)
+  title           String
+  message         String
+  data            String?           // JSON string of additional data
+  isRead          Boolean           @default(false)
+  readAt          DateTime?
+  actionUrl       String?           // URL to navigate to when clicked
+  actionLabel     String?           // label for the action button
+  createdAt       DateTime         @default(now())
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+/// Phase 0 — User-specific settings (per-user preferences)
+model UserSetting {
+  id              String           @id @default(cuid())
+  userId          String
+  key             String
+  value           String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_settings")
+}
+
+/// Phase 1 — Optional DB session store (for NextAuth database strategy)
+/// Per spec 08_SEC §6: HMAC-SHA256 session tokens, secure cookies
+/// If using JWT strategy (default), this model is unused but kept for future
+model Session {
+  id              String           @id @default(cuid())
+  sessionToken    String           @unique
+  userId          String
+  expires         DateTime
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@index([expires])
+  @@map("sessions")
+}
+
+/// Phase 0 — Schema metadata (track migration state)
+model SchemaMeta {
+  id              String           @id @default(cuid())
+  key             String           @unique
+  value           String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@map("schema_meta")
+}
+
+// ============================================================
+// PHASE 2 — Customer / Subscriber / Product / Plan / Subscription
+// Per: docs/architecture/06_DATABASE_DATA_MODEL_SPECIFICATION.md §5
+// Design rule: RADIUS Users = Subscribers, RADIUS Groups = Plans
+// (single source of truth — syncs to FreeRADIUS tables in Phase 3)
+// ============================================================
+
+enum CustomerType {
+  individual
+  business
+  government
+  reseller
+  lco
+}
+
+enum CustomerStatus {
+  active
+  inactive
+  suspended
+  blacklisted
+  prospect
+}
+
+enum SubscriberStatus {
+  active
+  inactive
+  suspended
+  terminated
+  pending_activation
+  expired
+}
+
+enum ProductType {
+  broadband
+  voip
+  iptv
+  addon
+  hardware
+  service
+}
+
+enum ProductStatus {
+  active
+  inactive
+  deprecated
+  draft
+}
+
+enum PlanBillingCycle {
+  monthly
+  quarterly
+  half_yearly
+  yearly
+  one_time
+  usage_based
+}
+
+enum PlanStatus {
+  active
+  inactive
+  deprecated
+}
+
+enum SubscriptionStatus {
+  pending_activation
+  active
+  suspended
+  terminated
+  expired
+  pending_termination
+}
+
+enum ServiceState {
+  provisioned
+  activated
+  suspended
+  resumed
+  terminated
+  expired
+}
+
+enum AddressType {
+  billing
+  installation
+  correspondence
+  permanent
+}
+
+enum ContactType {
+  phone
+  email
+  mobile
+  whatsapp
+  emergency
+}
+
+/// Phase 2 — Customer (business entity — company or individual)
+/// Per spec 06_DB §5: Customer/Subscriber/Service bounded context
+model Customer {
+  id              String         @id @default(cuid())
+  customerCode    String         @unique  // human-readable: CUST-0001
+  type            CustomerType   @default(individual)
+  status          CustomerStatus @default(active)
+  // Individual fields
+  firstName       String?
+  lastName        String?
+  // Business fields
+  companyName     String?
+  gstin           String?  // GST number (India)
+  pan             String?  // PAN (India)
+  // Common
+  displayName     String   // computed: "Acme Corp" or "John Doe"
+  email           String?  @unique
+  phone           String?
+  whatsappNumber  String?
+  // Metadata
+  KundaliId       String?  // KYC reference
+  kycVerified     Boolean  @default(false)
+  notes           String?  // free text notes
+  tags            String?  // JSON array of tags
+  // Relations
+  contacts        Contact[]
+  addresses       Address[]
+  subscribers     Subscriber[]
+  subscriptions   Subscription[]
+  invoices        Invoice[]
+  tickets         Ticket[]
+  installations   Installation[]
+  payments        Payment[]
+  wallet          Wallet?
+  portalUsers     PortalUser[]
+  // Audit
+  createdBy       String?  // userId
+  updatedBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([email])
+  @@index([customerCode])
+  @@map("customers")
+}
+
+/// Phase 2 — Subscriber (the actual internet user — RADIUS user)
+/// Per spec: RADIUS Users = Subscribers (single source of truth)
+/// Syncs to FreeRADIUS radcheck table in Phase 3
+model Subscriber {
+  id              String           @id @default(cuid())
+  customerId      String           // parent Customer
+  subscriberCode  String           @unique  // SUB-0001
+  // RADIUS credentials (sync to radcheck in Phase 3)
+  radiusUsername  String           @unique  // RADIUS username
+  radiusPasswordHash String        @default("")  // bcrypt hash (sync to radcheck)
+  // Service info
+  status          SubscriberStatus @default(pending_activation)
+  planId          String?  // current plan → RADIUS group
+  nasId           String?  // which NAS authenticates this subscriber
+  // Identity
+  fullName        String?
+  email           String?
+  mobile          String?
+  // Service dates
+  activatedAt     DateTime?
+  suspendedAt     DateTime?
+  terminatedAt    DateTime?
+  expiresAt       DateTime?  // plan expiry
+  // Location
+  installationAddressId String?  // link to Address
+  // Technical
+  staticIp        String?  // assigned static IP (if any)
+  vlanId          Int?
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan            Plan?            @relation(fields: [planId], references: [id], onDelete: SetNull)
+  subscriptions  Subscription[]
+  tickets         Ticket[]
+  installations   Installation[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([radiusUsername])
+  @@index([planId])
+  @@map("subscribers")
+}
+
+/// Phase 6 — Self-Care portal login account (customer-facing credentials)
+/// Per spec 08_SEC: portal users authenticate to the Self-Care portal with
+/// their own email + bcrypt password; strictly scoped to their customer's
+/// data. Staff Users and PortalUsers are separate tables — a portal login
+/// can never yield staff roles/permissions. Lockout mirrors staff Users:
+/// 5 failed attempts → 15 min lock.
+enum PortalUserStatus {
+  active
+  disabled
+}
+
+model PortalUser {
+  id            String           @id @default(cuid())
+  email         String           @unique
+  passwordHash  String           @map("password_hash") // bcryptjs
+  name          String?
+  customerId    String           @map("customer_id")
+  status        PortalUserStatus @default(active)
+  loginAttempts Int              @default(0) @map("login_attempts") // lockout counter
+  lockedUntil   DateTime?        @map("locked_until")
+  lastLoginAt   DateTime?        @map("last_login_at")
+  lastLoginIp   String?          @map("last_login_ip")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("portal_users")
+}
+
+/// Phase 2 — Contact (multiple contact methods per Customer)
+model Contact {
+  id              String         @id @default(cuid())
+  customerId      String
+  type            ContactType
+  value           String         // phone number, email, etc.
+  label           String?  // "Home", "Work", "Emergency"
+  isPrimary       Boolean        @default(false)
+  optOut          Boolean        @default(false)  // marketing opt-out
+  verifiedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, type, value])
+  @@index([customerId])
+  @@map("contacts")
+}
+
+/// Phase 2 — Address (billing, installation, correspondence)
+model Address {
+  id              String         @id @default(cuid())
+  customerId      String
+  type            AddressType
+  line1           String
+  line2           String?
+  city            String
+  state           String?
+  postalCode      String?
+  country         String         @default("India")
+  landmark        String?
+  geoLat          Float?
+  geoLng          Float?
+  isPrimary       Boolean         @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([type])
+  @@map("addresses")
+}
+
+/// Phase 2 — Product (what you sell — broadband plan, addon, hardware)
+/// Per spec: RADIUS Groups = Products/Plans (single source of truth)
+/// Syncs to FreeRADIUS radgroupcheck/radgroupreply in Phase 3
+model Product {
+  id              String         @id @default(cuid())
+  productCode     String         @unique  // PROD-BB-50
+  name            String         // "Broadband 50Mbps"
+  description     String?
+  type            ProductType   @default(broadband)
+  status          ProductStatus  @default(draft)
+  // Bandwidth profile
+  downloadSpeed   Int?  // kbps (50000 = 50Mbps)
+  uploadSpeed     Int?  // kbps
+  // Data transfer
+  dataLimitGb     Float?  // null = unlimited
+  fupDataLimitGb  Float?  // FUP threshold
+  fupDownloadSpeed Int?  // post-FUP speed (kbps)
+  // RADIUS mapping (sync to radgroupcheck in Phase 3)
+  radiusGroupName String?  @unique  // e.g. "BB-50Mbps" → RADIUS group
+  // Features
+  features        String?  // JSON array of features
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  plans           Plan[]
+
+  @@index([type])
+  @@index([status])
+  @@index([radiusGroupName])
+  @@index([productCode])
+  @@map("products")
+}
+
+/// Phase 2 — Plan (pricing/billing cycle for a Product)
+/// Per spec: RADIUS Groups = Plans (single source of truth)
+model Plan {
+  id              String           @id @default(cuid())
+  planCode        String           @unique  // PLAN-BB50-M
+  productId       String
+  name            String  // "50Mbps Monthly"
+  billingCycle    PlanBillingCycle @default(monthly)
+  status          PlanStatus       @default(active)
+  // Pricing
+  basePrice       Float    // base amount
+  currency        String   @default("INR")
+  taxRate         Float    @default(18.0)  // GST % (India)
+  setupFee        Float     @default(0)
+  // Discounts
+  discountPercent Float    @default(0)
+  // RADIUS group (sync to radgroupcheck/radgroupreply)
+  radiusGroupName String?   // overrides product's radiusGroupName if set
+  // Terms
+  contractMonths  Int?  // min contract period
+  dataLimitGb     Float?  // per billing cycle
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  subscribers     Subscriber[]
+  subscriptions   Subscription[]
+  policyMappings  PlanPolicyMapping[]
+
+  @@index([productId])
+  @@index([status])
+  @@index([billingCycle])
+  @@index([radiusGroupName])
+  @@map("plans")
+}
+
+/// Phase 2 — Subscription (Customer → Plan binding with lifecycle)
+model Subscription {
+  id              String             @id @default(cuid())
+  subscriptionCode String            @unique  // SUB-2026-0001
+  customerId      String
+  subscriberId    String?  // link to Subscriber (RADIUS user)
+  planId          String
+  status          SubscriptionStatus @default(pending_activation)
+  // Billing
+  basePrice       Float     // snapshot of plan price at time of subscription
+  currency        String    @default("INR")
+  // Dates
+  startDate       DateTime?
+  endDate         DateTime?  // contract end
+  nextBillingDate DateTime?
+  suspendedAt     DateTime?
+  terminatedAt    DateTime?
+  // Metadata
+  notes           String?
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Relations
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriber      Subscriber?        @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+  plan            Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  lifecycleEvents ServiceLifecycle[]
+  invoices        Invoice[]
+
+  @@index([customerId])
+  @@index([subscriberId])
+  @@index([planId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/// Phase 2 — ServiceLifecycle (track state transitions: provision→activate→suspend→terminate)
+model ServiceLifecycle {
+  id              String        @id @default(cuid())
+  subscriptionId  String
+  state           ServiceState
+  previousState   ServiceState?
+  reason          String?  // "Payment overdue", "Customer request", "FUP exceeded"
+  changedBy        String?  // userId
+  changedAt        DateTime      @default(now())
+  metadata         String?  // JSON: additional context
+
+  subscription     Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([state])
+  @@index([changedAt])
+  @@map("service_lifecycle")
+}
+
+// ============================================================
+// PHASE 3 — FreeRADIUS Integration
+// Per: docs/architecture/06_DATABASE §12, 02_GATEWAY §90
+// Standard FreeRADIUS 3.2.x schema + Cryptsk extended columns
+// Tables: radcheck, radreply, radusergroup, radgroupcheck,
+//         radgroupreply, radacct, radpostauth, nas
+// Sync: Subscribers → radcheck/radusergroup, Products → radgroupcheck/radgroupreply
+// ============================================================
+
+/// FreeRADIUS radcheck — per-user authentication attributes
+/// Synced from Subscriber.radiusUsername + radiusPasswordHash
+model RadCheck {
+  id            Int      @id @default(autoincrement())
+  username      String   // = Subscriber.radiusUsername
+  attribute     String   // "Cleartext-Password", "Auth-Type", etc.
+  op            String   @default(":=") // ":=", "==", "+=", etc.
+  value         String   // password hash or attribute value
+  // Cryptsc extended
+  subscriberId  String?  // link to Subscriber for traceability
+
+  @@index([username])
+  @@index([subscriberId])
+  @@map("radcheck")
+}
+
+/// FreeRADIUS radreply — per-user authorization reply attributes
+model RadReply {
+  id            Int      @id @default(autoincrement())
+  username      String
+  attribute     String   // "Framed-IP-Address", "Session-Timeout", etc.
+  op            String   @default(":=")
+  value         String
+  subscriberId  String?
+
+  @@index([username])
+  @@map("radreply")
+}
+
+/// FreeRADIUS radusergroup — user-to-group mapping
+/// Synced from Subscriber → Plan.radiusGroupName
+model RadUserGroup {
+  id            Int      @id @default(autoincrement())
+  username      String   // = Subscriber.radiusUsername
+  groupname     String   // = Plan.radiusGroupName (or Product.radiusGroupName)
+  priority      Int      @default(1)
+  subscriberId  String?
+
+  @@index([username])
+  @@index([groupname])
+  @@map("radusergroup")
+}
+
+/// FreeRADIUS radgroupcheck — per-group check attributes
+/// Synced from Product (bandwidth, FUP, session limits)
+model RadGroupCheck {
+  id            Int      @id @default(autoincrement())
+  groupname     String   // = Product.radiusGroupName
+  attribute     String   // "Mikrotik-Rate-Limit", "Session-Timeout", etc.
+  op            String   @default(":=")
+  value         String   // "50M/25M" or "86400" etc.
+  productId     String?
+
+  @@index([groupname])
+  @@map("radgroupcheck")
+}
+
+/// FreeRADIUS radgroupreply — per-group reply attributes
+/// Synced from Product (IP pool, DNS, etc.)
+model RadGroupReply {
+  id            Int      @id @default(autoincrement())
+  groupname     String
+  attribute     String   // "Framed-IP-Address", "DNS-Server", etc.
+  op            String   @default(":=")
+  value         String
+  productId     String?
+
+  @@index([groupname])
+  @@map("radgroupreply")
+}
+
+/// FreeRADIUS radacct — accounting records (session data)
+/// Written by FreeRADIUS accounting module (read-only from OSS/BSS perspective)
+model RadAcct {
+  radacctid           BigInt   @id @default(autoincrement())
+  acctsessionid       String   @default("")
+  acctuniqueid        String   @unique @default("")
+  username            String?  @default("")
+  groupname           String?  @default("")
+  realm               String?  @default("")
+  nasipaddress        String   @default("")
+  nasportid           String?  @default("")
+  nasporttype         String?  @default("")
+  acctstarttime       DateTime?
+  acctupdatetime      DateTime?
+  acctstoptime        DateTime?
+  acctinterval        BigInt?  // seconds since last update
+  acctsessiontime     BigInt?  // session duration in seconds
+  acctauthentic      String?  @default("")
+  connectinfo_start   String?  @default("")
+  connectinfo_stop    String?  @default("")
+  acctinputoctets     BigInt?  // bytes received from user
+  acctoutputoctets    BigInt?  // bytes sent to user
+  calledstationid     String?  @default("")
+  callingstationid    String?  @default("")
+  acctterminatecause   String?  @default("")
+  servicetype         String?  @default("")
+  framedprotocol      String?  @default("")
+  framedipaddress     String   @default("")
+  framedipv6address   String   @default("")
+  framedipv6prefix    String   @default("")
+  framedinterfaceid   String   @default("")
+  delegatedipv6prefix String   @default("")
+  // Cryptsk extended columns per spec 06_DB §12
+  subscriberId        String?
+  planId              String?
+  areaId              String?
+
+  @@index([username])
+  @@index([groupname])
+  @@index([nasipaddress])
+  @@index([acctstarttime])
+  @@index([acctstoptime])
+  @@index([framedipaddress])
+  @@index([subscriberId])
+  @@map("radacct")
+}
+
+/// FreeRADIUS radpostauth — post-authentication log (success + failure)
+/// Written by FreeRADIUS post-auth module
+model RadPostAuth {
+  id            BigInt   @id @default(autoincrement())
+  username      String
+  pass         String?  @default("")  // password attempted (may be empty for security)
+  reply         String?  // "Access-Accept", "Access-Reject", etc.
+  authdate      DateTime @default(now())
+  // Cryptsk extended
+  nasipaddress  String?
+  nasportid     String?
+  callingstationid String?  // MAC address
+  subscriberId  String?
+
+  @@index([username])
+  @@index([authdate])
+  @@index([reply])
+  @@map("radpostauth")
+}
+
+/// FreeRADIUS NAS — Network Access Server device list
+/// Read by FreeRADIUS clients.conf module (or sql module)
+model Nas {
+  id            Int      @id @default(autoincrement())
+  nasname       String   @unique  // IP address or hostname
+  shortname     String?  // friendly name
+  type          String   @default("other")  // "cisco", "mikrotik", "pppoe", etc.
+  ports         Int?
+  secret        String   // RADIUS shared secret (encrypted at rest — Phase 3+)
+  server        String?  // virtual server name
+  community     String?  // SNMP community (legacy)
+  description   String?  // human-readable
+  // Cryptsk extended
+  areaId        String?  // which area/site this NAS serves
+  isActive      Boolean  @default(true)
+  lastSeenAt    DateTime?  // last RADIUS request received
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([nasname])
+  @@index([type])
+  @@index([isActive])
+  @@map("nas")
+}
+
+// ============================================================
+// PHASE 5 — Policy Engine
+// Per: docs/architecture/02_GATEWAY §29-32, 06_DB §5
+// Owns policy definitions, translates to RADIUS attributes,
+// supports versioning + precedence + conflict resolution + simulator.
+// ============================================================
+
+enum PolicyType {
+  bandwidth
+  fup
+  access_time
+  data_transfer
+  security
+  qos
+  auth
+  content_filter
+  combined
+}
+
+enum PolicyStatus {
+  draft
+  active
+  deprecated
+  archived
+}
+
+/// Phase 5 — Policy definition (bandwidth, FUP, access time, etc.)
+/// Config is a JSON string holding all policy parameters.
+/// Per spec 02_GATEWAY §29: policies are versioned, have precedence,
+/// and are compiled to RADIUS attributes for the NAS.
+model Policy {
+  id              String       @id @default(cuid())
+  policyCode      String       @unique  // POL-BW-50-FUP100
+  name            String
+  description     String?
+  type            PolicyType   @default(combined)
+  status          PolicyStatus @default(draft)
+  version         Int          @default(1)
+  precedence      Int          @default(0)  // higher wins on conflict
+  // Config JSON — holds all parameters:
+  // {
+  //   "bandwidth": { "downloadKbps": 50000, "uploadKbps": 25000, "burstDownloadKbps": 60000, "burstUploadKbps": 30000, "burstTimeSec": 8 },
+  //   "fup": { "thresholdGb": 100, "postFupDownloadKbps": 10000, "postFupUploadKbps": 5000 },
+  //   "accessTime": { "startTime": "09:00", "endTime": "21:00", "daysOfWeek": ["mon","tue",...], "sessionTimeoutSec": 28800 },
+  //   "dataTransfer": { "dailyLimitGb": 5, "monthlyLimitGb": 100 },
+  //   "security": { "filterId": "BB-50-SAFE", "nasFilterId": "restrict-social" },
+  //   "qos": { "priority": 6, "queueType": "priority" }
+  // }
+  config          String       @default("{}")  // JSON string
+  // RADIUS group this policy maps to (when published, syncs to radgroupcheck)
+  radiusGroupName String?      // if set, overrides the Product's radiusGroupName
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  publishedAt     DateTime?
+  publishedBy     String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  versions        PolicyVersion[]
+  planMappings    PlanPolicyMapping[]
+
+  @@index([type])
+  @@index([status])
+  @@index([radiusGroupName])
+  @@index([precedence])
+  @@map("policies")
+}
+
+/// Phase 5 — Policy version history (for rollback)
+model PolicyVersion {
+  id              String       @id @default(cuid())
+  policyId        String
+  version         Int
+  config          String       // JSON snapshot at this version
+  changeLog       String?      // what changed
+  publishedAt     DateTime     @default(now())
+  publishedBy     String?
+
+  policy          Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, version])
+  @@index([policyId])
+  @@map("policy_versions")
+}
+
+/// Phase 5 — Plan → Policy mapping (which policies apply to which plans)
+model PlanPolicyMapping {
+  id              String       @id @default(cuid())
+  planId          String
+  policyId        String
+  priority        Int          @default(1)  // lower = higher priority
+  isActive        Boolean      @default(true)
+
+  plan            Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  policy          Policy       @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, policyId])
+  @@index([planId])
+  @@index([policyId])
+  @@map("plan_policy_mappings")
+}
+
+// ============================================================
+// PHASE 7 — Billing & Finance
+// Per: docs/architecture/04_FEATURE §10, 12_ROADMAP (Phase 7A)
+// Invoices, Payments, Tax (GST), Vouchers, Wallet, Credit Notes
+// ============================================================
+
+enum InvoiceStatus {
+  draft
+  issued
+  sent
+  paid
+  partial
+  overdue
+  cancelled
+  void
+}
+
+enum PaymentMethod {
+  cash
+  card
+  upi
+  bank_transfer
+  wallet
+  razorpay
+  stripe
+  payu
+  cheque
+  dd
+}
+
+enum PaymentStatus {
+  pending
+  completed
+  failed
+  refunded
+  partially_refunded
+}
+
+enum VoucherStatus {
+  unused
+  used
+  expired
+  cancelled
+}
+
+enum WalletTxnType {
+  recharge
+  payment
+  refund
+  adjustment
+  cashback
+}
+
+/// Phase 7 — Invoice (billing document)
+model Invoice {
+  id              String        @id @default(cuid())
+  invoiceNumber   String        @unique  // INV-2026-00001
+  customerId      String
+  subscriptionId  String?  // optional link to subscription
+  // Dates
+  issueDate       DateTime      @default(now())
+  dueDate         DateTime
+  // Amounts
+  subtotal        Float         @default(0)  // sum of line items
+  discountPercent Float         @default(0)
+  discountAmount  Float         @default(0)
+  taxableAmount   Float         @default(0)
+  taxRate         Float         @default(18.0)  // GST %
+  taxAmount       Float         @default(0)
+  total           Float         @default(0)  // subtotal - discount + tax
+  paidAmount      Float         @default(0)
+  balanceDue     Float         @default(0)  // total - paidAmount
+  // Status
+  status          InvoiceStatus @default(draft)
+  paymentStatus   String        @default("unpaid")  // unpaid, partial, paid
+  // Metadata
+  notes           String?
+  termsConditions String?
+  pdfUrl          String?  // generated PDF URL
+  // Audit
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  lines           InvoiceLine[]
+  payments        Payment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+/// Phase 7 — Invoice line item
+model InvoiceLine {
+  id              String        @id @default(cuid())
+  invoiceId       String
+  description     String
+  quantity        Float         @default(1)
+  unitPrice       Float
+  amount          Float         // quantity * unitPrice
+  taxRate         Float         @default(18.0)
+  taxAmount       Float         @default(0)
+  total           Float         // amount + taxAmount
+  // Reference (what is this line for?)
+  lineType        String        @default("charge")  // charge, discount, tax, adjustment
+  planId          String?  // if this is a plan charge
+  addonId         String?  // if this is an add-on
+  sortOrder       Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  invoice         Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+/// Phase 7 — Payment (received against invoice)
+model Payment {
+  id              String         @id @default(cuid())
+  paymentNumber   String         @unique  // PAY-2026-00001
+  invoiceId       String?
+  customerId      String
+  // Amount
+  amount          Float
+  currency        String         @default("INR")
+  // Method
+  method          PaymentMethod  @default(cash)
+  status          PaymentStatus  @default(pending)
+  // Transaction
+  transactionId   String?  // gateway transaction ID
+  gatewayRef      String?  // payment gateway reference
+  // Dates
+  paidAt          DateTime?
+  receivedAt      DateTime       @default(now())
+  // Metadata
+  notes           String?
+  // Audit
+  receivedBy      String?  // userId
+  createdBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  invoice         Invoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@index([status])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+/// Phase 7 — Voucher (prepaid recharge code)
+model Voucher {
+  id              String        @id @default(cuid())
+  code            String        @unique  // unique voucher code
+  planId          String?  // which plan this voucher activates
+  // Value
+  faceValue       Float   // printed value
+  currency        String        @default("INR")
+  validityDays    Int?    // validity after activation
+  // Status
+  status          VoucherStatus @default(unused)
+  // Batch
+  batchNumber     String?  // which batch this voucher belongs to
+  // Usage
+  usedAt          DateTime?
+  usedBy          String?  // subscriber/customer who used it
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  // Audit
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@index([batchNumber])
+  @@map("vouchers")
+}
+
+/// Phase 7 — Wallet (prepaid wallet per customer)
+model Wallet {
+  id              String        @id @default(cuid())
+  customerId      String        @unique  // one wallet per customer
+  balance         Float         @default(0)
+  currency        String        @default("INR")
+  minBalance      Float         @default(0)
+  autoRecharge    Boolean       @default(false)
+  autoRechargeThreshold Float?  // recharge when balance drops below this
+  autoRechargeAmount  Float?    // amount to recharge
+  // Audit
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  transactions    WalletTransaction[]
+
+  @@index([customerId])
+  @@map("wallets")
+}
+
+/// Phase 7 — Wallet transaction (credit/debit)
+model WalletTransaction {
+  id              String          @id @default(cuid())
+  walletId        String
+  amount          Float   // positive = credit, negative = debit
+  type            WalletTxnType
+  description     String?
+  balanceAfter    Float   // balance after this transaction
+  // Reference
+  invoiceId       String?  // if this is a payment for an invoice
+  paymentId       String?  // if this is a recharge from a payment
+  // Audit
+  createdBy       String?
+  createdAt       DateTime        @default(now())
+
+  wallet          Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("wallet_transactions")
+}
+
+/// Phase 7 — Tax rate (GST, CGST, SGST, IGST, TDS, TCS)
+model TaxRate {
+  id              String        @id @default(cuid())
+  name            String        @unique  // "GST 18%", "CGST 9%", "SGST 9%"
+  code            String        @unique  // GST18, CGST9, SGST9
+  rate            Float         // percentage
+  type            String        @default("percentage")  // percentage, fixed
+  isCompound      Boolean       @default(false)  // tax on tax?
+  // India-specific
+  gstType         String?  // CGST, SGST, IGST, UTGST, Cess
+  hsnCode         String?  // HSN/SAC code
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+  @@map("tax_rates")
+}
+
+// ============================================================
+// PHASE 8 — Advanced Network & Security
+// Per: docs/architecture/02_GATEWAY §34, 12_ROADMAP (Phase 8)
+// DHCP, DNS, Captive Portal, Content Filtering, Firewall,
+// VPN/IPsec, Multi-WAN, PPPoE, DPI
+// ============================================================
+
+enum DhcpLeaseStatus {
+  active
+  expired
+  released
+  declined
+}
+
+enum FirewallAction {
+  accept
+  drop
+  reject
+  masquerade
+  redirect
+  log
+}
+
+enum FirewallDirection {
+  ingress
+  egress
+  forward
+}
+
+enum ContentFilterType {
+  domain_block
+  domain_allow
+  category_block
+  dns_redirect
+  url_block
+}
+
+enum VpnTunnelStatus {
+  up
+  down
+  connecting
+  error
+}
+
+enum WanLinkStatus {
+  up
+  down
+  degraded
+  backup
+}
+
+/// Phase 8 — DHCP Lease (Kea DHCPv4/v6 lease database)
+model DhcpLease {
+  id              String           @id @default(cuid())
+  macAddress      String           @unique
+  ipAddress       String           @unique  // IPv4 or IPv6
+  ipType          String           @default("ipv4")  // ipv4, ipv6
+  hostname        String?
+  subscriberId    String?
+  subnetId        String?  // link to DhcpSubnet
+  leaseStart      DateTime         @default(now())
+  leaseEnd        DateTime
+  state           String           @default("active")  // active, expired, released, declined
+  // Kea-specific
+  keaLeaseId      Int?  // Kea's internal lease ID
+  interface       String?
+  vlanId          Int?
+  gateway         String?
+  dnsServer       String?
+  // Relations
+  subnet          DhcpSubnet?    @relation(fields: [subnetId], references: [id], onDelete: SetNull)
+  // Audit
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([macAddress])
+  @@index([ipAddress])
+  @@index([subnetId])
+  @@index([state])
+  @@index([leaseEnd])
+  @@map("dhcp_leases")
+}
+
+/// Phase 8 — DHCP Subnet (Kea subnet configuration)
+/// Supports both IPv4 and IPv6 subnets
+model DhcpSubnet {
+  id              String        @id @default(cuid())
+  subnetName      String        @unique  // "Office-LAN-v4", "Guest-v6"
+  subnet          String        @unique  // CIDR: "10.0.0.0/24" or "fd00::/64"
+  ipType          String        @default("ipv4")  // ipv4, ipv6
+  // Pool
+  poolStart       String  // "10.0.0.100"
+  poolEnd         String  // "10.0.0.200"
+  // Gateway + DNS
+  gateway         String?  // "10.0.0.1"
+  dnsServers      String?  // JSON array: ["8.8.8.8", "8.8.4.4"]
+  // Lease times
+  validLifetime   Int           @default(3600)  // seconds
+  preferredLifetime Int?  // for IPv6 (seconds)
+  renewTimer      Int?  // T1
+  rebindTimer     Int?  // T2
+  // Network
+  interface       String?  // which interface to serve
+  vlanId          Int?
+  // Kea-specific
+  keaSubnetId     Int?  // Kea's subnet-id
+  // Metadata
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  reservations    DhcpReservation[]
+  leases          DhcpLease[]
+
+  @@index([ipType])
+  @@index([isActive])
+  @@map("dhcp_subnets")
+}
+
+/// Phase 8 — DHCP Reservation (static IP assignment via Kea host reservation)
+model DhcpReservation {
+  id              String        @id @default(cuid())
+  subnetId        String
+  subscriberId   String?
+  macAddress      String        @unique  // client MAC
+  ipAddress       String        @unique  // reserved IP
+  ipType          String        @default("ipv4")
+  hostname        String?
+  // Kea-specific
+  keaHostId       Int?  // Kea's host reservation ID
+  // Options
+  dnsServers      String?  // JSON array
+  gateway         String?
+  // Metadata
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  subnet          DhcpSubnet    @relation(fields: [subnetId], references: [id], onDelete: Cascade)
+
+  @@index([subnetId])
+  @@index([subscriberId])
+  @@index([macAddress])
+  @@map("dhcp_reservations")
+}
+
+/// Phase 8 — DNS Zone (BIND zone management)
+model DnsZone {
+  id              String        @id @default(cuid())
+  zoneName        String        @unique  // "cryptsk.local", "1.0.10.in-addr.arpa"
+  zoneType        String        @default("forward")  // forward, reverse
+  // SOA record
+  primaryNs       String  // "ns1.cryptsk.com"
+  adminEmail      String  // "admin.cryptsk.com"
+  serial          Int           @default(1)
+  refresh         Int           @default(3600)
+  retry           Int           @default(900)
+  expire          Int           @default(604800)
+  minimum         Int           @default(86400)
+  // BIND-specific
+  zoneFile        String?  // path to zone file (e.g. "/var/named/cryptsk.local.zone")
+  allowTransfer   String?  // IP list for zone transfers
+  allowQuery      String?  // IP list for queries
+  // Metadata
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  records         DnsRecord[]
+
+  @@index([zoneName])
+  @@index([zoneType])
+  @@map("dns_zones")
+}
+
+/// Phase 8 — DNS Record (individual records within a zone)
+model DnsRecord {
+  id              String        @id @default(cuid())
+  zoneId          String  // link to DnsZone
+  hostname        String  // relative to zone: "router" (within cryptsk.local)
+  recordType      String        @default("A")  // A, AAAA, CNAME, MX, TXT, SRV, PTR
+  value           String  // IP, CNAME target, MX preference+exchange
+  ttl             Int           @default(300)
+  priority        Int?  // for MX, SRV
+  weight          Int?  // for SRV
+  port            Int?  // for SRV
+  description     String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  zone            DnsZone       @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([zoneId, hostname, recordType])
+  @@index([zoneId])
+  @@index([hostname])
+  @@map("dns_records")
+}
+
+/// Phase 8 — Firewall Rule (nftables or VPP ACL)
+model FirewallRule {
+  id              String           @id @default(cuid())
+  ruleName        String           @unique
+  action          FirewallAction
+  direction       FirewallDirection @default(ingress)
+  // Source
+  srcIp           String?  // CIDR or "any"
+  srcPort         String?  // port or range "80,443" or "1024-65535"
+  // Destination
+  dstIp           String?
+  dstPort         String?
+  // Protocol
+  protocol        String           @default("tcp")  // tcp, udp, icmp, any
+  // Interface
+  inInterface     String?
+  outInterface    String?
+  // VPP mapping
+  vppAclIndex     Int?  // if this rule is applied via VPP ACL
+  // Metadata
+  priority        Int              @default(100)  // lower = higher priority
+  isActive        Boolean          @default(true)
+  description     String?
+  createdBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([action])
+  @@index([direction])
+  @@index([priority])
+  @@index([isActive])
+  @@map("firewall_rules")
+}
+
+/// Phase 8 — Content Filter (DNS-based blocking via dnsmasq)
+model ContentFilter {
+  id              String           @id @default(cuid())
+  type            ContentFilterType
+  pattern         String  // domain name or category
+  redirectTarget  String?  // for dns_redirect: where to redirect
+  category        String?  // "social", "adult", "gambling", etc.
+  isActive        Boolean          @default(true)
+  description     String?
+  createdBy       String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([type])
+  @@index([category])
+  @@index([isActive])
+  @@map("content_filters")
+}
+
+/// Phase 8 — VPN Tunnel (IPsec via VPP or WireGuard)
+model VpnTunnel {
+  id              String          @id @default(cuid())
+  tunnelName      String          @unique
+  type            String          @default("ipsec")  // ipsec, wireguard, openvpn
+  status          VpnTunnelStatus @default(down)
+  // Local
+  localEndpoint   String  // local IP/hostname
+  localSubnet     String  // e.g. "10.0.0.0/24"
+  // Remote
+  remoteEndpoint  String  // remote IP/hostname
+  remoteSubnet    String  // e.g. "192.168.1.0/24"
+  // IPsec specifics
+  ikeVersion      Int             @default(2)
+  encryption      String          @default("aes256")
+  hash            String          @default("sha256")
+  dhGroup         String          @default("14")
+  psk             String?  // pre-shared key (encrypted at rest)
+  // Metrics
+  uptime          Int?  // seconds
+  rxBytes         BigInt?  @default(0)
+  txBytes         BigInt?  @default(0)
+  // Metadata
+  description     String?
+  isActive        Boolean         @default(true)
+  createdBy       String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@map("vpn_tunnels")
+}
+
+/// Phase 8 — WAN Link (Multi-WAN load balancing)
+model WanLink {
+  id              String         @id @default(cuid())
+  linkName        String         @unique  // "WAN1-Primary", "WAN2-Backup"
+  interface       String  // "eth0", "ens33", etc.
+  ipAddress       String?
+  gateway         String?
+  subnet          String?  // CIDR
+  // Status
+  status          WanLinkStatus  @default(down)
+  isPrimary       Boolean        @default(false)
+  // Metrics
+  rxBytes         BigInt?        @default(0)
+  txBytes         BigInt?        @default(0)
+  rxPackets       BigInt?        @default(0)
+  txPackets       BigInt?        @default(0)
+  latencyMs       Float?
+  packetLoss      Float?
+  // Load balancing
+  weight          Int            @default(1)  // for ECMP/weighted round-robin
+  // Metadata
+  description     String?
+  lastCheckedAt   DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([isPrimary])
+  @@map("wan_links")
+}
+
+/// Phase 8 — Captive Portal Session (unauthenticated user tracking)
+model CaptivePortalSession {
+  id              String        @id @default(cuid())
+  clientIp        String        @unique  // the client's IP
+  macAddress      String?
+  // State
+  state           String        @default("unauthenticated")  // unauthenticated, authenticated, blocked
+  // Auth
+  subscriberId    String?  // if authenticated, link to subscriber
+  phoneNumber     String?  // for OTP-based auth
+  // Timing
+  firstSeen       DateTime      @default(now())
+  lastSeen        DateTime      @default(now())
+  authenticatedAt DateTime?
+  expiresAt       DateTime?  // captive session expiry
+  // Redirect
+  originalUrl     String?  // the URL the user tried to access
+  // Metadata
+  userAgent       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([clientIp])
+  @@index([state])
+  @@index([lastSeen])
+  @@map("captive_portal_sessions")
+}
+
+// ============================================================
+// PHASE 9 — AI Intelligence
+// Per: docs/architecture/10_AI_AGENT, ADR-030
+// Advisory-only AI (never packet-path, never autonomous action)
+// Uses z-ai-web-dev-sdk (backend-only)
+// ============================================================
+
+enum AiInsightType {
+  advisor
+  diagnosis
+  churn
+  forecast
+  recommendation
+  competitor
+}
+
+enum AiInsightStatus {
+  pending
+  accepted
+  rejected
+  actioned
+}
+
+/// Phase 9 — AI Insight (saved AI-generated recommendations)
+/// Per spec 10_AI_AGENT §12: AI outputs must be traceable to source data,
+/// advisory only, any action must follow normal authorization + audit workflows.
+model AiInsight {
+  id              String          @id @default(cuid())
+  type            AiInsightType
+  title           String
+  content         String  // the AI-generated insight text
+  confidence      Float           @default(0.5)  // 0.0-1.0
+  // Data source (what was analyzed)
+  dataSource      String?  // "radacct", "invoices", "subscribers", etc.
+  dataSnapshot    String?  // JSON of the data that was analyzed
+  // Status (human review)
+  status          AiInsightStatus @default(pending)
+  actionTaken     String?  // what action was taken (if any)
+  actionedBy     String?  // userId
+  actionedAt      DateTime?
+  // Metadata
+  modelProvider   String          @default("z-ai-web-dev-sdk")
+  modelVersion    String?
+  tokensUsed      Int?
+  // Audit
+  createdBy       String?  // userId who triggered the AI
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("ai_insights")
+}
+
+// ============================================================
+// Phase 10: Operations & Support (spec 04_FEATURE §8.4 / 11 §9)
+// Tickets & Complaints · Installations · Inventory
+// ============================================================
+
+enum TicketCategory {
+  complaint
+  technical
+  billing
+  installation
+  other
+}
+
+enum TicketPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum TicketStatus {
+  open
+  in_progress
+  pending
+  resolved
+  closed
+}
+
+enum InstallationStatus {
+  scheduled
+  in_progress
+  completed
+  failed
+  rescheduled
+}
+
+model Ticket {
+  id            String          @id @default(cuid())
+  ticketNumber  String          @unique // TKT-2026-00001
+  customerId    String?
+  subscriberId  String?
+  category      TicketCategory  @default(complaint)
+  priority      TicketPriority  @default(medium)
+  status        TicketStatus    @default(open)
+  subject       String
+  description   String
+  assignedTo    String? // userId (technician / support agent)
+  slaDueAt      DateTime? // SLA deadline (per priority policy)
+  resolution    String?
+  resolvedAt    DateTime?
+  closedAt      DateTime?
+  reopenedAt    DateTime? // last time the ticket returned to open from resolved/closed via customer reply or staff reopen; cleared on resolve/close
+  createdBy     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  subscriber Subscriber?   @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+  assignee   User?         @relation("AssignedTickets", fields: [assignedTo], references: [id], onDelete: SetNull)
+  replies    TicketReply[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([category])
+  @@index([customerId])
+  @@map("tickets")
+}
+
+model TicketReply {
+  id         String   @id @default(cuid())
+  ticketId   String
+  userId     String? // author userId (null = system)
+  authorName String   // denormalized display name
+  message    String
+  isInternal Boolean  @default(false) // internal note vs customer-visible
+  createdAt  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_replies")
+}
+
+model Installation {
+  id             String            @id @default(cuid())
+  installNumber  String            @unique // INS-2026-00001
+  customerId     String
+  subscriberId   String?
+  type           String            @default("new") // new | upgrade | relocation | maintenance
+  status         InstallationStatus @default(scheduled)
+  scheduledAt    DateTime
+  completedAt    DateTime?
+  technicianName String? // free-text field technician
+  address        String?
+  notes          String?
+  createdBy      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  customer   Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscriber Subscriber? @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@map("installations")
+}
+
+model InventoryItem {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  category    String? // router | onu | cable | tool | other
+  quantity    Int      @default(0)
+  minQuantity Int      @default(0) // low-stock threshold
+  unitPrice   Float?
+  location    String? // warehouse / van
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@map("inventory_items")
+}
+
+// ============================================================
+// PHASE 10 — Monitoring & Diagnostics
+// Per: docs/architecture/11_MONITORING — syslog ingest, alert
+// dedup store, service probe history. 100% real data: rows are
+// written by the UDP syslog listener (port 30514), the HTTP
+// ingest API and the platform's own service probes.
+// ============================================================
+
+/// Syslog entries — RFC3164/5424 lines ingested from network
+/// devices via mini-services/syslog-listener (UDP) or the HTTP
+/// ingest API (POST /api/monitoring/syslog).
+model SyslogEntry {
+  id         BigInt   @id @default(autoincrement())
+  facility   Int      @default(16) // RFC3164 facility (local0 = 16)
+  severity   Int      @default(6) // RFC3164 severity (0=emerg … 7=debug)
+  tag        String? // program name, e.g. "sshd"
+  host       String? // hostname as claimed by the sender
+  sourceIp   String?  @map("source_ip") // sender IP (UDP source / remote addr)
+  message    String // log content (parsed remainder)
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@index([receivedAt])
+  @@index([severity])
+  @@map("syslog_entries")
+}
+
+/// Monitoring alerts — deduped by stable alertKey, synced from
+/// real platform conditions on every GET /api/monitoring/alerts.
+model MonitoringAlert {
+  id             BigInt    @id @default(autoincrement())
+  alertKey       String    @unique @map("alert_key") // stable condition key, e.g. "nas-down"
+  severity       String // critical | warning | info
+  title          String
+  detail         String
+  source         String // billing | network | aaa | operations | inventory | subscribers | monitoring
+  isAcknowledged Boolean   @default(false) @map("is_acknowledged")
+  acknowledgedBy String?   @map("acknowledged_by") // session user email
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  firstSeenAt    DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt     DateTime? @map("resolved_at") // set when the condition clears
+
+  @@index([resolvedAt])
+  @@index([severity])
+  @@map("monitoring_alerts")
+}
+
+/// Service probe history — one row per health-check run of each
+/// platform service (db, session engine, VPP adapter, DNS, diagnostics).
+/// Pruned to the last 24h by the overview route.
+model ServiceProbeLog {
+  id        BigInt   @id @default(autoincrement())
+  service   String // "postgresql" | "sessionEngine" | "vppAdapter" | "dnsResolver" | "diagnostic:<tool>"
+  status    String // up | degraded | down
+  latencyMs Int?     @map("latency_ms")
+  detail    String?
+  checkedAt DateTime @default(now()) @map("checked_at")
+
+  @@index([service, checkedAt])
+  @@map("service_probe_logs")
+}
+
+// ============================================================
+// T10 — Password reset tokens (self-service forgot-password +
+// staff-assisted reset links, helpdesk handover flow).
+// SECURITY: the RAW token (64-hex from 32 random bytes) is NEVER
+// persisted — only its SHA-256 hex hash is stored, and reset
+// links carry the raw token. A token is valid for 60 minutes,
+// single-use (usedAt), and rate-limited at creation
+// (≤3 unused tokens per actor per 60 minutes).
+// Exactly ONE of userId / portalUserId is set, per actorType.
+// ============================================================
+
+enum PasswordResetActor {
+  staff
+  portal
+}
+
+model PasswordResetToken {
+  id           String              @id @default(cuid())
+  tokenHash    String              @unique // sha256 hex of the raw token — raw NEVER stored
+  actorType    PasswordResetActor
+  userId       String?             // staff Users.id (actorType = staff)
+  portalUserId String?             // PortalUsers.id (actorType = portal)
+  expiresAt    DateTime
+  usedAt       DateTime?
+  deliveredAt  DateTime?           // when the helpdesk handed over the link
+  deliveredBy  String?             // staff users.id who delivered/issued the link
+  requestIp    String?             // x-forwarded-for at request time
+  createdBy    String?             // staff users.id (null = self-service forgot-password)
+  createdAt    DateTime            @default(now())
+
+  // Relations
+  user        User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portalUser  PortalUser?  @relation(fields: [portalUserId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([portalUserId])
+  @@index([actorType, createdAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}

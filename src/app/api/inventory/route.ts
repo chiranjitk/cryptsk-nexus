@@ -1,121 +1,149 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditCreateEntity } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { auditCreate, auditUpdate, auditDelete } from "@/lib/services/audit-service";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 
-// ============================================================
-// CRYPTSK Nexus — GET/POST /api/inventory
-// Warehouse / van-stock items (routers, ONUs, cable, tools…)
-// GET  filters: ?search (sku|name) ?category ?lowStock=1
-//      lowStock → quantity <= minQuantity, lowest stock first
-//      stats.stockValue = Σ quantity × unitPrice (real aggregate)
-// POST create — sku unique (409 on duplicate)
-// ============================================================
-
-// Next.js redirect() inside requireAuth surfaces as a thrown NEXT_REDIRECT —
-// map it to a clean 401 JSON instead of a 500.
-function isRedirectError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && String((err as any)?.digest || "").startsWith("NEXT_REDIRECT");
+// Helper: calculate depreciated value
+function calculateCurrentValue(purchasePrice: number, purchaseDate: Date | null, depreciationRate: number): number {
+  if (!purchaseDate || purchasePrice <= 0 || depreciationRate <= 0) return purchasePrice;
+  const now = new Date();
+  const ageYears = (now.getTime() - purchaseDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  const depreciatedValue = purchasePrice - (purchasePrice * (depreciationRate / 100) * ageYears);
+  return Math.max(0, Math.round(depreciatedValue * 100) / 100);
 }
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("inventory", "list");
-
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     const { searchParams } = new URL(req.url);
-    const search = searchParams.get("search") || "";
-    const category = searchParams.get("category") || "";
-    const lowStock = searchParams.get("lowStock") === "1";
+    const category = searchParams.get("category");
+    const condition = searchParams.get("condition");
+    const status = searchParams.get("status");
+    const vendorId = searchParams.get("vendorId");
+    const warrantyFilter = searchParams.get("warranty"); // active, expired, expiring-soon
 
     const where: Record<string, unknown> = {};
     if (category) where.category = category;
-    if (search) {
+    if (condition) where.condition = condition;
+    if (status) where.status = status;
+    if (vendorId) where.vendorId = vendorId;
+
+    // Warranty filter
+    if (warrantyFilter === "active") {
+      where.warrantyExpiry = { gt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) };
+    } else if (warrantyFilter === "expiring-soon") {
+      where.warrantyExpiry = { gt: new Date(), lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) };
+    } else if (warrantyFilter === "expired") {
       where.OR = [
-        { sku: { contains: search } },
-        { name: { contains: search } },
+        { warrantyExpiry: { lt: new Date() } },
+        { warrantyExpiry: null },
       ];
     }
-    if (lowStock) where.quantity = { lte: db.inventoryItem.fields.minQuantity };
 
-    const [items, allItems, lowStockCount, outOfStockCount] = await Promise.all([
-      db.inventoryItem.findMany({
+    const [equipment, summary] = await Promise.all([
+      db.equipment.findMany({
         where,
-        orderBy: lowStock ? { quantity: "asc" } : { updatedAt: "desc" },
-        take: 500,
+        include: {
+          Subscriber: { select: { id: true, name: true, code: true } },
+          Vendor: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
       }),
-      // Global stats — real aggregates, independent of list filters
-      db.inventoryItem.findMany({ select: { quantity: true, unitPrice: true } }),
-      db.inventoryItem.count({ where: { quantity: { lte: db.inventoryItem.fields.minQuantity } } }),
-      db.inventoryItem.count({ where: { quantity: 0 } }),
+      db.equipment.groupBy({
+        by: ["status"],
+        _count: { id: true },
+        _sum: { purchasePrice: true, currentValue: true },
+      }),
     ]);
 
-    const total = allItems.length;
-    const stockValue = allItems.reduce(
-      (sum, it) => sum + (it.quantity || 0) * (it.unitPrice ?? 0),
-      0
-    );
+    const statusSummary: Record<string, { count: number; totalValue: number; currentTotalValue: number }> = {};
+    for (const s of summary) {
+      statusSummary[s.status] = {
+        count: s._count.id,
+        totalValue: s._sum.purchasePrice || 0,
+        currentTotalValue: s._sum.currentValue || 0,
+      };
+    }
+
+    const totalItems = equipment.length;
+    const inStock = statusSummary["IN_STOCK"]?.count || 0;
+    const deployed = statusSummary["DEPLOYED"]?.count || 0;
+    const returned = statusSummary["RETURNED"]?.count || 0;
+    const decommissioned = statusSummary["DECOMMISSIONED"]?.count || 0;
+    const totalValue = equipment.reduce((sum, e) => sum + e.purchasePrice, 0);
+    const totalCurrentValue = equipment.reduce((sum, e) => sum + (e.currentValue || e.purchasePrice), 0);
+
+    // Calculate current values if not set
+    const enrichedEquipment = equipment.map((e) => {
+      const currentValue = e.currentValue || calculateCurrentValue(e.purchasePrice, e.purchaseDate, e.depreciationRate);
+      const warrantyStatus = e.warrantyExpiry
+        ? new Date(e.warrantyExpiry) < new Date()
+          ? "expired"
+          : new Date(e.warrantyExpiry) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+            ? "expiring-soon"
+            : "active"
+        : "none";
+      return { ...e, currentValue, warrantyStatus };
+    });
 
     return NextResponse.json({
-      items,
-      stats: { total, lowStock: lowStockCount, outOfStock: outOfStockCount, stockValue },
+      equipment: enrichedEquipment,
+      summary: { totalItems, inStock, deployed, returned, decommissioned, totalValue, totalCurrentValue, statusSummary },
     });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/inventory] GET failed:", err);
+  } catch (error) {
+    console.error("Inventory GET error:", error);
     return NextResponse.json({ error: "Failed to fetch inventory" }, { status: 500 });
   }
 }
 
-// POST /api/inventory — add a stock item
 export async function POST(req: NextRequest) {
   try {
-    const user = await requirePermission("inventory", "create");
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     const body = await req.json();
-    const { sku, name, category, quantity, minQuantity, unitPrice, location } = body;
+    const { name, category, manufacturer, model, serialNumber, macAddress, condition, purchasePrice, stockLocation, purchaseDate, vendorName, vendorId, depreciationRate, warrantyExpiry } = body;
 
-    if (!sku || !String(sku).trim() || !name || !String(name).trim()) {
-      return NextResponse.json({ error: "sku and name are required" }, { status: 400 });
-    }
-    const qty = Number(quantity ?? 0);
-    const minQty = Number(minQuantity ?? 0);
-    if (!Number.isInteger(qty) || qty < 0) {
-      return NextResponse.json({ error: "quantity must be an integer ≥ 0" }, { status: 400 });
-    }
-    if (!Number.isInteger(minQty) || minQty < 0) {
-      return NextResponse.json({ error: "minQuantity must be an integer ≥ 0" }, { status: 400 });
+    if (!name) {
+      return NextResponse.json({ error: "Equipment name is required" }, { status: 400 });
     }
 
-    const normalizedSku = String(sku).trim().toUpperCase();
-    const existing = await db.inventoryItem.findUnique({ where: { sku: normalizedSku } });
-    if (existing) {
-      return NextResponse.json({ error: `SKU "${normalizedSku}" already exists` }, { status: 409 });
-    }
+    const parsedDate = purchaseDate ? new Date(purchaseDate) : null;
+    const parsedPrice = purchasePrice ? Number(purchasePrice) : 0;
+    const parsedRate = depreciationRate ? Number(depreciationRate) : 20;
+    const currentValue = calculateCurrentValue(parsedPrice, parsedDate, parsedRate);
 
-    const item = await db.inventoryItem.create({
+    const equipment = await db.equipment.create({
       data: {
-        sku: normalizedSku,
-        name: String(name).trim(),
-        category: category || null,
-        quantity: qty,
-        minQuantity: minQty,
-        unitPrice: unitPrice !== undefined && unitPrice !== null && unitPrice !== "" ? Number(unitPrice) : null,
-        location: location?.trim() || null,
+        name,
+        category: category || "OTHER",
+        manufacturer: manufacturer || "",
+        model: model || "",
+        serialNumber: serialNumber || "",
+        macAddress: macAddress || "",
+        condition: condition || "NEW",
+        status: "IN_STOCK",
+        purchasePrice: parsedPrice,
+        depreciationRate: parsedRate,
+        currentValue,
+        stockLocation: stockLocation || "",
+        purchaseDate: parsedDate,
+        warrantyExpiry: warrantyExpiry ? new Date(warrantyExpiry) : null,
+        vendorName: vendorName || "",
+        vendorId: vendorId || null,
       },
     });
 
-    await auditCreateEntity({
-      userId: user.id, action: "create", resource: "inventory_item",
-      resourceId: item.id, resourceName: item.sku,
-      after: { sku: item.sku, name: item.name, quantity: item.quantity, minQuantity: item.minQuantity },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
-    return NextResponse.json({ item }, { status: 201 });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/inventory] POST failed:", err);
-    return NextResponse.json({ error: "Failed to create inventory item" }, { status: 500 });
+    await auditCreate(req, "Equipment", equipment.id, { name, category, serialNumber, purchasePrice });
+    return NextResponse.json({ equipment }, { status: 201 });
+  } catch (error) {
+    console.error("Inventory POST error:", error);
+    return NextResponse.json({ error: "Failed to add equipment" }, { status: 500 });
   }
 }

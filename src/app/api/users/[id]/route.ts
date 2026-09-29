@@ -1,146 +1,223 @@
-import { NextRequest, NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditUpdate, auditDelete } from "@/lib/audit";
+import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
+import { requirePermission, AuthError } from "@/lib/api-auth";
+import type { NextRequest } from "next/server";
 
-// GET /api/users/[id] — get single user
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+const VALID_ROLES = ["SUPER_ADMIN", "ADMIN", "OPERATOR", "AGENT", "TECHNICIAN", "VIEWER", "CUSTOMER"];
+const VALID_STATUSES = ["ACTIVE", "SUSPENDED", "INACTIVE", "LOCKED"];
+
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requirePermission("user", "read");
+    await requirePermission(_request, "users.read");
     const { id } = await params;
-
     const user = await db.user.findUnique({
       where: { id },
       select: {
-        id: true, email: true, username: true, name: true,
-        status: true, lastLoginAt: true, lastLoginIp: true,
-        loginAttempts: true, lockedUntil: true,
-        forcePasswordChange: true, mfaEnabled: true,
-        timezone: true, locale: true, avatarUrl: true,
-        createdAt: true, updatedAt: true,
-        roles: {
-          include: {
-            role: {
-              include: { permissions: { include: { permission: true } } },
-            },
-          },
+        id: true, name: true, email: true, phone: true, role: true, status: true,
+        avatarUrl: true, lastLoginAt: true, createdAt: true, updatedAt: true, twoFactorEnabled: true, assignedAreaIds: true,
+        Technician: {
+          select: { id: true, name: true, phone: true, skills: true, status: true, rating: true, totalResolved: true },
+        },
+        agent: {
+          select: { id: true, name: true, phone: true, dailyTarget: true, monthlyTarget: true, totalCollectedMonth: true },
         },
       },
     });
-
-    if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
-
-    return NextResponse.json({ user });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    return NextResponse.json(user);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("User get error:", error);
     return NextResponse.json({ error: "Failed to fetch user" }, { status: 500 });
   }
 }
 
-// PATCH /api/users/[id] — update user
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const currentUser = await requirePermission("user", "update");
+    const currentUserId = await requirePermission(request, "users.update");
     const { id } = await params;
-    const body = await req.json();
-    const { email, username, name, status, password, roleIds, forcePasswordChange, mfaEnabled } = body;
+    const body = await request.json();
 
-    const existing = await db.user.findUnique({ where: { id }, include: { roles: true } });
-    if (!existing) return NextResponse.json({ error: "User not found" }, { status: 404 });
-
-    const data: Record<string, unknown> = {};
-    if (email) data.email = email.toLowerCase();
-    if (username) data.username = username;
-    if (name !== undefined) data.name = name;
-    if (status) data.status = status;
-    if (forcePasswordChange !== undefined) data.forcePasswordChange = forcePasswordChange;
-    if (mfaEnabled !== undefined) data.mfaEnabled = mfaEnabled;
-    if (password) {
-      data.passwordHash = await bcrypt.hash(password, 12);
-      data.passwordChangedAt = new Date();
-      data.forcePasswordChange = false;
+    const existing = await db.user.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const updated = await db.user.update({
-      where: { id },
-      data,
-      include: {
-        roles: { include: { role: { select: { id: true, name: true, slug: true } } } },
-      },
-    });
+    const updateData: Record<string, unknown> = {};
 
-    // Update role assignments if provided
-    if (roleIds !== undefined) {
-      // Remove existing roles
-      await db.userRole.deleteMany({ where: { userId: id } });
-      // Add new roles
-      if (roleIds.length > 0) {
-        await db.userRole.createMany({
-          data: roleIds.map((roleId: string) => ({
-            userId: id,
-            roleId,
-            assignedBy: currentUser.id,
-          })),
-        });
+    // Name
+    if (body.name !== undefined) {
+      if (!body.name || !String(body.name).trim()) {
+        return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
+      }
+      updateData.name = String(body.name).trim();
+    }
+
+    // Email with uniqueness check
+    if (body.email !== undefined) {
+      const newEmail = String(body.email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+      }
+      if (newEmail !== existing.email) {
+        const duplicate = await db.user.findUnique({ where: { email: newEmail } });
+        if (duplicate) {
+          return NextResponse.json({ error: "User with this email already exists" }, { status: 409 });
+        }
+      }
+      updateData.email = newEmail;
+    }
+
+    // Phone
+    if (body.phone !== undefined) {
+      updateData.phone = body.phone !== null ? String(body.phone).trim() : "";
+    }
+
+    // Avatar URL
+    if (body.avatarUrl !== undefined) {
+      updateData.avatarUrl = String(body.avatarUrl || "");
+    }
+
+    // Role validation
+    if (body.role !== undefined) {
+      const role = String(body.role).toUpperCase();
+      if (!VALID_ROLES.includes(role)) {
+        return NextResponse.json({ error: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}` }, { status: 400 });
+      }
+      // Prevent non-SUPER_ADMIN from escalating roles to SUPER_ADMIN
+      const currentUser = await db.user.findUnique({ where: { id: currentUserId }, select: { role: true } });
+      if (currentUser && currentUser.role !== "SUPER_ADMIN" && role === "SUPER_ADMIN") {
+        return NextResponse.json({ error: "Only SUPER_ADMIN can assign SUPER_ADMIN role" }, { status: 403 });
+      }
+      updateData.role = role;
+    }
+
+    // Status validation
+    if (body.status !== undefined) {
+      const status = String(body.status).toUpperCase();
+      if (!VALID_STATUSES.includes(status)) {
+        return NextResponse.json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` }, { status: 400 });
+      }
+      // Prevent self-suspension
+      if (id === currentUserId && status !== "ACTIVE") {
+        return NextResponse.json({ error: "You cannot change your own status" }, { status: 403 });
+      }
+      updateData.status = status;
+    }
+
+    // Password
+    if (body.password && typeof body.password === "string" && body.password.length > 0) {
+      if (body.password.length < 6) {
+        return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
+      }
+      updateData.password = await bcrypt.hash(body.password, 12);
+    }
+
+    // Two-Factor Authentication toggle
+    if (body.twoFactorEnabled !== undefined) {
+      updateData.twoFactorEnabled = Boolean(body.twoFactorEnabled);
+    }
+
+    // Assigned area IDs
+    if (body.assignedAreaIds !== undefined) {
+      const areaIds = body.assignedAreaIds;
+      if (typeof areaIds === "string") {
+        try {
+          const parsed = JSON.parse(areaIds);
+          if (Array.isArray(parsed)) {
+            updateData.assignedAreaIds = JSON.stringify(parsed);
+          } else {
+            return NextResponse.json({ error: "assignedAreaIds must be a JSON array" }, { status: 400 });
+          }
+        } catch {
+          return NextResponse.json({ error: "assignedAreaIds must be valid JSON" }, { status: 400 });
+        }
+      } else if (Array.isArray(areaIds)) {
+        updateData.assignedAreaIds = JSON.stringify(areaIds);
       }
     }
 
-    await auditUpdate({
-      userId: currentUser.id,
-      action: "update",
-      resource: "user",
-      resourceId: id,
-      resourceName: existing.email,
-      before: { email: existing.email, username: existing.username, name: existing.name, status: existing.status },
-      after: { email: updated.email, username: updated.username, name: updated.name, status: updated.status, roleIds },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
+    if (Object.keys(updateData).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
+
+    const user = await db.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true, name: true, email: true, phone: true, role: true, status: true,
+        avatarUrl: true, createdAt: true, updatedAt: true,
+      },
     });
 
-    return NextResponse.json({ user: updated });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+    auditUpdate(request, "User", id, { changed: Object.keys(updateData) }, { name: existing.name, email: existing.email }, { userId: currentUserId }).catch(() => {});
+    return NextResponse.json(user);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("User update error:", error);
     return NextResponse.json({ error: "Failed to update user" }, { status: 500 });
   }
 }
 
-// DELETE /api/users/[id] — delete user
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const currentUser = await requirePermission("user", "delete");
+    const currentUserId = await requirePermission(request, "users.delete");
     const { id } = await params;
 
-    if (id === currentUser.id) {
-      return NextResponse.json({ error: "Cannot delete yourself" }, { status: 400 });
+    // Self-delete protection
+    if (id === currentUserId) {
+      return NextResponse.json({ error: "You cannot delete your own account" }, { status: 403 });
     }
 
-    const existing = await db.user.findUnique({ where: { id } });
-    if (!existing) return NextResponse.json({ error: "User not found" }, { status: 404 });
-
-    await db.user.delete({ where: { id } });
-
-    await auditDelete({
-      userId: currentUser.id,
-      action: "delete",
-      resource: "user",
-      resourceId: id,
-      resourceName: existing.email,
-      before: { email: existing.email, username: existing.username },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
+    const existing = await db.user.findUnique({
+      where: { id },
+      include: {
+        Technician: { select: { id: true } },
+        agent: { select: { id: true } },
+      },
     });
+    if (!existing) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
 
+    // Linked profile check — block delete if user has Technician or CollectionAgent profile
+    if (existing.Technician) {
+      return NextResponse.json(
+        { error: "Cannot delete user: this user is linked to a Technician profile. Delete the technician profile first." },
+        { status: 409 },
+      );
+    }
+    if (existing.agent) {
+      return NextResponse.json(
+        { error: "Cannot delete user: this user is linked to a Collection Agent profile. Delete the agent profile first." },
+        { status: 409 },
+      );
+    }
+
+    // Last SUPER_ADMIN protection
+    if (existing.role === "SUPER_ADMIN") {
+      const superAdminCount = await db.user.count({ where: { role: "SUPER_ADMIN" } });
+      if (superAdminCount <= 1) {
+        return NextResponse.json({ error: "Cannot delete the last SUPER_ADMIN account" }, { status: 403 });
+      }
+    }
+
+    auditDelete(request, "User", id, { name: existing.name, email: existing.email, role: existing.role }, { userId: currentUserId }).catch(() => {});
+    await db.user.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("User delete error:", error);
     return NextResponse.json({ error: "Failed to delete user" }, { status: 500 });
   }
 }

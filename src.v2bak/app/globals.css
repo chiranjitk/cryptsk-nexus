@@ -1,0 +1,479 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   CRYPTSK Nexus — Design Token System
+   Per: docs/architecture/07_UI_UX_IMPLEMENTATION_SPECIFICATION.md
+   ============================================================
+   Brand: CRYPTSK Red #DC2626 (light) / #EF4444 (dark)
+   Sidebar: Dark Navy #0F172A (light) / #020617 (dark) — stays dark in both
+   Background: white (light) / #0F172A (dark)
+   Borders: Slate-200 (light) / Slate-700 (dark)
+   Radius: 0.625rem (10px)
+   Animations: CSS-only (no framer-motion per spec §07)
+   ============================================================ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-ai: var(--ai);
+  --color-ai-foreground: var(--ai-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LIGHT THEME — CRYPTSK Red on White
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem; /* 10px per spec */
+
+  /* Base surfaces */
+  --background: #ffffff;
+  --foreground: #0f172a; /* slate-900 */
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* CRYPTSK brand red */
+  --primary: #dc2626; /* red-600 */
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9; /* slate-100 */
+  --secondary-foreground: #0f172a;
+  --muted: #f8fafc; /* slate-50 */
+  --muted-foreground: #64748b; /* slate-500 */
+  --accent: #fef2f2; /* red-50 */
+  --accent-foreground: #991b1b; /* red-800 */
+
+  /* Semantic palette */
+  --success: #16a34a; /* green-600 */
+  --success-foreground: #ffffff;
+  --warning: #d97706; /* amber-600 */
+  --warning-foreground: #ffffff;
+  --info: #2563eb; /* blue-600 */
+  --info-foreground: #ffffff;
+  --ai: #7c3aed; /* violet-600 */
+  --ai-foreground: #ffffff;
+
+  --destructive: #dc2626;
+  --border: #e2e8f0; /* slate-200 */
+  --input: #e2e8f0;
+  --ring: #dc2626;
+
+  /* Chart palette (5 tokens per spec) */
+  --chart-1: #dc2626; /* red */
+  --chart-2: #16a34a; /* green */
+  --chart-3: #2563eb; /* blue */
+  --chart-4: #d97706; /* amber */
+  --chart-5: #7c3aed; /* violet */
+
+  /* Sidebar — DARK NAVY in light theme (stays dark per spec) */
+  --sidebar: #0f172a; /* slate-900 */
+  --sidebar-foreground: #e2e8f0; /* slate-200 */
+  --sidebar-primary: #dc2626; /* CRYPTSK red */
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e293b; /* slate-800 */
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #1e293b; /* slate-800 */
+  --sidebar-ring: #dc2626;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   DARK THEME — CRYPTSK Red on Dark Navy
+   ───────────────────────────────────────────────────────────── */
+.dark {
+  --background: #0f172a; /* slate-900 */
+  --foreground: #f8fafc; /* slate-50 */
+  --card: #1e293b; /* slate-800 */
+  --card-foreground: #f8fafc;
+  --popover: #1e293b;
+  --popover-foreground: #f8fafc;
+
+  /* CRYPTSK brand red (lighter for dark bg) */
+  --primary: #ef4444; /* red-500 */
+  --primary-foreground: #ffffff;
+
+  --secondary: #334155; /* slate-700 */
+  --secondary-foreground: #f8fafc;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8; /* slate-400 */
+  --accent: #450a0a; /* red-950 */
+  --accent-foreground: #fca5a5; /* red-300 */
+
+  /* Semantic palette (lighter for dark bg) */
+  --success: #22c55e; /* green-500 */
+  --success-foreground: #052e16;
+  --warning: #f59e0b; /* amber-500 */
+  --warning-foreground: #422006;
+  --info: #3b82f6; /* blue-500 */
+  --info-foreground: #172554;
+  --ai: #8b5cf6; /* violet-500 */
+  --ai-foreground: #2e1065;
+
+  --destructive: #ef4444;
+  --border: #334155; /* slate-700 */
+  --input: #334155;
+  --ring: #ef4444;
+
+  /* Chart palette (dark variants) */
+  --chart-1: #ef4444;
+  --chart-2: #22c55e;
+  --chart-3: #3b82f6;
+  --chart-4: #f59e0b;
+  --chart-5: #8b5cf6;
+
+  /* Sidebar — even darker navy in dark theme */
+  --sidebar: #020617; /* slate-950 */
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #ef4444;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #0f172a; /* slate-900 */
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #ef4444;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   BASE LAYER
+   ───────────────────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* Prevent FOUC per spec §07 — hide body until theme class is applied */
+  html:not(.dark):not(.light) body {
+    visibility: hidden;
+  }
+  /* Tabular numbers for stat cards / data tables per spec */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ───────────────────────────────────────────────────────────── */
+
+/* Gradient text — CRYPTSK red */
+.text-gradient-red {
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 50%, #f87171 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Gradient text — violet (AI/special) */
+.text-gradient-violet {
+  background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 50%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Sidebar logo glow */
+.sidebar-logo-glow {
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
+}
+
+/* Card hover lift */
+.card-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15);
+}
+
+/* Scrollbar styling per spec */
+.cryptsk-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.cryptsk-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cryptsk-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 3px;
+  opacity: 0.3;
+}
+.cryptsk-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CSS KEYFRAME CATALOGUE (no framer-motion per spec §07)
+   20+ named keyframes for animations
+   ───────────────────────────────────────────────────────────── */
+
+/* Card load entrance */
+@keyframes cryptsk-card-load {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.cryptsk-card-load {
+  animation: cryptsk-card-load 0.4s ease-out;
+}
+
+/* Pulse dot (live indicators) */
+@keyframes cryptsk-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.15); }
+}
+.cryptsk-pulse-dot {
+  animation: cryptsk-pulse-dot 2s ease-in-out infinite;
+}
+
+/* Shimmer (loading skeletons) */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--accent) 50%,
+    var(--muted) 100%
+  );
+  background-size: 2000px 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+/* Badge pulse (status indicators) */
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--ring); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.badge-pulse {
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+
+/* Dialog enter */
+@keyframes dialog-enter {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.dialog-enter {
+  animation: dialog-enter 0.2s ease-out;
+}
+
+/* Confetti fall (celebration moments) */
+@keyframes confetti-fall {
+  0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+.confetti-fall {
+  animation: confetti-fall 3s ease-in forwards;
+}
+
+/* Login gradient spin (animated background) */
+@keyframes login-gradient-spin {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.login-gradient-spin {
+  background: linear-gradient(135deg, #dc2626, #7c3aed, #2563eb, #dc2626);
+  background-size: 400% 400%;
+  animation: login-gradient-spin 8s ease infinite;
+}
+
+/* NProgress top bar (3px red) */
+@keyframes nprogress-loading {
+  0% { transform: translate3d(-100%, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+/* Sidebar slide in (mobile drawer) */
+@keyframes sidebar-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.sidebar-slide-in {
+  animation: sidebar-slide-in 0.3s ease-out;
+}
+
+/* Fade in (generic) */
+@keyframes cryptsk-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.cryptsk-fade-in {
+  animation: cryptsk-fade-in 0.3s ease-out;
+}
+
+/* Slide up (toast / notification) */
+@keyframes cryptsk-slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.cryptsk-slide-up {
+  animation: cryptsk-slide-up 0.3s ease-out;
+}
+
+/* Scale in (popover / tooltip) */
+@keyframes cryptsk-scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.cryptsk-scale-in {
+  animation: cryptsk-scale-in 0.15s ease-out;
+}
+
+/* Spin (loading spinner) */
+@keyframes cryptsk-spin {
+  to { transform: rotate(360deg); }
+}
+.cryptsk-spin {
+  animation: cryptsk-spin 0.8s linear infinite;
+}
+
+/* Ping (radar / sonar effect) */
+@keyframes cryptsk-ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+.cryptsk-ping {
+  animation: cryptsk-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Bounce (subtle attention) */
+@keyframes cryptsk-bounce {
+  0%, 100% { transform: translateY(-25%); animation-timing-function: cubic-bezier(0.8, 0, 1, 1); }
+  50% { transform: translateY(0); animation-timing-function: cubic-bezier(0, 0, 0.2, 1); }
+}
+.cryptsk-bounce {
+  animation: cryptsk-bounce 1s infinite;
+}
+
+/* Glow pulse (AI features) */
+@keyframes ai-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(124, 58, 237, 0.3); }
+  50% { box-shadow: 0 0 25px rgba(124, 58, 237, 0.6); }
+}
+.ai-glow {
+  animation: ai-glow 2s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   REDUCED MOTION — respect user preference (spec §07)
+   ───────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .cryptsk-card-load,
+  .cryptsk-pulse-dot,
+  .shimmer,
+  .badge-pulse,
+  .confetti-fall,
+  .login-gradient-spin,
+  .sidebar-slide-in,
+  .cryptsk-fade-in,
+  .cryptsk-slide-up,
+  .cryptsk-scale-in,
+  .cryptsk-spin,
+  .cryptsk-ping,
+  .cryptsk-bounce,
+  .ai-glow {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PRINT — voucher handout sheet (T10-c). Everything but the
+   .print-area sheet is hidden on paper; voucher cards never
+   split across page breaks.
+   ───────────────────────────────────────────────────────────── */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 12px; }
+  .print-no-repeat-break { break-inside: avoid; }
+}
+
+/* T10-c print support: neutralize the shadcn dialog shell (fixed
+   positioning + centering transform + screen-only scroll clamp)
+   so the absolute .print-area is anchored to the page itself and
+   the full sheet flows across printed pages. Screen styles are
+   untouched — these rules only apply under @media print. */
+@media print {
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    translate: none !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+  .print-area {
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    color: #111827 !important;
+  }
+}

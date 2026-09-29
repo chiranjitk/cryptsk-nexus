@@ -1,405 +1,667 @@
+/**
+ * Cryptsk ISP Platform — Database Seed Script
+ *
+ * Usage:
+ *   DATABASE_URL="postgresql://cryptsk:Cryptsk2026@localhost:5432/ispplatform" npx tsx prisma/seed.ts
+ *   or via Prisma: npx prisma db seed
+ *
+ * Seeds:
+ *   - Super Admin user
+ *   - ISP default settings
+ *   - Coverage areas (6)
+ *   - Plans (8) with RADIUS groups
+ *   - Demo subscribers (15) with RADIUS provisioning
+ *   - RADIUS check/reply/user-group entries
+ *   - Sample NAS device
+ *   - Sample invoices and payments
+ */
+
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import { hash } from "bcryptjs";
+import { randomUUID } from "crypto";
 
-// ============================================================
-// CRYPTSK Nexus — Phase 1 Seed Script
-// Per: docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
-//
-// Creates:
-//   - 1 admin user (admin@cryptsk.com / Admin@2026)
-//   - 15 roles (Super Admin, Platform Admin, NOC Operator, etc.)
-//   - Core permissions (resource × action)
-//   - Super Admin gets all permissions
-//
-// Usage:
-//   bun run db:seed
-// ============================================================
+const prisma = new PrismaClient();
 
-const db = new PrismaClient();
+// ─── Seed Configuration ──────────────────────────────────────
 
-const ROLES = [
-  { name: "Super Administrator", slug: "super_admin", isSystem: true, isBreakGlass: true, sortOrder: 0 },
-  { name: "Platform Administrator", slug: "platform_admin", isSystem: true, sortOrder: 1 },
-  { name: "NOC Operator", slug: "noc_operator", isSystem: true, sortOrder: 2 },
-  { name: "Network Engineer", slug: "network_engineer", isSystem: true, sortOrder: 3 },
-  { name: "AAA Operator", slug: "aaa_operator", isSystem: true, sortOrder: 4 },
-  { name: "Billing Manager", slug: "billing_manager", isSystem: true, sortOrder: 5 },
-  { name: "Finance Operator", slug: "finance_operator", isSystem: true, sortOrder: 6 },
-  { name: "Support Lead", slug: "support_lead", isSystem: true, sortOrder: 7 },
-  { name: "Support Agent", slug: "support_agent", isSystem: true, sortOrder: 8 },
-  { name: "Field Technician", slug: "field_technician", isSystem: true, sortOrder: 9 },
-  { name: "Sales / Collection Agent", slug: "sales_agent", isSystem: true, sortOrder: 10 },
-  { name: "Reseller / Partner", slug: "reseller", isSystem: true, sortOrder: 11 },
-  { name: "Read-only Auditor", slug: "auditor", isSystem: true, sortOrder: 12 },
-  { name: "Scope Administrator", slug: "scope_admin", isSystem: true, sortOrder: 13 },
-  { name: "LCO / Partner Operator", slug: "lco_operator", isSystem: true, sortOrder: 14 },
+const ADMIN_USER = {
+  id: "usr_admin_001",
+  email: "admin@cryptsk.com",
+  name: "Super Administrator",
+  password: "Admin@2026",
+  phone: "9000000001",
+  role: "SUPER_ADMIN" as const,
+  status: "ACTIVE" as const,
+};
+
+const ISP_SETTINGS = {
+  companyName: "Cryptsk Networks Pvt Ltd",
+  tagline: "Intelligent ISP Management Platform",
+  address: "42 Tech Park, Salt Lake",
+  city: "Kolkata",
+  state: "West Bengal",
+  pincode: "700091",
+  phone: "+91-33-4000-0001",
+  email: "support@cryptsk.com",
+  website: "https://cryptsk.com",
+  gstin: "19AABCU9603R1ZM",
+  primaryColor: "#DC2626",
+  currency: "INR",
+  timezone: "Asia/Kolkata",
+  gracePeriodDays: 5,
+  lateFeeType: "PERCENTAGE" as const,
+  lateFeeValue: 2,
+  invoicePrefix: "INV",
+  customerCodePrefix: "CRY",
+  defaultCgstRate: 9,
+  defaultSgstRate: 9,
+  taxInclusive: false,
+  kpiTargets: JSON.stringify({
+    dailyCollectionTarget: 50000,
+    monthlyCollectionTarget: 1500000,
+    newConnectionTarget: 20,
+    churnRateTarget: 2,
+    uptimeTarget: 99.5,
+    complaintResolutionTarget: 4,
+  }),
+};
+
+const AREAS = [
+  { name: "Salt Lake", code: "SL", description: "Salt Lake City, Sector I-V" },
+  { name: "New Town", code: "NT", description: "New Town, Rajarhat" },
+  { name: "Lake Town", code: "LT", description: "Lake Town, Bangur Avenue" },
+  { name: "Dum Dum", code: "DD", description: "Dum Dum, Durganagar" },
+  { name: "Barasat", code: "BR", description: "Barasat, Madhyamgram" },
+  { name: "Howrah", code: "HW", description: "Howrah, Shibpur" },
 ];
 
-const RESOURCES = [
-  "subscriber", "session", "policy", "billing.invoice", "billing.payment",
-  "billing.refund", "network.device", "network.gateway", "network.interface",
-  "aaa.radius", "aaa.nas", "user", "role", "permission", "module",
-  "feature_flag", "api_key", "system_setting", "audit", "report",
-  "ticket", "installation", "inventory", "whatsapp", "sms", "email",
-  "mikrotik", "snmp", "tr069", "ssh", "captive_portal", "dhcp", "dns",
-  "ai_advisor", "ai_diagnosis", "ai_churn", "ai_forecast", "monitoring",
+const PLANS = [
+  {
+    name: "Basic 30 Mbps",
+    category: "FTTH" as const,
+    downloadSpeed: 30720,
+    uploadSpeed: 15360,
+    priceMonthly: 399,
+    installationCharge: 500,
+    securityDeposit: 500,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: false,
+    sortOrder: 1,
+    contentionRatio: "1:10",
+    slaUptime: 99.0,
+  },
+  {
+    name: "Standard 50 Mbps",
+    category: "FTTH" as const,
+    downloadSpeed: 51200,
+    uploadSpeed: 25600,
+    priceMonthly: 599,
+    installationCharge: 500,
+    securityDeposit: 500,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: true,
+    sortOrder: 2,
+    contentionRatio: "1:10",
+    slaUptime: 99.2,
+  },
+  {
+    name: "Premium 100 Mbps",
+    category: "FTTH" as const,
+    downloadSpeed: 102400,
+    uploadSpeed: 51200,
+    priceMonthly: 999,
+    installationCharge: 0,
+    securityDeposit: 1000,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: true,
+    sortOrder: 3,
+    contentionRatio: "1:8",
+    slaUptime: 99.5,
+  },
+  {
+    name: "Ultra 200 Mbps",
+    category: "FTTH" as const,
+    downloadSpeed: 204800,
+    uploadSpeed: 102400,
+    priceMonthly: 1499,
+    installationCharge: 0,
+    securityDeposit: 1000,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: false,
+    sortOrder: 4,
+    contentionRatio: "1:8",
+    burstSpeed: 256000,
+    burstDuration: 30,
+    slaUptime: 99.7,
+  },
+  {
+    name: "Enterprise 500 Mbps",
+    category: "FTTH" as const,
+    downloadSpeed: 512000,
+    uploadSpeed: 256000,
+    priceMonthly: 2999,
+    installationCharge: 0,
+    securityDeposit: 0,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: false,
+    sortOrder: 5,
+    contentionRatio: "1:4",
+    burstSpeed: 614400,
+    burstDuration: 60,
+    slaUptime: 99.9,
+  },
+  {
+    name: "Wireless 20 Mbps",
+    category: "WIRELESS" as const,
+    downloadSpeed: 20480,
+    uploadSpeed: 10240,
+    priceMonthly: 349,
+    installationCharge: 800,
+    securityDeposit: 500,
+    validityDays: 30,
+    dataLimitGb: 500,
+    status: "ACTIVE" as const,
+    isPopular: false,
+    sortOrder: 10,
+    contentionRatio: "1:15",
+    slaUptime: 98.0,
+  },
+  {
+    name: "Wireless 40 Mbps",
+    category: "WIRELESS" as const,
+    downloadSpeed: 40960,
+    uploadSpeed: 20480,
+    priceMonthly: 549,
+    installationCharge: 800,
+    securityDeposit: 500,
+    validityDays: 30,
+    dataLimitGb: 750,
+    status: "ACTIVE" as const,
+    isPopular: true,
+    sortOrder: 11,
+    contentionRatio: "1:12",
+    slaUptime: 98.5,
+  },
+  {
+    name: "Cable 30 Mbps",
+    category: "CABLE" as const,
+    downloadSpeed: 30720,
+    uploadSpeed: 15360,
+    priceMonthly: 299,
+    installationCharge: 300,
+    securityDeposit: 300,
+    validityDays: 30,
+    dataLimitGb: null,
+    status: "ACTIVE" as const,
+    isPopular: false,
+    sortOrder: 20,
+    contentionRatio: "1:20",
+    slaUptime: 97.0,
+  },
 ];
 
-const ACTIONS = ["read", "list", "create", "update", "delete", "approve", "execute", "export", "manage"] as const;
+// Demo subscribers with realistic Indian names and data
+const DEMO_SUBSCRIBERS = [
+  {
+    name: "Amit Sharma",
+    phone: "9876543210",
+    email: "amit.sharma@gmail.com",
+    areaCode: "SL",
+    planName: "Standard 50 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Block A, Sector V, Salt Lake",
+    macAddress: "AA:BB:CC:11:22:33",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Priya Das",
+    phone: "9876543211",
+    email: "priya.das@outlook.com",
+    areaCode: "NT",
+    planName: "Premium 100 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Tower 4, Eco Space, New Town",
+    macAddress: "AA:BB:CC:22:33:44",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Rajesh Kumar",
+    phone: "9876543212",
+    email: "rajesh.k@yahoo.com",
+    areaCode: "LT",
+    planName: "Basic 30 Mbps",
+    connectionType: "FTTH" as const,
+    address: "13 Bangur Avenue, Lake Town",
+    macAddress: "AA:BB:CC:33:44:55",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Sneha Mukherjee",
+    phone: "9876543213",
+    email: "sneha.m@gmail.com",
+    areaCode: "SL",
+    planName: "Ultra 200 Mbps",
+    connectionType: "FTTH" as const,
+    address: "FD Block, Salt Lake",
+    macAddress: "AA:BB:CC:44:55:66",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Sourav Banerjee",
+    phone: "9876543214",
+    email: "sourav.b@gmail.com",
+    areaCode: "DD",
+    planName: "Wireless 40 Mbps",
+    connectionType: "WIRELESS" as const,
+    address: "Durganagar, Dum Dum",
+    macAddress: "AA:BB:CC:55:66:77",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Ananya Ghosh",
+    phone: "9876543215",
+    email: "ananya.g@outlook.com",
+    areaCode: "BR",
+    planName: "Standard 50 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Barasat Main Road",
+    macAddress: "AA:BB:CC:66:77:88",
+    radiusEnabled: false,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Debasis Roy",
+    phone: "9876543216",
+    email: "debasis.r@gmail.com",
+    areaCode: "HW",
+    planName: "Basic 30 Mbps",
+    connectionType: "CABLE" as const,
+    address: "Shibpur, Howrah",
+    macAddress: "AA:BB:CC:77:88:99",
+    radiusEnabled: true,
+    status: "SUSPENDED" as const,
+  },
+  {
+    name: "Tanmoy Paul",
+    phone: "9876543217",
+    email: "tanmoy.p@gmail.com",
+    areaCode: "SL",
+    planName: "Enterprise 500 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Sector III, Salt Lake",
+    macAddress: "AA:BB:CC:88:99:AA",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Mousumi Saha",
+    phone: "9876543218",
+    email: "mousumi.s@outlook.com",
+    areaCode: "NT",
+    planName: "Wireless 20 Mbps",
+    connectionType: "WIRELESS" as const,
+    address: "Action Area I, New Town",
+    macAddress: "AA:BB:CC:99:AA:BB",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Indranil Chakraborty",
+    phone: "9876543219",
+    email: "indranil.c@gmail.com",
+    areaCode: "LT",
+    planName: "Premium 100 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Lake Town South",
+    macAddress: "AA:BB:CC:AA:BB:CC",
+    radiusEnabled: false,
+    status: "TRIAL" as const,
+  },
+  {
+    name: "Rupam Dutta",
+    phone: "9876543220",
+    email: "rupam.d@gmail.com",
+    areaCode: "DD",
+    planName: "Cable 30 Mbps",
+    connectionType: "CABLE" as const,
+    address: "Kestopur, Dum Dum",
+    macAddress: "AA:BB:CC:BB:CC:DD",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Pallabi Sen",
+    phone: "9876543221",
+    email: "pallabi.s@outlook.com",
+    areaCode: "SL",
+    planName: "Standard 50 Mbps",
+    connectionType: "FTTH" as const,
+    address: "BE Block, Salt Lake",
+    macAddress: "AA:BB:CC:CC:DD:EE",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Arka Bhattacharya",
+    phone: "9876543222",
+    email: "arka.b@gmail.com",
+    areaCode: "NT",
+    planName: "Ultra 200 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Uniworld City, New Town",
+    macAddress: "AA:BB:CC:DD:EE:FF",
+    radiusEnabled: true,
+    status: "ACTIVE" as const,
+  },
+  {
+    name: "Sujata Kayal",
+    phone: "9876543223",
+    email: "sujata.k@gmail.com",
+    areaCode: "BR",
+    planName: "Wireless 40 Mbps",
+    connectionType: "WIRELESS" as const,
+    address: "Madhyamgram, Barasat",
+    macAddress: "11:22:33:44:55:66",
+    radiusEnabled: false,
+    status: "PENDING_ACTIVATION" as const,
+  },
+  {
+    name: "Bikash Mondal",
+    phone: "9876543224",
+    email: "bikash.m@outlook.com",
+    areaCode: "HW",
+    planName: "Standard 50 Mbps",
+    connectionType: "FTTH" as const,
+    address: "Shibpur Bazaar, Howrah",
+    macAddress: "22:33:44:55:66:77",
+    radiusEnabled: true,
+    status: "DISCONNECTED" as const,
+  },
+];
+
+// ─── Main Seed Function ──────────────────────────────────────
 
 async function main() {
-  console.log("🌱 CRYPTSK Nexus — Phase 1 Seed starting…\n");
+  console.log("🌱 Cryptsk ISP Platform — Seeding database...\n");
 
-  // ── 1. Create roles ──
-  console.log("1. Creating 15 roles…");
-  for (const role of ROLES) {
-    await db.role.upsert({
-      where: { slug: role.slug },
-      update: role,
-      create: role,
+  // 1. Seed Admin User
+  console.log("▸ Seeding admin user...");
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: ADMIN_USER.email },
+  });
+  if (!existingAdmin) {
+    const hashedPassword = await hash(ADMIN_USER.password, 12);
+    await prisma.user.create({
+      data: {
+        id: ADMIN_USER.id,
+        email: ADMIN_USER.email,
+        name: ADMIN_USER.name,
+        password: hashedPassword,
+        phone: ADMIN_USER.phone,
+        role: ADMIN_USER.role,
+        status: ADMIN_USER.status,
+        updatedAt: new Date(),
+      },
     });
+    console.log(`  ✅ Admin created: ${ADMIN_USER.email} / ${ADMIN_USER.password}`);
+  } else {
+    console.log(`  ⏭️  Admin already exists: ${ADMIN_USER.email}`);
   }
-  console.log("   ✓ 15 roles created\n");
 
-  // ── 2. Create permissions ──
-  console.log("2. Creating permissions…");
-  let permCount = 0;
-  for (const resource of RESOURCES) {
-    for (const action of ACTIONS) {
-      await db.permission.upsert({
-        where: { resource_action: { resource, action } },
-        update: {},
-        create: {
-          resource,
-          action,
-          description: `${action} ${resource}`,
-          isSystem: true,
+  // 2. Seed ISP Settings
+  console.log("▸ Seeding ISP settings...");
+  const existingSettings = await prisma.ispSettings.findUnique({
+    where: { id: "default" },
+  });
+  if (!existingSettings) {
+    await prisma.ispSettings.create({
+      data: {
+        ...ISP_SETTINGS,
+        updatedAt: new Date(),
+      },
+    });
+    console.log(`  ✅ ISP settings created: ${ISP_SETTINGS.companyName}`);
+  } else {
+    console.log("  ⏭️  ISP settings already exist");
+  }
+
+  // 3. Seed Areas
+  console.log("▸ Seeding coverage areas...");
+  let areasCreated = 0;
+  const areaMap: Record<string, string> = {};
+  for (const area of AREAS) {
+    const exists = await prisma.area.findUnique({ where: { code: area.code } });
+    if (!exists) {
+      const created = await prisma.area.create({ data: { id: randomUUID(), ...area, updatedAt: new Date() } });
+      areasCreated++;
+      areaMap[area.code] = created.id;
+    } else {
+      areaMap[area.code] = exists.id;
+    }
+  }
+  console.log(`  ✅ ${areasCreated} area(s) created`);
+
+  // 4. Seed Plans + RADIUS Groups
+  console.log("▸ Seeding plans + RADIUS groups...");
+  let plansCreated = 0;
+  const planMap: Record<string, { id: string; groupId: string }> = {};
+  for (const plan of PLANS) {
+    const existingPlan = await prisma.plan.findFirst({
+      where: { name: plan.name },
+    });
+    if (!existingPlan) {
+      const groupName = plan.name.replace(/\s+/g, "-").toLowerCase();
+      const dlMbps = Math.round(plan.downloadSpeed / 1024);
+      const ulMbps = Math.round(plan.uploadSpeed / 1024);
+
+      // Create or reuse RADIUS group
+      const existingGroup = await prisma.radiusGroup.findUnique({
+        where: { name: groupName },
+      });
+      const radiusGroup = existingGroup || await prisma.radiusGroup.create({
+        data: {
+          id: randomUUID(),
+          name: groupName,
+          description: `RADIUS group for ${plan.name}`,
+          speedLimitDown: dlMbps,
+          speedLimitUp: ulMbps,
+          dataLimit: plan.dataLimitGb ? Math.round(plan.dataLimitGb * 1024) : null,
+          sessionTimeout: plan.validityDays * 86400,
+          updatedAt: new Date(),
         },
       });
-      permCount++;
-    }
-  }
-  console.log(`   ✓ ${permCount} permissions created (${RESOURCES.length} resources × ${ACTIONS.length} actions)\n`);
 
-  // ── 3. Assign ALL permissions to Super Administrator ──
-  console.log("3. Assigning all permissions to Super Administrator…");
-  const superAdmin = await db.role.findUnique({ where: { slug: "super_admin" } });
-  if (!superAdmin) throw new Error("Super Administrator role not found");
-
-  const allPerms = await db.permission.findMany();
-  for (const perm of allPerms) {
-    await db.rolePermission.upsert({
-      where: {
-        roleId_permissionId: { roleId: superAdmin.id, permissionId: perm.id },
-      },
-      update: {},
-      create: { roleId: superAdmin.id, permissionId: perm.id },
-    });
-  }
-  console.log(`   ✓ ${allPerms.length} permissions assigned to Super Administrator\n`);
-
-  // ── 4. Assign read permissions to Read-only Auditor ──
-  console.log("4. Assigning read permissions to Read-only Auditor…");
-  const auditor = await db.role.findUnique({ where: { slug: "auditor" } });
-  if (auditor) {
-    const readPerms = allPerms.filter((p) => p.action === "read" || p.action === "list" || p.action === "export");
-    for (const perm of readPerms) {
-      await db.rolePermission.upsert({
-        where: { roleId_permissionId: { roleId: auditor.id, permissionId: perm.id } },
-        update: {},
-        create: { roleId: auditor.id, permissionId: perm.id },
+      const createdPlan = await prisma.plan.create({
+        data: {
+          id: randomUUID(),
+          ...plan,
+          groupId: radiusGroup.id,
+          updatedAt: new Date(),
+        },
       });
-    }
-    console.log(`   ✓ ${readPerms.length} read/list/export permissions assigned to Read-only Auditor\n`);
-  }
-
-  // ── 5. Create admin user ──
-  console.log("5. Creating admin user (admin@cryptsk.com / Admin@2026)…");
-  const passwordHash = await bcrypt.hash("Admin@2026", 12);
-  const adminUser = await db.user.upsert({
-    where: { email: "admin@cryptsk.com" },
-    update: {},
-    create: {
-      email: "admin@cryptsk.com",
-      username: "admin",
-      name: "Super Administrator",
-      passwordHash,
-      status: "active",
-      forcePasswordChange: false,
-      timezone: "Asia/Kolkata",
-      locale: "en",
-    },
-  });
-  console.log(`   ✓ Admin user created (ID: ${adminUser.id})\n`);
-
-  // ── 6. Assign Super Administrator role to admin ──
-  console.log("6. Assigning Super Administrator role to admin user…");
-  await db.userRole.upsert({
-    where: { userId_roleId: { userId: adminUser.id, roleId: superAdmin.id } },
-    update: {},
-    create: {
-      userId: adminUser.id,
-      roleId: superAdmin.id,
-      assignedBy: adminUser.id,
-    },
-  });
-  console.log("   ✓ Role assigned\n");
-
-  // ── 7. Create core system settings ──
-  console.log("7. Creating system settings…");
-  const settings = [
-    { key: "platform.name", value: "CRYPTSK Nexus", type: "string", category: "general", description: "Platform display name" },
-    { key: "platform.version", value: "1.0.0", type: "string", category: "general", description: "Platform version" },
-    { key: "platform.phase", value: "1", type: "string", category: "general", description: "Current implementation phase" },
-    { key: "auth.session_timeout", value: "28800", type: "number", category: "security", description: "Session timeout in seconds (8h)" },
-    { key: "auth.lockout_threshold", value: "5", type: "number", category: "security", description: "Failed login attempts before lockout" },
-    { key: "auth.lockout_duration", value: "900", type: "number", category: "security", description: "Lockout duration in seconds (15m)" },
-    { key: "billing.currency", value: "INR", type: "string", category: "billing", description: "Default currency" },
-    { key: "billing.gst_enabled", value: "true", type: "boolean", category: "billing", description: "Enable GST tax calculation" },
-    { key: "ai.enabled", value: "true", type: "boolean", category: "ai", description: "Enable AI features (advisory only per ADR-030)" },
-  ];
-  for (const s of settings) {
-    await db.systemSetting.upsert({
-      where: { key: s.key },
-      update: {},
-      create: s,
-    });
-  }
-  console.log(`   ✓ ${settings.length} system settings created\n`);
-
-  // ── 8. Create core modules ──
-  console.log("8. Creating modules…");
-  const modules = [
-    { name: "Dashboard", slug: "dashboard", description: "Main dashboard", status: "active", isRequired: true, sortOrder: 0 },
-    { name: "Identity & Administration", slug: "identity_admin", description: "Users, roles, permissions, RBAC, audit", status: "active", isRequired: true, sortOrder: 1 },
-    { name: "Customer & Services", slug: "customer_service", description: "Customers, subscribers, products, packages", status: "active", sortOrder: 2 },
-    { name: "AAA", slug: "aaa", description: "RADIUS auth/authz/accounting", status: "active", sortOrder: 3 },
-    { name: "Session Engine", slug: "session_engine", description: "Live session management", status: "active", sortOrder: 4 },
-    { name: "Policy Engine", slug: "policy_engine", description: "Policy definition and enforcement", status: "active", sortOrder: 5 },
-    { name: "VPP Gateway", slug: "vpp_gateway", description: "DPDK/VPP dataplane", status: "active", sortOrder: 6 },
-    { name: "Billing & Finance", slug: "billing_finance", description: "Invoices, payments, collections", status: "active", sortOrder: 7 },
-    { name: "Operations & Support", slug: "operations_support", description: "Tickets, installations, inventory", status: "active", sortOrder: 8 },
-    { name: "Reports & Analytics", slug: "reporting", description: "Revenue, usage, SLA reports and data export", status: "active", sortOrder: 9 },
-    { name: "Monitoring", slug: "monitoring", description: "Live monitoring, syslog, alerts", status: "active", sortOrder: 10 },
-    { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "active", sortOrder: 11 },
-  ];
-  for (const m of modules) {
-    await db.module.upsert({
-      where: { slug: m.slug },
-      update: {},
-      create: m,
-    });
-  }
-  console.log(`   ✓ ${modules.length} modules created\n`);
-
-  // ── 9. Role-permission matrix (idempotent, additive — never prunes manual links) ──
-  console.log("9. Applying role-permission matrix…");
-
-  /** Expand helper: P(resource, [actions]) → [resource, action] tuples */
-  function P(resource: string, actions: string[]): Array<[string, string]> {
-    return actions.map((a) => [resource, a] as [string, string]);
-  }
-
-  // Enterprise RBAC matrix per docs/architecture/08_SECURITY_RBAC_SPECIFICATION.md
-  // Key = role slug, value = "ALL" (every permission) or [resource, action] tuples.
-  // super_admin bypasses RBAC in code (src/lib/rbac.ts) but is also fully seeded.
-  const ROLE_PERMISSION_MATRIX: Record<string, "ALL" | Array<[string, string]>> = {
-    super_admin: "ALL",
-
-    platform_admin: [
-      ...P("user", ["manage"]),
-      ...P("role", ["manage"]),
-      ...P("module", ["manage"]),
-      ...P("feature_flag", ["manage"]),
-      ...P("api_key", ["manage"]),
-      ...P("system_setting", ["manage"]),
-      ...P("audit", ["read", "list", "export"]),
-      ...P("subscriber", ["manage"]),
-      ...P("billing.invoice", ["manage"]),
-      ...P("billing.payment", ["manage"]),
-      ...P("billing.refund", ["manage"]),
-      ...P("network.device", ["manage"]),
-      ...P("network.gateway", ["manage"]),
-      ...P("network.interface", ["manage"]),
-      ...P("aaa.radius", ["manage"]),
-      ...P("aaa.nas", ["manage"]),
-      ...P("dhcp", ["manage"]),
-      ...P("dns", ["manage"]),
-      ...P("policy", ["manage"]),
-      ...P("report", ["read", "list", "export"]),
-    ],
-
-    noc_operator: [
-      ...P("session", ["read", "list", "execute"]),
-      ...P("aaa.radius", ["read", "list"]),
-      ...P("aaa.nas", ["read", "list"]),
-      ...P("network.device", ["read", "list"]),
-      ...P("dhcp", ["read", "list"]),
-      ...P("dns", ["read", "list"]),
-      ...P("report", ["read", "list"]),
-      ...P("audit", ["read", "list"]),
-    ],
-
-    network_engineer: [
-      ...P("network.device", ["manage"]),
-      ...P("dhcp", ["manage"]),
-      ...P("dns", ["manage"]),
-      ...P("policy", ["read", "list", "update"]),
-      ...P("report", ["read", "list"]),
-    ],
-
-    aaa_operator: [
-      ...P("aaa.radius", ["manage"]),
-      ...P("aaa.nas", ["manage"]),
-      ...P("session", ["read", "list", "execute"]),
-      ...P("subscriber", ["read", "list"]),
-      ...P("audit", ["read", "list"]),
-    ],
-
-    billing_manager: [
-      ...P("billing.invoice", ["manage"]),
-      ...P("billing.payment", ["manage"]),
-      ...P("billing.refund", ["approve"]),
-      ...P("subscriber", ["read", "list"]),
-      ...P("report", ["read", "list", "export"]),
-      ...P("audit", ["read", "list"]),
-    ],
-
-    finance_operator: [
-      ...P("billing.payment", ["create", "update", "list", "read"]),
-      ...P("billing.invoice", ["read", "list"]),
-      ...P("report", ["read", "list", "export"]),
-    ],
-
-    support_lead: [
-      ...P("subscriber", ["manage"]),
-      ...P("session", ["read", "list"]),
-      ...P("ticket", ["manage"]),
-      ...P("installation", ["manage"]),
-      ...P("audit", ["read", "list"]),
-    ],
-
-    support_agent: [
-      ...P("subscriber", ["read", "list", "update"]),
-      ...P("ticket", ["create", "update", "list", "read"]),
-      ...P("session", ["read", "list"]),
-    ],
-
-    field_technician: [
-      ...P("installation", ["read", "list", "update"]),
-      ...P("subscriber", ["read", "list"]),
-      ...P("inventory", ["read", "list"]),
-    ],
-
-    sales_agent: [
-      ...P("subscriber", ["read", "list", "create"]),
-      ...P("report", ["read"]),
-      ...P("billing.invoice", ["read", "list"]),
-    ],
-
-    reseller: [
-      ...P("subscriber", ["read", "list"]),
-      ...P("report", ["read"]),
-      ...P("billing.invoice", ["read", "list"]),
-    ],
-
-    // Read-only persona: read + list + export only
-    auditor: [
-      ...["audit", "report", "user", "role", "subscriber", "billing.invoice", "billing.payment",
-        "session", "aaa.radius", "network.device", "policy", "dhcp", "dns"].flatMap((r) =>
-        P(r, ["read", "list", "export"])
-      ),
-    ],
-
-    scope_admin: [
-      ...P("subscriber", ["manage"]),
-      ...P("report", ["read", "list"]),
-      ...P("policy", ["read", "list"]),
-    ],
-
-    lco_operator: [
-      ...P("subscriber", ["read", "list", "update"]),
-      ...P("session", ["read", "list"]),
-      ...P("report", ["read"]),
-      ...P("billing.payment", ["create"]),
-    ],
-  };
-
-  // Map "resource.action" → permission id (seed step 2 guarantees all exist)
-  const matrixPermRecords = await db.permission.findMany({
-    select: { id: true, resource: true, action: true },
-  });
-  const permIdByKey = new Map<string, string>(
-    matrixPermRecords.map((p) => [`${p.resource}.${p.action}`, p.id])
-  );
-
-  // Existing links → idempotency: only add missing links, never remove
-  const existingRolePerms = await db.rolePermission.findMany({
-    select: { roleId: true, permissionId: true },
-  });
-  const linkedByRole = new Map<string, Set<string>>();
-  for (const rp of existingRolePerms) {
-    let set = linkedByRole.get(rp.roleId);
-    if (!set) {
-      set = new Set();
-      linkedByRole.set(rp.roleId, set);
-    }
-    set.add(rp.permissionId);
-  }
-
-  let matrixLinksCreated = 0;
-  for (const [roleSlug, spec] of Object.entries(ROLE_PERMISSION_MATRIX)) {
-    const role = await db.role.findUnique({
-      where: { slug: roleSlug },
-      select: { id: true, name: true },
-    });
-    if (!role) {
-      console.log(`   ⚠ role "${roleSlug}" not found — skipped`);
-      continue;
-    }
-
-    let targetIds: string[];
-    if (spec === "ALL") {
-      targetIds = matrixPermRecords.map((p) => p.id);
+      plansCreated++;
+      planMap[plan.name] = { id: createdPlan.id, groupId: radiusGroup.id };
     } else {
-      const ids: string[] = [];
-      for (const [resource, action] of spec) {
-        const id = permIdByKey.get(`${resource}.${action}`);
-        if (!id) {
-          console.log(`   ⚠ permission "${resource}.${action}" not found — skipped`);
-          continue;
-        }
-        ids.push(id);
-      }
-      targetIds = Array.from(new Set(ids));
+      planMap[plan.name] = { id: existingPlan.id, groupId: existingPlan.groupId || "" };
     }
-
-    const already = linkedByRole.get(role.id) ?? new Set<string>();
-    const missing = targetIds.filter((id) => !already.has(id));
-    if (missing.length > 0) {
-      await db.rolePermission.createMany({
-        data: missing.map((permissionId) => ({ roleId: role.id, permissionId })),
-        skipDuplicates: true,
-      });
-    }
-    matrixLinksCreated += missing.length;
-    console.log(
-      `   ✓ ${roleSlug} (${role.name}): +${missing.length} new → ${targetIds.length} permissions total`
-    );
   }
-  console.log(`   ✓ Role-permission matrix applied (${matrixLinksCreated} new links)\n`);
+  console.log(`  ✅ ${plansCreated} plan(s) created with RADIUS provisioning`);
 
-  // ── Summary ──
-  console.log("══════════════════════════════════════════════════");
-  console.log("✅ SEED COMPLETE");
-  console.log("══════════════════════════════════════════════════");
-  console.log(`Roles:        15`);
-  console.log(`Permissions:  ${allPerms.length}`);
-  console.log(`Role perms:   +${matrixLinksCreated} links via matrix`);
-  console.log(`Admin user:   admin@cryptsk.com (password: Admin@2026)`);
-  console.log(`Settings:     ${settings.length}`);
-  console.log(`Modules:      ${modules.length}`);
-  console.log("══════════════════════════════════════════════════");
+  // 5. Seed Demo Subscribers + RADIUS provisioning
+  console.log("▸ Seeding demo subscribers + RADIUS entries...");
+  let subsCreated = 0;
+  const existingSubCount = await prisma.subscriber.count();
+
+  if (existingSubCount === 0) {
+    for (let i = 0; i < DEMO_SUBSCRIBERS.length; i++) {
+      const sub = DEMO_SUBSCRIBERS[i];
+      const code = `CRY${String(i + 1).padStart(5, "0")}`;
+      const serviceUsername = sub.name.toLowerCase().replace(/\s+/g, ".").replace(/[.]+/g, ".");
+      const servicePassword = `Cryptsk@${String(i + 1).padStart(3, "0")}`;
+      const areaId = areaMap[sub.areaCode];
+      const planInfo = planMap[sub.planName];
+
+      // Create subscriber
+      const subscriber = await prisma.subscriber.create({
+        data: {
+          id: randomUUID(),
+          code,
+          name: sub.name,
+          phone: sub.phone,
+          email: sub.email,
+          areaId,
+          planId: planInfo?.id || null,
+          connectionType: sub.connectionType,
+          address: sub.address,
+          macAddress: sub.macAddress,
+          status: sub.status,
+          serviceUsername,
+          servicePassword,
+          radiusEnabled: sub.radiusEnabled,
+          radiusGroupId: sub.radiusEnabled ? planInfo?.groupId : null,
+          activationDate: sub.status === "ACTIVE" ? new Date() : null,
+          billingStartDate: sub.status === "ACTIVE" ? new Date() : null,
+          currentSpeedDown: planInfo?.id ? PLANS.find(p => p.name === sub.planName)?.downloadSpeed || 0 : 0,
+          currentSpeedUp: planInfo?.id ? PLANS.find(p => p.name === sub.planName)?.uploadSpeed || 0 : 0,
+          balance: sub.status === "ACTIVE" ? Math.random() * 500 : 0,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Create RADIUS user record
+      if (sub.radiusEnabled && planInfo?.groupId) {
+        try {
+          await prisma.radiusUser.create({
+            data: { id: randomUUID(), subscriberId: subscriber.id, updatedAt: new Date() },
+          });
+        } catch (e) {
+          // Ignore duplicate errors
+        }
+
+        // Create RADIUS check entry (Cleartext-Password)
+        try {
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO radcheck (UserName, Attribute, op, Value, subscriber_id)
+             VALUES ($1, 'Cleartext-Password', '==', $2, $3)
+             ON CONFLICT DO NOTHING`,
+            serviceUsername, servicePassword, subscriber.id
+          );
+        } catch (e) {
+          console.error(`  ⚠️  Failed to create radcheck for ${serviceUsername}:`, e);
+        }
+
+        // Create RADIUS user-group mapping
+        const groupName = sub.planName.replace(/\s+/g, "-").toLowerCase();
+        try {
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO radusergroup (UserName, GroupName, priority, subscriber_id, is_active)
+             VALUES ($1, $2, 0, $3, $4)
+             ON CONFLICT DO NOTHING`,
+            serviceUsername, groupName, subscriber.id, sub.status === "ACTIVE"
+          );
+        } catch (e) {
+          console.error(`  ⚠️  Failed to create radusergroup for ${serviceUsername}:`, e);
+        }
+      }
+
+      subsCreated++;
+    }
+    console.log(`  ✅ ${subsCreated} subscriber(s) created`);
+  } else {
+    console.log(`  ⏭️  ${existingSubCount} subscriber(s) already exist, skipping`);
+  }
+
+  // 6. Seed Sample NAS Device
+  console.log("▸ Seeding NAS devices...");
+  const nasExists = await prisma.$queryRawUnsafe(
+    `SELECT 1 FROM nas WHERE nasname = '192.168.1.1' LIMIT 1`
+  );
+  if (!nasExists || (nasExists as any[])?.length === 0) {
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO nas (nasname, shortname, type, ports, secret, server, community, description, status, coa_enabled)
+      VALUES ('192.168.1.1', 'MikroTik-CORE', 'other', 0, 'cryptsksecret', '', 'public', 'Core MikroTik NAS', 'active', true)
+      ON CONFLICT DO NOTHING
+    `);
+    console.log("  ✅ NAS device created: MikroTik-CORE (192.168.1.1)");
+  } else {
+    console.log("  ⏭️  NAS devices already exist");
+  }
+
+  // 7. Seed Sample Invoices for active subscribers
+  console.log("▸ Seeding sample invoices...");
+  let invoicesCreated = 0;
+  const activeSubs = await prisma.subscriber.findMany({
+    where: { status: "ACTIVE", planId: { not: null } },
+    include: { Plan: true },
+    take: 5,
+  });
+  for (const sub of activeSubs) {
+    if (!sub.Plan) continue;
+    const existingInvoice = await prisma.invoice.findFirst({
+      where: { subscriberId: sub.id },
+    });
+    if (!existingInvoice) {
+      const cgst = (sub.Plan.priceMonthly * (sub.Plan.cgstPercent || 9)) / 100;
+      const sgst = (sub.Plan.priceMonthly * (sub.Plan.sgstPercent || 9)) / 100;
+      const total = sub.Plan.priceMonthly + cgst + sgst;
+      await prisma.invoice.create({
+        data: {
+          id: randomUUID(),
+          subscriberId: sub.id,
+          planId: sub.Plan.id,
+          invoiceNumber: `INV-${sub.code}-001`,
+          issueDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+          periodStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          periodEnd: new Date(),
+          subtotal: sub.Plan.priceMonthly,
+          cgstAmount: cgst,
+          sgstAmount: sgst,
+          igstAmount: 0,
+          totalAmount: total,
+          grandTotal: total,
+          status: "DRAFT",
+          updatedAt: new Date(),
+        },
+      });
+      invoicesCreated++;
+    }
+  }
+  console.log(`  ✅ ${invoicesCreated} invoice(s) created`);
+
+  // 8. Summary
+  const totalSubscribers = await prisma.subscriber.count();
+  const totalPlans = await prisma.plan.count();
+  const totalAreas = await prisma.area.count();
+  const totalUsers = await prisma.user.count();
+  const totalRadiusGroups = await prisma.radiusGroup.count();
+  const totalRadcheck = await prisma.$queryRawUnsafe(`SELECT count(*)::int as c FROM radcheck`) as any[];
+  const totalRadusergroup = await prisma.$queryRawUnsafe(`SELECT count(*)::int as c FROM radusergroup`) as any[];
+
+  console.log("\n📊 Database Summary:");
+  console.log(`   Users:              ${totalUsers}`);
+  console.log(`   Areas:              ${totalAreas}`);
+  console.log(`   Plans:              ${totalPlans}`);
+  console.log(`   RADIUS Groups:      ${totalRadiusGroups}`);
+  console.log(`   Subscribers:        ${totalSubscribers}`);
+  console.log(`   RADIUS Users:       ${(totalRadcheck[0] as any)?.c || 0}`);
+  console.log(`   RADIUS User-Groups: ${(totalRadusergroup[0] as any)?.c || 0}`);
+  console.log("\n✅ Seed completed successfully!");
 }
 
 main()
@@ -408,5 +670,5 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await db.$disconnect();
+    await prisma.$disconnect();
   });

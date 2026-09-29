@@ -1,121 +1,164 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditUpdate, auditDelete } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 
-// ============================================================
-// CRYPTSK Nexus — PATCH/DELETE /api/inventory/[id]
-// PATCH fields: quantityDelta (± int, result must stay ≥ 0 → 409),
-// name, category, minQuantity, unitPrice, location
-// ============================================================
-
-// Next.js redirect() inside requireAuth surfaces as a thrown NEXT_REDIRECT —
-// map it to a clean 401 JSON instead of a 500.
-function isRedirectError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && String((err as any)?.digest || "").startsWith("NEXT_REDIRECT");
+function calculateCurrentValue(purchasePrice: number, purchaseDate: Date | null, depreciationRate: number): number {
+  if (!purchaseDate || purchasePrice <= 0 || depreciationRate <= 0) return purchasePrice;
+  const now = new Date();
+  const ageYears = (now.getTime() - purchaseDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  const depreciatedValue = purchasePrice - (purchasePrice * (depreciationRate / 100) * ageYears);
+  return Math.max(0, Math.round(depreciatedValue * 100) / 100);
 }
 
-// PATCH /api/inventory/[id] — stock adjustment + field updates
-export async function PATCH(
+export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("inventory", "update");
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     const { id } = await params;
-    const body = await req.json();
-    const { quantityDelta, name, category, minQuantity, unitPrice, location } = body;
-
-    const current = await db.inventoryItem.findUnique({ where: { id } });
-    if (!current) {
-      return NextResponse.json({ error: "Inventory item not found" }, { status: 404 });
-    }
-
-    const data: Record<string, unknown> = {};
-
-    if (quantityDelta !== undefined && quantityDelta !== null && quantityDelta !== 0) {
-      const delta = Number(quantityDelta);
-      if (!Number.isInteger(delta)) {
-        return NextResponse.json({ error: "quantityDelta must be an integer" }, { status: 400 });
-      }
-      const newQty = current.quantity + delta;
-      if (newQty < 0) {
-        return NextResponse.json(
-          { error: `Insufficient stock: ${current.quantity} units on hand, cannot remove ${Math.abs(delta)}` },
-          { status: 409 }
-        );
-      }
-      data.quantity = newQty;
-    }
-
-    if (name !== undefined && name !== null && String(name).trim()) data.name = String(name).trim();
-    if (category !== undefined) data.category = category?.trim() || null;
-    if (location !== undefined) data.location = location?.trim() || null;
-    if (minQuantity !== undefined && minQuantity !== null && minQuantity !== "") {
-      const minQty = Number(minQuantity);
-      if (!Number.isInteger(minQty) || minQty < 0) {
-        return NextResponse.json({ error: "minQuantity must be an integer ≥ 0" }, { status: 400 });
-      }
-      data.minQuantity = minQty;
-    }
-    if (unitPrice !== undefined) {
-      data.unitPrice = unitPrice === null || unitPrice === "" ? null : Number(unitPrice);
-      if (data.unitPrice !== null && (isNaN(data.unitPrice as number) || (data.unitPrice as number) < 0)) {
-        return NextResponse.json({ error: "unitPrice must be a number ≥ 0" }, { status: 400 });
-      }
-    }
-
-    if (Object.keys(data).length === 0) {
-      return NextResponse.json({ error: "No changes provided" }, { status: 400 });
-    }
-
-    const item = await db.inventoryItem.update({ where: { id }, data });
-
-    await auditUpdate({
-      userId: user.id, action: "update", resource: "inventory_item",
-      resourceId: item.id, resourceName: item.sku,
-      before: { quantity: current.quantity, minQuantity: current.minQuantity, unitPrice: current.unitPrice },
-      after: { quantity: item.quantity, minQuantity: item.minQuantity, unitPrice: item.unitPrice },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
+    const equipment = await db.equipment.findUnique({
+      where: { id },
+      include: {
+        Subscriber: { select: { id: true, name: true, code: true, phone: true, address: true } },
+        Vendor: { select: { id: true, name: true, phone: true, email: true } },
+        StockTransfer: { orderBy: { createdAt: "desc" }, take: 10 },
+      },
     });
 
-    return NextResponse.json({ item });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/inventory/[id]] PATCH failed:", err);
-    return NextResponse.json({ error: "Failed to update inventory item" }, { status: 500 });
+    if (!equipment) {
+      return NextResponse.json({ error: "Equipment not found" }, { status: 404 });
+    }
+
+    const currentValue = equipment.currentValue || calculateCurrentValue(equipment.purchasePrice, equipment.purchaseDate, equipment.depreciationRate);
+    const warrantyStatus = equipment.warrantyExpiry
+      ? new Date(equipment.warrantyExpiry) < new Date()
+        ? "expired"
+        : new Date(equipment.warrantyExpiry) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          ? "expiring-soon"
+          : "active"
+      : "none";
+
+    return NextResponse.json({ Equipment: { ...Equipment, currentValue, warrantyStatus } });
+  } catch (error) {
+    console.error("Inventory GET by ID error:", error);
+    return NextResponse.json({ error: "Failed to fetch equipment" }, { status: 500 });
   }
 }
 
-// DELETE /api/inventory/[id]
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const { id } = await params;
+    const body = await req.json();
+
+    const existing = await db.equipment.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Equipment not found" }, { status: 404 });
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (body.name !== undefined) updateData.name = body.name;
+    if (body.category !== undefined) updateData.category = body.category;
+    if (body.manufacturer !== undefined) updateData.manufacturer = body.manufacturer;
+    if (body.model !== undefined) updateData.model = body.model;
+    if (body.serialNumber !== undefined) updateData.serialNumber = body.serialNumber;
+    if (body.macAddress !== undefined) updateData.macAddress = body.macAddress;
+    if (body.condition !== undefined) updateData.condition = body.condition;
+    if (body.status !== undefined) {
+      updateData.status = body.status;
+      if (body.status === "DEPLOYED") {
+        updateData.assignedAt = new Date();
+        if (body.assignedSubscriberId) updateData.assignedSubscriberId = body.assignedSubscriberId;
+      }
+      if (body.status === "RETURNED") {
+        updateData.returnedAt = new Date();
+        updateData.assignedSubscriberId = null;
+      }
+      if (body.status === "DECOMMISSIONED") {
+        updateData.assignedSubscriberId = null;
+      }
+    }
+    if (body.assignedSubscriberId !== undefined && body.status === undefined) {
+      updateData.assignedSubscriberId = body.assignedSubscriberId || null;
+      if (body.assignedSubscriberId) {
+        updateData.status = "DEPLOYED";
+        updateData.assignedAt = new Date();
+      }
+    }
+    if (body.stockLocation !== undefined) updateData.stockLocation = body.stockLocation;
+    if (body.purchasePrice !== undefined) updateData.purchasePrice = body.purchasePrice;
+    if (body.purchaseDate !== undefined) updateData.purchaseDate = body.purchaseDate ? new Date(body.purchaseDate) : null;
+    if (body.vendorName !== undefined) updateData.vendorName = body.vendorName;
+    if (body.vendorId !== undefined) updateData.vendorId = body.vendorId || null;
+    if (body.depreciationRate !== undefined) updateData.depreciationRate = Number(body.depreciationRate);
+    if (body.warrantyExpiry !== undefined) updateData.warrantyExpiry = body.warrantyExpiry ? new Date(body.warrantyExpiry) : null;
+
+    // Recalculate current value
+    const price = body.purchasePrice !== undefined ? Number(body.purchasePrice) : existing.purchasePrice;
+    const date = body.purchaseDate !== undefined ? (body.purchaseDate ? new Date(body.purchaseDate) : null) : existing.purchaseDate;
+    const rate = body.depreciationRate !== undefined ? Number(body.depreciationRate) : existing.depreciationRate;
+    updateData.currentValue = calculateCurrentValue(price, date, rate);
+
+    const equipment = await db.equipment.update({
+      where: { id },
+      data: updateData,
+      include: {
+        Subscriber: { select: { id: true, name: true, code: true } },
+        Vendor: { select: { id: true, name: true } },
+      },
+    });
+
+    await auditUpdate(req, "Equipment", id, updateData, existing);
+    return NextResponse.json({ equipment });
+  } catch (error) {
+    console.error("Inventory PUT error:", error);
+    return NextResponse.json({ error: "Failed to update equipment" }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("inventory", "delete");
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     const { id } = await params;
 
-    const item = await db.inventoryItem.findUnique({ where: { id } });
-    if (!item) {
-      return NextResponse.json({ error: "Inventory item not found" }, { status: 404 });
+    const existing = await db.equipment.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Equipment not found" }, { status: 404 });
     }
 
-    await db.inventoryItem.delete({ where: { id } });
+    if (existing.status === "DEPLOYED") {
+      return NextResponse.json(
+        { error: "Cannot delete deployed equipment. Return it first." },
+        { status: 400 }
+      );
+    }
 
-    await auditDelete({
-      userId: user.id, action: "delete", resource: "inventory_item",
-      resourceId: id, resourceName: item.sku,
-      before: { sku: item.sku, name: item.name, quantity: item.quantity },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/inventory/[id]] DELETE failed:", err);
-    return NextResponse.json({ error: "Failed to delete inventory item" }, { status: 500 });
+    const deletedRecord = { ...existing };
+    await db.equipment.delete({ where: { id } });
+    await auditDelete(req, "Equipment", id, deletedRecord);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Inventory DELETE error:", error);
+    return NextResponse.json({ error: "Failed to delete equipment" }, { status: 500 });
   }
 }

@@ -1,141 +1,93 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditUpdate, auditDelete } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
+import { auditUpdate } from "@/lib/services/audit-service";
 
-// ============================================================
-// CRYPTSK Nexus — PATCH/DELETE /api/installations/[id]
-// Installation workflow:
-//   scheduled → in_progress | completed | failed | rescheduled
-//   in_progress → completed | failed | rescheduled
-//   rescheduled → in_progress | completed | failed
-//   failed → rescheduled | scheduled   ·   completed is terminal
-// completed sets completedAt; delete allowed only while
-// scheduled / rescheduled / failed.
-// ============================================================
-
-const INSTALL_TRANSITIONS: Record<string, string[]> = {
-  scheduled: ["in_progress", "completed", "failed", "rescheduled"],
-  in_progress: ["completed", "failed", "rescheduled"],
-  completed: [],
-  failed: ["rescheduled", "scheduled"],
-  rescheduled: ["in_progress", "completed", "failed", "scheduled"],
-};
-
-// Next.js redirect() inside requireAuth surfaces as a thrown NEXT_REDIRECT —
-// map it to a clean 401 JSON instead of a 500.
-function isRedirectError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && String((err as any)?.digest || "").startsWith("NEXT_REDIRECT");
-}
-
-// PATCH /api/installations/[id] — status + field updates
-export async function PATCH(
+export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("installation", "update");
     const { id } = await params;
-    const body = await req.json();
-    const { status, scheduledAt, technicianName, notes } = body;
 
-    const current = await db.installation.findUnique({ where: { id } });
-    if (!current) {
+    const installation = await db.installation.findUnique({
+      where: { id },
+      include: {
+        Subscriber: { select: { id: true, name: true, phone: true, email: true, code: true, address: true, Plan: { select: { name: true } } } },
+        Technician: { select: { id: true, name: true, phone: true, email: true, status: true, skills: true } },
+        Area: { select: { id: true, name: true, code: true } },
+        feedbacks: { select: { id: true, rating: true, feedback: true, createdAt: true } },
+      },
+    });
+
+    if (!installation) {
       return NextResponse.json({ error: "Installation not found" }, { status: 404 });
     }
 
-    const data: Record<string, unknown> = {};
+    // Calculate average rating
+    const feedbackList = installation.feedbacks || [];
+    const avgRating = feedbackList.length > 0
+      ? Math.round((feedbackList.reduce((sum, f) => sum + f.rating, 0) / feedbackList.length) * 10) / 10
+      : null;
 
-    if (status && status !== current.status) {
-      const allowed = INSTALL_TRANSITIONS[current.status] || [];
-      if (!allowed.includes(status)) {
-        return NextResponse.json(
-          { error: `Invalid status transition: ${current.status} → ${status}` },
-          { status: 400 }
-        );
-      }
-      data.status = status;
-      if (status === "completed") {
-        data.completedAt = new Date();
-      } else {
-        data.completedAt = null;
-      }
+    return NextResponse.json({ installation, avgRating, feedbackCount: feedbackList.length });
+  } catch (error) {
+    console.error("Installation GET by ID error:", error);
+    return NextResponse.json({ error: "Failed to fetch installation" }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(req);
+    const { id } = await params;
+    const body = await req.json();
+
+    const existing = await db.installation.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Installation not found" }, { status: 404 });
     }
 
-    if (scheduledAt !== undefined) {
-      const d = new Date(scheduledAt);
-      if (isNaN(d.getTime())) {
-        return NextResponse.json({ error: "Invalid scheduledAt date" }, { status: 400 });
-      }
-      data.scheduledAt = d;
-    }
-    if (technicianName !== undefined) data.technicianName = technicianName?.trim() || null;
-    if (notes !== undefined) data.notes = notes?.trim() || null;
+    const updateData: Record<string, unknown> = {};
+    if (body.technicianId !== undefined) updateData.technicianId = body.technicianId;
+    if (body.areaId !== undefined) updateData.areaId = body.areaId || null;
+    if (body.scheduledDate !== undefined) updateData.scheduledDate = new Date(body.scheduledDate);
+    if (body.scheduledTime !== undefined) updateData.scheduledTime = body.scheduledTime;
+    if (body.status !== undefined) updateData.status = body.status;
+    if (body.checklist !== undefined) updateData.checklist = JSON.stringify(body.checklist);
+    if (body.notes !== undefined) updateData.notes = body.notes;
+    if (body.customerSignature !== undefined) updateData.customerSignature = body.customerSignature;
+    if (body.estimatedDurationHours !== undefined) updateData.estimatedDurationHours = Number(body.estimatedDurationHours);
+    if (body.equipmentIds !== undefined) updateData.equipmentIds = JSON.stringify(body.equipmentIds);
+    if (body.cancellationReason !== undefined) updateData.cancellationReason = body.cancellationReason;
+    if (body.subscriberId !== undefined) updateData.subscriberId = body.subscriberId;
 
-    if (Object.keys(data).length === 0) {
-      return NextResponse.json({ error: "No changes provided" }, { status: 400 });
+    // Auto-set completedAt when status changes to COMPLETED
+    if (body.status === "COMPLETED" && !existing.completedAt) {
+      updateData.completedAt = new Date();
     }
 
     const installation = await db.installation.update({
       where: { id },
-      data,
+      data: updateData,
       include: {
-        customer: { select: { id: true, displayName: true, customerCode: true } },
-        subscriber: { select: { id: true, radiusUsername: true } },
+        Subscriber: { select: { id: true, name: true, phone: true, code: true } },
+        Technician: { select: { id: true, name: true, phone: true, status: true } },
+        Area: { select: { id: true, name: true, code: true } },
       },
     });
 
-    await auditUpdate({
-      userId: user.id, action: "update", resource: "installation",
-      resourceId: installation.id, resourceName: installation.installNumber,
-      before: { status: current.status, scheduledAt: current.scheduledAt, technicianName: current.technicianName },
-      after: { status: installation.status, scheduledAt: installation.scheduledAt, technicianName: installation.technicianName },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
+    await auditUpdate(req, "Installation", id, updateData, existing);
     return NextResponse.json({ installation });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/installations/[id]] PATCH failed:", err);
+  } catch (error: unknown) {
+    console.error("Installation PUT error:", error);
+    if (error && typeof error === "object" && "statusCode" in error) {
+      const err = error as { statusCode: number; message: string };
+      return NextResponse.json({ error: err.message }, { status: err.statusCode });
+    }
     return NextResponse.json({ error: "Failed to update installation" }, { status: 500 });
-  }
-}
-
-// DELETE /api/installations/[id] — only unscheduled/failed jobs
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const user = await requirePermission("installation", "delete");
-    const { id } = await params;
-
-    const installation = await db.installation.findUnique({ where: { id } });
-    if (!installation) {
-      return NextResponse.json({ error: "Installation not found" }, { status: 404 });
-    }
-    if (!["scheduled", "rescheduled", "failed"].includes(installation.status)) {
-      return NextResponse.json(
-        { error: `Installations in status "${installation.status}" cannot be deleted — only scheduled, rescheduled or failed jobs.` },
-        { status: 409 }
-      );
-    }
-
-    await db.installation.delete({ where: { id } });
-
-    await auditDelete({
-      userId: user.id, action: "delete", resource: "installation",
-      resourceId: id, resourceName: installation.installNumber,
-      before: { installNumber: installation.installNumber, status: installation.status },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/installations/[id]] DELETE failed:", err);
-    return NextResponse.json({ error: "Failed to delete installation" }, { status: 500 });
   }
 }

@@ -1,70 +1,135 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditUpdate } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
 
-// ============================================================
-// CRYPTSK Nexus — PATCH /api/vouchers/[id]
-// Voucher lifecycle action (Billing module).
-// RBAC: billing.invoice.update — the update-side sibling of the
-// invoices routes' billing.invoice permission so billing staff
-// manage the voucher stock.
-// PATCH { action: "cancel" } — only UNUSED vouchers can be
-// cancelled (used/expired/cancelled are immutable states).
-// ============================================================
-
-// Next.js redirect() inside requireAuth surfaces as a thrown NEXT_REDIRECT —
-// map it to a clean 401 JSON instead of a 500.
-function isRedirectError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && String((err as any)?.digest || "").startsWith("NEXT_REDIRECT");
-}
-
-// PATCH /api/vouchers/[id] — cancel an unused voucher
-export async function PATCH(
+export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("billing.invoice", "update");
-    const { id } = await params; // Next 16 — params is a Promise
+    await requireAuth(req);
+    const { id } = await params;
 
-    const body = await req.json().catch(() => null);
-    if (!body || typeof body !== "object" || body.action !== "cancel") {
-      return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    const voucher = await db.voucher.findUnique({
+      where: { id },
+      include: {
+        Plan: { select: { id: true, name: true, priceMonthly: true, validityDays: true } },
+        usedBySubscriber: { select: { id: true, name: true, code: true, phone: true } },
+      },
+    });
+
+    if (!voucher) {
+      return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
     }
+
+    // Get usage history: related payments for the subscriber
+    let usageHistory: unknown[] = [];
+    if (voucher.usedBySubscriberId && voucher.usedAt) {
+      usageHistory = await db.payment.findMany({
+        where: {
+          subscriberId: voucher.usedBySubscriberId,
+          createdAt: { gte: voucher.usedAt },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        include: {
+          Invoice: { select: { invoiceNumber: true } },
+        },
+      });
+    }
+
+    return NextResponse.json({ voucher, usageHistory });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Voucher GET [id] error:", error);
+    return NextResponse.json({ error: "Failed to fetch voucher" }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(req);
+    const { id } = await params;
+    const body = await req.json();
 
     const voucher = await db.voucher.findUnique({ where: { id } });
     if (!voucher) {
       return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
     }
-    if (voucher.status !== "unused") {
-      return NextResponse.json(
-        { error: "Only unused vouchers can be cancelled" },
-        { status: 400 }
-      );
+
+    const updateData: Record<string, unknown> = {};
+
+    if (body.status && body.status !== voucher.status) {
+      if (voucher.status === "USED") {
+        return NextResponse.json({ error: "Cannot modify a used voucher" }, { status: 400 });
+      }
+      updateData.status = body.status;
+    }
+
+    if (body.extendDays && voucher.status !== "USED") {
+      updateData.validityDays = voucher.validityDays + parseInt(body.extendDays);
+    } else if (body.validityDays !== undefined && voucher.status !== "USED") {
+      updateData.validityDays = body.validityDays;
+    }
+
+    if (body.status === "USED" && body.usedBySubscriberId) {
+      updateData.usedBySubscriberId = body.usedBySubscriberId;
+      updateData.usedAt = new Date();
+      updateData.status = "USED";
     }
 
     const updated = await db.voucher.update({
       where: { id },
-      data: { status: "cancelled" },
+      data: updateData,
+      include: {
+        Plan: { select: { id: true, name: true, priceMonthly: true, validityDays: true } },
+        usedBySubscriber: { select: { id: true, name: true, code: true, phone: true } },
+      },
     });
 
-    await auditUpdate({
-      userId: user.id,
-      action: "update",
-      resource: "voucher",
-      resourceId: updated.id,
-      resourceName: updated.code,
-      before: { status: voucher.status, batchNumber: voucher.batchNumber },
-      after: { status: updated.status, batchNumber: updated.batchNumber },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
+    await auditUpdate(req, "Voucher", id, updateData, voucher);
     return NextResponse.json({ voucher: updated });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    if (isRedirectError(err)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    console.error("[/api/vouchers/[id]] PATCH failed:", err);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Voucher PUT error:", error);
     return NextResponse.json({ error: "Failed to update voucher" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(req);
+    const { id } = await params;
+
+    const voucher = await db.voucher.findUnique({ where: { id } });
+    if (!voucher) {
+      return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
+    }
+
+    if (voucher.status === "USED") {
+      return NextResponse.json({ error: "Cannot delete a used voucher" }, { status: 400 });
+    }
+
+    const deletedRecord = { ...voucher };
+    await db.voucher.delete({ where: { id } });
+    await auditDelete(req, "Voucher", id, deletedRecord);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Voucher DELETE error:", error);
+    return NextResponse.json({ error: "Failed to delete voucher" }, { status: 500 });
   }
 }

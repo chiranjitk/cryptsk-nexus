@@ -1,115 +1,209 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditCreateEntity } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { auditCreate, auditBulk } from "@/lib/services/audit-service";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 
-// GET /api/payments — list payments
+// GET /api/payments — list payments with filters + summary + pendingVerifyCount
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("billing.payment", "read");
-
+    await requireAuth(req);
     const { searchParams } = new URL(req.url);
-    const search = searchParams.get("search") || "";
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "20");
     const status = searchParams.get("status") || "";
-    const customerId = searchParams.get("customerId") || "";
+    const mode = searchParams.get("mode") || "";
+    const dateFrom = searchParams.get("dateFrom") || "";
+    const dateTo = searchParams.get("dateTo") || "";
+    const search = searchParams.get("search") || "";
+    const sortBy = searchParams.get("sortBy") || "createdAt";
+    const sortOrder = searchParams.get("sortOrder") || "desc";
+
+    // Validate sort params
+    const allowedSortFields = ["createdAt", "amount", "paymentMode", "status", "receiptNumber"];
+    const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : "createdAt";
+    const validSortOrder = sortOrder === "asc" ? "asc" : "desc";
 
     const where: Record<string, unknown> = {};
+
     if (status) where.status = status;
-    if (customerId) where.customerId = customerId;
+    if (mode) where.paymentMode = mode;
+
     if (search) {
       where.OR = [
-        { paymentNumber: { contains: search } },
-        { transactionId: { contains: search } },
-        { customer: { displayName: { contains: search } } },
+        { receiptNumber: { contains: search } },
+        { transactionRef: { contains: search } },
+        { Subscriber: { name: { contains: search } } },
+        { Subscriber: { code: { contains: search } } },
       ];
     }
 
-    const payments = await db.payment.findMany({
-      where,
-      orderBy: { receivedAt: "desc" },
-      take: 100,
-      include: {
-        customer: { select: { id: true, displayName: true, customerCode: true } },
-        invoice: { select: { id: true, invoiceNumber: true, total: true } },
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) (where.createdAt as Record<string, unknown>).gte = new Date(dateFrom);
+      if (dateTo) (where.createdAt as Record<string, unknown>).lte = new Date(dateTo);
+    }
+
+    const [payments, total, pendingVerifyCount, todayVerifiedCount, todayVerifiedTotal, todayPendingCount, todayPendingTotal] = await Promise.all([
+      db.payment.findMany({
+        where,
+        include: {
+          Subscriber: { select: { id: true, name: true, code: true } },
+          Invoice: { select: { id: true, invoiceNumber: true } },
+        },
+        orderBy: { [validSortBy]: validSortOrder },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      db.payment.count({ where }),
+      // Total pending count across ALL payments (not page-limited)
+      db.payment.count({ where: { status: "PENDING" } }),
+      // Today's summary
+      db.payment.count({ where: { status: "VERIFIED", createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
+      db.payment.aggregate({
+        where: { status: "VERIFIED", createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+        _sum: { amount: true },
+      }),
+      db.payment.count({ where: { status: "PENDING", createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
+      db.payment.aggregate({
+        where: { status: "PENDING", createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    return NextResponse.json({
+      payments,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      pendingVerifyCount,
+      summary: {
+        todayCount: todayVerifiedCount,
+        todayTotal: Math.round(todayVerifiedTotal._sum.amount || 0),
+        todayPendingCount: todayPendingCount,
+        todayPendingAmount: Math.round(todayPendingTotal._sum.amount || 0),
       },
     });
-
-    return NextResponse.json({ payments });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    return NextResponse.json({ error: "Failed" }, { status: 500 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Payments GET error:", error);
+    return NextResponse.json({ error: "Failed to fetch payments" }, { status: 500 });
   }
 }
 
-// POST /api/payments — record a payment
+// POST /api/payments — collect payment
 export async function POST(req: NextRequest) {
   try {
-    const user = await requirePermission("billing.payment", "create");
+    const userId = await requireAuth(req);
     const body = await req.json();
-    const { invoiceId, customerId, amount, method, transactionId, notes } = body;
 
-    if (!customerId || !amount || !method) {
-      return NextResponse.json({ error: "customerId, amount, method required" }, { status: 400 });
+    // Bulk verify/reject action (supports both 'verify'/'reject' and 'bulk_verify'/'bulk_reject')
+    const effectiveAction = body.action === 'verify' ? 'bulk_verify'
+      : body.action === 'reject' ? 'bulk_reject'
+      : body.action;
+
+    if (effectiveAction === "bulk_verify" || effectiveAction === "bulk_reject") {
+      const { paymentIds } = body;
+      if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
+        return NextResponse.json({ error: "Payment IDs are required" }, { status: 400 });
+      }
+
+      const targetStatus = effectiveAction === "bulk_verify" ? "VERIFIED" : "FAILED";
+
+      // Find all payments to update invoice balances for verified ones
+      const paymentsToUpdate = await db.payment.findMany({
+        where: { id: { in: paymentIds }, status: "PENDING" },
+        include: { Invoice: true },
+      });
+
+      const result = await db.payment.updateMany({
+        where: { id: { in: paymentIds }, status: "PENDING" },
+        data: { status: targetStatus },
+      });
+
+      // If verifying, update linked invoice balances
+      if (targetStatus === "VERIFIED") {
+        for (const p of paymentsToUpdate) {
+          if (p.invoiceId && p.Invoice) {
+            const invoice = p.Invoice;
+            const newPaidAmount = invoice.paidAmount + p.amount;
+            const newBalanceAmount = invoice.grandTotal - newPaidAmount;
+            // Use 0.01 tolerance for float precision
+            const newInvoiceStatus = newBalanceAmount <= 0.01 ? "PAID" : "PARTIALLY_PAID";
+            await db.invoice.update({
+              where: { id: p.invoiceId },
+              data: {
+                paidAmount: newPaidAmount,
+                balanceAmount: Math.max(0, Math.round(newBalanceAmount * 100) / 100),
+                status: newInvoiceStatus,
+                paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
+              },
+            });
+          }
+        }
+      }
+
+      await auditBulk(req, targetStatus === "VERIFIED" ? "BULK_UPDATE" : "BULK_DELETE", "Payment", result.count, paymentIds);
+      return NextResponse.json({
+        message: `${targetStatus === "VERIFIED" ? "Verified" : "Rejected"} ${result.count} payment(s)`,
+        count: result.count,
+      });
     }
 
-    // Generate payment number
-    const count = await db.payment.count();
-    const paymentNumber = `PAY-2026-${String(count + 1).padStart(5, "0")}`;
+    const { subscriberId, amount, paymentMode, transactionRef, notes, invoiceId } = body;
 
-    const payment = await db.payment.create({
-      data: {
-        paymentNumber,
-        invoiceId: invoiceId || null,
-        customerId,
-        amount: Number(amount),
-        method,
-        status: "completed",
-        transactionId: transactionId || null,
-        paidAt: new Date(),
-        receivedBy: user.id,
-        createdBy: user.id,
-        notes,
-      },
-      include: {
-        customer: { select: { displayName: true, customerCode: true } },
-        invoice: { select: { invoiceNumber: true, total: true, balanceDue: true } },
-      },
-    });
+    if (!subscriberId || !amount || amount <= 0) {
+      return NextResponse.json({ error: "Subscriber and valid amount are required" }, { status: 400 });
+    }
 
-    // If linked to invoice, update invoice paid amount + status
+    const subscriber = await db.subscriber.findUnique({ where: { id: subscriberId } });
+    if (!subscriber) {
+      return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+    }
+
+    // B5 FIX: Validate payment amount doesn't exceed invoice balance
     if (invoiceId) {
       const invoice = await db.invoice.findUnique({ where: { id: invoiceId } });
-      if (invoice) {
-        const newPaid = invoice.paidAmount + Number(amount);
-        const newBalance = invoice.total - newPaid;
-        const newStatus = newBalance <= 0 ? "paid" : "partial";
-        const newPayStatus = newBalance <= 0 ? "paid" : "partial";
-
-        await db.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            paidAmount: newPaid,
-            balanceDue: Math.max(0, newBalance),
-            paymentStatus: newPayStatus,
-            status: newStatus === "paid" ? "paid" : invoice.status,
-          },
-        });
+      if (!invoice) {
+        return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+      }
+      const balance = (invoice.grandTotal || 0) - (invoice.paidAmount || 0);
+      if (amount > balance) {
+        return NextResponse.json(
+          { error: `Payment amount (₹${amount}) exceeds outstanding balance (₹${Math.max(0, balance)}). Maximum allowed: ₹${Math.max(0, balance)}` },
+          { status: 400 }
+        );
       }
     }
 
-    await auditCreateEntity({
-      userId: user.id,
-      action: "create",
-      resource: "payment",
-      resourceId: payment.id,
-      resourceName: payment.paymentNumber,
-      after: { paymentNumber, amount, method, invoiceId },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
+    const payCount = await db.payment.count();
+    const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
+
+    const payment = await db.payment.create({
+      data: {
+        subscriberId,
+        invoiceId: invoiceId || null,
+        amount,
+        paymentMode: paymentMode || "CASH",
+        transactionRef: transactionRef || "",
+        notes: notes || "",
+        receiptNumber,
+        status: "PENDING",
+      },
+      include: {
+        Subscriber: { select: { id: true, name: true, code: true } },
+        Invoice: { select: { id: true, invoiceNumber: true } },
+      },
     });
 
-    return NextResponse.json({ payment }, { status: 201 });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    return NextResponse.json({ error: "Failed" }, { status: 500 });
+    await auditCreate(req, "Payment", payment.id, { amount, mode: paymentMode, subscriberId }, { userId });
+    return NextResponse.json(payment, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Payments POST error:", error);
+    return NextResponse.json({ error: "Failed to create payment" }, { status: 500 });
   }
 }

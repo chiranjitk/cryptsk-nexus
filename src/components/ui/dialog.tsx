@@ -50,9 +50,12 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  /** Screen-reader-only title — fixes Radix accessibility warning when DialogTitle is conditionally rendered (e.g. loading states). */
+  a11yTitle,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  a11yTitle?: string
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -65,6 +68,9 @@ function DialogContent({
         )}
         {...props}
       >
+        {a11yTitle && (
+          <DialogPrimitive.Title className="sr-only">{a11yTitle}</DialogPrimitive.Title>
+        )}
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
@@ -123,9 +129,10 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("text-muted-foreground text-sm", className)}
-      {...props}
-    />
+      asChild
+    >
+      <span className={cn("text-muted-foreground text-sm", className)} {...props} />
+    </DialogPrimitive.Description>
   )
 }
 

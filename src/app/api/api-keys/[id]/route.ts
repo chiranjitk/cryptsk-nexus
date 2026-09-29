@@ -1,81 +1,197 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditUpdate, auditDelete } from "@/lib/audit";
+import { NextResponse } from "next/server";
+import { auditDelete, auditUpdate } from "@/lib/services/audit-service";
+import type { NextRequest } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 
-// PATCH /api/api-keys/[id] — revoke a key ({ status: "revoked" })
-export async function PATCH(
-  req: NextRequest,
+const VALID_SCOPES = ["read", "write", "admin", "subscribers", "plans", "invoices", "payments"];
+
+export async function GET(
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("api_key", "manage");
+    try {
+      await requireAuth(request);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     const { id } = await params;
-    const body = await req.json();
-
-    if (body?.status !== "revoked") {
-      return NextResponse.json(
-        { error: "Only { status: \"revoked\" } is supported — keys cannot be un-revoked" },
-        { status: 400 }
-      );
-    }
-
-    const existing = await db.apiKey.findUnique({ where: { id } });
-    if (!existing) return NextResponse.json({ error: "API key not found" }, { status: 404 });
-
-    if (existing.status === "revoked") {
-      return NextResponse.json({ error: "API key is already revoked" }, { status: 409 });
-    }
-
-    const revoked = await db.apiKey.update({
+    const apiKey = await db.apiKey.findUnique({
       where: { id },
-      data: { status: "revoked", revokedAt: new Date(), revokedBy: user.id },
-      select: { id: true, name: true, keyPrefix: true, status: true, revokedAt: true },
     });
 
-    await auditUpdate({
-      userId: user.id,
-      resource: "api_key",
-      resourceId: id,
-      resourceName: existing.name,
-      before: { status: existing.status },
-      after: { status: "revoked" },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
+    if (!apiKey) {
+      return NextResponse.json({ error: "API key not found" }, { status: 404 });
+    }
 
-    return NextResponse.json({ apiKey: revoked });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
-    return NextResponse.json({ error: "Failed to revoke API key" }, { status: 500 });
+    // Parse scopes from JSON string to array
+    const result = {
+      ...apiKey,
+      scopes: typeof apiKey.scopes === "string" ? JSON.parse(apiKey.scopes) : apiKey.scopes,
+    };
+
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error("API key fetch error:", error);
+    return NextResponse.json({ error: "Failed to fetch API key" }, { status: 500 });
   }
 }
 
-// DELETE /api/api-keys/[id] — permanently delete a key
-export async function DELETE(
-  req: NextRequest,
+export async function PUT(
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("api_key", "delete");
+    await requireAuth(request);
     const { id } = await params;
+    const body = await request.json();
 
     const existing = await db.apiKey.findUnique({ where: { id } });
-    if (!existing) return NextResponse.json({ error: "API key not found" }, { status: 404 });
+    if (!existing) {
+      return NextResponse.json({ error: "API key not found" }, { status: 404 });
+    }
 
-    await db.apiKey.delete({ where: { id } });
+    const updateData: Record<string, unknown> = {};
+    if (body.name !== undefined) updateData.name = body.name;
+    if (body.ipWhitelist !== undefined) updateData.ipWhitelist = body.ipWhitelist;
+    if (body.status !== undefined) updateData.status = body.status;
 
-    await auditDelete({
-      userId: user.id,
-      resource: "api_key",
-      resourceId: id,
-      resourceName: existing.name,
-      before: { name: existing.name, keyPrefix: existing.keyPrefix, status: existing.status },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
+    // Track lastUsedAt if explicitly provided
+    if (body.lastUsedAt !== undefined) updateData.lastUsedAt = new Date(body.lastUsedAt);
+
+    // Handle scopes update
+    if (body.scopes !== undefined && Array.isArray(body.scopes)) {
+      const normalizedScopes = body.scopes.map((s: string) => String(s).toLowerCase());
+      const invalidScopes = normalizedScopes.filter((s: string) => !VALID_SCOPES.includes(s));
+      if (invalidScopes.length > 0) {
+        return NextResponse.json(
+          { error: `Invalid scopes: ${invalidScopes.join(", ")}` },
+          { status: 400 }
+        );
+      }
+      updateData.scopes = JSON.stringify(normalizedScopes);
+    }
+
+    // Handle rate limiting updates
+    if (body.requestsPerMinute !== undefined) {
+      updateData.requestsPerMinute = Number(body.requestsPerMinute);
+    }
+    if (body.requestsPerDay !== undefined) {
+      updateData.requestsPerDay = Number(body.requestsPerDay);
+    }
+
+    // Handle auto-expiry updates
+    if (body.autoExpiryDays !== undefined) {
+      updateData.autoExpiryDays = Number(body.autoExpiryDays);
+    }
+
+    const updated = await db.apiKey.update({
+      where: { id },
+      data: updateData,
     });
 
+    auditUpdate(request, "ApiKey", id, body, existing).catch(() => {});
+
+    const result = {
+      ...updated,
+      scopes: typeof updated.scopes === "string" ? JSON.parse(updated.scopes) : updated.scopes,
+    };
+
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("API key update error:", error);
+    return NextResponse.json({ error: "Failed to update API key" }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await request.json();
+    const { action } = body;
+
+    const existing = await db.apiKey.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "API key not found" }, { status: 404 });
+    }
+
+    if (action === "regenerate") {
+      const { randomUUID } = await import("crypto");
+      const newKey = `csk_${randomUUID().replace(/-/g, "")}`;
+
+      const updated = await db.apiKey.update({
+        where: { id },
+        data: { key: newKey },
+      });
+
+      auditUpdate(request, "ApiKey", id, { action: "regenerate" }, existing).catch(() => {});
+
+      return NextResponse.json({
+        ...updated,
+        scopes: typeof updated.scopes === "string" ? JSON.parse(updated.scopes) : updated.scopes,
+        key: newKey,
+      });
+    }
+
+    if (action === "extend") {
+      // Extend expiry by 90 days from now
+      const newExpiry = new Date();
+      newExpiry.setDate(newExpiry.getDate() + 90);
+
+      const updated = await db.apiKey.update({
+        where: { id },
+        data: { expiresAt: newExpiry },
+      });
+
+      auditUpdate(request, "ApiKey", id, { action: "extend", newExpiry: newExpiry.toISOString() }, existing).catch(() => {});
+
+      return NextResponse.json({
+        ...updated,
+        scopes: typeof updated.scopes === "string" ? JSON.parse(updated.scopes) : updated.scopes,
+      });
+    }
+
+    if (action === "touch") {
+      // Update lastUsedAt and increment requestCount
+      const updated = await db.apiKey.update({
+        where: { id },
+        data: {
+          lastUsedAt: new Date(),
+          requestCount: { increment: 1 },
+        },
+      });
+
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  } catch (error) {
+    console.error("API key patch error:", error);
+    return NextResponse.json({ error: "Failed to patch API key" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAuth(request);
+    const { id } = await params;
+    const existing = await db.apiKey.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "API key not found" }, { status: 404 });
+    }
+
+    await auditDelete(request, "ApiKey", id, { name: existing.name });
+    await db.apiKey.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+  } catch (error) {
+    console.error("API key delete error:", error);
     return NextResponse.json({ error: "Failed to delete API key" }, { status: 500 });
   }
 }

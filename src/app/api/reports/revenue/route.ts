@@ -1,179 +1,364 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-
-// ============================================================
-// CRYPTSK Nexus — GET /api/reports/revenue?months=6
-// Revenue & Collection report (Reports & Analytics module).
-//   • monthly series: invoiced / collected / outstanding / count
-//   • invoice aging buckets (current → 90+)
-//   • payment method mix (completed payments)
-//   • top outstanding customers
-// All series computed with SQL date_trunc over real tables.
-// ============================================================
-
-export const dynamic = "force-dynamic";
-
-function isRedirectError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && String((err as any)?.digest || "").startsWith("NEXT_REDIRECT");
-}
-
-const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-interface MonthRow {
-  month: string;
-  invoiced: number;
-  invoices: number;
-}
-interface PayRow {
-  month: string;
-  collected: number;
-  payments: number;
-}
-interface AgingRow {
-  bucket: string;
-  amount: number;
-  invoices: number;
-}
-interface MethodRow {
-  method: string;
-  amount: number;
-  payments: number;
-}
-interface OutstandingRow {
-  customer_id: string;
-  display_name: string;
-  customer_code: string;
-  amount: number;
-  invoices: number;
-}
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("report", "read");
+    try {
+      await requireAuth(req as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const { searchParams } = req.nextUrl;
+    const startDateStr = searchParams.get("startDate");
+    const endDateStr = searchParams.get("endDate");
+    const detailed = searchParams.get("detailed") === "true";
 
-    const { searchParams } = new URL(req.url);
-    const months = Math.min(Math.max(Number(searchParams.get("months")) || 6, 3), 24);
     const now = new Date();
-    const seriesStart = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
 
-    const [invoicedSeries, collectedSeries, aging, methods, topOutstanding] = await Promise.all([
-      // Monthly invoiced (real invoices, excluding draft/void/cancelled)
-      db.$queryRaw<MonthRow[]>`
-        SELECT to_char(date_trunc('month', "issueDate"), 'YYYY-MM') AS month,
-               COALESCE(SUM(total), 0)::float8 AS invoiced,
-               COUNT(*)::int AS invoices
-        FROM invoices
-        WHERE "issueDate" >= ${seriesStart}
-          AND status NOT IN ('draft', 'void', 'cancelled')
-        GROUP BY 1 ORDER BY 1`,
-      // Monthly collected (completed payments)
-      db.$queryRaw<PayRow[]>`
-        SELECT to_char(date_trunc('month', "receivedAt"), 'YYYY-MM') AS month,
-               COALESCE(SUM(amount), 0)::float8 AS collected,
-               COUNT(*)::int AS payments
-        FROM payments
-        WHERE "receivedAt" >= ${seriesStart}
-          AND status = 'completed'
-        GROUP BY 1 ORDER BY 1`,
-      // Invoice aging over unpaid balances
-      db.$queryRaw<AgingRow[]>`
-        SELECT CASE
-                 WHEN "dueDate" >= ${todayStart} THEN 'current'
-                 WHEN "dueDate" >= ${todayStart} - INTERVAL '30 days' THEN '1-30'
-                 WHEN "dueDate" >= ${todayStart} - INTERVAL '60 days' THEN '31-60'
-                 WHEN "dueDate" >= ${todayStart} - INTERVAL '90 days' THEN '61-90'
-                 ELSE '90+'
-               END AS bucket,
-               COALESCE(SUM("balanceDue"), 0)::float8 AS amount,
-               COUNT(*)::int AS invoices
-        FROM invoices
-        WHERE "balanceDue" > 0
-          AND status IN ('issued', 'sent', 'partial', 'overdue')
-        GROUP BY 1`,
-      // Payment method mix
-      db.$queryRaw<MethodRow[]>`
-        SELECT method::text AS method,
-               COALESCE(SUM(amount), 0)::float8 AS amount,
-               COUNT(*)::int AS payments
-        FROM payments
-        WHERE status = 'completed'
-        GROUP BY 1 ORDER BY amount DESC`,
-      // Top outstanding customers
-      db.$queryRaw<OutstandingRow[]>`
-        SELECT c.id AS customer_id, c."displayName" AS display_name, c."customerCode" AS customer_code,
-               COALESCE(SUM(i."balanceDue"), 0)::float8 AS amount,
-               COUNT(i.id)::int AS invoices
-        FROM invoices i
-        JOIN customers c ON c.id = i."customerId"
-        WHERE i."balanceDue" > 0
-          AND i.status IN ('issued', 'sent', 'partial', 'overdue')
-        GROUP BY c.id, c."displayName", c."customerCode"
-        ORDER BY amount DESC
-        LIMIT 8`,
-    ]);
+    const startDate = startDateStr ? new Date(startDateStr) : new Date(currentYear, currentMonth, 1);
+    const endDate = endDateStr ? new Date(endDateStr) : new Date(currentYear, currentMonth + 1, 0, 23, 59, 59);
 
-    // Merge into a continuous month axis (no gaps)
-    const series: Array<{ month: string; label: string; invoiced: number; collected: number; outstanding: number; invoices: number; payments: number; collectionPct: number }> = [];
-    const invMap = new Map(invoicedSeries.map((r) => [r.month, r]));
-    const payMap = new Map(collectedSeries.map((r) => [r.month, r]));
-    for (let i = months - 1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const inv = invMap.get(key);
-      const pay = payMap.get(key);
-      const invoiced = inv?.invoiced || 0;
-      const collected = pay?.collected || 0;
-      series.push({
-        month: key,
-        label: `${MONTH_LABELS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
-        invoiced,
-        collected,
-        outstanding: Math.max(invoiced - collected, 0),
-        invoices: inv?.invoices || 0,
-        payments: pay?.payments || 0,
-        collectionPct: invoiced > 0 ? Math.min((collected / invoiced) * 100, 100) : 0,
+    // Previous period for comparison
+    const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    const prevStart = new Date(startDate.getTime() - periodDays * 24 * 60 * 60 * 1000);
+    const prevEnd = new Date(startDate.getTime() - 1);
+
+    // ── Total Revenue (paid invoices) ──
+    const paidInvoices = await db.invoice.findMany({
+      where: { status: "PAID", paidAt: { gte: startDate, lte: endDate } },
+      select: { grandTotal: true, subtotal: true, totalTax: true },
+    });
+    const totalRevenue = paidInvoices.reduce((s, i) => s + i.grandTotal, 0);
+    const totalSubtotal = paidInvoices.reduce((s, i) => s + i.subtotal, 0);
+    const totalTax = paidInvoices.reduce((s, i) => s + i.totalTax, 0);
+
+    // ── Previous period revenue ──
+    const prevInvoices = await db.invoice.findMany({
+      where: { status: "PAID", paidAt: { gte: prevStart, lte: prevEnd } },
+      select: { grandTotal: true },
+    });
+    const prevRevenue = prevInvoices.reduce((s, i) => s + i.grandTotal, 0);
+    const revenueChange = prevRevenue > 0 ? Math.round(((totalRevenue - prevRevenue) / prevRevenue) * 100) : 0;
+
+    // ── ARPU ──
+    const activeSubscribers = await db.subscriber.count({ where: { status: "ACTIVE" } });
+    const arpu = activeSubscribers > 0 ? Math.round(totalRevenue / activeSubscribers) : 0;
+
+    // ── Collection Efficiency ──
+    const allInvoices = await db.invoice.findMany({
+      where: { issueDate: { gte: startDate, lte: endDate } },
+      select: { grandTotal: true, paidAmount: true },
+    });
+    const totalBilled = allInvoices.reduce((s, i) => s + i.grandTotal, 0);
+    const totalPaid = allInvoices.reduce((s, i) => s + i.paidAmount, 0);
+    const collectionEfficiency = totalBilled > 0 ? Math.round((totalPaid / totalBilled) * 100) : 0;
+
+    // ── Monthly Revenue Trend (last 12 months) ──
+    const monthlyTrend: Array<{ month: string; revenue: number }> = [];
+    for (let m = 11; m >= 0; m--) {
+      const mStart = new Date(currentYear, currentMonth - m, 1);
+      const mEnd = new Date(currentYear, currentMonth - m + 1, 0, 23, 59, 59);
+      const label = mStart.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+
+      const mInvoices = await db.invoice.findMany({
+        where: { status: "PAID", paidAt: { gte: mStart, lte: mEnd } },
+        select: { grandTotal: true },
+      });
+      monthlyTrend.push({
+        month: label,
+        revenue: Math.round(mInvoices.reduce((s, i) => s + i.grandTotal, 0)),
       });
     }
 
-    // Ensure all 5 buckets exist
-    const bucketOrder = ["current", "1-30", "31-60", "61-90", "90+"];
-    const agingBuckets = bucketOrder.map((b) => {
-      const row = aging.find((r) => r.bucket === b);
-      return { bucket: b, amount: row?.amount || 0, invoices: row?.invoices || 0 };
-    });
-    const totalOverdueAmount = agingBuckets.slice(1).reduce((s, b) => s + b.amount, 0);
+    // ── Subscriber Growth Trend (last 12 months) ──
+    const subscriberGrowth: Array<{ month: string; newSubs: number; churned: number; net: number }> = [];
+    for (let m = 11; m >= 0; m--) {
+      const mStart = new Date(currentYear, currentMonth - m, 1);
+      const mEnd = new Date(currentYear, currentMonth - m + 1, 0, 23, 59, 59);
+      const label = mStart.toLocaleString("en-IN", { month: "short", year: "2-digit" });
 
-    const last = series[series.length - 1];
-    const prev = series.length > 1 ? series[series.length - 2] : null;
-    const growthPct = prev && prev.collected > 0 ? ((last.collected - prev.collected) / prev.collected) * 100 : last.collected > 0 ? 100 : 0;
+      const newSubs = await db.subscriber.count({
+        where: { createdAt: { gte: mStart, lte: mEnd } },
+      });
+      const churnedSubs = await db.subscriber.count({
+        where: { status: "DISCONNECTED", updatedAt: { gte: mStart, lte: mEnd } },
+      });
+
+      subscriberGrowth.push({
+        month: label,
+        newSubs,
+        churned: churnedSubs,
+        net: newSubs - churnedSubs,
+      });
+    }
+
+    // ── Churn Impact on Revenue ──
+    const churnImpact: Array<{ month: string; churnedCount: number; lostRevenue: number }> = [];
+    for (let m = 11; m >= 0; m--) {
+      const mStart = new Date(currentYear, currentMonth - m, 1);
+      const mEnd = new Date(currentYear, currentMonth - m + 1, 0, 23, 59, 59);
+      const label = mStart.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+
+      const churned = await db.subscriber.findMany({
+        where: { status: "DISCONNECTED", updatedAt: { gte: mStart, lte: mEnd } },
+        select: { id: true },
+      });
+      const churnedIds = churned.map((s) => s.id);
+      let lostRevenue = 0;
+      if (churnedIds.length > 0) {
+        const churnedPayments = await db.invoice.findMany({
+          where: {
+            subscriberId: { in: churnedIds },
+            paidAt: { gte: mStart, lte: mEnd },
+          },
+          select: { grandTotal: true },
+        });
+        lostRevenue = churnedPayments.reduce((s, i) => s + i.grandTotal, 0);
+      }
+
+      churnImpact.push({
+        month: label,
+        churnedCount: churnedIds.length,
+        lostRevenue: Math.round(lostRevenue),
+      });
+    }
+
+    // ── Revenue Forecast (linear projection based on last 3 months) ──
+    const revenueForecast: Array<{ month: string; revenue: number; projected: boolean }> = [];
+    const last3 = monthlyTrend.slice(-3);
+    if (last3.length === 3) {
+      const avgGrowth = ((last3[2].revenue - last3[0].revenue) / 2);
+      for (let i = 1; i <= 3; i++) {
+        const projDate = new Date(currentYear, currentMonth + i, 1);
+        const label = projDate.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+        const projected = Math.round(last3[2].revenue + avgGrowth * i);
+        revenueForecast.push({ month: label, revenue: Math.max(0, projected), projected: true });
+      }
+    }
+
+    // ── Invoice Aging Report ──
+    const allOverdue = await db.invoice.findMany({
+      where: { balanceAmount: { gt: 0 } },
+      select: { dueDate: true, balanceAmount: true, grandTotal: true, paidAmount: true },
+    });
+
+    let bucket0to30 = 0, count0to30 = 0;
+    let bucket31to60 = 0, count31to60 = 0;
+    let bucket61to90 = 0, count61to90 = 0;
+    let bucket90plus = 0, count90plus = 0;
+
+    for (const inv of allOverdue) {
+      const daysOverdue = Math.max(0, Math.floor((now.getTime() - new Date(inv.dueDate).getTime()) / 86400000));
+      const balance = inv.balanceAmount || (inv.grandTotal - inv.paidAmount);
+      if (daysOverdue <= 30) { bucket0to30 += balance; count0to30++; }
+      else if (daysOverdue <= 60) { bucket31to60 += balance; count31to60++; }
+      else if (daysOverdue <= 90) { bucket61to90 += balance; count61to90++; }
+      else { bucket90plus += balance; count90plus++; }
+    }
+
+    const invoiceAging = [
+      { bucket: "0-30 days", amount: Math.round(bucket0to30), count: count0to30 },
+      { bucket: "31-60 days", amount: Math.round(bucket31to60), count: count31to60 },
+      { bucket: "61-90 days", amount: Math.round(bucket61to90), count: count61to90 },
+      { bucket: "90+ days", amount: Math.round(bucket90plus), count: count90plus },
+    ];
+
+    // ── Area-wise Revenue ──
+    const areaRevenueData = await db.invoice.findMany({
+      where: { status: "PAID", paidAt: { gte: startDate, lte: endDate } },
+      include: { Subscriber: { select: { areaId: true } } },
+    });
+
+    const areaMap: Record<string, number> = {};
+    for (const inv of areaRevenueData) {
+      const areaId = inv.Subscriber.areaId;
+      if (areaId) {
+        areaMap[areaId] = (areaMap[areaId] || 0) + inv.grandTotal;
+      }
+    }
+
+    const areaWiseRevenue: Array<{ area: string; revenue: number }> = [];
+    for (const [areaId, rev] of Object.entries(areaMap)) {
+      const area = await db.area.findUnique({ where: { id: areaId }, select: { name: true } });
+      if (area) {
+        areaWiseRevenue.push({ area: area.name, revenue: Math.round(rev) });
+      }
+    }
+    areaWiseRevenue.sort((a, b) => b.revenue - a.revenue);
+
+    // ── Plan-wise Revenue ──
+    const planRevenueData = await db.invoice.findMany({
+      where: { status: "PAID", paidAt: { gte: startDate, lte: endDate } },
+      include: { Plan: { select: { name: true } } },
+    });
+
+    const planMap: Record<string, { revenue: number; count: number }> = {};
+    for (const inv of planRevenueData) {
+      const planName = inv.Plan?.name || "No Plan";
+      if (!planMap[planName]) planMap[planName] = { revenue: 0, count: 0 };
+      planMap[planName].revenue += inv.grandTotal;
+      planMap[planName].count += 1;
+    }
+
+    const planWiseRevenue = Object.entries(planMap)
+      .map(([plan, data]) => ({ plan, revenue: Math.round(data.revenue), count: data.count }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // ── Payment Mode Breakdown ──
+    const payments = await db.payment.findMany({
+      where: { status: "VERIFIED", createdAt: { gte: startDate, lte: endDate } },
+      select: { amount: true, paymentMode: true },
+    });
+
+    const modeMap: Record<string, number> = {};
+    for (const p of payments) {
+      modeMap[p.paymentMode] = (modeMap[p.paymentMode] || 0) + p.amount;
+    }
+    const paymentModes = Object.entries(modeMap)
+      .map(([mode, amount]) => ({ mode, amount: Math.round(amount) }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // ── Invoice Status Breakdown ──
+    const invoiceStatuses = await db.invoice.groupBy({
+      by: ["status"],
+      where: { issueDate: { gte: startDate, lte: endDate } },
+      _count: { id: true },
+      _sum: { grandTotal: true },
+    });
+    const statusBreakdown = invoiceStatuses.map((s) => ({
+      status: s.status,
+      count: s._count.id,
+      amount: Math.round(s._sum.grandTotal || 0),
+    }));
+
+    const topAreas = areaWiseRevenue.slice(0, 10);
+
+    const totalInvoices = allInvoices.length;
+    const paidCount = paidInvoices.length;
+    const overdueCount = allInvoices.filter((i) => i.paidAmount < i.grandTotal).length;
+
+    // ── KPI Targets (from saved settings or computed defaults) ──
+    const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
+    let savedKpiTargets: { metric: string; target: number; period: string }[] = [];
+    try { savedKpiTargets = settings?.kpiTargets ? JSON.parse(settings.kpiTargets) : []; } catch { savedKpiTargets = []; }
+
+    const actuals: Record<string, number> = {
+      "Monthly Revenue": Math.round(totalRevenue),
+      "Collection Efficiency": collectionEfficiency,
+      "ARPU": arpu,
+      "Active Subscribers": activeSubscribers,
+      "Total Invoices": totalInvoices,
+      "Paid Invoices": paidCount,
+      "Net Profit": Math.round(totalRevenue) - 0, // expenses fetched separately on client
+    };
+
+    const defaultTargets: Record<string, number> = {
+      "Monthly Revenue": Math.round(prevRevenue * 1.1),
+      "Collection Efficiency": 90,
+      "ARPU": arpu > 0 ? Math.round(arpu * 1.05) : 500,
+      "Active Subscribers": activeSubscribers + 10,
+      "Total Invoices": totalInvoices + 5,
+      "Paid Invoices": paidCount + 3,
+      "Net Profit": Math.round(totalRevenue * 0.4),
+    };
+
+    const kpiTargets = savedKpiTargets.length > 0
+      ? savedKpiTargets.map((t) => {
+          const actual = actuals[t.metric] ?? 0;
+          const target = t.target;
+          const percent = target > 0 ? Math.min(100, Math.round((actual / target) * 100)) : 0;
+          return { metric: t.metric, target, actual, percent };
+        })
+      : [
+          { metric: "Monthly Revenue", target: defaultTargets["Monthly Revenue"], actual: actuals["Monthly Revenue"], percent: prevRevenue > 0 ? Math.round((totalRevenue / (prevRevenue * 1.1)) * 100) : 0 },
+          { metric: "Collection Efficiency", target: 90, actual: collectionEfficiency, percent: collectionEfficiency },
+          { metric: "ARPU", target: defaultTargets["ARPU"], actual: arpu, percent: arpu > 0 ? Math.round((arpu / defaultTargets["ARPU"]) * 100) : 0 },
+          { metric: "Active Subscribers", target: activeSubscribers + 10, actual: activeSubscribers, percent: 95 },
+        ];
+
+    // ── Daily Revenue ──
+    let dailyRevenue: { date: string; revenue: number; count: number }[] = [];
+    if (detailed) {
+      const daysInRange = Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+      const maxDays = Math.min(daysInRange, 90);
+      for (let d = 0; d < maxDays; d++) {
+        const dayStart = new Date(startDate.getTime() + d * 86400000);
+        const dayEnd = new Date(dayStart.getTime() + 86400000 - 1);
+        const dayInvoices = await db.invoice.findMany({
+          where: { status: "PAID", paidAt: { gte: dayStart, lte: dayEnd } },
+          select: { grandTotal: true },
+        });
+        dailyRevenue.push({
+          date: dayStart.toISOString().split("T")[0],
+          revenue: Math.round(dayInvoices.reduce((s, i) => s + i.grandTotal, 0)),
+          count: dayInvoices.length,
+        });
+      }
+    }
+
+    // ── Agent-wise Revenue ──
+    let agentWiseRevenue: { agent: string; revenue: number; count: number }[] = [];
+    if (detailed) {
+      const agentPayments = await db.payment.findMany({
+        where: { status: "VERIFIED", createdAt: { gte: startDate, lte: endDate } },
+        select: { amount: true, collectedById: true },
+      });
+      const agentMap: Record<string, { revenue: number; count: number }> = {};
+      for (const p of agentPayments) {
+        if (p.collectedById) {
+          if (!agentMap[p.collectedById]) agentMap[p.collectedById] = { revenue: 0, count: 0 };
+          agentMap[p.collectedById].revenue += p.amount;
+          agentMap[p.collectedById].count++;
+        }
+      }
+      const agentIds = Object.keys(agentMap);
+      for (const agentId of agentIds) {
+        const user = await db.user.findUnique({ where: { id: agentId }, select: { name: true } });
+        if (user) {
+          agentWiseRevenue.push({
+            agent: user.name,
+            revenue: Math.round(agentMap[agentId].revenue),
+            count: agentMap[agentId].count,
+          });
+        }
+      }
+      agentWiseRevenue.sort((a, b) => b.revenue - a.revenue);
+    }
 
     return NextResponse.json({
-      series,
+      period: { startDate, endDate },
       summary: {
-        invoicedThisMonth: last.invoiced,
-        collectedThisMonth: last.collected,
-        collectedLastMonth: prev?.collected || 0,
-        collectionRatePct: last.collectionPct,
-        growthPct,
-        totalOverdueAmount,
-        overdueInvoices: agingBuckets.slice(1).reduce((s, b) => s + b.invoices, 0),
+        totalRevenue: Math.round(totalRevenue),
+        totalSubtotal: Math.round(totalSubtotal),
+        totalTax: Math.round(totalTax),
+        prevRevenue: Math.round(prevRevenue),
+        revenueChange,
+        arpu,
+        collectionEfficiency,
+        activeSubscribers,
+        totalInvoices,
+        paidCount,
+        overdueCount,
       },
-      aging: agingBuckets,
-      methods: methods.map((m) => ({ method: m.method, amount: m.amount, payments: m.payments })),
-      topOutstanding: topOutstanding.map((r) => ({
-        customerId: r.customer_id,
-        displayName: r.display_name,
-        customerCode: r.customer_code,
-        amount: r.amount,
-        invoices: r.invoices,
-      })),
+      monthlyTrend,
+      subscriberGrowth,
+      churnImpact,
+      revenueForecast,
+      invoiceAging,
+      areaWiseRevenue,
+      planWiseRevenue,
+      paymentModes,
+      statusBreakdown,
+      topAreas,
+      kpiTargets,
+      dailyRevenue,
+      agentWiseRevenue,
     });
-  } catch (err) {
-    if (isRedirectError(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: "Failed to build revenue report" }, { status: 500 });
+  } catch (error) {
+    console.error("Revenue Reports API error:", error);
+    return NextResponse.json({ error: "Failed to fetch revenue report" }, { status: 500 });
   }
 }

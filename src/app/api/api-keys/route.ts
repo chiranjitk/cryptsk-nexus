@@ -1,104 +1,81 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
-import { auditCreateEntity } from "@/lib/audit";
+import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { auditCreate } from "@/lib/services/audit-service";
+import type { NextRequest } from "next/server";
+import { optionalAuth, requireAuth as _requireAuth, AuthError } from "@/lib/api-auth";
 
-// ============================================================
-// API Keys — service-to-service auth credentials
-// Per spec 08_SEC §6. The plaintext key is generated once and
-// returned exactly one time (oneTimeView). Only the SHA-256
-// hash is persisted in `api_keys.key` (per schema design).
-// ============================================================
+const VALID_SCOPES = ["read", "write", "admin", "subscribers", "plans", "invoices", "payments"];
 
-// GET /api/api-keys — list keys (never returns the secret)
-export async function GET(req: NextRequest) {
+export async function GET(request: Request) {
   try {
-    await requirePermission("api_key", "list");
-
-    // Auto-expire: any active key past its expiry becomes `expired`
-    await db.apiKey.updateMany({
-      where: { status: "active", expiresAt: { lt: new Date() } },
-      data: { status: "expired" },
-    });
-
-    const apiKeys = await db.apiKey.findMany({
+    try {
+      await _requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const keys = await db.apiKey.findMany({
       orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        name: true,
-        keyPrefix: true,
-        status: true,
-        lastUsedAt: true,
-        expiresAt: true,
-        createdAt: true,
-        revokedAt: true,
-      },
     });
 
-    return NextResponse.json({ apiKeys });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+    // Parse scopes from JSON string to array for frontend
+    const parsed = keys.map((k) => ({
+      ...k,
+      scopes: typeof k.scopes === "string" ? JSON.parse(k.scopes) : k.scopes,
+    }));
+
+    return NextResponse.json(parsed);
+  } catch (error) {
+    console.error("API keys fetch error:", error);
     return NextResponse.json({ error: "Failed to fetch API keys" }, { status: 500 });
   }
 }
 
-// POST /api/api-keys — generate a new key (plaintext shown once)
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const user = await requirePermission("api_key", "create");
-    const body = await req.json();
-    const { name, expiresAt } = body;
+    const authUserId = await optionalAuth(request);
+    const body = await request.json();
+    const { name, scopes, expiresAt, userId: bodyUserId, autoExpiryDays, requestsPerMinute, requestsPerDay } = body;
 
-    if (!name || typeof name !== "string" || !name.trim()) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
+    if (!name || !scopes || !Array.isArray(scopes) || scopes.length === 0) {
+      return NextResponse.json({ error: "Name and at least one scope are required" }, { status: 400 });
     }
 
-    if (expiresAt && isNaN(Date.parse(expiresAt))) {
-      return NextResponse.json({ error: "expiresAt must be a valid date" }, { status: 400 });
+    // Validate all scopes against allowed values
+    const normalizedScopes = scopes.map((s: string) => String(s).toLowerCase());
+    const invalidScopes = normalizedScopes.filter((s: string) => !VALID_SCOPES.includes(s));
+    if (invalidScopes.length > 0) {
+      return NextResponse.json(
+        { error: `Invalid scopes: ${invalidScopes.join(", ")}. Valid scopes: ${VALID_SCOPES.join(", ")}` },
+        { status: 400 }
+      );
     }
 
-    // Generate the plaintext key: csk_live_<48 hex chars>
-    const plaintext = `csk_live_${randomBytes(24).toString("hex")}`;
+    const key = `csk_${randomUUID().replace(/-/g, "")}`;
+    const scopesJson = JSON.stringify(normalizedScopes);
 
     const apiKey = await db.apiKey.create({
       data: {
-        name: name.trim(),
-        // Schema design: only the SHA-256 hash is stored for verification
-        key: createHash("sha256").update(plaintext).digest("hex"),
-        keyPrefix: plaintext.slice(0, 12),
-        status: "active",
+        name,
+        key,
+        scopes: scopesJson,
+        userId: bodyUserId || authUserId || null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
+        autoExpiryDays: typeof autoExpiryDays === "number" ? autoExpiryDays : 0,
+        requestsPerMinute: typeof requestsPerMinute === "number" ? requestsPerMinute : 60,
+        requestsPerDay: typeof requestsPerDay === "number" ? requestsPerDay : 1000,
       },
     });
 
-    await auditCreateEntity({
-      userId: user.id,
-      resource: "api_key",
-      resourceId: apiKey.id,
-      resourceName: apiKey.name,
-      after: { name: apiKey.name, keyPrefix: apiKey.keyPrefix, expiresAt: apiKey.expiresAt },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
+    auditCreate(request, "ApiKey", apiKey.id, { name, scopes: normalizedScopes, requestsPerMinute, requestsPerDay }, { userId: bodyUserId || authUserId || undefined }).catch(() => {});
 
-    return NextResponse.json(
-      {
-        apiKey: {
-          id: apiKey.id,
-          name: apiKey.name,
-          keyPrefix: apiKey.keyPrefix,
-          status: apiKey.status,
-          lastUsedAt: apiKey.lastUsedAt,
-          expiresAt: apiKey.expiresAt,
-          createdAt: apiKey.createdAt,
-        },
-        key: plaintext, // full plaintext — shown exactly once
-        oneTimeView: true,
-      },
-      { status: 201 }
-    );
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+    // Return parsed scopes (as array, not string)
+    return NextResponse.json({ ...apiKey, scopes: normalizedScopes }, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("API key create error:", error);
     return NextResponse.json({ error: "Failed to create API key" }, { status: 500 });
   }
 }

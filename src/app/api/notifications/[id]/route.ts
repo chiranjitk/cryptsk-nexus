@@ -1,77 +1,111 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, hasRole, requirePermission } from "@/lib/rbac";
-import { auditDelete } from "@/lib/audit";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+import { auditCreate } from "@/lib/services/audit-service";
 
-// PATCH /api/notifications/[id] — mark as read ({ read: true })
-// Only the owner or a Super Administrator may update.
-export async function PATCH(
-  req: NextRequest,
+export async function GET(
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    await requireAuth(request);
+    const { id } = await params;
+    const notification = await db.notification.findUnique({
+      where: { id },
+      include: {
+        Subscriber: { select: { id: true, name: true, code: true, phone: true, email: true } },
+        User: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (!notification) {
+      return NextResponse.json({ error: "Notification not found" }, { status: 404 });
     }
 
+    return NextResponse.json({ notification });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Get notification error:", error);
+    return NextResponse.json({ error: "Failed to fetch notification" }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await requireAuth(request);
     const { id } = await params;
-    const body = await req.json();
+    const body = await request.json();
 
     const notification = await db.notification.findUnique({ where: { id } });
     if (!notification) {
       return NextResponse.json({ error: "Notification not found" }, { status: 404 });
     }
 
-    const isAdmin = hasRole(user, "Super Administrator");
-    if (notification.userId !== user.id && !isAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const updateData: Record<string, unknown> = {};
+    // Only allow safe fields — userId is excluded to prevent authorization bypass
+    const allowedFields = [
+      "title", "message", "type", "category", "status", "subscriberId",
+    ];
+
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        updateData[field] = body[field] === "" ? null : body[field];
+      }
     }
 
-    if (body?.read !== true) {
-      return NextResponse.json({ error: "Only { read: true } is supported" }, { status: 400 });
+    if (body.status === "DELIVERED") updateData.deliveredAt = new Date();
+    if (body.status === "READ") {
+      updateData.readAt = new Date();
+      if (!updateData.deliveredAt) updateData.deliveredAt = new Date();
     }
+    if (body.sentAt) updateData.sentAt = new Date(body.sentAt);
 
     const updated = await db.notification.update({
       where: { id },
-      data: { isRead: true, readAt: new Date() },
+      data: updateData,
+      include: {
+        Subscriber: { select: { id: true, name: true, code: true } },
+        User: { select: { id: true, name: true } },
+      },
     });
 
+    auditCreate(request, "Notification", id, { updatedFields: Object.keys(updateData), oldStatus: notification.status, newStatus: body.status }, { userId: session }).catch(() => {});
     return NextResponse.json({ notification: updated });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Update notification error:", error);
     return NextResponse.json({ error: "Failed to update notification" }, { status: 500 });
   }
 }
 
-// DELETE /api/notifications/[id] — remove a notification (admin)
 export async function DELETE(
-  req: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requirePermission("system_setting", "manage");
+    const session = await requireAuth(request);
     const { id } = await params;
+    const notification = await db.notification.findUnique({ where: { id } });
 
-    const existing = await db.notification.findUnique({ where: { id } });
-    if (!existing) {
+    if (!notification) {
       return NextResponse.json({ error: "Notification not found" }, { status: 404 });
     }
 
     await db.notification.delete({ where: { id } });
-
-    await auditDelete({
-      userId: user.id,
-      resource: "notification",
-      resourceId: id,
-      resourceName: existing.title,
-      before: { title: existing.title, type: existing.type },
-      ipAddress: req.headers.get("x-forwarded-for") || "unknown",
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (err: any) {
-    if (err instanceof Response) return err;
+    auditCreate(request, "Notification", id, { action: "delete", title: notification.title, subscriberId: notification.subscriberId }, { userId: session }).catch(() => {});
+    return NextResponse.json({ success: true, message: "Notification deleted successfully" });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Delete notification error:", error);
     return NextResponse.json({ error: "Failed to delete notification" }, { status: 500 });
   }
 }
