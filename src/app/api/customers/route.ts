@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
       select: {
         id: true, customerCode: true, type: true, status: true,
         displayName: true, email: true, phone: true,
-        companyName: true, gstin: true, kycVerified: true,
+        companyName: true, gstin: true, pan: true, kycVerified: true,
         createdAt: true, updatedAt: true,
         _count: { select: { subscribers: true, subscriptions: true } },
       },

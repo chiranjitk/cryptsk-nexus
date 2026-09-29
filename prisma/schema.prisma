@@ -1839,3 +1839,65 @@ model InventoryItem {
   @@index([category])
   @@map("inventory_items")
 }
+
+// ============================================================
+// PHASE 10 — Monitoring & Diagnostics
+// Per: docs/architecture/11_MONITORING — syslog ingest, alert
+// dedup store, service probe history. 100% real data: rows are
+// written by the UDP syslog listener (port 30514), the HTTP
+// ingest API and the platform's own service probes.
+// ============================================================
+
+/// Syslog entries — RFC3164/5424 lines ingested from network
+/// devices via mini-services/syslog-listener (UDP) or the HTTP
+/// ingest API (POST /api/monitoring/syslog).
+model SyslogEntry {
+  id         BigInt   @id @default(autoincrement())
+  facility   Int      @default(16) // RFC3164 facility (local0 = 16)
+  severity   Int      @default(6) // RFC3164 severity (0=emerg … 7=debug)
+  tag        String? // program name, e.g. "sshd"
+  host       String? // hostname as claimed by the sender
+  sourceIp   String?  @map("source_ip") // sender IP (UDP source / remote addr)
+  message    String // log content (parsed remainder)
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@index([receivedAt])
+  @@index([severity])
+  @@map("syslog_entries")
+}
+
+/// Monitoring alerts — deduped by stable alertKey, synced from
+/// real platform conditions on every GET /api/monitoring/alerts.
+model MonitoringAlert {
+  id             BigInt    @id @default(autoincrement())
+  alertKey       String    @unique @map("alert_key") // stable condition key, e.g. "nas-down"
+  severity       String // critical | warning | info
+  title          String
+  detail         String
+  source         String // billing | network | aaa | operations | inventory | subscribers | monitoring
+  isAcknowledged Boolean   @default(false) @map("is_acknowledged")
+  acknowledgedBy String?   @map("acknowledged_by") // session user email
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  firstSeenAt    DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt     DateTime? @map("resolved_at") // set when the condition clears
+
+  @@index([resolvedAt])
+  @@index([severity])
+  @@map("monitoring_alerts")
+}
+
+/// Service probe history — one row per health-check run of each
+/// platform service (db, session engine, VPP adapter, DNS, diagnostics).
+/// Pruned to the last 24h by the overview route.
+model ServiceProbeLog {
+  id        BigInt   @id @default(autoincrement())
+  service   String // "postgresql" | "sessionEngine" | "vppAdapter" | "dnsResolver" | "diagnostic:<tool>"
+  status    String // up | degraded | down
+  latencyMs Int?     @map("latency_ms")
+  detail    String?
+  checkedAt DateTime @default(now()) @map("checked_at")
+
+  @@index([service, checkedAt])
+  @@map("service_probe_logs")
+}

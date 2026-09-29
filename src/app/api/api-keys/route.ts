@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
         apiKey: {
           id: apiKey.id,
           name: apiKey.name,
-          prefix: apiKey.keyPrefix,
+          keyPrefix: apiKey.keyPrefix,
           status: apiKey.status,
           lastUsedAt: apiKey.lastUsedAt,
           expiresAt: apiKey.expiresAt,

@@ -162,20 +162,30 @@ export async function aiChurnPrediction(userId: string): Promise<string> {
     orderBy: { createdAt: "desc" },
     select: {
       id: true, radiusUsername: true, status: true, activatedAt: true,
-      lastLoginAt: true, planId: true,
+      expiresAt: true, planId: true,
       plan: { select: { name: true, basePrice: true } } },
   });
+
+  // Real last-session activity per username from RADIUS accounting
+  // (Subscriber has no lastLoginAt column — RadAcct is the source of truth)
+  const lastSessions = await db.radAcct.groupBy({
+    by: ["username"],
+    _max: { acctstarttime: true },
+  });
+  const lastSeenByUser = new Map(lastSessions.map((s) => [s.username, s._max.acctstarttime]));
 
   const customerCount = await db.customer.count();
   const activeSubs = subscribers.filter(s => s.status === "active").length;
   const suspendedSubs = subscribers.filter(s => s.status === "suspended").length;
   const terminatedSubs = subscribers.filter(s => s.status === "terminated").length;
 
-  // Check for subscribers with no recent activity
+  // Check for subscribers with no recent session activity
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
-  const inactiveSubs = subscribers.filter(s =>
-    s.status === "active" && (!s.lastLoginAt || new Date(s.lastLoginAt) < thirtyDaysAgo)
-  ).length;
+  const inactiveSubs = subscribers.filter(s => {
+    if (s.status !== "active") return false;
+    const lastSeen = lastSeenByUser.get(s.radiusUsername);
+    return !lastSeen || new Date(lastSeen) < thirtyDaysAgo;
+  }).length;
 
   const churnData = `
 Churn Analysis Data:
@@ -192,7 +202,7 @@ ${JSON.stringify(subscribers.slice(0, 20).map(s => ({
   status: s.status,
   plan: s.plan?.name || "none",
   price: s.plan?.basePrice || 0,
-  lastLogin: s.lastLoginAt || "never",
+  lastSession: lastSeenByUser.get(s.radiusUsername) || "never",
   activated: s.activatedAt || "never",
 })), null, 2)}
 `;
@@ -241,8 +251,8 @@ export async function aiRevenueForecast(userId: string): Promise<string> {
     db.invoice.aggregate({ _sum: { balanceDue: true } }),
   ]);
 
-  const collectionRate = totalRevenue._sum.total?.valueOf() > 0
-    ? ((totalCollected._sum.paidAmount?.valueOf() || 0) / totalRevenue._sum.total!.valueOf() * 100).toFixed(1)
+  const collectionRate = (totalRevenue._sum.total?.valueOf() ?? 0) > 0
+    ? ((totalCollected._sum.paidAmount?.valueOf() || 0) / (totalRevenue._sum.total?.valueOf() || 1) * 100).toFixed(1)
     : "0";
 
   const forecastData = `

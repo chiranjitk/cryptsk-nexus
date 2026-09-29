@@ -29,10 +29,10 @@ export async function GET(req: NextRequest) {
 
     const where: Record<string, unknown> = {};
     if (status) {
-      if (!Object.values(VpnTunnelStatus).includes(status)) {
+      if (!Object.values(VpnTunnelStatus).includes(status as VpnTunnelStatus)) {
         return NextResponse.json({ error: "Invalid status — must be up, down, connecting or error" }, { status: 400 });
       }
-      where.status = status;
+      where.status = status as VpnTunnelStatus;
     }
     if (type) where.type = type;
 

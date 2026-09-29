@@ -83,6 +83,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Monitoring",
+    module: "monitoring",
+    items: [
+      { title: "Monitoring & Diagnostics", href: "/?view=monitoring", view: "monitoring", icon: Activity, perm: { resource: "monitoring", action: "list" } },
+    ],
+  },
+  {
     label: "Reports & Analytics",
     module: "reporting",
     items: [

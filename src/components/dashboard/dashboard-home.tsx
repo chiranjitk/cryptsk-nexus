@@ -40,7 +40,7 @@ type DashboardStats = {
   topSubscribers: Array<{ username: string; plan: string | null; trafficBytes: number; sessions: number }>;
   hourlyThroughput: Array<{ hour: string; down: number; up: number }>;
   dailyTrend: Array<{ day: string; sessions: number; revenue: number }>;
-  recentActivity: Array<{ id: string; user: string; action: string; resource: string; result: string | null; createdAt: string }>;
+  recentActivity: Array<{ id: string; user: string; action: string; resource: string; result: string | null; description?: string; createdAt: string }>;
   alerts: Array<{ severity: "error" | "warning" | "info"; title: string; desc: string; time: string }>;
 };
 

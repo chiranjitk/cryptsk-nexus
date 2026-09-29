@@ -234,7 +234,7 @@ export async function GET(req: NextRequest) {
     if (subscribersExpiring > 0)
       alerts.push({ severity: "info", title: `${subscribersExpiring} plan${subscribersExpiring > 1 ? "s" : ""} expiring in 7 days`, desc: "Send renewal reminders", time: "7d window" });
 
-    const trafficTodayBytes = Number(trafficToday._sum.acctinputoctets ?? 0n) + Number(trafficToday._sum.acctoutputoctets ?? 0n);
+    const trafficTodayBytes = Number(trafficToday._sum.acctinputoctets ?? BigInt(0)) + Number(trafficToday._sum.acctoutputoctets ?? BigInt(0));
     const authTotal24h = authAccept24h + authReject24h;
 
     return NextResponse.json({

@@ -277,7 +277,7 @@ export function AppHeader() {
     "radius-postauth": "Authentication Logs", sessions: "Active Sessions", policies: "Policies & Rules",
     vpp: "VPP Gateway", billing: "Invoices & Payments", network: "Network Manager",
     ai: "AI Advisor & Insights", audit: "Audit Log", admin: "System Administration",
-    operations: "Tickets & Support",
+    operations: "Tickets & Support", monitoring: "Monitoring & Diagnostics",
   };
   const reportTabLabels: Record<string, string> = {
     center: "Report Center", revenue: "Revenue & Collection", usage: "Usage & Bandwidth",

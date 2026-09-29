@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requirePermission } from "@/lib/rbac";
+import type { Prisma } from "@prisma/client";
 
 // GET /api/audit — list audit events with filters
 export async function GET(req: NextRequest) {
@@ -19,15 +20,16 @@ export async function GET(req: NextRequest) {
 
     const skip = (page - 1) * pageSize;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.AuditEventWhereInput = {};
     if (userId) where.userId = userId;
-    if (action) where.action = action;
+    if (action) where.action = action as Prisma.EnumAuditActionFilter["equals"];
     if (resource) where.resource = resource;
     if (result) where.result = result;
     if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+      where.createdAt = {
+        ...(startDate ? { gte: new Date(startDate) } : {}),
+        ...(endDate ? { lte: new Date(endDate) } : {}),
+      };
     }
 
     const [events, total] = await Promise.all([
