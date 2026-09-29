@@ -2347,14 +2347,14 @@ model NetworkDevice {
   BandwidthLog                                                     BandwidthLog[]
   BandwidthThrottleConfig                                          BandwidthThrottleConfig[]
   DeviceConfigHistory                                              DeviceConfigHistory[]
-  DeviceInterface_DeviceInterface_connectedDeviceIdToNetworkDevice DeviceInterface[]         @relation("DeviceInterface_connectedDeviceIdToNetworkDevice")
-  DeviceInterface_DeviceInterface_deviceIdToNetworkDevice          DeviceInterface[]         @relation("DeviceInterface_deviceIdToNetworkDevice")
+  connectedInterfaces                                              DeviceInterface[]         @relation("DeviceInterface_connectedDeviceIdToNetworkDevice")
+  interfaces                                                       DeviceInterface[]         @relation("DeviceInterface_deviceIdToNetworkDevice")
   NasClientConfig                                                  NasClientConfig?
   Area                                                             Area?                     @relation(fields: [areaId], references: [id])
-  NetworkDevice                                                    NetworkDevice?            @relation("NetworkDeviceToNetworkDevice", fields: [parentId], references: [id])
-  other_NetworkDevice                                              NetworkDevice[]           @relation("NetworkDeviceToNetworkDevice")
-  OltPort                                                          OltPort[]
-  Subscriber                                                       Subscriber[]
+  parent                                                           NetworkDevice?            @relation("NetworkDeviceToNetworkDevice", fields: [parentId], references: [id])
+  children                                                         NetworkDevice[]           @relation("NetworkDeviceToNetworkDevice")
+  oltPorts                                                         OltPort[]
+  assignedSubscribers                                              Subscriber[]
 
   @@index([ipAddress])
   @@index([status])
@@ -2983,7 +2983,7 @@ model RadiusAttributeDef {
   enabled             Boolean               @default(true)
   createdAt           DateTime              @default(now())
   updatedAt DateTime @updatedAt
-  UserRadiusAttribute UserRadiusAttribute[]
+  userAttributes      UserRadiusAttribute[]
 
   @@index([attrType])
   @@index([enabled])
@@ -3955,7 +3955,7 @@ model Technician {
   certifications    String?
   createdAt         DateTime           @default(now())
   updatedAt DateTime @updatedAt
-  Area              Area[]
+  areasManaged      Area[]
   AttendanceRecord  AttendanceRecord[]
   Complaint         Complaint[]
   Installation      Installation[]
