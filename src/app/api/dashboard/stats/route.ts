@@ -43,6 +43,10 @@ export async function GET(req: NextRequest) {
       planRows,
       moduleActive, moduleTotal,
       subscribersExpiring,
+      tOpen, tInProgress, tPending, tCritical, tUnassigned,
+      instToday, instUpcoming,
+      invLowStock, invOutOfStock, invStockValue,
+      instTechnicians,
     ] = await Promise.all([
       db.subscriber.count(),
       db.subscriber.count({ where: { status: "active" } }),
@@ -110,7 +114,18 @@ export async function GET(req: NextRequest) {
       }),
       db.module.count({ where: { status: "active" } }),
       db.module.count(),
-      db.subscriber.count({ where: { expiresAt: { not: null, lte: new Date(now.getTime() + 7 * 24 * 3600 * 1000) }, status: "active" } }),
+      db.subscriber.count({ where: { expiresAt: { not: null, lte: new Date(now.getTime() + 7 * 3600 * 1000 * 24) }, status: "active" } }),
+      db.ticket.count({ where: { status: "open" } }),
+      db.ticket.count({ where: { status: "in_progress" } }),
+      db.ticket.count({ where: { status: "pending" } }),
+      db.ticket.count({ where: { priority: "critical", status: { notIn: ["resolved", "closed"] } } }),
+      db.ticket.count({ where: { status: { in: ["open", "in_progress", "pending"] }, assignedTo: null } }),
+      db.installation.count({ where: { scheduledAt: { gte: startOfToday, lt: new Date(startOfToday.getTime() + 86400000) }, status: { in: ["scheduled", "in_progress"] } } }),
+      db.installation.count({ where: { scheduledAt: { gte: now }, status: "scheduled" } }),
+      db.inventoryItem.count({ where: { quantity: { lte: db.inventoryItem.fields.minQuantity } } }),
+      db.inventoryItem.count({ where: { quantity: 0 } }),
+      db.$queryRaw<Array<{ v: number | null }>>`SELECT COALESCE(SUM(quantity * COALESCE("unitPrice", 0)), 0)::float8 AS v FROM inventory_items`,
+      db.installation.findMany({ where: { status: { in: ["scheduled", "in_progress"] }, technicianName: { not: null } }, select: { technicianName: true }, distinct: ["technicianName"] }),
     ]);
 
     // ── Plan distribution (real plan names) ──
@@ -238,6 +253,11 @@ export async function GET(req: NextRequest) {
       },
       network: { nasTotal, nasActive, dhcpLeases, dhcpSubnets, dnsZones, dnsRecords, firewallRules },
       modules: { active: moduleActive, total: moduleTotal },
+      operations: {
+        tickets: { open: tOpen, inProgress: tInProgress, pending: tPending, critical: tCritical, unassigned: tUnassigned },
+        installations: { today: instToday, upcoming: instUpcoming, technicians: instTechnicians.length },
+        inventory: { lowStock: invLowStock, outOfStock: invOutOfStock, stockValue: Math.round(Number(Array.isArray(invStockValue) ? (invStockValue[0]?.v ?? 0) : 0)) },
+      },
       planDistribution,
       topSubscribers,
       hourlyThroughput,

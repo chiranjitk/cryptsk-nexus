@@ -12,7 +12,7 @@
     "deploy:restart": "node scripts/deploy.mjs --restart",
     "deploy:logs": "node scripts/deploy.mjs --logs",
     "deploy:no-push": "node scripts/deploy.mjs --no-push",
-    "db:push": "prisma db push --accept-data-loss --schema prisma/schema.prisma",
+    "db:push": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus prisma db push --accept-data-loss --schema prisma/schema.prisma",
     "db:generate": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",

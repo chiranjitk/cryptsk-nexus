@@ -7,7 +7,7 @@ import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Users, Package, CreditCard, KeyRound, Radio, ScrollText,
-  Gauge, Network, Server, Brain, ShieldCheck, UserCog, Settings, ListChecks, Wifi,
+  Gauge, Network, Server, Brain, ShieldCheck, UserCog, Settings, ListChecks, Wifi, Wrench,
 } from "lucide-react";
 import { canClient } from "@/lib/rbac";
 
@@ -29,7 +29,7 @@ type NavLeaf = {
   view: string;            // ?view= key used for active matching
   icon: React.ComponentType<{ className?: string }>;
   perm?: { resource: string; action: "read" | "list" | "manage" };
-  badgeKey?: "activeSessions";
+  badgeKey?: "activeSessions" | "openTickets";   // key into /api/health counts
 };
 
 type NavGroup = {
@@ -74,6 +74,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Operations",
+    module: "operations_support",
+    items: [
+      { title: "Tickets & Support", href: "/?view=operations", view: "operations", icon: Wrench, perm: { resource: "ticket", action: "list" }, badgeKey: "openTickets" },
+    ],
+  },
+  {
     label: "Intelligence",
     module: "ai_intelligence",
     items: [
@@ -94,7 +101,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 type HealthCounts = {
   status?: string;
-  counts?: { activeSessions?: number };
+  counts?: { activeSessions?: number; openTickets?: number };
 };
 
 export function AppSidebar() {
@@ -105,7 +112,7 @@ export function AppSidebar() {
   const perms = (session?.user as { permissions?: string[] } | undefined)?.permissions;
   const roles = (session?.user as { roles?: string[] } | undefined)?.roles;
 
-  // Live badge source: active session count (real data, 30s refresh)
+  // Live badge source: /api/health counts (real data, 30s refresh)
   const { data: health } = useQuery<HealthCounts>({
     queryKey: ["sidebar-health"],
     queryFn: async () => {
@@ -117,7 +124,7 @@ export function AppSidebar() {
     retry: 1,
     staleTime: 25000,
   });
-  const activeSessions = health?.counts?.activeSessions;
+  const healthCounts = health?.counts || {};
 
   const canSee = (leaf: NavLeaf): boolean =>
     !leaf.perm || canClient(perms, roles, leaf.perm.resource, leaf.perm.action);
@@ -155,10 +162,14 @@ export function AppSidebar() {
                 <SidebarMenu>
                   {visibleItems.map((item) => {
                     const active = item.view === activeView;
-                    const badge =
-                      item.badgeKey === "activeSessions" && typeof activeSessions === "number" && activeSessions > 0
-                        ? activeSessions
-                        : null;
+                    // Generalized badge: any badgeKey resolves against /api/health counts
+                    const badgeValue = item.badgeKey
+                      ? healthCounts[item.badgeKey as keyof NonNullable<HealthCounts["counts"]>]
+                      : undefined;
+                    const badge = typeof badgeValue === "number" && badgeValue > 0 ? badgeValue : null;
+                    const badgeTone = item.badgeKey === "openTickets"
+                      ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                      : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
                     return (
                       <SidebarMenuItem key={item.view}>
                         <SidebarMenuButton asChild isActive={active} tooltip={item.title}
@@ -169,7 +180,7 @@ export function AppSidebar() {
                             <item.icon className={`size-4 ${active ? "text-primary" : ""}`} />
                             <span className={active ? "text-primary" : ""}>{item.title}</span>
                             {badge !== null && (
-                              <span className="ml-auto rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                              <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums ${badgeTone}`}>
                                 {badge}
                               </span>
                             )}

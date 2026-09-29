@@ -178,7 +178,7 @@ async function main() {
     { name: "Policy Engine", slug: "policy_engine", description: "Policy definition and enforcement", status: "active", sortOrder: 5 },
     { name: "VPP Gateway", slug: "vpp_gateway", description: "DPDK/VPP dataplane", status: "active", sortOrder: 6 },
     { name: "Billing & Finance", slug: "billing_finance", description: "Invoices, payments, collections", status: "active", sortOrder: 7 },
-    { name: "Operations & Support", slug: "operations_support", description: "Tickets, installations, inventory", status: "not_installed", sortOrder: 8 },
+    { name: "Operations & Support", slug: "operations_support", description: "Tickets, installations, inventory", status: "active", sortOrder: 8 },
     { name: "Monitoring", slug: "monitoring", description: "Live monitoring, syslog, alerts", status: "not_installed", sortOrder: 9 },
     { name: "AI & Intelligence", slug: "ai_intelligence", description: "AI advisor, diagnosis, churn", status: "active", sortOrder: 10 },
   ];
