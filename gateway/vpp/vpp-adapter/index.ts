@@ -39,7 +39,7 @@ async function generateVPPConfig(): Promise<string> {
     lines.push("# ─── 1. Interfaces ──────────────────────────────────────");
 
     // Get NAS devices (each NAS = one VPP interface)
-    const nasResult = await client.query("SELECT nasname, shortname, type FROM nas WHERE \"isActive\" = true ORDER BY nasname");
+    const nasResult = await client.query("SELECT nasname, shortname, type FROM nas ORDER BY nasname");
     for (const nas of nasResult.rows) {
       lines.push(`# NAS: ${nas.shortname} (${nas.nasname}, type=${nas.type})`);
       lines.push(`set interface state ${nas.nasname} up`);
