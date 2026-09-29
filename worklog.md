@@ -631,3 +631,50 @@ Stage Summary:
 - ✅ All services active (PM2 + systemd)
 - Commits: c6a1f8d (Phase 8), d1719cc (schema fix), 3d760dd (Kea output_options), 6aa8eb2 (Kea subnet id)
 - Next: Phase 9 — AI Intelligence (z-ai-web-dev-sdk)
+
+---
+Task ID: PHASE-9
+Agent: orchestrator (sandbox main)
+Task: Phase 9 — AI Intelligence (final development phase)
+
+Work Log:
+- Added AiInsight Prisma model (type, title, content, confidence, dataSource,
+  dataSnapshot, status, actionTaken/By/At, modelProvider, tokensUsed, audit)
+  + 2 enums (AiInsightType: 6 values, AiInsightStatus: 4 values)
+- 51 tables total (50 Phase 0-8 + 1 ai_insights)
+- Created AI service (src/lib/ai-service.ts):
+  * Uses z-ai-web-dev-sdk (backend-only)
+  * LLM singleton (reuses ZAI.create() instance)
+  * aiAdvisor(question) — gathers platform context (users, customers, subscribers,
+    active sessions, invoices, revenue, outstanding, products) → LLM → saves insight
+  * aiNetworkDiagnosis() — analyzes radpostauth + radacct for auth failures,
+    reject rate, session anomalies, NAS issues → LLM → saves insight
+  * aiChurnPrediction() — analyzes subscribers (active/suspended/inactive,
+    plan pricing, last login, account age) → LLM → saves insight
+  * aiRevenueForecast() — analyzes invoices + payments for collection rate,
+    outstanding, revenue projections (30/60/90 days) → LLM → saves insight
+  * getInsights() — list saved AI insights
+- Created 5 API routes (RBAC-protected):
+  * POST /api/ai/advisor (requires ai_advisor.execute)
+  * POST /api/ai/diagnosis (requires ai_diagnosis.execute)
+  * POST /api/ai/churn (requires ai_churn.execute)
+  * POST /api/ai/forecast (requires ai_forecast.execute)
+  * GET /api/ai/insights (requires ai_advisor.read)
+- Created UI panel (src/components/admin/ai-panel.tsx):
+  * Chat interface (messages + input + Enter to send)
+  * 3 Quick Action cards (Diagnosis, Churn, Forecast)
+  * Saved Insights sidebar (type icon, content preview, status badge)
+  * Advisory disclaimer (ADR-030)
+  * AI Active badge with ai-glow animation
+- Updated page.tsx (view=ai) + sidebar (AI & Intelligence → /?view=ai)
+
+Deployed + verified:
+- 51 tables on PostgreSQL 18.6
+- Build succeeded, PM2 restarted, HTTP 200
+- All 3 PM2 services + 5 systemd services running
+
+Stage Summary:
+- ✅ Phase 9 AI Intelligence deployed — advisor chat + diagnosis + churn + forecast
+- ✅ z-ai-web-dev-sdk working (backend-only, advisory per ADR-030)
+- ✅ ALL 10 IMPLEMENTATION PHASES (0-9) COMPLETE!
+- Commit: d96af1d
