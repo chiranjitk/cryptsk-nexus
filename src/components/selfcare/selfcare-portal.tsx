@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -11,6 +11,7 @@ import {
   CheckCircle2, Clock, Pause, CircleSlash, Hourglass, Wifi, WifiOff,
   RefreshCw, AlertTriangle, Inbox, FileText, Banknote, Landmark, Wallet,
   IndianRupee, LogOut, Sun, Moon, Info, Download, Upload, Smartphone, Ticket,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +36,16 @@ import { cn } from "@/lib/utils";
 // All data is real via /api/selfcare/* (T5-a contract) and
 // /api/subscribers. Zero mock values, honest empty states, and
 // NO admin-only concepts (no NAS/RBAC/audit terminology).
+//
+// Two modes (T6):
+//  - Customer session (session.user.userType === "customer"): the
+//    portal is the customer's OWN account — subscriber picker, staff
+//    preview banner and admin links are never rendered. API calls
+//    pass NO subscriberId (the backend force-scopes customer
+//    sessions and auto-picks their first subscriber); billing and
+//    support use the session's own customerId.
+//  - Staff session: preview mode with the subscriber picker
+//    (unchanged behavior).
 // ============================================================
 
 // ---------- API contract types (T5-a) ----------
@@ -308,6 +319,14 @@ type Tab = "dashboard" | "usage" | "billing" | "support" | "profile" | "plans";
 
 const STORAGE_KEY = "selfcare.subscriberId";
 
+// Resolved self-care context (T6). Customer sessions scope themselves:
+// no subscriberId is sent (the backend auto-picks their first subscriber
+// and rejects foreign ones), and customerId comes from the session.
+// Staff sessions keep the explicit picker selection.
+type SelfcareCtx =
+  | { mode: "customer"; customerId: string; subscriberId: null }
+  | { mode: "staff"; customerId: string | null; subscriberId: string };
+
 const NAV_TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "usage", label: "My Usage", icon: BarChart3 },
@@ -327,6 +346,18 @@ export function SelfCarePortal() {
     }
   });
   const { theme, setTheme } = useTheme();
+  const { data: session, status: sessionStatus } = useSession();
+
+  // Customer session detection (T6 contract: session.user gains the
+  // additive userType/customerId/customerName fields on customer logins).
+  const sessionUser = session?.user as
+    | { userType?: string; customerId?: string; customerName?: string; name?: string | null }
+    | undefined;
+  const isCustomer = sessionStatus !== "loading" && sessionUser?.userType === "customer";
+  const sessionCustomerId = isCustomer ? sessionUser?.customerId || "" : "";
+  const sessionCustomerName = isCustomer
+    ? sessionUser?.customerName || sessionUser?.name || ""
+    : "";
 
   function selectSubscriber(id: string) {
     setSubscriberId(id);
@@ -337,34 +368,76 @@ export function SelfCarePortal() {
     }
   }
 
-  // Subscriber context (picker) — real /api/subscribers data
+  // Subscriber context (picker) — real /api/subscribers data.
+  // Staff-only: customer sessions must never list other customers' lines.
   const pickerQuery = useQuery<PickerSubscriber[]>({
     queryKey: ["selfcare", "subscribers"],
     queryFn: async () => {
       const data = await apiRequest("/api/subscribers?limit=50") as { subscribers?: PickerSubscriber[] };
       return Array.isArray(data?.subscribers) ? data.subscribers : [];
     },
+    enabled: sessionStatus !== "loading" && !isCustomer,
     refetchInterval: 60000,
     staleTime: 50000,
     retry: 1,
   });
 
-  // Overview — powers header banner, dashboard hero + customerId derivation
+  // Overview — powers header banner, dashboard hero + customerId derivation.
+  // Customer mode: no subscriberId param — the backend scopes the session
+  // to the signed-in customer and auto-picks their first subscriber.
   const overviewQuery = useQuery<OverviewData>({
-    queryKey: ["selfcare", "overview", subscriberId],
-    queryFn: () => apiRequest(`/api/selfcare/overview?subscriberId=${encodeURIComponent(subscriberId)}`) as Promise<OverviewData>,
-    enabled: !!subscriberId,
+    queryKey: isCustomer ? ["selfcare", "overview", "self", sessionCustomerId] : ["selfcare", "overview", subscriberId],
+    queryFn: () =>
+      (isCustomer
+        ? apiRequest("/api/selfcare/overview")
+        : apiRequest(`/api/selfcare/overview?subscriberId=${encodeURIComponent(subscriberId)}`)) as Promise<OverviewData>,
+    enabled: sessionStatus !== "loading" && (isCustomer ? !!sessionCustomerId : !!subscriberId),
     refetchInterval: 60000,
     staleTime: 50000,
     retry: 1,
   });
 
   const overview = overviewQuery.data;
-  const customerId = overview?.customer?.id ?? null;
-  const customerName = overview?.customer?.displayName ?? null;
+
+  // Resolved context: customer sessions never touch the picker state,
+  // so a stale sessionStorage "selfcare.subscriberId" cannot override them.
+  const ctx: SelfcareCtx = isCustomer
+    ? { mode: "customer", customerId: sessionCustomerId, subscriberId: null }
+    : { mode: "staff", customerId: overview?.customer?.id ?? null, subscriberId };
+  const customerId = ctx.customerId;
+  const customerName = isCustomer
+    ? sessionCustomerName
+    : (overview?.customer?.displayName ?? null);
+  // Tabs that scope by subscriber receive null in customer mode (no param
+  // sent) and the picker selection in staff mode — staff behavior unchanged.
+  const ctxSubscriberId = ctx.mode === "customer" ? null : ctx.subscriberId;
 
   const main = (() => {
-    if (!subscriberId) {
+    if (sessionStatus === "loading") {
+      return (
+        <div className="flex flex-col items-center justify-center gap-3 py-24 text-sm text-muted-foreground" aria-busy="true">
+          <Loader2 className="size-6 cryptsk-spin" aria-hidden="true" />
+          Loading your portal…
+        </div>
+      );
+    }
+    if (isCustomer && !sessionCustomerId) {
+      // Defensive only — customer sessions always carry a customerId.
+      return (
+        <Card className="mx-auto mt-6 max-w-lg text-center">
+          <CardContent className="p-8">
+            <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-amber-500/10">
+              <AlertTriangle className="size-7 text-amber-500" />
+            </div>
+            <h2 className="text-lg font-semibold">Account not linked yet</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your sign-in isn&apos;t linked to a customer account yet. Please contact our support team so we can finish setting up your access.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
+    if (!isCustomer && !subscriberId) {
       return (
         <Card className="mx-auto mt-6 max-w-lg text-center">
           <CardContent className="p-8">
@@ -381,15 +454,15 @@ export function SelfCarePortal() {
     }
     switch (tab) {
       case "usage":
-        return <UsageTab subscriberId={subscriberId} />;
+        return <UsageTab subscriberId={ctxSubscriberId} />;
       case "billing":
         return <BillingTab customerId={customerId} />;
       case "support":
         return <SupportTab customerId={customerId} openTickets={overview?.openTickets ?? 0} />;
       case "profile":
-        return <ProfileTab subscriberId={subscriberId} />;
+        return <ProfileTab subscriberId={ctxSubscriberId} />;
       case "plans":
-        return <PlansTab subscriberId={subscriberId} />;
+        return <PlansTab subscriberId={ctxSubscriberId} />;
       case "dashboard":
       default:
         return (
@@ -409,7 +482,11 @@ export function SelfCarePortal() {
       {/* ── Self-care header (own chrome — NOT the admin shell) ── */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex h-14 items-center gap-3 px-4">
-          <Link href="/" className="flex items-center gap-2.5" aria-label="CRYPTSK Nexus home">
+          <Link
+            href={isCustomer ? "/?view=selfcare" : "/"}
+            className="flex items-center gap-2.5"
+            aria-label={isCustomer ? "CRYPTSK Nexus Self-Care home" : "CRYPTSK Nexus home"}
+          >
             <div className="flex size-8 items-center justify-center rounded-lg bg-primary sidebar-logo-glow">
               <span className="text-sm font-bold text-primary-foreground">C</span>
             </div>
@@ -419,25 +496,39 @@ export function SelfCarePortal() {
             Self-Care
           </Badge>
 
-          {/* Subscriber context switcher */}
+          {/* Customer sessions: own identity instead of the staff picker */}
           <div className="ml-auto flex min-w-0 items-center gap-2">
-            <Select value={subscriberId} onValueChange={selectSubscriber}>
-              <SelectTrigger
-                className="h-9 w-full max-w-[190px] text-xs sm:w-[260px] sm:max-w-none sm:text-sm"
-                aria-label="Select connection"
-              >
-                <SelectValue placeholder={pickerQuery.isLoading ? "Loading connections…" : "Select connection"} />
-              </SelectTrigger>
-              <SelectContent className="max-h-72">
-                {(pickerQuery.data ?? []).map((s) => (
-                  <SelectItem key={s.id} value={s.id} className="text-xs sm:text-sm">
-                    <span className="truncate">
-                      {s.customer?.displayName || s.fullName || s.radiusUsername} — {s.subscriberCode}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {isCustomer ? (
+              <div className="flex min-w-0 items-center gap-2" aria-label="Signed-in customer">
+                <span className="hidden min-w-0 truncate text-sm font-semibold sm:inline" title={sessionCustomerName}>
+                  {sessionCustomerName || "My account"}
+                </span>
+                <Badge
+                  variant="outline"
+                  className="shrink-0 border-emerald-500/30 bg-emerald-500/10 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+                >
+                  Customer
+                </Badge>
+              </div>
+            ) : (
+              <Select value={subscriberId} onValueChange={selectSubscriber}>
+                <SelectTrigger
+                  className="h-9 w-full max-w-[190px] text-xs sm:w-[260px] sm:max-w-none sm:text-sm"
+                  aria-label="Select connection"
+                >
+                  <SelectValue placeholder={pickerQuery.isLoading ? "Loading connections…" : "Select connection"} />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {(pickerQuery.data ?? []).map((s) => (
+                    <SelectItem key={s.id} value={s.id} className="text-xs sm:text-sm">
+                      <span className="truncate">
+                        {s.customer?.displayName || s.fullName || s.radiusUsername} — {s.subscriberCode}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
 
             <Button
               variant="ghost"
@@ -470,16 +561,18 @@ export function SelfCarePortal() {
           </div>
         </div>
 
-        {/* Staff preview banner — never shown to real customers */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t bg-amber-500/5 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-400">
-          <Info className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            Staff preview mode — this is what {customerName ? <strong className="font-semibold">{customerName}</strong> : "the customer"} sees in the customer portal.
-          </span>
-          <Link href="/" className="ml-auto font-medium underline underline-offset-2 hover:text-foreground">
-            Back to Admin
-          </Link>
-        </div>
+        {/* Staff preview banner — never rendered for real customers */}
+        {!isCustomer && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t bg-amber-500/5 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              Staff preview mode — this is what {customerName ? <strong className="font-semibold">{customerName}</strong> : "the customer"} sees in the customer portal.
+            </span>
+            <Link href="/" className="ml-auto font-medium underline underline-offset-2 hover:text-foreground">
+              Back to Admin
+            </Link>
+          </div>
+        )}
 
         {/* Horizontal section nav */}
         <nav className="border-t" aria-label="Self-care sections">
@@ -717,13 +810,20 @@ function DashboardTab({ overview, loading, error, retry, onGo }: {
 // TAB 2 — My Usage
 // ============================================================
 
-function UsageTab({ subscriberId }: { subscriberId: string }) {
+function UsageTab({ subscriberId }: { subscriberId: string | null }) {
   const [days, setDays] = React.useState<"7" | "30" | "90">("30");
 
   const query = useQuery<UsageData>({
-    queryKey: ["selfcare", "usage", subscriberId, days],
-    queryFn: () => apiRequest(`/api/selfcare/usage?subscriberId=${encodeURIComponent(subscriberId)}&days=${days}`) as Promise<UsageData>,
-    enabled: !!subscriberId,
+    // staff: scoped to the picked subscriber — customer (subscriberId null):
+    // NO subscriberId param, the backend auto-picks their own subscriber.
+    queryKey: ["selfcare", "usage", subscriberId ?? "self", days],
+    queryFn: () =>
+      (subscriberId
+        ? apiRequest(`/api/selfcare/usage?subscriberId=${encodeURIComponent(subscriberId)}&days=${days}`)
+        : apiRequest(`/api/selfcare/usage?days=${days}`)) as Promise<UsageData>,
+    // null = customer mode (own data); staff renders are gated on a
+    // non-empty selection upstream, so "" can never reach this query.
+    enabled: subscriberId !== "",
     refetchInterval: 60000,
     staleTime: 50000,
     retry: 1,
@@ -1174,11 +1274,16 @@ function SupportTab({ customerId, openTickets }: { customerId: string | null; op
 // TAB 5 — Profile
 // ============================================================
 
-function ProfileTab({ subscriberId }: { subscriberId: string }) {
+function ProfileTab({ subscriberId }: { subscriberId: string | null }) {
   const query = useQuery<ProfileData>({
-    queryKey: ["selfcare", "profile", subscriberId],
-    queryFn: () => apiRequest(`/api/selfcare/profile?subscriberId=${encodeURIComponent(subscriberId)}`) as Promise<ProfileData>,
-    enabled: !!subscriberId,
+    // staff: scoped to the picked subscriber — customer (subscriberId null):
+    // NO subscriberId param, the backend auto-picks their own subscriber.
+    queryKey: ["selfcare", "profile", subscriberId ?? "self"],
+    queryFn: () =>
+      (subscriberId
+        ? apiRequest(`/api/selfcare/profile?subscriberId=${encodeURIComponent(subscriberId)}`)
+        : apiRequest("/api/selfcare/profile")) as Promise<ProfileData>,
+    enabled: subscriberId !== "",
     refetchInterval: 60000,
     staleTime: 50000,
     retry: 1,
@@ -1332,11 +1437,16 @@ function InfoField({ label, value, mono }: { label: string; value: string | null
 // TAB 6 — Plans
 // ============================================================
 
-function PlansTab({ subscriberId }: { subscriberId: string }) {
+function PlansTab({ subscriberId }: { subscriberId: string | null }) {
   const query = useQuery<PlansData>({
-    queryKey: ["selfcare", "plans", subscriberId],
-    queryFn: () => apiRequest(`/api/selfcare/plans?subscriberId=${encodeURIComponent(subscriberId)}`) as Promise<PlansData>,
-    enabled: !!subscriberId,
+    // staff: scoped to the picked subscriber — customer (subscriberId null):
+    // NO subscriberId param, the backend auto-picks their own subscriber.
+    queryKey: ["selfcare", "plans", subscriberId ?? "self"],
+    queryFn: () =>
+      (subscriberId
+        ? apiRequest(`/api/selfcare/plans?subscriberId=${encodeURIComponent(subscriberId)}`)
+        : apiRequest("/api/selfcare/plans")) as Promise<PlansData>,
+    enabled: subscriberId !== "",
     refetchInterval: 60000,
     staleTime: 50000,
     retry: 1,

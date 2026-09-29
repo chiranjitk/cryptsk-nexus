@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, UserPlus, Wifi, CreditCard, Activity, RefreshCw, AlertTriangle, Info,
   FileText, Pencil, Trash2, LogIn, LogOut, Shield, KeyRound, Settings, Zap,
-  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy,
+  MoreHorizontal, CalendarDays, Users, CheckCircle2, Wallet, LifeBuoy, Copy, Check,
 } from "lucide-react";
 import { relTime } from "@/lib/format";
 import {
@@ -28,6 +28,11 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 // ============================================================
@@ -122,6 +127,43 @@ type Ticket360Row = {
   replies: { authorName: string; message: string; createdAt: string }[];
 };
 type Support360Response = { tickets: Ticket360Row[] };
+
+// Portal access (customer self-service logins) — T6-a contract via
+// /api/portal-users. Staff-only management surface inside Customer 360.
+type PortalUserRow = {
+  id: string; email: string; name: string | null;
+  status: string; // "active" | "disabled"
+  lastLoginAt: string | null; lastLoginIp: string | null; createdAt: string;
+};
+type PortalUsersResponse = { portalUsers: PortalUserRow[] };
+
+type PortalUserRecord = {
+  portalUser: {
+    id: string; email: string; name: string | null;
+    status: string; createdAt: string;
+  };
+};
+
+const PORTAL_USER_STATUS_BADGE: Record<string, string> = {
+  active: "border-emerald-500/30 bg-emerald-500/5 text-emerald-600",
+  disabled: "border-slate-400/30 bg-slate-500/5 text-slate-500",
+};
+
+// Cryptographically random base62 password (rejection-sampled, no modulo
+// bias) — prefilled in the create / reset dialogs, shown once to staff.
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const max = Math.floor(256 / chars.length) * chars.length;
+  const buf = new Uint8Array(length * 2);
+  const out: string[] = [];
+  while (out.length < length) {
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < buf.length && out.length < length; i++) {
+      if (buf[i] < max) out.push(chars[buf[i] % chars.length]);
+    }
+  }
+  return out.join("");
+}
 
 const TICKET_360_STATUS_BADGE: Record<string, string> = {
   open: "border-red-500/30 text-red-600",
@@ -437,6 +479,9 @@ export function Customer360Dialog({
                   query={ticketsQuery}
                   onRetry={() => ticketsQuery.refetch()}
                 />
+
+                {/* Portal access — customer self-service logins (staff-managed) */}
+                <PortalAccessSection customerId={customer.id} />
               </TabsContent>
 
               {/* Subscribers */}
@@ -833,6 +878,416 @@ function SupportTicketsSection({ query, onRetry }: {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// Portal access card (Overview tab) — manage the customer's self-service
+// portal logins (CustomerUser accounts). Real data via /api/portal-users.
+function PortalAccessSection({ customerId }: { customerId: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = React.useState(false);
+  const [resetUser, setResetUser] = React.useState<PortalUserRow | null>(null);
+  const [deleteUser, setDeleteUser] = React.useState<PortalUserRow | null>(null);
+
+  const query = useQuery<PortalUsersResponse>({
+    queryKey: ["portal-users", customerId],
+    queryFn: async () => {
+      const res = await fetch(`/api/portal-users?customerId=${encodeURIComponent(customerId)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load portal access");
+      }
+      return res.json();
+    },
+    enabled: !!customerId, // this section only mounts while the dialog is open
+    staleTime: 15000,
+  });
+
+  const users = query.data?.portalUsers ?? [];
+
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ["portal-users", customerId] });
+  }
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const res = await fetch(`/api/portal-users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update portal access");
+      }
+      return res.json() as Promise<PortalUserRecord>;
+    },
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.status === "active" ? "Portal access enabled" : "Portal access disabled" });
+      invalidate();
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/portal-users/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to remove portal access");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Portal access removed" });
+      invalidate();
+      setDeleteUser(null);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <KeyRound className="size-4 text-muted-foreground" /> Portal Access ({users.length})
+          </CardTitle>
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setShowAdd(true)}>
+            <Plus className="size-3" /> Add portal access
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {query.isLoading ? (
+          <div className="space-y-2" aria-busy="true">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}
+          </div>
+        ) : query.isError ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+            <span className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" /> Couldn&apos;t load portal access.</span>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => query.refetch()}>
+              <RefreshCw className="size-3" /> Retry
+            </Button>
+          </div>
+        ) : users.length === 0 ? (
+          <p className="py-2 text-xs text-muted-foreground">
+            No portal access yet — create one to give the customer self-service login.
+          </p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto cryptsk-scrollbar rounded-lg border">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background">
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead className="hidden sm:table-cell">Name</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Last login</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {users.map((u) => (
+                  <TableRow key={u.id} className="hover:bg-muted/50">
+                    <TableCell className="font-mono text-xs font-medium">{u.email}</TableCell>
+                    <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">{u.name || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={`text-[10px] ${PORTAL_USER_STATUS_BADGE[u.status] || PORTAL_USER_STATUS_BADGE.disabled}`}>
+                        {u.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="hidden text-xs md:table-cell">
+                      {u.lastLoginAt ? (
+                        <div>
+                          <p title={fmtDateTime(u.lastLoginAt)}>{relTime(u.lastLoginAt)}</p>
+                          {u.lastLoginIp && <p className="font-mono text-[10px] text-muted-foreground">{u.lastLoginIp}</p>}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">never</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Switch
+                          checked={u.status === "active"}
+                          disabled={statusMutation.isPending && statusMutation.variables?.id === u.id}
+                          onCheckedChange={(checked) =>
+                            statusMutation.mutate({ id: u.id, status: checked ? "active" : "disabled" })
+                          }
+                          aria-label={u.status === "active" ? `Disable portal access for ${u.email}` : `Enable portal access for ${u.email}`}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          onClick={() => setResetUser(u)}
+                          aria-label={`Reset password for ${u.email}`}
+                          title="Reset password"
+                        >
+                          <KeyRound className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-rose-600 hover:text-rose-600"
+                          onClick={() => setDeleteUser(u)}
+                          aria-label={`Remove portal access for ${u.email}`}
+                          title="Remove access"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+
+      {showAdd && (
+        <PortalUserDialog
+          customerId={customerId}
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); invalidate(); toast({ title: "Portal access created" }); }}
+        />
+      )}
+      {resetUser && (
+        <ResetPortalPasswordDialog
+          user={resetUser}
+          onClose={() => setResetUser(null)}
+          onSaved={() => { setResetUser(null); invalidate(); toast({ title: "Password reset" }); }}
+        />
+      )}
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteUser} onOpenChange={(o) => { if (!o) setDeleteUser(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove portal access?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteUser?.email} will no longer be able to sign in to the customer portal. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-600/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => { e.preventDefault(); if (deleteUser) deleteMutation.mutate(deleteUser.id); }}
+            >
+              {deleteMutation.isPending ? "Removing…" : "Remove access"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+// Shared password field for the create / reset dialogs — generated
+// prefill, regenerate and copy actions, "shown once" warning.
+function PortalPasswordField({ password, onChange }: {
+  password: string;
+  onChange: (value: string) => void;
+}) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard blocked (permissions/insecure context) — value stays selectable
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Temporary password *</Label>
+      <div className="flex items-center gap-2">
+        <Input
+          value={password}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-9 font-mono text-xs"
+          aria-label="Temporary password"
+          required
+          minLength={8}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={() => onChange(generatePassword())}
+          aria-label="Generate a new password"
+          title="Generate a new password"
+        >
+          <RefreshCw className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={copyPassword}
+          aria-label="Copy password"
+          title="Copy password"
+        >
+          {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+        </Button>
+      </div>
+      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400" role="note">
+        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span>This password is shown only once — copy it and share it with the customer now. It cannot be viewed again.</span>
+      </div>
+    </div>
+  );
+}
+
+function PortalUserDialog({ customerId, onClose, onSaved }: {
+  customerId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [email, setEmail] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [password, setPassword] = React.useState(() => generatePassword());
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const passwordOk = password.length >= 8;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!emailOk || !passwordOk) {
+      toast({
+        title: "Check the form",
+        description: !emailOk ? "Enter a valid email address." : "Password must be at least 8 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/portal-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId, email: email.trim(), password, name: name.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error
+            || (res.status === 409 ? "That email already has portal access." : "Failed to create portal access"),
+        );
+      }
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Add portal access</DialogTitle>
+          <DialogDescription>
+            Creates a self-service login so this customer can sign in to the portal with their own email.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Email *</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="h-9"
+              placeholder="customer@example.com"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} className="h-9" placeholder="Optional display name" />
+          </div>
+          <PortalPasswordField password={password} onChange={setPassword} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={submitting || !emailOk || !passwordOk}>
+              {submitting ? "Creating…" : "Create access"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ResetPortalPasswordDialog({ user, onClose, onSaved }: {
+  user: PortalUserRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [password, setPassword] = React.useState(() => generatePassword());
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const passwordOk = password.length >= 8;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!passwordOk) {
+      toast({ title: "Check the form", description: "Password must be at least 8 characters.", variant: "destructive" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/portal-users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to reset password");
+      }
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md cryptsk-card-load">
+        <DialogHeader>
+          <DialogTitle>Reset password</DialogTitle>
+          <DialogDescription>
+            Replaces the portal password for <span className="font-mono">{user.email}</span>. The current password stops working immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <PortalPasswordField password={password} onChange={setPassword} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={submitting || !passwordOk}>
+              {submitting ? "Resetting…" : "Reset password"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

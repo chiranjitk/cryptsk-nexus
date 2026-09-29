@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError, resolveSelfcareSubscriber, radAcctSubscriberWhere, nasDisplayName } from "../common";
 
 // ============================================================
 // CRYPTSK Nexus — GET /api/selfcare/overview?subscriberId=<cuid>
-// Self-Care portal landing dashboard (spec §18). Admin preview is
-// per-subscriber via ?subscriberId= (RBAC: subscriber.list).
+// Self-Care portal landing dashboard (spec §18).
+// AUTH: requireSelfcareAccess — customer logins are scoped to their
+// own customer (subscriberId auto-picked from their first subscriber);
+// staff preview per-subscriber via ?subscriberId= (RBAC: subscriber.list).
 // 100% real data — subscriber + plan + latest subscription, real
 // radacct usage (month/today), live session + NAS, latest invoice,
 // open ticket count and a derived customer-facing service status.
@@ -17,14 +19,19 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
+    const { searchParams } = new URL(req.url);
+    const ctx = await requireSelfcareAccess({
+      subscriberId: searchParams.get("subscriberId"),
+      customerId: searchParams.get("customerId"),
+    });
 
-    const subscriberId = new URL(req.url).searchParams.get("subscriberId");
-    if (!subscriberId) {
-      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    if (!ctx.subscriberId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "subscriberId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
-    const subscriber = await resolveSelfcareSubscriber(subscriberId);
+    const subscriber = await resolveSelfcareSubscriber(ctx.subscriberId);
     if (!subscriber || !subscriber.customer) {
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }

@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError, resolveSelfcareSubscriber, radAcctSubscriberWhere, nasDisplayName } from "../common";
 
 // ============================================================
 // CRYPTSK Nexus — GET /api/selfcare/usage?subscriberId=<cuid>&days=7|30|90
 // Self-Care "My Usage" + "Speed History" (spec §18).
+// AUTH: requireSelfcareAccess — customer logins are scoped to their
+// own customer (subscriberId auto-picked from their first subscriber);
+// staff preview per-subscriber via ?subscriberId= (RBAC: subscriber.list).
 // Real FreeRADIUS radacct accounting only:
 //   • daily traffic buckets over the window (real buckets — gaps are
 //     days with genuinely no sessions, the UI renders them as gaps)
 //   • last 20 sessions with average down/up Mbps per session
 //   • window totals
 // days: default 7, clamped 1..365.
-// RBAC: subscriber.list. PRIVACY: only this subscriber's rows.
+// PRIVACY: only this subscriber's rows.
 // ============================================================
 
 export const dynamic = "force-dynamic";
@@ -21,19 +24,23 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
-
     const { searchParams } = new URL(req.url);
-    const subscriberId = searchParams.get("subscriberId");
-    if (!subscriberId) {
-      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    const ctx = await requireSelfcareAccess({
+      subscriberId: searchParams.get("subscriberId"),
+      customerId: searchParams.get("customerId"),
+    });
+
+    if (!ctx.subscriberId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "subscriberId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
     let days = Number(searchParams.get("days"));
     if (!Number.isFinite(days) || days <= 0) days = 7;
     days = Math.min(Math.max(Math.round(days), 1), 365);
 
-    const subscriber = await resolveSelfcareSubscriber(subscriberId);
+    const subscriber = await resolveSelfcareSubscriber(ctx.subscriberId);
     if (!subscriber || !subscriber.customer) {
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }

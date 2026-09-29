@@ -1,31 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError } from "../common";
 
 // ============================================================
 // CRYPTSK Nexus — GET /api/selfcare/billing?customerId=<cuid>
 // Self-Care "Billing" + "Payments" tabs (spec §18).
-// Real invoices + payments for exactly one customer — the customerId
-// comes from the subscriber's own record (see /api/selfcare/overview),
-// so the response can never contain another tenant's data.
+// AUTH: requireSelfcareAccess — customer logins have customerId
+// FORCED from their session (a differing query customerId → 404);
+// staff pass ?customerId= (RBAC: subscriber.list).
+// Real invoices + payments for exactly one customer — so the response
+// can never contain another tenant's data.
 //   • invoices: latest 50 with line-item count
 //   • payments: latest 50 with invoice number
 //   • totals: invoiced (Σ invoice.total), paid (Σ completed payments),
 //     outstanding (Σ invoice.balanceDue on still-open invoices)
-// RBAC: subscriber.list. Read-only.
+// Read-only.
 // ============================================================
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
+    const { searchParams } = new URL(req.url);
+    const ctx = await requireSelfcareAccess({
+      customerId: searchParams.get("customerId"),
+      subscriberId: searchParams.get("subscriberId"),
+    });
 
-    const customerId = new URL(req.url).searchParams.get("customerId");
-    if (!customerId) {
-      return NextResponse.json({ error: "customerId is required" }, { status: 400 });
+    if (!ctx.customerId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "customerId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Customer not found" }, { status: 404 });
     }
+    const customerId = ctx.customerId;
 
     // Never leak another customer's ledger — unknown id → 404, not empty data
     const customer = await db.customer.findUnique({ where: { id: customerId }, select: { id: true } });

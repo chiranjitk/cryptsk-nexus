@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError } from "../common";
 
 // ============================================================
@@ -8,25 +8,33 @@ import { isRedirectError } from "../common";
 // Self-Care "My Profile" (spec §18): the customer's own identity,
 // KYC flags, addresses and contacts plus the subscriber's service
 // identity.
+// AUTH: requireSelfcareAccess — customer logins are scoped to their
+// own customer (subscriberId auto-picked from their first subscriber);
+// staff preview per-subscriber via ?subscriberId= (RBAC: subscriber.list).
 // PRIVACY (hard rule): NEVER returns customer.notes, tags, audit
 // columns (createdBy/updatedBy), the RADIUS password hash, wallet
 // internals or any other tenant's data.
-// RBAC: subscriber.list. Read-only.
+// Read-only.
 // ============================================================
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
+    const { searchParams } = new URL(req.url);
+    const ctx = await requireSelfcareAccess({
+      subscriberId: searchParams.get("subscriberId"),
+      customerId: searchParams.get("customerId"),
+    });
 
-    const subscriberId = new URL(req.url).searchParams.get("subscriberId");
-    if (!subscriberId) {
-      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    if (!ctx.subscriberId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "subscriberId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
     const subscriber = await db.subscriber.findUnique({
-      where: { id: subscriberId },
+      where: { id: ctx.subscriberId },
       select: {
         id: true,
         subscriberCode: true,

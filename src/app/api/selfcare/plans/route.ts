@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError, resolveSelfcareSubscriber } from "../common";
 
 // ============================================================
@@ -8,23 +8,31 @@ import { isRedirectError, resolveSelfcareSubscriber } from "../common";
 // Self-Care "Plan Comparison" (spec §18): the active catalog a
 // subscriber can compare against their current plan. isCurrent is
 // computed server-side from subscribers.planId.
+// AUTH: requireSelfcareAccess — customer logins are scoped to their
+// own customer (subscriberId auto-picked from their first subscriber);
+// staff preview per-subscriber via ?subscriberId= (RBAC: subscriber.list).
 // Product.description is the catalog copy — Plan has no description
 // column of its own in this schema.
-// RBAC: subscriber.list. Read-only.
+// Read-only.
 // ============================================================
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
+    const { searchParams } = new URL(req.url);
+    const ctx = await requireSelfcareAccess({
+      subscriberId: searchParams.get("subscriberId"),
+      customerId: searchParams.get("customerId"),
+    });
 
-    const subscriberId = new URL(req.url).searchParams.get("subscriberId");
-    if (!subscriberId) {
-      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    if (!ctx.subscriberId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "subscriberId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
-    const subscriber = await resolveSelfcareSubscriber(subscriberId);
+    const subscriber = await resolveSelfcareSubscriber(ctx.subscriberId);
     if (!subscriber || !subscriber.customer) {
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }

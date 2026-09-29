@@ -1,29 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requirePermission } from "@/lib/rbac";
+import { requireSelfcareAccess } from "@/lib/portal-auth";
 import { isRedirectError } from "../common";
 
 // ============================================================
 // CRYPTSK Nexus — GET /api/selfcare/support?customerId=<cuid>
 // Self-Care "Support" tab (spec §18): the customer's own tickets
 // with their public reply threads.
+// AUTH: requireSelfcareAccess — customer logins have customerId
+// FORCED from their session (a differing query customerId → 404);
+// staff pass ?customerId= (RBAC: subscriber.list).
 // PRIVACY (hard rule): internal staff notes (TicketReply.isInternal)
 // are filtered out server-side and internal-only fields (resolution
 // drafts, assignee, createdBy, audit columns) are never selected.
 // Only fields a customer may see about their own tickets are returned.
-// RBAC: subscriber.list. Read-only.
+// Read-only.
 // ============================================================
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission("subscriber", "list");
+    const { searchParams } = new URL(req.url);
+    const ctx = await requireSelfcareAccess({
+      customerId: searchParams.get("customerId"),
+      subscriberId: searchParams.get("subscriberId"),
+    });
 
-    const customerId = new URL(req.url).searchParams.get("customerId");
-    if (!customerId) {
-      return NextResponse.json({ error: "customerId is required" }, { status: 400 });
+    if (!ctx.customerId) {
+      return ctx.mode === "staff"
+        ? NextResponse.json({ error: "customerId is required" }, { status: 400 })
+        : NextResponse.json({ error: "Customer not found" }, { status: 404 });
     }
+    const customerId = ctx.customerId;
 
     // Never leak another customer's tickets — unknown id → 404
     const customer = await db.customer.findUnique({ where: { id: customerId }, select: { id: true } });

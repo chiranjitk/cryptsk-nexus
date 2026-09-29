@@ -50,7 +50,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // admin chrome entirely. Returning here (before SidebarProvider)
   // means <AppSidebar/>, <AppHeader/>, <AppFooter/> and {children}
   // never mount — the page's view router is bypassed too.
-  if (isSelfCare) {
+  // Customer sessions (portal login) are ALWAYS routed to the
+  // self-care portal — spec §18: customers must never see internal
+  // administration, even with an RBAC-empty sidebar.
+  if (isSelfCare || (session.user as { userType?: string })?.userType === "customer") {
     return <SelfCarePortal />;
   }
 

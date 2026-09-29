@@ -4,8 +4,10 @@ import type { Prisma } from "@prisma/client";
 // ============================================================
 // CRYPTSK Nexus — Self-Care Portal shared helpers
 // Per: docs/architecture/11_FINAL_MENU_NAVIGATION_SPECIFICATION.md §18
-// The portal is subscriber/customer-facing; admins preview it
-// per-subscriber via ?subscriberId= (RBAC: subscriber.list).
+// The portal is subscriber/customer-facing. Session scoping lives in
+// src/lib/portal-auth.ts (requireSelfcareAccess): customer logins are
+// forced to their own customer/subscriber; staff preview per-subscriber
+// via ?subscriberId= (RBAC: subscriber.list).
 // PRIVACY: routes here only ever return self-safe fields —
 // internal notes, credentials and other tenants' data never leave.
 // ============================================================

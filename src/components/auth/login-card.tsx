@@ -136,7 +136,10 @@ export function LoginCard() {
             </Button>
           </form>
 
-          <div className="mt-6 pt-4 border-t text-center">
+          <div className="mt-6 space-y-2 pt-4 border-t text-center">
+            <p className="text-[10px] text-muted-foreground">
+              Customer? Sign in with the email from your welcome message.
+            </p>
             <p className="text-[10px] text-muted-foreground">
               Default admin: <code className="font-mono bg-muted px-1.5 py-0.5 rounded">admin@cryptsk.com</code> / <code className="font-mono bg-muted px-1.5 py-0.5 rounded">Admin@2026</code>
             </p>

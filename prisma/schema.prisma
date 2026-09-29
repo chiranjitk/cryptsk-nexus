@@ -541,6 +541,7 @@ model Customer {
   installations   Installation[]
   payments        Payment[]
   wallet          Wallet?
+  portalUsers     PortalUser[]
   // Audit
   createdBy       String?  // userId
   updatedBy       String?
@@ -600,6 +601,39 @@ model Subscriber {
   @@index([radiusUsername])
   @@index([planId])
   @@map("subscribers")
+}
+
+/// Phase 6 — Self-Care portal login account (customer-facing credentials)
+/// Per spec 08_SEC: portal users authenticate to the Self-Care portal with
+/// their own email + bcrypt password; strictly scoped to their customer's
+/// data. Staff Users and PortalUsers are separate tables — a portal login
+/// can never yield staff roles/permissions. Lockout mirrors staff Users:
+/// 5 failed attempts → 15 min lock.
+enum PortalUserStatus {
+  active
+  disabled
+}
+
+model PortalUser {
+  id            String           @id @default(cuid())
+  email         String           @unique
+  passwordHash  String           @map("password_hash") // bcryptjs
+  name          String?
+  customerId    String           @map("customer_id")
+  status        PortalUserStatus @default(active)
+  loginAttempts Int              @default(0) @map("login_attempts") // lockout counter
+  lockedUntil   DateTime?        @map("locked_until")
+  lastLoginAt   DateTime?        @map("last_login_at")
+  lastLoginIp   String?          @map("last_login_ip")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([status])
+  @@map("portal_users")
 }
 
 /// Phase 2 — Contact (multiple contact methods per Customer)
