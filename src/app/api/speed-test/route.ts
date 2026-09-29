@@ -42,7 +42,12 @@ async function ensureSpeedtestBinary(): Promise<{ ok: boolean; error?: string }>
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
   }
@@ -92,7 +97,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
   }

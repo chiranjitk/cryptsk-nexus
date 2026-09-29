@@ -14,7 +14,12 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json(

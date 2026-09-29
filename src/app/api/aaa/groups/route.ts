@@ -863,7 +863,12 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const { searchParams } = new URL(req.url);
     const groupname = searchParams.get("groupname")?.trim();

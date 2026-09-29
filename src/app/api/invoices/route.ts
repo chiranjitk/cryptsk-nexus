@@ -144,7 +144,14 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const body = await req.json();
     const { subscriberId, planId, issueDate, dueDate, periodStart, periodEnd, billingPeriodStart, billingPeriodEnd, description, discountType, discountValue, lateFee, advanceAdjustment, notes, status: requestedStatus, isProRata, lineItems, items, cgstRate: cgstRateOverride, sgstRate: sgstRateOverride, igstRate: igstRateOverride, reverseCharge } = body;
 

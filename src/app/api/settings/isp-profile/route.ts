@@ -211,7 +211,12 @@ function validatePutBody(body: Record<string, unknown>): ValidationError[] {
 
 export async function GET(request: NextRequest) {
 
-  await requireAuth(request as unknown as import("next/server").NextRequest);
+  try {
+    await requireAuth(request as unknown as import("next/server").NextRequest);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
 
   try {
     const userId = await requirePermission(request, "settings.read");
@@ -245,7 +250,12 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
 
-  await requireAuth(request as unknown as import("next/server").NextRequest);
+  try {
+    await requireAuth(request as unknown as import("next/server").NextRequest);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
 
   try {
     const userId = await requirePermission(request, "settings.update");

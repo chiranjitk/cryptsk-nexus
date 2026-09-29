@@ -877,7 +877,14 @@ export async function PUT(request: NextRequest) {
 // ---------------------------------------------------------------------------
 export async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
 
     const sp = request.nextUrl.searchParams;
     const username = sp.get("username");

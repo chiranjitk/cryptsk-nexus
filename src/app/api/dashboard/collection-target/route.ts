@@ -5,7 +5,12 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 // GET /api/dashboard/collection-target — Monthly collection target vs actual
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const NOW = new Date();
     const monthStart = new Date(NOW.getFullYear(), NOW.getMonth(), 1);

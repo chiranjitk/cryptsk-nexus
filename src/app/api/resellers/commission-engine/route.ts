@@ -65,7 +65,12 @@ function calculateTieredCommission(
 // GET /api/resellers/commission-engine
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const now = new Date();
 
     // Fetch all resellers
@@ -237,7 +242,14 @@ export async function GET(request: NextRequest) {
 // POST /api/resellers/commission-engine
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const body = await request.json();
     const { resellerId, period, amount } = body;
 

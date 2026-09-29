@@ -6,7 +6,12 @@ import { requireAuth } from "@/lib/api-auth";
 // ─── GET: Return articles, categories, FAQs, and stats ─────────
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
     const search = searchParams.get("search") || "";

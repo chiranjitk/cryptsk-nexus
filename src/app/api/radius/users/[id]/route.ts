@@ -6,7 +6,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await requireAuth(request);
+  try {
+    await requireAuth(request);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
   const { id } = await params;
   try {
     const user = await db.radiusUser.findUnique({
@@ -35,7 +40,12 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await requireAuth(request);
+  try {
+    await requireAuth(request);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
   const { id } = await params;
   try {
     const body = await request.json();
@@ -58,7 +68,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await requireAuth(request);
+  try {
+    await requireAuth(request);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
   const { id } = await params;
   try {
     await db.radiusUser.delete({ where: { id } });

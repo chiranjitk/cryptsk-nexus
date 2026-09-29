@@ -47,7 +47,14 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const { id } = await params;
     const body = await req.json();
 
@@ -284,7 +291,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const { id } = await params;
     const subscriber = await db.subscriber.findUnique({
       where: { id },

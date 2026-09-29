@@ -31,7 +31,12 @@ async function grafanaFetch(path: string, config: { url: string; apiKey: string 
 export async function GET(request: NextRequest) {
   try {
     try {
-      await requireAuth(request);
+      try {
+        await requireAuth(request);
+      } catch (e) {
+        if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+        throw e;
+      }
     } catch (error) {
       if (error instanceof AuthError)
         return NextResponse.json({ error: error.message }, { status: error.statusCode });
@@ -165,7 +170,12 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     try {
-      await requireAuth(request);
+      try {
+        await requireAuth(request);
+      } catch (e) {
+        if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+        throw e;
+      }
     } catch (error) {
       if (error instanceof AuthError)
         return NextResponse.json({ error: error.message }, { status: error.statusCode });

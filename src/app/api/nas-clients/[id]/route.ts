@@ -44,7 +44,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { id: rawId } = await params;
     const nasId = parseInt(rawId, 10);
 

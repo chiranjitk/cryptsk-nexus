@@ -8,7 +8,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(_req);
+    try {
+      await requireAuth(_req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { id } = await params;
 
     // ─── 1. Core Subscriber Profile ────────────────────────────

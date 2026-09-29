@@ -6,7 +6,12 @@ import { safeJsonParse } from "@/lib/utils";
 // GET /api/bandwidth/export - Export bandwidth data as CSV
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const { searchParams } = new URL(request.url);
     const startDateParam = searchParams.get("startDate");

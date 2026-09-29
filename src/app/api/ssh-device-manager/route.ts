@@ -95,7 +95,12 @@ function sshExec(auth: SshAuth, command: string): Promise<{ stdout: string; stde
 // ─── POST Handler ─────────────────────────────────────────────────
 export async function POST(request: NextRequest): Promise<Response> {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const body = await request.json();
     const { action } = body;
 

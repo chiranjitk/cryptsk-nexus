@@ -11,7 +11,12 @@ interface WorkflowRule {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
     let workflows: WorkflowRule[] = [];
     if (settings?.churnWorkflowConfig) {

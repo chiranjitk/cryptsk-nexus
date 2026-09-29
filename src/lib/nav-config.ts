@@ -305,6 +305,7 @@ export const navGroups: NavGroup[] = [
       { label: "Integrations", href: "/integrations", icon: Plug },
       { label: "Knowledge Base", href: "/knowledge-base", icon: BookOpen },
       { label: "Module Manager", href: "/module-manager", icon: Layers },
+      { label: "System Health", href: "/system-health", icon: Heart },
     ],
   },
 ];

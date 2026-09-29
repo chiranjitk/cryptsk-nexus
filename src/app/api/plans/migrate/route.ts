@@ -11,7 +11,12 @@ function isValidUUID(v: string): boolean {
 // POST /api/plans/migrate — migrate subscribers from one plan to another
 export async function POST(req: NextRequest) {
 
-  await requireAuth(req as unknown as import("next/server").NextRequest);
+  try {
+    await requireAuth(req as unknown as import("next/server").NextRequest);
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
 
   try {
     await requirePermission(req, "subscribers.update");

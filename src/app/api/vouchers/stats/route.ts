@@ -4,7 +4,12 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 
 export async function GET(request: Request) {
   try {
-    await requireAuth(request as unknown as NextRequest);
+    try {
+      await requireAuth(request as unknown as NextRequest);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
   } catch {
     // Stats endpoint is accessible without auth for public display
   }

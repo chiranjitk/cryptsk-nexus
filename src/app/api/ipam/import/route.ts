@@ -5,7 +5,14 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 // POST /api/ipam/import - Bulk import IPs/subnets from CSV
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    let userId: string | undefined;
+    try {
+      userId = await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
+    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const type = formData.get("type") as string || "ip"; // "ip" or "subnet"

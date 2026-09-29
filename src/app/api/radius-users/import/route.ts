@@ -5,7 +5,12 @@ import { db } from "@/lib/db";
 // POST /api/radius-users/import — batch CSV import
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const formData = await req.formData();
     const file = formData.get("file") as File | null;

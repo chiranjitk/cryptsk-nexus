@@ -6,7 +6,12 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 export async function POST(request: NextRequest) {
   try {
     try {
-      await requireAuth(request as unknown as import("next/server").NextRequest);
+      try {
+        await requireAuth(request as unknown as import("next/server").NextRequest);
+      } catch (e) {
+        if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+        throw e;
+      }
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
     }

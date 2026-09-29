@@ -261,6 +261,118 @@ model AuditLog {
   @@index([userName])
 }
 
+// ============================================================
+// PHASE 1 — DB-backed RBAC + Feature Flags + Licensing + Module State
+// Added per docs/architecture/12_IMPLEMENTATION_PHASE_ROADMAP.md Phase 1
+// These complement v1's existing enum-based UserRole + hardcoded ROLE_PERMISSIONS
+// (which remain as the default roles; the DB-backed models allow custom role
+//  management + per-tenant feature flags + license enforcement).
+// ============================================================
+
+model Role {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  slug         String   @unique
+  description  String   @default("")
+  isSystem     Boolean  @default(false)  // System roles can't be deleted
+  isBreakGlass Boolean  @default(false)  // Break-glass role (emergency access)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  userAssignments UserRoleAssignment[]
+  permissions  RolePermission[]
+
+  @@index([slug])
+  @@index([sortOrder])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  resource    String   // e.g., "subscribers", "plans", "users"
+  action      String   // e.g., "read", "create", "update", "delete"
+  description String   @default("")
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  roles       RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@index([action])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  assignedAt   DateTime  @default(now())
+  assignedBy   String?
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model UserRoleAssignment {
+  id         String    @id @default(uuid())
+  userId     String
+  roleId     String
+  assignedAt DateTime  @default(now())
+  assignedBy String?
+  expiresAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([roleId])
+  @@index([expiresAt])
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  key         String   @unique  // e.g., "ai_advisor_enabled"
+  name        String
+  description String   @default("")
+  enabled     Boolean  @default(false)
+  value       String?  // optional value (e.g., "max_users=1000")
+  scope       String   @default("global")  // global | user | tenant
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([enabled])
+  @@index([scope])
+}
+
+model License {
+  id           String    @id @default(uuid())
+  key          String    @unique
+  productName  String
+  customerName String
+  maxUsers     Int       @default(0)
+  maxSessions  Int       @default(0)
+  features     Json?
+  status       String    @default("ACTIVE")  // ACTIVE | EXPIRED | SUSPENDED | REVOKED
+  issuedAt     DateTime  @default(now())
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model ModuleState {
+  id             String   @id @default(uuid())
+  moduleId       String   @unique  // matches Module.id in src/lib/modules/registry.ts
+  enabled        Boolean  @default(true)
+  deploymentType String   @default("isp")  // matches DEPLOYMENT_PRESETS
+  settings       Json?
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@index([enabled])
+  @@index([deploymentType])
+}
+
 model BackupRecord {
   id               String    @id @default(uuid())
   type             String    @default("full")
@@ -4080,6 +4192,7 @@ model User {
   Technician                           Technician?
   UserSession                          UserSession[]
   BatchProvisioningJob                 BatchProvisioningJob[]
+  UserRoleAssignment                   UserRoleAssignment[]
 
   @@index([email])
   @@index([role])

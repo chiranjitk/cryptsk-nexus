@@ -272,7 +272,12 @@ export async function DELETE(
   { params }: { params: Promise<{ groupname: string }> }
 ) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { groupname } = await params;
     const groupName = decodeURIComponent(groupname);
 

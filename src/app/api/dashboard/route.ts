@@ -4,7 +4,12 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { searchParams } = request.nextUrl;
     const range = searchParams.get("range") || "30d";
     const now = new Date();

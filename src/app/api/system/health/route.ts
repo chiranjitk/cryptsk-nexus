@@ -44,7 +44,12 @@ export async function OPTIONS() {
 export async function GET(request: NextRequest) {
   try {
     // ── Authentication ──
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     // ── 1. Uptime ──
     const uptimeSeconds = Math.floor(process.uptime());

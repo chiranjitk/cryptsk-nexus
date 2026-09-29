@@ -4,6 +4,7 @@ import { join } from "path";
 import { MODULES, DEPLOYMENT_PRESETS, checkDependencies, getDefaultEnabledModules } from "@/lib/modules/registry";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { db } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 const CONFIG_PATH = join(process.cwd(), "data", "module-config.json");
 
@@ -13,7 +14,8 @@ interface ModuleConfig {
   updatedAt: string;
 }
 
-function readConfig(): ModuleConfig {
+// ─── File-based fallback (used if DB lookup fails) ─────────
+function readConfigFile(): ModuleConfig {
   try {
     if (existsSync(CONFIG_PATH)) {
       const raw = readFileSync(CONFIG_PATH, "utf-8");
@@ -29,9 +31,8 @@ function readConfig(): ModuleConfig {
   };
 }
 
-function writeConfig(config: ModuleConfig): void {
+function writeConfigFile(config: ModuleConfig): void {
   const dir = join(process.cwd(), "data");
-  // Ensure data dir exists
   try {
     mkdirSync(dir, { recursive: true });
   } catch {
@@ -41,19 +42,89 @@ function writeConfig(config: ModuleConfig): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
+// ─── DB-backed module state (Phase 1 fix: persists across restarts) ─
+async function readModuleStatesFromDB(): Promise<Map<string, { enabled: boolean; deploymentType: string; settings: unknown }>> {
+  const map = new Map<string, { enabled: boolean; deploymentType: string; settings: unknown }>();
+  try {
+    const states = await db.moduleState.findMany();
+    for (const s of states) {
+      map.set(s.moduleId, {
+        enabled: s.enabled,
+        deploymentType: s.deploymentType,
+        settings: s.settings,
+      });
+    }
+  } catch (err) {
+    logger.warn("module_state_db_read_failed_fallback_to_file", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return map;
+}
+
+async function upsertModuleState(moduleId: string, enabled: boolean, deploymentType: string, settings?: unknown): Promise<void> {
+  try {
+    await db.moduleState.upsert({
+      where: { moduleId },
+      create: { moduleId, enabled, deploymentType, settings: settings as never },
+      update: { enabled, deploymentType, settings: settings as never },
+    });
+  } catch (err) {
+    logger.warn("module_state_db_upsert_failed", {
+      moduleId, enabled, error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+// ─── Hybrid read: DB first, file fallback, default last ─────
+async function readConfigHybrid(): Promise<ModuleConfig> {
+  // 1. Try DB
+  const dbStates = await readModuleStatesFromDB();
+  if (dbStates.size > 0) {
+    const enabledModules: string[] = [];
+    let deploymentType = "isp";
+    for (const [modId, state] of dbStates.entries()) {
+      if (state.enabled) enabledModules.push(modId);
+      deploymentType = state.deploymentType || deploymentType;
+    }
+    return {
+      enabledModules: enabledModules.length > 0 ? enabledModules : getDefaultEnabledModules(),
+      deploymentType,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  // 2. Fallback to file
+  return readConfigFile();
+}
+
+async function writeConfigHybrid(config: ModuleConfig): Promise<void> {
+  // Write to DB (per-module upsert)
+  for (const modId of MODULES.map(m => m.id)) {
+    const enabled = config.enabledModules.includes(modId);
+    await upsertModuleState(modId, enabled, config.deploymentType);
+  }
+  // Also write to file (for backward compat)
+  writeConfigFile(config);
+}
+
 // ─── GET /api/modules ──────────────────────────────────────────
 // Returns all module definitions with current enabled status
 export async function GET(request: NextRequest) {
   try {
     try {
-      await requireAuth(request);
+      try {
+        await requireAuth(request);
+      } catch (e) {
+        if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+        throw e;
+      }
     } catch (error) {
       if (error instanceof AuthError) {
         return NextResponse.json({ error: error.message }, { status: error.statusCode });
       }
       return NextResponse.json({ error: "Authentication failed" }, { status: 401 });
     }
-    const config = readConfig();
+    const config = await readConfigHybrid();
     const { enabledModules, deploymentType } = config;
 
     // Read gateway mode from DB (real flag)
@@ -104,7 +175,12 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     try {
-      await requireAuth(request);
+      try {
+        await requireAuth(request);
+      } catch (e) {
+        if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+        throw e;
+      }
     } catch (error) {
       if (error instanceof AuthError) {
         return NextResponse.json({ error: error.message }, { status: error.statusCode });
@@ -164,7 +240,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // DB succeeded — now write config file
-    writeConfig({ enabledModules: finalModules, deploymentType: finalType, updatedAt: new Date().toISOString() });
+    await writeConfigHybrid({ enabledModules: finalModules, deploymentType: finalType, updatedAt: new Date().toISOString() });
 
     return NextResponse.json({
       success: true,

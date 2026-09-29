@@ -137,7 +137,12 @@ export async function GET(req: NextRequest) {
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { searchParams } = req.nextUrl;
     const action = searchParams.get("action");
     const body = await req.json();

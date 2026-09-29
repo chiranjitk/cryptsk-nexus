@@ -261,7 +261,12 @@ function extractMetadata(
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const { searchParams } = new URL(req.url);
     const maxItems = Math.min(parseInt(searchParams.get("maxItems") || "15"), 50);

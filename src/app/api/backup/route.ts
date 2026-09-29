@@ -553,7 +553,12 @@ async function cloudDelete(provider: CloudProvider, config: Record<string, strin
 // ─── GET /api/backup ─────────────────────────────────────────
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") || "all";
 
@@ -758,7 +763,12 @@ export async function GET(request: NextRequest) {
 // ─── POST /api/backup ────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth(request);
+    try {
+      await requireAuth(request);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
     const body = await request.json();
     const { action } = body;
 

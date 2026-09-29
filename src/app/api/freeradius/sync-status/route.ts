@@ -8,7 +8,12 @@ import { requireAuth } from "@/lib/api-auth";
  * to detect sync drift.
  */
 export async function GET() {
-  await requireAuth({} as any).catch(() => {}); // optional auth
+  try {
+    await requireAuth({} as any).catch(() => {}); // optional auth
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+    throw e;
+  }
 
   try {
     // 1. App subscriber count vs RADIUS radcheck count

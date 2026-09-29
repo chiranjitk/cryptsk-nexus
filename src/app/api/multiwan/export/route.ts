@@ -14,7 +14,12 @@ const STATUS_LABELS: Record<string, string> = {
 // GET /api/multiwan/export — Export WAN links as CSV
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request as unknown as NextRequest);
+    try {
+      await requireAuth(request as unknown as NextRequest);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") || "";

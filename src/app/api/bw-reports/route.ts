@@ -275,7 +275,12 @@ export async function GET(req: NextRequest) {
 
   // Try auth
   try {
-    await requireAuth(req);
+    try {
+      await requireAuth(req);
+    } catch (e) {
+      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
+      throw e;
+    }
   } catch (error) {
     if (error instanceof AuthError)
       return NextResponse.json({ error: error.message }, { status: error.statusCode });
