@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
     const { searchParams } = new URL(req.url);
-    const action = searchParams.get("action");
+    const action = searchParams.get("action") || "list";
 
     if (action !== "list") {
       return NextResponse.json({ error: "Invalid action. Use ?action=list" }, { status: 400 });
