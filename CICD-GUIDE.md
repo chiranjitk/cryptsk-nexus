@@ -1,4 +1,4 @@
-# 🚀 CRYPTSK Intelligent ISP Platform — CI/CD Setup Guide
+# 🚀 CRYPTSK ISP Platform — CI/CD Setup Guide
 
 > **Complete guide for deploying code from Z.ai Sandbox → GitHub → Production Server**
 
