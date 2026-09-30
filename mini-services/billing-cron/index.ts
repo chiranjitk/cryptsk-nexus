@@ -299,8 +299,32 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
 
   let suspended = 0;
   let radiusBlocked = 0;
+  let graceHonored = 0;
   for (const inv of overdueInvoices) {
     if (!inv.Subscriber || inv.Subscriber.status !== "ACTIVE") continue;
+
+    // [AUDIT-FIX F-16] Skip subscribers inside an operator-granted grace window —
+    // the grace period CRUD existed but nothing honored it at enforcement time.
+    const gracePeriod = await db.subscriberGracePeriod.findFirst({
+      where: {
+        subscriberId: inv.Subscriber.id,
+        status: "ACTIVE",
+        OR: [
+          { suspensionDate: { gt: new Date() } },
+          { suspensionDate: null, appliedAt: { gt: new Date(Date.now() - 86400000 * 365) } },
+        ],
+      },
+      select: { id: true, graceDays: true, appliedAt: true, suspensionDate: true },
+    });
+    if (gracePeriod) {
+      const windowEnd = gracePeriod.suspensionDate
+        ? new Date(gracePeriod.suspensionDate).getTime()
+        : gracePeriod.appliedAt.getTime() + gracePeriod.graceDays * 86400000;
+      if (windowEnd > Date.now()) {
+        graceHonored++;
+        continue;
+      }
+    }
 
     await db.subscriber.update({
       where: { id: inv.Subscriber.id },
@@ -333,8 +357,8 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
     suspended++;
   }
 
-  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended, radiusBlocked });
-  return { checked: overdueInvoices.length, suspended, radiusBlocked };
+  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended, radiusBlocked, graceHonored });
+  return { checked: overdueInvoices.length, suspended, radiusBlocked, graceHonored };
 }
 
 // [AUDIT-FIX F-05] Expiry enforcement — the product had NO mechanism to stop service
@@ -344,8 +368,24 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
 // from their billing anchor + plan validity and suspends + RADIUS-blocks whoever has
 // lapsed beyond the grace period.
 async function jobExpiryEnforcement(): Promise<Record<string, unknown>> {
-  const graceDays = 3; // days of tolerance after the paid-through date before suspension
+  const graceDays = 3; // default days of tolerance after the paid-through date before suspension
   const now = Date.now();
+
+  // [AUDIT-FIX F-16] Operator-granted grace windows now EXTEND the tolerance:
+  // a subscriber with an ACTIVE SubscriberGracePeriod gets max(default, graceDays).
+  const activeGrace = await db.subscriberGracePeriod.findMany({
+    where: { status: "ACTIVE" },
+    select: { subscriberId: true, graceDays: true, appliedAt: true, suspensionDate: true },
+  });
+  const graceBySubscriber = new Map<string, number>();
+  for (const gp of activeGrace) {
+    const windowEnd = gp.suspensionDate
+      ? new Date(gp.suspensionDate).getTime()
+      : gp.appliedAt.getTime() + gp.graceDays * 86400000;
+    if (windowEnd > now) {
+      graceBySubscriber.set(gp.subscriberId, Math.max(graceBySubscriber.get(gp.subscriberId) || 0, gp.graceDays));
+    }
+  }
 
   const active = await db.subscriber.findMany({
     where: { status: "ACTIVE", planId: { not: null } },
@@ -373,7 +413,8 @@ async function jobExpiryEnforcement(): Promise<Record<string, unknown>> {
     // Beyond the paid-through date + grace AND no PAID invoice covering the future
     // (belt-and-braces: a recently generated invoice that starts in the future means
     // the operator has already taken payment for the next cycle).
-    if (lapsedDays > graceDays) {
+    const effectiveGrace = Math.max(graceDays, graceBySubscriber.get(sub.id) || 0);
+    if (lapsedDays > effectiveGrace) {
       const coveringInvoice = await db.invoice.findFirst({
         where: {
           subscriberId: sub.id,
@@ -426,6 +467,159 @@ async function jobUsageReset(): Promise<Record<string, unknown>> {
   return { resetCount: result.count };
 }
 
+// [AUDIT-FIX F-16] Complaint SLA escalation — previously this logic lived inside
+// GET /api/complaints (a read path!), so escalation only happened when someone
+// browsed the complaints page, and never overnight. job-007 owns it on the clock.
+async function jobComplaintSlaSweep(): Promise<Record<string, unknown>> {
+  const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
+  if (!settings?.complaintEscalationEnabled) {
+    logger.info("Complaint SLA sweep skipped — escalation disabled");
+    return { skipped: true, reason: "escalation disabled in settings" };
+  }
+
+  const active = await db.complaint.findMany({
+    where: {
+      status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS", "REOPENED"] },
+      isSlaPaused: false,
+      slaDeadline: { not: null },
+      escalationLevel: { lt: 2 },
+    },
+    select: {
+      id: true, ticketNumber: true, status: true, priority: true,
+      escalationLevel: true, slaDeadline: true, createdAt: true,
+    },
+  });
+
+  const level1Percent = settings.complaintEscalationLevel1Percent || 75;
+  const level2Percent = settings.complaintEscalationLevel2Percent || 100;
+  const PRIORITY_ORDER: Record<string, string> = {
+    P4_LOW: "P3_MEDIUM",
+    P3_MEDIUM: "P2_HIGH",
+    P2_HIGH: "P1_CRITICAL",
+  };
+
+  const now = Date.now();
+  let escalatedL1 = 0;
+  let escalatedL2 = 0;
+  let priorityRaised = 0;
+  const details: string[] = [];
+
+  for (const c of active) {
+    const deadline = new Date(c.slaDeadline!).getTime();
+    const created = new Date(c.createdAt).getTime();
+    const totalSlaMs = Math.max(deadline - created, 1);
+    const elapsedPercent = ((now - created) / totalSlaMs) * 100;
+
+    let newLevel = c.escalationLevel;
+    if (elapsedPercent >= level2Percent && c.escalationLevel < 2) newLevel = 2;
+    else if (elapsedPercent >= level1Percent && c.escalationLevel < 1) newLevel = 1;
+
+    const breached = elapsedPercent >= 100;
+    const newPriority = breached ? (PRIORITY_ORDER[c.priority] || null) : null;
+
+    if (newLevel !== c.escalationLevel || (newPriority && newPriority !== c.priority)) {
+      const data: Record<string, unknown> = { escalationLevel: newLevel };
+      if (newPriority && newPriority !== c.priority) data.priority = newPriority;
+
+      await db.complaint.update({ where: { id: c.id }, data });
+      await db.auditLog.create({
+        data: {
+          action: "AUTO_ESCALATION",
+          entity: "Complaint",
+          entityId: c.id,
+          details: JSON.stringify({
+            ticketNumber: c.ticketNumber,
+            fromLevel: c.escalationLevel,
+            toLevel: newLevel,
+            fromPriority: c.priority,
+            toPriority: newPriority || c.priority,
+            toRole: newLevel === 1 ? (settings.complaintEscalationRole1 || "MANAGER") : (settings.complaintEscalationRole2 || "ADMIN"),
+            elapsedPercent: Math.round(elapsedPercent * 10) / 10,
+            triggeredBy: "job-007-sla-sweep",
+          }),
+          userName: "System",
+        },
+      });
+
+      if (newLevel === 2 && c.escalationLevel < 2) escalatedL2++;
+      else if (newLevel === 1 && c.escalationLevel < 1) escalatedL1++;
+      if (newPriority && newPriority !== c.priority) {
+        priorityRaised++;
+        details.push(`${c.ticketNumber} → ${newPriority}`);
+      }
+    }
+  }
+
+  logger.info("Complaint SLA sweep complete", {
+    checked: active.length, escalatedL1, escalatedL2, priorityRaised,
+  });
+  return { checked: active.length, escalatedL1, escalatedL2, priorityRaised, details };
+}
+
+// [AUDIT-FIX F-16] Grace-period automation — SubscriberGracePeriod rows existed
+// with CRUD + UI but NOTHING read them. This job applies the operator-granted
+// grace: subscribers inside their grace window are protected from job-004
+// suspension (consumed here via the same lookup) and get a heads-up notification
+// before the window ends; expired windows are marked USED so they stop protecting.
+async function jobGracePeriodSweep(): Promise<Record<string, unknown>> {
+  const now = new Date();
+  const activePeriods = await db.subscriberGracePeriod.findMany({
+    where: { status: "ACTIVE" },
+    include: { Subscriber: { select: { id: true, code: true, name: true, status: true } } },
+  });
+
+  let markedUsed = 0;
+  let notified = 0;
+  for (const gp of activePeriods) {
+    // Window end = appliedAt + graceDays (or explicit suspensionDate if set)
+    const windowEnd = gp.suspensionDate
+      ? new Date(gp.suspensionDate)
+      : new Date(gp.appliedAt.getTime() + gp.graceDays * 86400000);
+
+    if (now > windowEnd) {
+      await db.subscriberGracePeriod.update({
+        where: { id: gp.id },
+        data: { status: "USED" },
+      });
+      markedUsed++;
+      continue;
+    }
+
+    // Remind the subscriber once per day while inside the window (deduped by
+    // only notifying when a prior reminder for today does not exist).
+    if (gp.Subscriber && gp.graceDays > 0) {
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const recentReminder = await db.notification.findFirst({
+        where: {
+          subscriberId: gp.Subscriber.id,
+          category: "BILL_DUE",
+          title: "Grace Period Active",
+          createdAt: { gte: startOfDay },
+        },
+        select: { id: true },
+      });
+      if (!recentReminder) {
+        const daysLeft = Math.max(0, Math.ceil((windowEnd.getTime() - now.getTime()) / 86400000));
+        await db.notification.create({
+          data: {
+            subscriberId: gp.Subscriber.id,
+            type: "IN_APP",
+            category: "BILL_DUE",
+            title: "Grace Period Active",
+            message: `A ${gp.graceDays}-day grace period is active on your account. Please clear your dues before ${windowEnd.toISOString().slice(0, 10)} (${daysLeft} day(s) left) to avoid service suspension.`,
+            status: "PENDING",
+          },
+        });
+        notified++;
+      }
+    }
+  }
+
+  logger.info("Grace period sweep complete", { active: activePeriods.length, markedUsed, notified });
+  return { active: activePeriods.length, markedUsed, notified };
+}
+
 // ─── Job Registry ───────────────────────────────────────────
 
 function getNextRun(cron: string): string {
@@ -450,6 +644,13 @@ function getNextRun(cron: string): string {
     // Daily 2 AM
     if (next.getHours() >= 2) next.setDate(next.getDate() + 1);
     next.setHours(2, 0, 0, 0);
+  } else if (cron === "0 * * * *") {
+    // Hourly (complaint SLA sweep)
+    next.setHours(next.getHours() + 1, 0, 0, 0);
+  } else if (cron === "30 7 * * *") {
+    // Daily 7:30 AM (grace period sweep)
+    if (next.getHours() > 7 || (next.getHours() === 7 && next.getMinutes() >= 30)) next.setDate(next.getDate() + 1);
+    next.setHours(7, 30, 0, 0);
   } else {
     next.setMinutes(next.getMinutes() + 5, 0, 0);
   }
@@ -546,6 +747,36 @@ const jobs: ScheduledJob[] = [
     failCount: 0,
     history: [],
     handler: jobExpiryEnforcement,
+  },
+  {
+    id: "job-007",
+    name: "Complaint SLA Sweep",
+    description: "Escalate complaints past SLA thresholds (L1/L2) + auto-raise priority on breach [AUDIT-FIX F-16/F-23]",
+    type: "complaint-sla",
+    cron: "0 * * * *",
+    enabled: true,
+    nextRun: getNextRun("0 * * * *"),
+    status: "idle",
+    totalRuns: 0,
+    successCount: 0,
+    failCount: 0,
+    history: [],
+    handler: jobComplaintSlaSweep,
+  },
+  {
+    id: "job-008",
+    name: "Grace Period Sweep",
+    description: "Apply operator-granted grace windows: protect subscribers from suspension, send reminders, expire used windows [AUDIT-FIX F-16]",
+    type: "grace-period",
+    cron: "30 7 * * *",
+    enabled: true,
+    nextRun: getNextRun("30 7 * * *"),
+    status: "idle",
+    totalRuns: 0,
+    successCount: 0,
+    failCount: 0,
+    history: [],
+    handler: jobGracePeriodSweep,
   },
 ];
 

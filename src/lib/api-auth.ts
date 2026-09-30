@@ -12,21 +12,27 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/session'
+import { hashToken } from '@/lib/session-store'
 import { db } from '@/lib/db'
 import { hasPermission as checkPermission } from '@/lib/auth'
 import type { UserRole } from '@prisma/client'
 
-export async function requireAuth(request: NextRequest): Promise<string> {
+/** Extract the raw session token from cookie or Bearer header. */
+export function extractSessionToken(request: NextRequest): string | null {
   // 1. Try cookie-based auth
-  let sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const cookieToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (cookieToken) return cookieToken;
 
   // 2. Fallback: Bearer token in Authorization header (for proxy/gateway environments)
-  if (!sessionToken) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader?.startsWith('Bearer ')) {
-      sessionToken = authHeader.substring(7);
-    }
+  const authHeader = request.headers.get('authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.substring(7);
   }
+  return null;
+}
+
+export async function requireAuth(request: NextRequest): Promise<string> {
+  const sessionToken = extractSessionToken(request)
 
   if (!sessionToken) {
     throw new AuthError('Authentication required. Please log in.', 401)
@@ -38,13 +44,28 @@ export async function requireAuth(request: NextRequest): Promise<string> {
     throw new AuthError('Session expired or invalid. Please log in again.', 401)
   }
 
-  // Verify current account status — reject locked/suspended accounts
-  const user = await db.user.findUnique({
-    where: { id: userId },
-    select: { status: true },
+  // [AUDIT-FIX F-19] DB-backed session store — the token must map to an ACTIVE
+  // UserSession row. Logout, password change, role demotion and deactivation all
+  // revoke rows server-side, so stolen/copied tokens can be killed instantly.
+  // A single joined query also verifies current account status.
+  const session = await db.userSession.findUnique({
+    where: { tokenHash: hashToken(sessionToken) },
+    select: {
+      userId: true,
+      status: true,
+      User: { select: { status: true } },
+    },
   })
 
-  if (!user || user.status !== 'ACTIVE') {
+  if (!session || session.status !== 'active') {
+    throw new AuthError('Session revoked or expired. Please log in again.', 401)
+  }
+
+  if (session.userId !== userId) {
+    throw new AuthError('Session user mismatch. Please log in again.', 401)
+  }
+
+  if (!session.User || session.User.status !== 'ACTIVE') {
     throw new AuthError('Account is not active', 403)
   }
 
@@ -128,6 +149,34 @@ export async function requirePermission(
   }
 
   return userId
+}
+
+/**
+ * [AUDIT-FIX F-20] Permission check for a userId that has ALREADY passed
+ * requireAuth — avoids a second full auth round-trip in handlers that need
+ * both the userId and a permission gate (e.g. different permissions per
+ * branch of the same handler).
+ */
+export async function permissionFor(userId: string, permission: string): Promise<void> {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { role: true, status: true },
+  })
+
+  if (!user) {
+    throw new AuthError('User not found. Please log in again.', 401)
+  }
+
+  if (user.status !== 'ACTIVE') {
+    throw new AuthError('Account is not active', 403)
+  }
+
+  if (!checkPermission(user.role as UserRole, permission)) {
+    throw new AuthError(
+      `Insufficient permissions. Required: ${permission}`,
+      403,
+    )
+  }
 }
 
 /**

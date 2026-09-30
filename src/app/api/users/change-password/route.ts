@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, extractSessionToken, AuthError } from "@/lib/api-auth";
+import { hashToken, revokeAllUserSessions } from "@/lib/session-store";
 import { auditCreate } from "@/lib/services/audit-service";
 import { rateLimit } from "@/lib/rate-limit";
 import type { NextRequest } from "next/server";
@@ -85,6 +86,15 @@ export async function POST(request: NextRequest) {
       data: { password: hashedPassword },
     });
 
+    // [AUDIT-FIX F-19] Revoke every OTHER session of this user — a password
+    // change must kill stolen tokens on other devices immediately. The current
+    // session is kept alive so the user is not logged out mid-flow.
+    const currentToken = extractSessionToken(request);
+    const revokedCount = await revokeAllUserSessions(
+      userId,
+      currentToken ? hashToken(currentToken) : undefined
+    );
+
     // Audit log
     await auditCreate(
       request,
@@ -101,6 +111,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: "Password changed successfully",
+      sessionsRevoked: revokedCount,
     });
   } catch (error) {
     if (error instanceof AuthError) {

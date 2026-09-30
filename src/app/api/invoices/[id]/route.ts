@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, requirePermission, permissionFor } from "@/lib/api-auth";
 
 export async function GET(
   req: NextRequest,
@@ -59,6 +59,8 @@ export async function PUT(
 ) {
   try {
     const userId = await requireAuth(req);
+    // [AUDIT-FIX F-20] Invoice edits (status/discount/ledger-affecting) need invoices.update
+    await permissionFor(userId, "invoices.update");
     const { id } = await params;
     const body = await req.json();
 
@@ -186,7 +188,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const userId = await requirePermission(req, "invoices.delete"); // [AUDIT-FIX F-20]
     const { id } = await params;
 
     const invoice = await db.invoice.findUnique({ where: { id } });
@@ -198,7 +200,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Cannot delete a paid or partially paid invoice" }, { status: 400 });
     }
 
-    const deletedRecord = { ...Invoice };
+    const deletedRecord = { ...invoice }; // [BUGFIX] was `{ ...Invoice }` — undefined identifier, 500 after delete
     await db.invoice.delete({ where: { id } });
     await auditDelete(req, "Invoice", id, deletedRecord, { userId });
     return NextResponse.json({ success: true });

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditStatusChange, auditUpdate, auditDelete } from "@/lib/services/audit-service";
-import { requireAuth, requirePermission } from "@/lib/api-auth";
+import { requireAuth, requirePermission, permissionFor, AuthError } from "@/lib/api-auth";
 
 // GET /api/payments/[id] — single payment with ISP settings for receipt
 export async function GET(
@@ -73,6 +73,9 @@ export async function PUT(
       if (!["VERIFIED", "FAILED", "REFUNDED"].includes(newStatus)) {
         return NextResponse.json({ error: "Invalid status. Must be VERIFIED, FAILED, or REFUNDED" }, { status: 400 });
       }
+      // [AUDIT-FIX F-20] Verification (money approval) needs payments.verify;
+      // reject/refund transitions need payments.update. AGENT/VIEWER have neither.
+      await permissionFor(userId, newStatus === "VERIFIED" ? "payments.verify" : "payments.update");
 
       // [AUDIT-FIX F-01/F-03] Enforce a legal status-transition matrix:
       //  - PENDING → VERIFIED | FAILED        (normal verify/reject)
@@ -147,6 +150,9 @@ export async function PUT(
       return NextResponse.json({ error: "Only PENDING payments can be edited" }, { status: 400 });
     }
 
+    // [AUDIT-FIX F-20] Editing recorded money requires payments.update
+    await permissionFor(userId, "payments.update");
+
     const previousValues = { amount: payment.amount, paymentMode: payment.paymentMode, notes: payment.notes, transactionRef: payment.transactionRef };
 
     const updateData: Record<string, unknown> = {};
@@ -194,7 +200,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const userId = await requirePermission(req, "payments.delete"); // [AUDIT-FIX F-20]
     const { id } = await params;
 
     const payment = await db.payment.findUnique({

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 
 // GET /api/billing — list invoices with filters + total status counts
@@ -86,9 +86,12 @@ export async function GET(req: NextRequest) {
 // POST /api/billing — generate invoices, send, record payment, bulk send
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
+    const userId = await requireAuth(req);
     const body = await req.json();
     const { subscriberId, action } = body;
+
+    // [AUDIT-FIX F-20] Generating/sending invoices is a billing action
+    await permissionFor(userId, "invoices.create");
 
     // Action: bulk send invoices
     if (action === "bulk_send") {

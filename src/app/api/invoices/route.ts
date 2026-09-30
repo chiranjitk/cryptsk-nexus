@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditCreate } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 
 export async function GET(req: NextRequest) {
@@ -153,6 +153,8 @@ export async function POST(req: NextRequest) {
       throw e;
     }
     if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    // [AUDIT-FIX F-20] Creating invoices is a billing action — viewers/agents cannot
+    await permissionFor(userId, 'invoices.create');
     const body = await req.json();
     const { subscriberId, planId, issueDate, dueDate, periodStart, periodEnd, billingPeriodStart, billingPeriodEnd, description, discountType, discountValue, lateFee, advanceAdjustment, notes, status: requestedStatus, isProRata, lineItems, items, cgstRate: cgstRateOverride, sgstRate: sgstRateOverride, igstRate: igstRateOverride, reverseCharge } = body;
 

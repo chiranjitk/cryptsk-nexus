@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, requirePermission } from "@/lib/api-auth";
 
 // POST /api/payments/[id]/refund — Create a refund for a VERIFIED payment
 export async function POST(
@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const userId = await requirePermission(req, "payments.update"); // [AUDIT-FIX F-20] refunds move money out — AGENT (payments.create only) must not
     const { id } = await params;
     const body = await req.json();
 
@@ -134,11 +134,18 @@ export async function GET(
       where: { paymentId: id },
       orderBy: { createdAt: "desc" },
       include: {
-        processedBy: { select: { name: true } },
+        User: { select: { name: true } },
       },
     });
 
-    return NextResponse.json({ refunds });
+    // [BUGFIX] include was `processedBy` — not a valid relation (Prisma relation is
+    // `User`); the include itself made this endpoint 500. Map it back for API compat.
+    return NextResponse.json({
+      refunds: refunds.map((r) => ({
+        ...r,
+        processedBy: (r as Record<string, unknown> & { User?: { name: string } }).User,
+      })),
+    });
   } catch (error) {
     if (error && typeof error === "object" && "statusCode" in error) {
       const authErr = error as { statusCode: number; message: string };

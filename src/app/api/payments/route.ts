@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditCreate, auditBulk } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 
 // GET /api/payments — list payments with filters + summary + pendingVerifyCount
 export async function GET(req: NextRequest) {
@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
       : body.action;
 
     if (effectiveAction === "bulk_verify" || effectiveAction === "bulk_reject") {
+      // [AUDIT-FIX F-20] Verification is a money-approval action — agents/viewers cannot.
+      await permissionFor(userId, effectiveAction === "bulk_verify" ? "payments.verify" : "payments.update");
       const { paymentIds } = body;
       if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
         return NextResponse.json({ error: "Payment IDs are required" }, { status: 400 });
@@ -117,32 +119,37 @@ export async function POST(req: NextRequest) {
         include: { Invoice: true },
       });
 
-      const result = await db.payment.updateMany({
-        where: { id: { in: paymentIds }, status: "PENDING" },
-        data: { status: targetStatus },
-      });
+      // [AUDIT-FIX F-10] Bulk verify touches invoice balances — run the whole
+      // batch atomically so a mid-loop crash cannot leave books inconsistent.
+      const result = await db.$transaction(async (tx) => {
+        const r = await tx.payment.updateMany({
+          where: { id: { in: paymentIds }, status: "PENDING" },
+          data: { status: targetStatus },
+        });
 
-      // If verifying, update linked invoice balances
-      if (targetStatus === "VERIFIED") {
-        for (const p of paymentsToUpdate) {
-          if (p.invoiceId && p.Invoice) {
-            const invoice = p.Invoice;
-            const newPaidAmount = invoice.paidAmount + p.amount;
-            const newBalanceAmount = invoice.grandTotal - newPaidAmount;
-            // Use 0.01 tolerance for float precision
-            const newInvoiceStatus = newBalanceAmount <= 0.01 ? "PAID" : "PARTIALLY_PAID";
-            await db.invoice.update({
-              where: { id: p.invoiceId },
-              data: {
-                paidAmount: newPaidAmount,
-                balanceAmount: Math.max(0, Math.round(newBalanceAmount * 100) / 100),
-                status: newInvoiceStatus,
-                paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
-              },
-            });
+        // If verifying, update linked invoice balances
+        if (targetStatus === "VERIFIED") {
+          for (const p of paymentsToUpdate) {
+            if (p.invoiceId && p.Invoice) {
+              const invoice = p.Invoice;
+              const newPaidAmount = invoice.paidAmount + p.amount;
+              const newBalanceAmount = invoice.grandTotal - newPaidAmount;
+              // Use 0.01 tolerance for float precision
+              const newInvoiceStatus = newBalanceAmount <= 0.01 ? "PAID" : "PARTIALLY_PAID";
+              await tx.invoice.update({
+                where: { id: p.invoiceId },
+                data: {
+                  paidAmount: newPaidAmount,
+                  balanceAmount: Math.max(0, Math.round(newBalanceAmount * 100) / 100),
+                  status: newInvoiceStatus,
+                  paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
+                },
+              });
+            }
           }
         }
-      }
+        return r;
+      });
 
       await auditBulk(req, targetStatus === "VERIFIED" ? "BULK_UPDATE" : "BULK_DELETE", "Payment", result.count, paymentIds);
       return NextResponse.json({
@@ -152,6 +159,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { subscriberId, amount, paymentMode, transactionRef, notes, invoiceId } = body;
+
+    // [AUDIT-FIX F-20] Recording money requires an explicit permission
+    await permissionFor(userId, "payments.create");
 
     if (!subscriberId || !amount || amount <= 0) {
       return NextResponse.json({ error: "Subscriber and valid amount are required" }, { status: 400 });

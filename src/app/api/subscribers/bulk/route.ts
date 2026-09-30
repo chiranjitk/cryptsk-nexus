@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditBulk } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { unblockUserInFreeRADIUS, blockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
 
@@ -11,10 +11,15 @@ const VALID_PAYMENT_MODES = ["CASH", "UPI", "ONLINE", "BANK_TRANSFER", "CHEQUE",
 
 export async function POST(request: NextRequest) {
   try {
+    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    // [AUDIT-FIX F-20] Bulk operations mutate subscriber state en masse (renew,
+    // change-plan, change-status, RADIUS block/unblock) — need subscribers.update.
+    // A plain AuthError return is preserved for shape compatibility.
     try {
-      await requireAuth(request as unknown as import("next/server").NextRequest);
+      await permissionFor(userId, "subscribers.update");
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      throw error;
     }
     const body = await request.json();
     const { action, subscriberIds, ...payload } = body;

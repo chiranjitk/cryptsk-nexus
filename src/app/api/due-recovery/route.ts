@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { auditLog } from "@/lib/services/audit-service";
 import { blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
 
@@ -334,9 +334,30 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const now = new Date();
   try {
-    await requireAuth(request);
+    const userId = await requireAuth(request);
     const body = await request.json();
     const { action, invoiceIds, method, subscriberId, amount, note } = body;
+
+    // [AUDIT-FIX F-20] Per-action RBAC — money movements need payments.*, state
+    // changes need subscribers.update. AGENT was previously able to refund/collect.
+    const ACTION_PERMISSIONS: Record<string, string> = {
+      "record-payment": "payments.create",
+      "pay-installment": "payments.create",
+      "send-reminder": "subscribers.update",
+      "suspend": "subscribers.update",
+      "assign-agent": "subscribers.update",
+      "add-promise": "subscribers.update",
+      "create-payment-plan": "invoices.update",
+      "default-plan": "invoices.update",
+      "escalate": "subscribers.update",
+      "save-legal-notice": "subscribers.update",
+      "raise-dispute": "complaints.create",
+      "resolve-dispute": "complaints.update",
+    };
+    const requiredPermission = ACTION_PERMISSIONS[action || ""];
+    if (requiredPermission) {
+      await permissionFor(userId, requiredPermission);
+    }
 
     if (action === "send-reminder") {
       const invoices = await db.invoice.findMany({
@@ -350,7 +371,7 @@ export async function POST(request: NextRequest) {
             type: method === "whatsapp" ? "WHATSAPP" : method === "sms" ? "SMS" : "IN_APP",
             category: "BILL_DUE",
             title: "Payment Reminder",
-            message: `Dear ${inv.subscriber.name}, your invoice ${inv.invoiceNumber} of ₹${Math.round(inv.balanceAmount || 0)} is overdue since ${new Date(inv.dueDate).toLocaleDateString("en-IN")}. Please pay immediately to avoid service suspension.`,
+            message: `Dear ${inv.Subscriber.name}, your invoice ${inv.invoiceNumber} of ₹${Math.round(inv.balanceAmount || 0)} is overdue since ${new Date(inv.dueDate).toLocaleDateString("en-IN")}. Please pay immediately to avoid service suspension.`,
             status: "SENT",
             sentAt: new Date(),
           },
@@ -512,7 +533,7 @@ export async function POST(request: NextRequest) {
                 category: "BILL_DUE",
                 type: "IN_APP",
                 title: "Payment Promise Recorded",
-                message: `${inv.subscriber.name || subscriberName || "Subscriber"} promised to pay ${promiseText}. Invoice: ${inv.invoiceNumber}.`,
+                message: `${inv.Subscriber.name || subscriberName || "Subscriber"} promised to pay ${promiseText}. Invoice: ${inv.invoiceNumber}.`,
                 status: "SENT",
                 sentAt: new Date(),
               },
@@ -585,15 +606,15 @@ export async function POST(request: NextRequest) {
       });
 
       const allInstallments = await db.paymentPlanInstallment.findMany({
-        where: { paymentPlanId: installment.paymentPlan.id },
+        where: { paymentPlanId: installment.PaymentPlan.id },
       });
       const paidCount = allInstallments.filter((i) => i.status === "paid").length;
 
       await db.paymentPlan.update({
-        where: { id: installment.paymentPlan.id },
+        where: { id: installment.PaymentPlan.id },
         data: {
           paidInstallments: paidCount,
-          status: paidCount >= installment.paymentPlan.emiCount ? "completed" : "active",
+          status: paidCount >= installment.PaymentPlan.emiCount ? "completed" : "active",
         },
       });
 

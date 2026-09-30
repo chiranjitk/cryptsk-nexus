@@ -3200,7 +3200,6 @@ Work Log:
 - Attempted agent-browser UI verification — blocked by sandbox OOM-killer repeatedly killing next-server (PID 30338, total-vm: 22 GB requested for turbopack compilation of the 5253-line file). Documented in Stage Summary. Pre-restart dev.log already showed the page successfully rendering and polling /api/vpp?action=* endpoints (including the new /api/vpp?action=recovery-logs call triggered by alertsQ on the Live Activity tab).
 
 Stage Summary:
-<<<<<<< Updated upstream
 - Files modified (ONLY these, per constraint):
   1. /home/z/my-project/src/components/pages/vpp-gateway-page.tsx — added 3 new features.
   2. /home/z/my-project/next.config.ts — added 127.0.0.1 + localhost to allowedDevOrigins (harmless addition to unblock future agent-browser testing; no functional impact).
@@ -3314,12 +3313,10 @@ Final VPP dataplane state on prod (all 11 items fixed):
   * NAT44 EI plugin enabled (via startup.cmd) ✅
   * GoVPP v0.5.0 connected via binary API ✅
   * Full transactional flow: /api/radius/auth → session-engine → vpp-adapter → govpp-adapter → VPP binary API ✅
-=======
 - Deliverable: AUDIT-REPORT.md at repo root (evidence-based, 23 findings, remediation roadmap)
 - Environment restored in sandbox: postgres 16.4 on :5432 (~/pg, pg_ctl -D data), billing-cron restarted on :3004 with SESSION_SECRET, dev server :3000
 - CRITICAL for next agents: every suspend path except manual PUT misses blockUserInFreeRADIUS; only 1 $transaction in whole money pipeline; payments have no idempotency — P0 list in AUDIT-REPORT §4 should drive next fix sprint
 - Test data pollution in sandbox DB is intentional (payments INV-00001/00002, DUP-UTR-999888, refunds) — safe to wipe
->>>>>>> Stashed changes
 
 ---
 Task ID: P0-FIX-SPRINT-2026-10-01
@@ -3354,7 +3351,6 @@ Stage Summary:
 - Remaining: F-12 invoice numbering unification, F-13 prepaid wallet debit, F-14 cron totalAmount tax, F-15 plan-change proration/CoA, F-16 grace/SLA automation, F-17 soft-delete, F-18 parameterized SQL, F-19 session revocation, F-20 RBAC, F-21 counter races, F-23 complaint state machine
 - Ops note: dev server OOM-killed twice during route compiles (2.6GB spike); portable postgres on :5432 (~/pg) + billing-cron on :3004 running; background processes get reaped between shell sessions — start cron+test in the SAME command
 - Next round: F-12/F-14/F-15 (billing correctness) are the highest-value remaining items
->>>>>>> Stashed changes
 
 ---
 Task ID: P1-FIX-SPRINT-2026-10-01
@@ -3376,3 +3372,34 @@ Stage Summary:
 - Remaining: F-16 (grace/SLA automation), F-17 (soft-delete retention), F-18 (parameterize radius-sync SQL), F-19 (session revocation), F-20 (RBAC on money routes), F-23 (complaint state machine)
 - Ops: sandbox jobs invoices INV-00005..16 are DRAFT artifacts of T-E; billing-cron must be started with DATABASE_URL+SESSION_SECRET env (kill by PID, pkill -f "billing-cron/index.ts" does NOT match its cmdline)
 - Next round suggestion: F-20 RBAC + F-19 session revocation (security), or F-16 SLA automation
+
+---
+Task ID: P2-SECURITY-SPRINT-2026-09-30
+Agent: Z.ai Code (cron webDevReview round 3)
+Task: P2 audit remediation — session revocation (F-19), RBAC on money routes (F-20), complaint state machine (F-23), subscriber-delete retention guards (F-17), parameterized SQL (F-18), SLA/grace automation (F-16) + UI badges
+
+Work Log:
+- Browser QA baseline: login OK, dashboard + subscribers pages render, 15 subscribers, no console errors; screenshots in download/
+- CRITICAL INFRA FIX: prisma/schema.prisma datasource had been reverted to `provider = "sqlite"` (template regression) while the live DB is PostgreSQL 16.4 — restored `postgresql`, pushed schema (added UserSession.tokenHash @unique), regenerated client. Also fixed .env to point at postgres (was file:sqlite). ⚠️ NOTE FOR FUTURE AGENTS: the sandbox shell exports DATABASE_URL=file:... globally — it OVERRIDES .env; launch dev with `DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus bun run dev`. Dev server OOM-killed twice by concurrent route compiles (browser tab polls ~10 APIs on boot) — close the browser tab or warm routes sequentially after restart.
+- F-19 FIXED (revocable sessions): new src/lib/session-store.ts (SHA-256 tokenHash, recordUserSession, revokeSessionByToken, revokeAllUserSessions, UA parsing); login records a UserSession row; requireAuth now validates tokenHash against the store (1 joined query — session active + user ACTIVE); logout revokes server-side; change-password revokes all OTHER sessions (returns sessionsRevoked); users/[id] PUT revokes all sessions on role change / deactivation / password reset; session.ts now embeds type:"admin" and REJECTS subscriber-type tokens on staff routes (cross-portal replay blocked). /api/users/[id]/sessions GET+DELETE (existing UI) now shows real data and termination actually takes effect.
+- F-20 FIXED (RBAC): added permissionFor(userId, perm) helper; wired payments POST (bulk_verify→payments.verify, bulk_reject/edit→payments.update, create→payments.create), payments PUT (VERIFIED→payments.verify), payments DELETE→payments.delete, refund POST→payments.update, invoices POST→invoices.create, invoices PUT→invoices.update, invoices DELETE→invoices.delete, billing POST→invoices.create, subscribers/bulk POST→subscribers.update, subscribers DELETE→subscribers.delete, due-recovery POST per-action map (record-payment/pay-installment→payments.create etc.), complaints POST→complaints.create, complaints PUT→complaints.update.
+- F-23 FIXED (complaint state machine): valid-status enum + transition matrix (OPEN→ASSIGNED/IN_PROGRESS/RESOLVED/CLOSED; RESOLVED→CLOSED/REOPENED only; REOPENED re-enters flow), same-status 409, illegal 409 with allowed list, RESOLVED requires an assignee (400), resolvedAt set once on RESOLVED and CLEARED on REOPENED, technician totalResolved increments only on legal RESOLVED, SLA deadline set only on FIRST assignment (re-ASSIGNED no longer restarts the clock).
+- F-17 FIXED (retention guards): subscriber DELETE now 409 SUBSCRIBER_ACTIVE if status ACTIVE; 409 FINANCIAL_HISTORY_EXISTS with counts if any invoices/payments/refunds exist (GST/tax retention) — only customers with zero financial history can be hard-deleted; destructive route now requires subscribers.delete.
+- F-18 FIXED (SQL injection hardening): radius-sync.ts fully rewritten — all radcheck/radreply/radusergroup/radgroupcheck/radgroupreply writes use $executeRaw tagged templates or $executeRawUnsafe/$queryRawUnsafe with $n bound params (hand-rolled quote-doubling removed); subscriber DELETE chain converted from interpolated $executeRawUnsafe to $1-parameterized statements.
+- F-16 FIXED (automation): complaint SLA escalation REMOVED from GET /api/complaints and GET detail (read-path side effects); NEW billing-cron job-007 "Complaint SLA Sweep" (hourly) — L1/L2 escalation per ISP settings + auto priority raise on breach + audit log; NEW job-008 "Grace Period Sweep" (daily 07:30) — marks used-up SubscriberGracePeriod windows, sends daily grace reminders; job-004 (suspend overdue) now HONORS active grace windows (skips + graceHonored counter); job-006 (expiry) uses max(default 3d, subscriber graceDays) when grace window active. getNextRun extended for hourly/07:30 crons.
+- 3 LATENT 500-BUGS FOUND + FIXED: complaints/[id] GET spread `...Complaint` (undefined identifier → every detail GET 500) + invalid include `assignedTo` (schema relation is Technician) — fixed + mapped back for API compat; invoices/[id] DELETE `{ ...Invoice }` same bug (500 AFTER delete already ran); refund GET invalid include `processedBy` (relation is User). users/[id] invalid include `agent` → CollectionAgent. due-recovery send-reminder/add-promise/pay-installment referenced lowercase inv.subscriber/installment.paymentPlan (would TypeError) → PascalCase.
+- UI: complaints list rows + detail now show "SLA Breach" (red pulsing) and "L1 · Manager"/"L2 · Admin" escalation badges fed by the new isSlaBreached API flag; users-page session panel now displays REAL login sessions (browser/device/IP) and Terminate Sessions now truly kills tokens.
+
+Regression tests (all PASS, live):
+- T1 authed GET 200; T2 no-cookie 401; T3 logout 200; T4 SAME TOKEN after logout → 401 (server-side revocation works)
+- R1 AGENT can record payment (201); R2 AGENT verify → 403 "Insufficient permissions. Required: payments.verify"; R3 AGENT bulk change-status → 403; R4 AGENT delete subscriber → 403
+- S1 DELETE ACTIVE subscriber → 409 SUBSCRIBER_ACTIVE
+- P1 admin verify → 200; P2 re-verify → 409 (F-01 guard intact); P3 duplicate UTR DUP-UTR-999888 → 409 (F-02 intact)
+- C0 create complaint 201; C1 invalid status → 400; C2 OPEN→RESOLVED unassigned → 400; C3 OPEN→ASSIGNED 200; C4 detail GET → 200 (was 500); C5 ASSIGNED→RESOLVED 200 + resolvedAt set; C6 RESOLVED→OPEN → 409 "Allowed: CLOSED, REOPENED"; C7 RESOLVED→REOPENED 200 + resolvedAt cleared
+- job-007 triggered on SLA-breached complaint → escalationLevel 0→2, priority P3_MEDIUM→P2_HIGH, audit AUTO_ESCALATION recorded (triggeredBy: job-007-sla-sweep); job-008 runs clean; screenshots qa-round4-dashboard.png + qa-round4-complaints-sla-badges.png
+
+Stage Summary:
+- 22 of 23 audit findings now fixed (F-22 cleartext RADIUS passwords is by-design for FreeRADIUS; mitigation = F-07/F-19 auth + credential stripping, already in place)
+- Test artifacts: user agent@test.cryptsk.com (AGENT), tech@test.cryptsk.com technician, complaints CMP-20260930-0001/0002, payment RCT-… on CRY-00015 — safe to wipe
+- Ops: dev server MUST be launched with explicit postgres DATABASE_URL (shell env has stale file:sqlite override); billing-cron on :3004 with SESSION_SECRET; old browser sessions are invalidated once (no UserSession row) — re-login expected
+- Next round suggestion: audit-log retention/archival job, dashboard Security widget (active sessions), or feature work (notifications center for escalations)

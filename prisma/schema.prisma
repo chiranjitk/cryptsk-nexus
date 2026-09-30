@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -4609,6 +4609,7 @@ model UserRadiusAttribute {
 model UserSession {
   id        String    @id @default(uuid())
   userId    String
+  tokenHash String    @unique // [AUDIT-FIX F-19] SHA-256 of the session token — enables server-side revocation
   ipAddress String    @default("")
   userAgent String    @default("")
   device    String    @default("")

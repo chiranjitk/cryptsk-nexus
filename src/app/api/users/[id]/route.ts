@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
 import { requirePermission, AuthError } from "@/lib/api-auth";
+import { revokeAllUserSessionsAsync } from "@/lib/session-store";
 import type { NextRequest } from "next/server";
 
 const VALID_ROLES = ["SUPER_ADMIN", "ADMIN", "OPERATOR", "AGENT", "TECHNICIAN", "VIEWER", "CUSTOMER"];
@@ -20,7 +21,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         Technician: {
           select: { id: true, name: true, phone: true, skills: true, status: true, rating: true, totalResolved: true },
         },
-        agent: {
+        CollectionAgent: {
           select: { id: true, name: true, phone: true, dailyTarget: true, monthlyTarget: true, totalCollectedMonth: true },
         },
       },
@@ -156,6 +157,15 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       },
     });
 
+    // [AUDIT-FIX F-19] Role change, deactivation, or password reset must kill
+    // all of the target user's live sessions immediately (fire-and-forget).
+    const roleChanged = updateData.role !== undefined && updateData.role !== existing.role;
+    const statusChanged = updateData.status !== undefined && updateData.status !== "ACTIVE";
+    const passwordReset = updateData.password !== undefined;
+    if (roleChanged || statusChanged || passwordReset) {
+      revokeAllUserSessionsAsync(id);
+    }
+
     auditUpdate(request, "User", id, { changed: Object.keys(updateData) }, { name: existing.name, email: existing.email }, { userId: currentUserId }).catch(() => {});
     return NextResponse.json(user);
   } catch (error) {
@@ -181,7 +191,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       where: { id },
       include: {
         Technician: { select: { id: true } },
-        agent: { select: { id: true } },
+        CollectionAgent: { select: { id: true } },
       },
     });
     if (!existing) {
@@ -195,7 +205,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
         { status: 409 },
       );
     }
-    if (existing.agent) {
+    if (existing.CollectionAgent) {
       return NextResponse.json(
         { error: "Cannot delete user: this user is linked to a Collection Agent profile. Delete the agent profile first." },
         { status: 409 },

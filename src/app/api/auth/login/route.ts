@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { login } from '@/lib/auth'
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/session'
+import { recordUserSession } from '@/lib/session-store'
 import { auditLogin } from "@/lib/services/audit-service";
 import { rateLimit } from '@/lib/rate-limit'
 
@@ -44,6 +45,16 @@ export async function POST(request: NextRequest) {
 
     // Create a signed session token and set it as an httpOnly cookie
     const sessionToken = await createSessionToken(result.user!.id)
+
+    // [AUDIT-FIX F-19] Persist the session server-side (SHA-256 of the token only)
+    // so it can be revoked from /api/auth/logout, change-password and user admin.
+    await recordUserSession({
+      userId: result.user!.id,
+      token: sessionToken,
+      ipAddress: clientIp,
+      userAgent: request.headers.get('user-agent') || '',
+      location: request.headers.get('cf-ipcountry') || request.headers.get('x-vercel-ip-country') || '',
+    });
 
     const response = NextResponse.json({
       success: true,
