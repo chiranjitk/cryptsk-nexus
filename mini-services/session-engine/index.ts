@@ -766,6 +766,10 @@ logger.info("VPP restart detector (5s) + reconciliation (5min) + NAS health chec
 
 // ─── Request Router ──────────────────────────────────────────
 
+// Shared secret for machine-to-machine RADIUS calls (rlm_rest → /api/radius/auth).
+// Set via env var RADIUS_API_SECRET; fallback to a default for dev.
+const RADIUS_API_SECRET = process.env.RADIUS_API_SECRET || "cryptsk-radius-shared-secret-2026";
+
 async function handleRequest(req: Request, path: string, url: URL) {
   // ── Health (no auth) ──
   if (path === "/api/health" && req.method === "GET") {
@@ -786,12 +790,49 @@ async function handleRequest(req: Request, path: string, url: URL) {
     return json({ status: "ok", service: "session-engine", health: "/api/health" });
   }
 
+  // ══════════════════════════════════════════════════════════
+  // §7/§8 RADIUS MACHINE-TO-MACHINE ENDPOINT (no session cookie)
+  // FreeRADIUS rlm_rest calls this endpoint on every Access-Request.
+  // Auth is via X-RADIUS-Secret header (shared secret), NOT admin cookie.
+  // Body schema matches /api/auth: { username, password, nasIp, nasPort,
+  //   callingStationId (MAC), calledStationId?, clientIp?, vlanId?,
+  //   circuitId?, remoteId?, pppoeSessionId?, dhcpClientId?, framedIp? }
+  // Returns RLM_MODULE_OK on success (HTTP 200 with Auth-Type: Accept header).
+  // ══════════════════════════════════════════════════════════
+  if (path === "/api/radius/auth" && req.method === "POST") {
+    const providedSecret = req.headers.get("x-radius-secret") || "";
+    if (providedSecret !== RADIUS_API_SECRET) {
+      logger.warn("RADIUS /api/radius/auth rejected — bad shared secret", {
+        provided: providedSecret.slice(0, 8) + "...",
+      });
+      return json({ error: "Invalid shared secret", authResult: "REJECT" }, 403);
+    }
+    // Defer to the same transactional login flow as /api/auth.
+    // Inline the call by re-dispatching with the auth context faked.
+    // To keep this code path simple, we synthesize an auth object that
+    // marks the call as machine-to-machine (m2m).
+    const fakeAuth = { userId: "radius-rlm-rest", role: "RADIUS" };
+    try {
+      // Inline the /api/auth handler body by calling a shared helper.
+      // The /api/auth handler below this block uses the same logic.
+      // To avoid duplication, we set auth = fakeAuth and fall through
+      // to the regular /api/auth handler.
+      (req as any)._radiusAuth = fakeAuth;
+    } catch {}
+    // Fall through — the /api/auth handler will pick up (req as any)._radiusAuth
+  }
+
   // ── All remaining endpoints require auth ──
-  let auth;
-  try {
-    auth = requireAuth(req);
-  } catch {
-    return json({ error: "Unauthorized" }, 401);
+  // EXCEPT if this is a RADIUS m2m call (already validated above).
+  let auth: any;
+  if ((req as any)._radiusAuth) {
+    auth = (req as any)._radiusAuth;
+  } else {
+    try {
+      auth = requireAuth(req);
+    } catch {
+      return json({ error: "Unauthorized" }, 401);
+    }
   }
 
   // ══════════════════════════════════════════════════════════
@@ -809,7 +850,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
   //       Mark ACTIVE → Persist snapshot → Log + broadcast
   // VPP programming failure = full rollback (no ghost sessions, §8).
   // ══════════════════════════════════════════════════════════
-  if (path === "/api/auth" && req.method === "POST") {
+  if ((path === "/api/auth" || path === "/api/radius/auth") && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     // Accept both new + legacy field names
     const username = body.username || body.serviceUsername || "";
