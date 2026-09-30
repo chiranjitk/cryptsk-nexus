@@ -941,7 +941,7 @@ func natAddressesHandler(w http.ResponseWriter, r *http.Request) {
                 out = append(out, map[string]interface{}{
                         "ipAddress": ipStr,
                         "vrfId":     a.VrfID,
-                        "flags":     uint8(a.Flags),
+                        // Nat44EiAddressDetails has only IPAddress + VrfID fields (no Flags)
                 })
         }
         writeJSON(w, map[string]interface{}{
