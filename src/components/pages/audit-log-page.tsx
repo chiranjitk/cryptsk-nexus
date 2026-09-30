@@ -35,6 +35,8 @@ import {
   Database,
   GitCompare,
   History,
+  ArchiveRestore,
+  Sparkles,
 } from "lucide-react";
 import {
   BarChart,
@@ -232,6 +234,9 @@ const ACTION_STYLES: Record<string, string> = {
   PLAN_CHANGE: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",
   RETENTION_SWEEP: "bg-lime-100 text-lime-700 border-lime-200 dark:bg-lime-950 dark:text-lime-300 dark:border-lime-800",
   AUTO_ESCALATION: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
+  RESTORE: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800",
+  ARCHIVE: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800",
+  PURGE: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
 };
 
 const METHOD_COLORS: Record<string, string> = {
@@ -842,6 +847,63 @@ export default function AuditLogPage() {
     onError: (err: Error) => toast.error(`Failed to delete: ${err.message}`),
   });
 
+  // ─── Lifecycle Mutation (archive / restore) [NEW-FEATURE] ──
+  const lifecycleMutation = useMutation({
+    mutationFn: async (params: { action: "archive" | "restore"; ids: string[] }) => {
+      return apiFetch<{ updatedCount: number; message?: string }>("/api/audit-log", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
+    },
+    onSuccess: (res, vars) => {
+      if (res.updatedCount === 0) {
+        toast.info(vars.action === "restore" ? "Nothing to restore — already active" : "Nothing to archive — already archived");
+      } else {
+        toast.success(res.message || `Updated ${res.updatedCount} entries`);
+      }
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["audit-log"] });
+      queryClient.invalidateQueries({ queryKey: ["audit-retention-info"] });
+    },
+    onError: (err: Error) => toast.error(`Lifecycle update failed: ${err.message}`),
+  });
+
+  // ─── Run Retention Sweep Now [NEW-FEATURE] ──────────
+  // Triggers job-009 in billing-cron (:3004) through the dev gateway, then
+  // refreshes retention info so "Last sweep" + counts update. The sweep is
+  // async server-side, so we poll the info query a couple of times.
+  const [sweepRunning, setSweepRunning] = useState(false);
+  const runSweepMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch<{ success: boolean; message?: string }>("/api/retention-sweep?XTransformPort=3004", {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      toast.success("Retention sweep started — job-009 is running");
+      setSweepRunning(true);
+      // The sweep finishes within seconds; poll retention info to catch it.
+      const pollDelays = [3000, 6000, 10000];
+      pollDelays.forEach((d) =>
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["audit-retention-info"] });
+          queryClient.invalidateQueries({ queryKey: ["audit-log"] });
+        }, d)
+      );
+      setTimeout(() => setSweepRunning(false), 12000);
+    },
+    onError: (err: Error) => {
+      setSweepRunning(false);
+      if (err.message.includes("409")) {
+        toast.warning("A retention sweep is already in progress");
+      } else if (err.message.includes("401") || err.message.includes("403")) {
+        toast.error("Session expired or insufficient role — please re-login as admin");
+      } else {
+        toast.error(`Failed to start sweep: ${err.message}`);
+      }
+    },
+  });
+
   // ─── Purge Mutation ───────────────────────────────────
   const purgeMutation = useMutation({
     mutationFn: async () => {
@@ -1253,33 +1315,41 @@ ${logs.map((l, i) => `<tr>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Total Logs</p>
-                  <p className="text-sm font-bold">{formatNumber(retentionInfo.totalCount)}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+              <div className="flex items-center gap-2.5 rounded-lg border border-transparent hover:border-border hover:bg-background/60 px-2 py-1.5 transition-colors">
+                <span className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-slate-900/60 flex items-center justify-center flex-shrink-0">
+                  <Database className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground leading-tight">Total Logs</p>
+                  <p className="text-sm font-bold leading-tight">{formatNumber(retentionInfo.totalCount)}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Est. Storage</p>
-                  <p className="text-sm font-bold">{retentionInfo.estimatedStorageMB} MB</p>
+              <div className="flex items-center gap-2.5 rounded-lg border border-transparent hover:border-border hover:bg-background/60 px-2 py-1.5 transition-colors">
+                <span className="h-8 w-8 rounded-lg bg-cyan-100 dark:bg-cyan-950/50 flex items-center justify-center flex-shrink-0">
+                  <HardDrive className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground leading-tight">Est. Storage</p>
+                  <p className="text-sm font-bold leading-tight">{retentionInfo.estimatedStorageMB} MB</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Trash2 className="h-4 w-4 text-amber-500" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Expiring Soon</p>
-                  <p className="text-sm font-bold text-amber-600">{formatNumber(retentionInfo.oldCount)}</p>
+              <div className="flex items-center gap-2.5 rounded-lg border border-transparent hover:border-border hover:bg-background/60 px-2 py-1.5 transition-colors">
+                <span className="h-8 w-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center flex-shrink-0">
+                  <Trash2 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground leading-tight">Expiring Soon</p>
+                  <p className={`text-sm font-bold leading-tight ${retentionInfo.oldCount > 0 ? "text-amber-600 dark:text-amber-400" : ""}`}>{formatNumber(retentionInfo.oldCount)}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Retention</p>
-                  <p className="text-sm font-bold">{retentionInfo.retentionDays} days</p>
+              <div className="flex items-center gap-2.5 rounded-lg border border-transparent hover:border-border hover:bg-background/60 px-2 py-1.5 transition-colors">
+                <span className="h-8 w-8 rounded-lg bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center flex-shrink-0">
+                  <Clock className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground leading-tight">Retention</p>
+                  <p className="text-sm font-bold leading-tight">{retentionInfo.retentionDays} days</p>
                 </div>
               </div>
             </div>
@@ -1312,9 +1382,47 @@ ${logs.map((l, i) => `<tr>
                   </>
                 )}
               </div>
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setRetentionOpen(true)}>
-                <Settings className="h-3 w-3" /> Configure
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* [NEW-FEATURE] Manual trigger for job-009 through the gateway */}
+                {(retentionInfo.automation?.lastSweepResult || sweepRunning) && (
+                  <span className="hidden md:flex items-center gap-1.5 text-[10px] text-muted-foreground/80" aria-live="polite">
+                    {sweepRunning ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />
+                        <span className="text-emerald-700 dark:text-emerald-400 font-medium">Sweep running…</span>
+                      </>
+                    ) : (
+                      (() => {
+                        const r = retentionInfo.automation?.lastSweepResult;
+                        const parts = [
+                          r?.archivedAuditLogs != null ? `${r.archivedAuditLogs} archived` : null,
+                          r?.purgedAuditLogs != null ? `${r.purgedAuditLogs} purged` : null,
+                          r?.purgedSessions != null ? `${r.purgedSessions} sessions` : null,
+                        ].filter(Boolean);
+                        return parts.length > 0 ? <span title="Result of last sweep">{parts.join(" · ")}</span> : null;
+                      })()
+                    )}
+                  </span>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`h-7 text-xs gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40 ${sweepRunning ? "opacity-80" : ""}`}
+                  onClick={() => runSweepMutation.mutate()}
+                  disabled={runSweepMutation.isPending || sweepRunning}
+                  aria-label="Run retention sweep now"
+                >
+                  {runSweepMutation.isPending || sweepRunning ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                  {sweepRunning ? "Sweeping…" : "Run Sweep Now"}
+                </Button>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setRetentionOpen(true)}>
+                  <Settings className="h-3 w-3" /> Configure
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1632,6 +1740,20 @@ ${logs.map((l, i) => `<tr>
           <div className="px-4 sm:px-6 py-2 bg-muted/50 flex items-center justify-between border-b">
             <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
             <div className="flex gap-2">
+              {/* [NEW-FEATURE] Restore rows out of the archive (visible when the
+                  Archived filter is active — those rows are the restore targets) */}
+              {archivedFilter === "only" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1 border-sky-300 text-sky-700 hover:bg-sky-50 hover:text-sky-800 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/40"
+                  onClick={() => lifecycleMutation.mutate({ action: "restore", ids: Array.from(selectedIds) })}
+                  disabled={lifecycleMutation.isPending}
+                >
+                  {lifecycleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArchiveRestore className="h-3 w-3" />}
+                  Restore Selected
+                </Button>
+              )}
               <Button variant="destructive" size="sm" className="h-7 text-xs gap-1" onClick={() => setBulkDeleteOpen(true)}>
                 <Trash2 className="h-3 w-3" /> Delete Selected
               </Button>
@@ -1736,7 +1858,7 @@ ${logs.map((l, i) => `<tr>
                   return (
                   <TableRow
                     key={log.id}
-                    className={`group hover:bg-muted/30 cursor-default ${rowHighlight ? (compareMode ? "bg-red-50 dark:bg-red-950/20" : "bg-muted/50") : ""} ${isFlagged ? "bg-red-50/50 dark:bg-red-950/10" : ""}`}
+                    className={`group hover:bg-muted/30 cursor-default transition-colors ${rowHighlight ? (compareMode ? "bg-red-50 dark:bg-red-950/20" : "bg-muted/50") : ""} ${isFlagged ? "bg-red-50/50 dark:bg-red-950/10" : ""} ${log.isArchived && !rowHighlight && !isFlagged ? "bg-amber-50/40 dark:bg-amber-950/10" : ""}`}
                   >
                     <TableCell className="w-10">
                       <Checkbox checked={isChecked} onCheckedChange={() => toggleSelectId(log.id)} />
@@ -1846,22 +1968,41 @@ ${logs.map((l, i) => `<tr>
 
                     {/* Details Button */}
                     <TableCell className="text-center py-2.5">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => {
-                              setDetailLog(log);
-                              setUaExpanded(false);
-                            }}
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>View Details</TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center justify-center gap-0.5">
+                        {/* [NEW-FEATURE] One-click restore for archived rows */}
+                        {log.isArchived && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950/40"
+                                onClick={() => lifecycleMutation.mutate({ action: "restore", ids: [log.id] })}
+                                disabled={lifecycleMutation.isPending}
+                              >
+                                <ArchiveRestore className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Restore from archive</TooltipContent>
+                          </Tooltip>
+                        )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => {
+                                setDetailLog(log);
+                                setUaExpanded(false);
+                              }}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>View Details</TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

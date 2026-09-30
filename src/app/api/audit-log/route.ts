@@ -3,12 +3,13 @@
  *
  * GET    — Query audit logs with full filtering, pagination, and statistics
  * POST   — Create a manual audit log entry
+ * PATCH  — Archive / restore log rows (retention lifecycle, settings.update RBAC)
  * DELETE — Purge old audit logs (requires authenticated user)
  */
 
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, optionalAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, optionalAuth, requirePermission, AuthError } from "@/lib/api-auth";
 import { auditLog } from "@/lib/services/audit-service";
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -499,6 +500,104 @@ export async function POST(request: NextRequest) {
     console.error("Audit log POST error:", error);
     return NextResponse.json(
       { error: "Failed to create audit log entry" },
+      { status: 500 }
+    );
+  }
+}
+
+// ─── PATCH: Archive / Restore (retention lifecycle) ────────────
+// [NEW-FEATURE] Restore archived rows (undo job-009 archival) or archive
+// rows manually. Gated behind settings.update (ADMIN/SUPER_ADMIN) and
+// self-auditing: every batch writes an ARCHIVE/RESTORE trail row.
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const userId = await requirePermission(request, "settings.update");
+
+    const body = await request.json();
+    const { action, ids } = body;
+
+    if (action !== "archive" && action !== "restore") {
+      return NextResponse.json(
+        { success: false, error: 'action must be "archive" or "restore"' },
+        { status: 400 }
+      );
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "ids must be a non-empty array of log ids" },
+        { status: 400 }
+      );
+    }
+    if (ids.length > 500) {
+      return NextResponse.json(
+        { success: false, error: "Too many ids (max 500 per batch)" },
+        { status: 400 }
+      );
+    }
+
+    const restore = action === "restore";
+
+    // Guard: only flip rows that are actually in the opposite state, so the
+    // returned count reflects real changes and repeated clicks are no-ops.
+    // restore → where isArchived=true (archived rows), set isArchived=false;
+    // archive → where isArchived=false (active rows), set isArchived=true.
+    const result = await db.auditLog.updateMany({
+      where: { id: { in: ids }, isArchived: restore },
+      data: { isArchived: !restore },
+    });
+
+    if (result.count === 0) {
+      return NextResponse.json({
+        success: true,
+        updatedCount: 0,
+        message: restore
+          ? "No archived rows matched — nothing to restore"
+          : "No active rows matched — nothing to archive",
+      });
+    }
+
+    // Self-auditing trail (direct DB write to avoid circular logging)
+    db.auditLog
+      .create({
+        data: {
+          userId,
+          action: restore ? "RESTORE" : "ARCHIVE",
+          entity: "AuditLog",
+          entityId: `${action}_${Date.now()}`,
+          details: JSON.stringify({
+            updatedCount: result.count,
+            requestedCount: ids.length,
+            via: restore ? "manual-restore" : "manual-archive",
+          }),
+          endpoint: request.nextUrl.pathname,
+          method: "PATCH",
+          ipAddress:
+            request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+            "unknown",
+          userAgent:
+            request.headers.get("user-agent")?.substring(0, 500) || "unknown",
+        },
+      })
+      .catch(() => {});
+
+    return NextResponse.json({
+      success: true,
+      updatedCount: result.count,
+      message: restore
+        ? `Restored ${result.count} log ${result.count === 1 ? "entry" : "entries"} from archive`
+        : `Archived ${result.count} log ${result.count === 1 ? "entry" : "entries"}`,
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: error.statusCode }
+      );
+    }
+    console.error("Audit log PATCH error:", error);
+    return NextResponse.json(
+      { error: "Failed to update audit log lifecycle" },
       { status: 500 }
     );
   }

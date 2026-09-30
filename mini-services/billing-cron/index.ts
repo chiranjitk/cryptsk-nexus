@@ -546,6 +546,10 @@ async function jobComplaintSlaSweep(): Promise<Record<string, unknown>> {
       // previously it only landed in the audit trail where nobody looks.
       // One IN_APP row per active staff member (ADMIN/SUPER_ADMIN) + the
       // assigned technician if any.
+      // [DIGEST] Dedupe: repeated sweeps for the same complaint UPDATE the
+      // existing unread notification instead of fanning out a new row each
+      // time — one live notification per (user, complaint), self-refreshing
+      // with the latest level/percent.
       try {
         const staff = await db.user.findMany({
           where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, status: "ACTIVE" },
@@ -555,16 +559,39 @@ async function jobComplaintSlaSweep(): Promise<Record<string, unknown>> {
         const uniqueStaff = Array.from(new Set(staff.map((s) => s.id)));
         if (uniqueStaff.length > 0) {
           const escLabel = newLevel === 1 ? "L1 · Manager" : "L2 · Admin";
-          await db.notification.createMany({
-            data: uniqueStaff.map((uid) => ({
-              userId: uid,
-              type: "IN_APP" as const,
-              category: "OTHER" as const,
-              title: `SLA Escalation — ${c.ticketNumber}`,
-              message: `Complaint ${c.ticketNumber} auto-escalated to ${escLabel}${newPriority && newPriority !== c.priority ? ` and raised to ${newPriority.replace("P", "P")}` : ""}. SLA ${Math.round(elapsedPercent)}% elapsed.`,
-              status: "PENDING" as const,
-            })),
-          });
+          const escTitle = `SLA Escalation — ${c.ticketNumber}`;
+          const escMessage = `Complaint ${c.ticketNumber} auto-escalated to ${escLabel}${newPriority && newPriority !== c.priority ? ` and raised to ${newPriority.replace("P", "P")}` : ""}. SLA ${Math.round(elapsedPercent)}% elapsed.`;
+          const escCreatedAt = new Date();
+          for (const uid of uniqueStaff) {
+            const existing = await db.notification.findFirst({
+              where: {
+                userId: uid,
+                title: escTitle,
+                readAt: null,
+                status: { in: ["PENDING", "DELIVERED"] },
+              },
+              orderBy: { createdAt: "desc" },
+              select: { id: true },
+            });
+            if (existing) {
+              // Refresh the live notification in place (keeps unread state).
+              await db.notification.update({
+                where: { id: existing.id },
+                data: { message: escMessage, status: "PENDING", createdAt: escCreatedAt },
+              });
+            } else {
+              await db.notification.create({
+                data: {
+                  userId: uid,
+                  type: "IN_APP",
+                  category: "OTHER",
+                  title: escTitle,
+                  message: escMessage,
+                  status: "PENDING",
+                },
+              });
+            }
+          }
         }
       } catch (e) {
         logger.error("Escalation notification write failed", { ticket: c.ticketNumber, error: String(e) });
