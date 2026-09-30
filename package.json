@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "dev": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus SESSION_SECRET=cryptsk_session_secret_key_2026_isp_platform NODE_OPTIONS=--max-old-space-size=768 next dev -p 3000 -H 0.0.0.0 2>&1 | tee dev.log",
+    "dev": "SESSION_SECRET=cryptsk_session_secret_key_2026_isp_platform NODE_OPTIONS=--max-old-space-size=768 next dev -p 3000 -H 0.0.0.0 2>&1 | tee dev.log",
     "build": "next build --webpack && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",

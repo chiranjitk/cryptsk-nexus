@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -477,6 +477,14 @@ function OverviewTab() {
   const queryClient = useQueryClient();
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showInterfacesDialog, setShowInterfacesDialog] = useState(false);
+  // Bandwidth real-time graph — last 60 samples (~5 min at 5s polling).
+  // Each entry: { time: number (epoch ms), downKbps: number, upKbps: number }.
+  // prevBwRef holds the previous (rxBytes, txBytes, timestampMs) triple so we
+  // can compute deltas between polls (not absolute counters — those wrap/overflow).
+  const [bwHistory, setBwHistory] = useState<
+    { time: number; downKbps: number; upKbps: number }[]
+  >([]);
+  const prevBwRef = useRef<{ rx: number; tx: number; ts: number } | null>(null);
 
   const healthQ = useQuery({
     queryKey: ["vpp-health"],
@@ -496,7 +504,8 @@ function OverviewTab() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    refetchInterval: autoRefresh ? 10000 : false,
+    // 5s polling so the bandwidth graph accumulates 60 samples in 5 min.
+    refetchInterval: autoRefresh ? 5000 : false,
     retry: 1,
   });
 
@@ -642,6 +651,50 @@ function OverviewTab() {
     URL.revokeObjectURL(url);
     toast.success("Config downloaded");
   };
+
+  // ─── Bandwidth real-time tracking ─────────────────────────────
+  // Watches stateQ.data (and falls back to interfacesQ.data) — on each
+  // refetch, computes delta(rxBytes)/delta(txBytes) vs the previous poll
+  // and converts to kbps using the wall-clock time delta. Pushes a new
+  // sample to bwHistory, capped at 60 entries (~5 min at 5s polling).
+  // Absolute counter wrap-around (e.g. uint32 overflow) is detected and
+  // the sample is skipped rather than producing a huge negative spike.
+  const bwInterfacesKey = `${stateQ.dataUpdatedAt ?? 0}-${interfacesQ.dataUpdatedAt ?? 0}`;
+  useEffect(() => {
+    // Prefer stateQ.data?.interfaces (spec), fall back to interfacesQ.
+    const ifacesFromState = (stateQ.data as AnyRecord | undefined)?.interfaces;
+    const ifacesFromInterfacesQ = interfacesQ.data?.interfaces || interfacesQ.data?.items;
+    const ifaces: AnyRecord[] = Array.isArray(ifacesFromState)
+      ? ifacesFromState
+      : Array.isArray(ifacesFromInterfacesQ)
+        ? ifacesFromInterfacesQ
+        : [];
+    if (ifaces.length === 0) return;
+    const totalRx = ifaces.reduce(
+      (sum: number, i: AnyRecord) => sum + Number(i.rxBytes ?? i.rx_bytes ?? 0),
+      0
+    );
+    const totalTx = ifaces.reduce(
+      (sum: number, i: AnyRecord) => sum + Number(i.txBytes ?? i.tx_bytes ?? 0),
+      0
+    );
+    const now = Date.now();
+    const prev = prevBwRef.current;
+    prevBwRef.current = { rx: totalRx, tx: totalTx, ts: now };
+    if (!prev) return; // first sample — no delta to compute yet
+    const dtMs = Math.max(1, now - prev.ts);
+    // If counter went backwards (wrap/adapter restart), skip the sample.
+    if (totalRx < prev.rx || totalTx < prev.tx) return;
+    const dRxBytes = totalRx - prev.rx;
+    const dTxBytes = totalTx - prev.tx;
+    // kbps = bytes/sec * 8 / 1000 (kilobits per second, base 10).
+    const downKbps = Math.max(0, Math.round((dRxBytes * 8) / dtMs));
+    const upKbps = Math.max(0, Math.round((dTxBytes * 8) / dtMs));
+    setBwHistory((prevHist) =>
+      [...prevHist, { time: now, downKbps, upKbps }].slice(-60)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bwInterfacesKey]);
 
   const health: AnyRecord = healthQ.data || {};
   const state: AnyRecord = stateQ.data || {};
@@ -1186,6 +1239,132 @@ function OverviewTab() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Bandwidth real-time graph (last ~5 min).
+            Polls /api/vpp?action=state every 5s, computes delta(rxBytes)/delta(txBytes)
+            vs the previous poll, converts to kbps (bytes/sec * 8 / 1000). Two lines
+            on a recharts LineChart: Download (emerald) + Upload (amber). */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-emerald-600" />
+              Bandwidth (Last 5 min)
+            </CardTitle>
+            <CardDescription>
+              Real-time rx/tx throughput from VPP interfaces — 5s polling, 60 samples
+              (~5 min window). Each sample = delta bytes / delta time, in kbps.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {stateQ.error && !interfacesQ.data ? (
+              <div className="text-sm text-red-600 text-center py-8">
+                VPP state unreachable — bandwidth graph will populate once the
+                vpp-adapter (port 3015) is online.
+              </div>
+            ) : bwHistory.length < 2 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                Collecting data… ({bwHistory.length}/2 samples needed). The graph
+                appears once 2 consecutive polls have been received.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <RechartsLineChart
+                  data={bwHistory}
+                  margin={{ top: 8, right: 16, bottom: 4, left: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fontSize: 10 }}
+                    stroke="#94a3b8"
+                    tickFormatter={(t: number) => {
+                      try {
+                        return new Date(t).toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                          hour12: false,
+                        });
+                      } catch {
+                        return String(t);
+                      }
+                    }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10 }}
+                    stroke="#94a3b8"
+                    width={48}
+                    tickFormatter={(v: number) => `${v >= 1000 ? `${(v / 1000).toFixed(1)}M` : `${v}k`}`}
+                  />
+                  <RechartsTooltip
+                    contentStyle={{
+                      borderRadius: 8,
+                      border: "1px solid #e2e8f0",
+                      fontSize: 12,
+                      padding: "8px 12px",
+                      background: "#ffffff",
+                    }}
+                    labelFormatter={(label: number) => {
+                      try {
+                        return `Time: ${new Date(label).toLocaleTimeString()}`;
+                      } catch {
+                        return `Time: ${label}`;
+                      }
+                    }}
+                    formatter={(value: number, name: string) => [
+                      `${Number(value).toLocaleString()} kbps`,
+                      name,
+                    ]}
+                  />
+                  <RechartsLine
+                    type="monotone"
+                    dataKey="downKbps"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                    name="Download"
+                  />
+                  <RechartsLine
+                    type="monotone"
+                    dataKey="upKbps"
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                    name="Upload"
+                  />
+                </RechartsLineChart>
+              </ResponsiveContainer>
+            )}
+            {/* Legend + latest values */}
+            <div className="flex items-center justify-between mt-3 pt-3 border-t text-xs">
+              <div className="flex items-center gap-4">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  <span className="text-muted-foreground">Download</span>
+                  <span className="font-mono font-medium">
+                    {bwHistory.length > 0
+                      ? `${Number(bwHistory[bwHistory.length - 1].downKbps).toLocaleString()} kbps`
+                      : "—"}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+                  <span className="text-muted-foreground">Upload</span>
+                  <span className="font-mono font-medium">
+                    {bwHistory.length > 0
+                      ? `${Number(bwHistory[bwHistory.length - 1].upKbps).toLocaleString()} kbps`
+                      : "—"}
+                  </span>
+                </span>
+              </div>
+              <span className="text-muted-foreground">
+                {bwHistory.length}/60 samples
+              </span>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Recovery Timeline — bar chart + compact table */}
         <Card>
@@ -2250,6 +2429,9 @@ function SnapshotsTab() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // CoA (Change of Authorization) — opens a dialog to change bandwidth mid-session.
+  // The sessionId is set when "Change Bandwidth" is clicked on a row; null = closed.
+  const [coaSessionId, setCoaSessionId] = useState<string | null>(null);
   const pageSize = 25;
 
   const snapshotsQ = useQuery({
@@ -2461,6 +2643,24 @@ function SnapshotsTab() {
                                 <RefreshCw className="h-3.5 w-3.5 mr-1" />
                                 Rebuild VPP
                               </Button>
+                              {/* CoA (Change of Authorization) — opens CoADialog.
+                                  Calls POST /api/vpp?action=coa with
+                                  { sessionId, subscriberIP, downloadKbps, uploadKbps }. */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-amber-200 text-amber-700 hover:bg-amber-50"
+                                onClick={() =>
+                                  setCoaSessionId(
+                                    String(s.sessionId || s.acctSessionId || "")
+                                  )
+                                }
+                                disabled={!(s.sessionId || s.acctSessionId)}
+                                title="Change bandwidth (CoA)"
+                              >
+                                <Gauge className="h-3.5 w-3.5 mr-1" />
+                                Change Bandwidth
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -2502,7 +2702,204 @@ function SnapshotsTab() {
         sessionId={selectedSessionId}
         onClose={() => setSelectedSessionId(null)}
       />
+
+      {/* CoA (Change of Authorization) dialog — change downloadKbps/uploadKbps
+          mid-session. Calls POST /api/vpp?action=coa with
+          { sessionId, subscriberIP, downloadKbps, uploadKbps }.
+          subscriberIP is the framedIp from the snapshot. */}
+      <CoADialog
+        sessionId={coaSessionId}
+        onClose={() => setCoaSessionId(null)}
+      />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CoA (Change of Authorization) DIALOG — bandwidth change mid-session
+// ─────────────────────────────────────────────────────────────────
+// Fetches the snapshot for the given sessionId to pre-fill the current
+// download/upload kbps, then POSTs the new values to /api/vpp?action=coa
+// which proxies to vpp-adapter /coa (real GoVPP binary API: Policermanager
+// updates the in-place policer CIR for the subscriber's VPP interface).
+function CoADialog({
+  sessionId,
+  onClose,
+}: {
+  sessionId: string | null;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const open = !!sessionId;
+
+  // Local form state — pre-filled from the snapshot detail
+  const [downKbps, setDownKbps] = useState<number>(30000);
+  const [upKbps, setUpKbps] = useState<number>(15000);
+  const [subscriberIP, setSubscriberIP] = useState<string>("");
+
+  // Fetch the snapshot for the current sessionId so we can pre-fill the form
+  const detailQ = useQuery({
+    queryKey: ["vpp-snapshot-coa", sessionId],
+    queryFn: async () => {
+      if (!sessionId) return null;
+      const res = await fetch(
+        `/api/vpp?action=snapshot&sessionId=${encodeURIComponent(sessionId)}`
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: open,
+    retry: 1,
+  });
+
+  // Pre-fill the form when the snapshot loads
+  useEffect(() => {
+    if (!detailQ.data) return;
+    const snap: AnyRecord =
+      detailQ.data?.snapshot || detailQ.data?.data || detailQ.data || {};
+    const down = Number(snap.speedDownKbps);
+    const up = Number(snap.speedUpKbps);
+    if (!isNaN(down) && down > 0) setDownKbps(down);
+    if (!isNaN(up) && up > 0) setUpKbps(up);
+    const ip = snap.framedIp || snap.framedIpAddress || "";
+    if (ip) setSubscriberIP(String(ip));
+  }, [detailQ.data]);
+
+  const coaMut = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("No sessionId");
+      if (!subscriberIP) throw new Error("Snapshot has no framedIp — cannot CoA");
+      const res = await fetch(`/api/vpp?action=coa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          subscriberIP,
+          downloadKbps: downKbps,
+          uploadKbps: upKbps,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      return data;
+    },
+    onSuccess: () => {
+      toast.success(`CoA applied: ${downKbps}/${upKbps} kbps`);
+      queryClient.invalidateQueries({ queryKey: ["vpp-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: ["vpp-snapshot-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["vpp-snapshot-coa"] });
+      onClose();
+    },
+    onError: (err: Error) => toast.error(err.message || "CoA failed"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        a11yTitle={sessionId ? `Change Bandwidth — ${sessionId}` : "Change Bandwidth"}
+        className="sm:max-w-md"
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Gauge className="h-5 w-5 text-amber-600" />
+            Change Bandwidth (CoA)
+          </DialogTitle>
+          <DialogDescription>
+            Update download/upload rates mid-session via VPP CoA. The policer CIR
+            is updated in-place on the subscriber's interface (no disconnect).
+          </DialogDescription>
+        </DialogHeader>
+
+        {detailQ.isLoading ? (
+          <div className="space-y-2 py-4">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-4 w-3/4" />
+          </div>
+        ) : detailQ.error ? (
+          <ServiceUnavailable
+            message={(detailQ.error as Error).message}
+            onRetry={() => detailQ.refetch()}
+          />
+        ) : (
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border bg-muted/30 dark:bg-muted/20 p-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Session ID</span>
+                <span className="font-mono break-all">{sessionId || "—"}</span>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-muted-foreground">Subscriber IP</span>
+                <span className="font-mono">{subscriberIP || "—"}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="coa-down">Download (kbps)</Label>
+              <Input
+                id="coa-down"
+                type="number"
+                min={64}
+                step={1024}
+                value={downKbps}
+                onChange={(e) => setDownKbps(Number(e.target.value) || 0)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Downstream CIR — affects the policer&apos;s conform rate.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="coa-up">Upload (kbps)</Label>
+              <Input
+                id="coa-up"
+                type="number"
+                min={64}
+                step={1024}
+                value={upKbps}
+                onChange={(e) => setUpKbps(Number(e.target.value) || 0)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Upstream CIR — affects the policer&apos;s conform rate.
+              </p>
+            </div>
+
+            {coaMut.error && (
+              <div className="rounded-md border border-red-200 bg-red-50 dark:bg-red-950/30 p-2 text-xs text-red-700 dark:text-red-300">
+                {(coaMut.error as Error).message}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onClose}
+            disabled={coaMut.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => coaMut.mutate()}
+            disabled={
+              coaMut.isPending ||
+              detailQ.isLoading ||
+              !sessionId ||
+              !subscriberIP ||
+              downKbps <= 0 ||
+              upKbps <= 0
+            }
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            <Gauge className="h-4 w-4 mr-1.5" />
+            {coaMut.isPending ? "Applying CoA…" : "Apply CoA"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2957,6 +3354,49 @@ function LiveActivityTab() {
     retry: 1,
   });
 
+  // VPP restart alert feed — polls /api/vpp?action=recovery-logs every 10s,
+  // filters for RESTART_DETECTED events from the last hour. Used to render
+  // the prominent "Recent VPP Alerts" card at the top of the Live Activity tab.
+  // The recovery-logs response shape:
+  //   { logs: [{ id, event, prevEpoch, newEpoch, sessionsAffected,
+  //              sessionsRecovered, sessionsFailed, durationMs, createdAt }] }
+  const alertsQ = useQuery({
+    queryKey: ["vpp-alerts"],
+    queryFn: async () => {
+      const res = await fetch("/api/vpp?action=recovery-logs");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 10000,
+    retry: 1,
+  });
+
+  const recentAlerts = useMemo(() => {
+    const raw: AnyRecord[] =
+      alertsQ.data?.logs || alertsQ.data?.items || alertsQ.data?.data || [];
+    if (!Array.isArray(raw)) return [];
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    return raw
+      .filter((a) => {
+        const ev = String(a.event || a.eventType || "").toUpperCase();
+        if (ev !== "RESTART_DETECTED") return false;
+        const ts = a.createdAt || a.timestamp;
+        if (!ts) return true; // keep no-timestamp events so they aren't silently dropped
+        try {
+          const d = new Date(ts as string | number);
+          return !isNaN(d.getTime()) && d.getTime() >= oneHourAgo;
+        } catch {
+          return true;
+        }
+      })
+      .slice(0, 10)
+      .sort((a, b) => {
+        const ta = new Date(a.createdAt || a.timestamp || 0).getTime();
+        const tb = new Date(b.createdAt || b.timestamp || 0).getTime();
+        return tb - ta;
+      });
+  }, [alertsQ.data]);
+
   // Merge new events into state when query returns new data
   useEffect(() => {
     if (eventsQ.isError) {
@@ -3069,6 +3509,114 @@ function LiveActivityTab() {
             </p>
           </div>
         </div>
+
+        {/* ─── Recent VPP Alerts (RESTART_DETECTED in last hour) ───
+            Polls /api/vpp?action=recovery-logs every 10s, filters for
+            RESTART_DETECTED events from the last hour. Prominent amber/red
+            styling so operators see restarts immediately on entering the tab.
+            Shows "All systems nominal" green state when no recent restarts. */}
+        <Card className="border-amber-200 bg-amber-50/50 dark:bg-amber-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="h-5 w-5" />
+              Recent VPP Alerts
+              {recentAlerts.length > 0 && (
+                <Badge className="bg-red-100 text-red-800 border-red-200 ml-2">
+                  {recentAlerts.length} restart
+                  {recentAlerts.length === 1 ? "" : "s"} in last hour
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription className="text-amber-700/70 dark:text-amber-400/70">
+              VPP restart events detected by the session-engine in the last
+              60 minutes (polled every 10s from{" "}
+              <code>/api/vpp?action=recovery-logs</code>).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {alertsQ.isLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-full" />
+                <Skeleton className="h-5 w-3/4" />
+              </div>
+            ) : alertsQ.error ? (
+              <div className="rounded-md border border-red-200 bg-red-50 dark:bg-red-950/30 p-2 text-xs text-red-700 dark:text-red-300">
+                Could not fetch recovery logs:{" "}
+                {(alertsQ.error as Error).message}
+              </div>
+            ) : recentAlerts.length === 0 ? (
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="text-sm">
+                  All systems nominal — no VPP restarts in the last hour
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentAlerts.map((alert, i) => {
+                  const prevEpoch = alert.prevEpoch ?? alert.previousEpoch;
+                  const newEpoch = alert.newEpoch ?? alert.currentEpoch;
+                  const affected = Number(alert.sessionsAffected ?? alert.affected ?? 0);
+                  const recovered = Number(
+                    alert.sessionsRecovered ?? alert.recovered ?? 0
+                  );
+                  const failed = Number(
+                    alert.sessionsFailed ?? alert.failed ?? 0
+                  );
+                  const durMs = Number(alert.durationMs ?? alert.duration ?? 0);
+                  return (
+                    <div
+                      key={String(alert.id || `alert-${i}`)}
+                      className="flex items-start gap-2 text-sm rounded-md border border-amber-200/60 dark:border-amber-800/40 bg-white/60 dark:bg-amber-950/10 p-2"
+                    >
+                      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium text-amber-900 dark:text-amber-200">
+                          VPP restart detected
+                        </span>
+                        <span className="text-muted-foreground ml-2 text-xs">
+                          epoch{" "}
+                          <span className="font-mono">
+                            {prevEpoch !== undefined ? `${prevEpoch} → ${newEpoch}` : newEpoch ?? "—"}
+                          </span>
+                          ,{" "}
+                          <span className="font-medium text-amber-700 dark:text-amber-300">
+                            {affected}
+                          </span>{" "}
+                          sessions affected,{" "}
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                            {recovered}
+                          </span>{" "}
+                          recovered
+                          {failed > 0 && (
+                            <>
+                              ,{" "}
+                              <span className="font-medium text-red-700 dark:text-red-400">
+                                {failed}
+                              </span>{" "}
+                              failed
+                            </>
+                          )}
+                          {durMs > 0 && (
+                            <>
+                              , recovery in {formatDuration(durMs)}
+                            </>
+                          )}
+                        </span>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {formatTime(alert.createdAt || alert.timestamp)}
+                          <span className="ml-1">
+                            ({relativeTime(alert.createdAt || alert.timestamp)})
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Top bar: pause/resume + clear + filter + search */}
         <Card>

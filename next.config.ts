@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  allowedDevOrigins: ["*.space-z.ai"],
+  allowedDevOrigins: ["*.space-z.ai", "127.0.0.1", "localhost"],
   // ─── Cap Turbopack memory (sandbox has 4GB RAM, OOM protection) ──
   experimental: {
     turbopackMemoryLimit: 256,

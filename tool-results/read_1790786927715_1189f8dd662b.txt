@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import React, { useState, useEffect, useMemo } from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import { toast } from "sonner";
+     6→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+     7→import { Badge } from "@/components/ui/badge";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Skeleton } from "@/components/ui/skeleton";
+    10→import { Input } from "@/components/ui/input";
+    11→import { Textarea } from "@/components/ui/textarea";
+    12→import { Label } from "@/components/ui/label";
+    13→import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+    14→import {
+    15→  Select,
+    16→  SelectTrigger,
+    17→  SelectValue,
+    18→  SelectContent,
+    19→  SelectItem,
+    20→} from "@/components/ui/select";
+    21→import {
+    22→  Table,
+    23→  TableHeader,
+    24→  TableBody,
+    25→  TableHead,
+    26→  TableRow,
+    27→  TableCell,
+    28→} from "@/components/ui/table";
+    29→import { EmptyState } from "@/components/ui/empty-state";
+    30→import {
+    31→  Activity,
+    32→  Server,
+    33→  Network,
+    34→  Zap,
+    35→  CheckCircle2,
+    36→  XCircle,
+    37→  RefreshCw,
+    38→  Cpu,
+    39→  Settings,
+    40→  AlertTriangle,
+    41→  Shield,
+    42→  Database,
+    43→  Layers,
+    44→  Users,
+    45→  Boxes,
+    46→  Power,
+    47→  Pause,
+    48→  Play,
+    49→  Radio,
+    50→  Trash,
+    51→  Trash2,
+    52→  Plus,
+    53→  Download,
+    54→  Search,
+    55→  Gauge,
+    56→  Clock,
+    57→  Filter,
+    58→  BarChart3,
+    59→  Cpu as CpuIcon,
+    60→  PlayCircle,
+    61→  ChevronDown,
+    62→  ChevronRight,
+    63→  Eye,
+    64→  PieChart as PieChartIcon,
+    65→  LineChart as LineChartIcon,
+    66→  TrendingUp,
+    67→  Hash,
+    68→  ArrowRightLeft,
+    69→  Globe2,
+    70→  Sparkles,
+    71→} from "lucide-react";
+    72→import {
+    73→  LineChart as RechartsLineChart,
+    74→  Line as RechartsLine,
+    75→  BarChart as RechartsBarChart,
+    76→  Bar as RechartsBar,
+    77→  PieChart as RechartsPieChart,
+    78→  Pie as RechartsPie,
+    79→  Area as RechartsArea,
+    80→  AreaChart as RechartsAreaChart,
+    81→  Cell,
+    82→  XAxis,
+    83→  YAxis,
+    84→  CartesianGrid,
+    85→  Tooltip as RechartsTooltip,
+    86→  ResponsiveContainer,
+    87→  Legend as RechartsLegend,
+    88→} from "recharts";
+    89→import {
+    90→  Accordion,
+    91→  AccordionItem,
+    92→  AccordionTrigger,
+    93→  AccordionContent,
+    94→} from "@/components/ui/accordion";
+    95→import {
+    96→  Dialog,
+    97→  DialogContent,
+    98→  DialogHeader,
+    99→  DialogTitle,
+   100→  DialogDescription,
+   101→  DialogFooter,
+   102→  DialogClose,
+   103→  DialogTrigger,
+   104→} from "@/components/ui/dialog";
+   105→import { Progress } from "@/components/ui/progress";
+   106→import {
+   107→  Tooltip as UITooltip,
+   108→  TooltipTrigger,
+   109→  TooltipContent,
+   110→  TooltipProvider,
+   111→} from "@/components/ui/tooltip";
+   112→import { motion, AnimatePresence } from "framer-motion";
+   113→import {
+   114→  ArrowUp,
+   115→  ArrowDown,
+   116→  Info,
+   117→  Timer,
+   118→  RotateCcw,
+   119→  RotateCw,
+   120→  FileCode,
+   121→  Bug,
+   122→} from "lucide-react";
+   123→
+   124→// ─────────────────────────────────────────────────────────────────
+   125→// Shared types & helpers
+   126→// ─────────────────────────────────────────────────────────────────
+   127→type AnyRecord = Record<string, any>;
+   128→
+   129→function formatBytes(bytes: number | string | undefined | null): string {
+   130→  if (bytes === undefined || bytes === null) return "—";
+   131→  const n = typeof bytes === "string" ? parseInt(bytes, 10) : bytes;
+   132→  if (isNaN(n) || n === 0) return "0 B";
+   133→  const units = ["B", "KB", "MB", "GB", "TB"];
+   134→  const i = Math.floor(Math.log(n) / Math.log(1024));
+   135→  return `${(n / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+   136→}
+   137→
+   138→function formatTime(iso: string | number | undefined | null): string {
+   139→  if (!iso) return "—";
+   140→  try {
+   141→    const d = typeof iso === "number" ? new Date(iso) : new Date(iso);
+   142→    if (isNaN(d.getTime())) return String(iso);
+   143→    return d.toLocaleString(undefined, {
+   144→      year: "numeric",
+   145→      month: "short",
+   146→      day: "2-digit",
+   147→      hour: "2-digit",
+   148→      minute: "2-digit",
+   149→      second: "2-digit",
+   150→    });
+   151→  } catch {
+   152→    return String(iso);
+   153→  }
+   154→}
+   155→
+   156→function formatDuration(ms: number | undefined | null): string {
+   157→  if (ms === undefined || ms === null) return "—";
+   158→  if (ms < 1000) return `${ms}ms`;
+   159→  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+   160→  return `${(ms / 60000).toFixed(1)}m`;
+   161→}
+   162→
+   163→function truncate(s: string | undefined | null, n = 12): string {
+   164→  if (!s) return "—";
+   165→  return s.length > n ? `${s.slice(0, n)}…` : s;
+   166→}
+   167→
+   168→// Status badge colors (slate/emerald/amber/red — no indigo/blue)
+   169→function statusBadgeVariant(
+   170→  status: string | undefined | null
+   171→): { className: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+   172→  const s = (status || "").toUpperCase();
+   173→  if (["UP", "ACTIVE", "OK", "CONNECTED", "HEALTHY", "VERIFIED", "FRESH", "PROGRAMMED"].includes(s)) {
+   174→    return { className: "bg-emerald-100 text-emerald-800 border-emerald-200", variant: "outline" };
+   175→  }
+   176→  if (["DOWN", "ERROR", "FAILED", "STALE", "DISCONNECTED"].includes(s)) {
+   177→    return { className: "bg-red-100 text-red-800 border-red-200", variant: "outline" };
+   178→  }
+   179→  if (["RECOVERING", "PENDING", "WARNING", "WARN"].includes(s)) {
+   180→    return { className: "bg-amber-100 text-amber-800 border-amber-200", variant: "outline" };
+   181→  }
+   182→  return { className: "bg-slate-100 text-slate-700 border-slate-200", variant: "outline" };
+   183→}
+   184→
+   185→function riskBadge(level: string | undefined | null): React.ReactNode {
+   186→  const l = (level || "").toUpperCase();
+   187→  if (l === "CRITICAL") {
+   188→    return <Badge className="bg-red-600 text-white border-red-700 font-bold">CRITICAL</Badge>;
+   189→  }
+   190→  if (l === "HIGH") {
+   191→    return <Badge className="bg-red-100 text-red-800 border-red-200">HIGH</Badge>;
+   192→  }
+   193→  if (l === "MEDIUM") {
+   194→    return <Badge className="bg-amber-100 text-amber-800 border-amber-200">MEDIUM</Badge>;
+   195→  }
+   196→  if (l === "LOW") {
+   197→    return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">LOW</Badge>;
+   198→  }
+   199→  return <Badge variant="secondary">{level || "UNKNOWN"}</Badge>;
+   200→}
+   201→
+   202→// ─────────────────────────────────────────────────────────────────
+   203→// Reusable error / loading / empty cards
+   204→// ─────────────────────────────────────────────────────────────────
+   205→function ServiceUnavailable({
+   206→  message,
+   207→  onRetry,
+   208→}: {
+   209→  message?: string;
+   210→  onRetry?: () => void;
+   211→}) {
+   212→  return (
+   213→    <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-4 flex items-start gap-3">
+   214→      <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+   215→      <div className="flex-1">
+   216→        <div className="font-medium text-red-900 dark:text-red-200">
+   217→          Service Unavailable
+   218→        </div>
+   219→        <div className="text-sm text-red-700/80 dark:text-red-300/80 mt-1">
+   220→          {message ||
+   221→            "Could not reach the VPP adapter, session-engine, or nat-logger service. The parallel subagent building this service may still be running."}
+   222→        </div>
+   223→        {onRetry && (
+   224→          <Button
+   225→            variant="outline"
+   226→            size="sm"
+   227→            className="mt-3 border-red-300 text-red-700 hover:bg-red-100"
+   228→            onClick={onRetry}
+   229→          >
+   230→            <RefreshCw className="h-4 w-4 mr-1" />
+   231→            Retry
+   232→          </Button>
+   233→        )}
+   234→      </div>
+   235→    </div>
+   236→  );
+   237→}
+   238→
+   239→function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: number }) {
+   240→  return (
+   241→    <div className="space-y-2 p-2">
+   242→      {Array.from({ length: rows }).map((_, i) => (
+   243→        <div key={i} className="flex gap-2">
+   244→          {Array.from({ length: cols }).map((_, j) => (
+   245→            <Skeleton key={j} className="h-8 flex-1" />
+   246→          ))}
+   247→        </div>
+   248→      ))}
+   249→    </div>
+   250→  );
+   251→}
+   252→
+   253→// ─────────────────────────────────────────────────────────────────
+   254→// TAB 1: OVERVIEW
+   255→// ─────────────────────────────────────────────────────────────────
+   256→// Stat card color mapping (text-XXX-600 → hex for sparkline + hover border class).
+   257→// Palette restricted to slate/emerald/amber/red/purple/rose/cyan — NO indigo/blue.
+   258→const STAT_COLOR_HEX: Record<string, string> = {
+   259→  "text-emerald-600": "#059669",
+   260→  "text-amber-600": "#d97706",
+   261→  "text-red-600": "#dc2626",
+   262→  "text-slate-600": "#475569",
+   263→  "text-purple-600": "#9333ea",
+   264→  "text-rose-600": "#e11d48",
+   265→  "text-cyan-600": "#0891b2",
+   266→};
+   267→
+   268→const STAT_COLOR_BORDER: Record<string, string> = {
+   269→  "text-emerald-600": "hover:border-emerald-300",
+   270→  "text-amber-600": "hover:border-amber-300",
+   271→  "text-red-600": "hover:border-red-300",
+   272→  "text-slate-600": "hover:border-slate-300",
+   273→  "text-purple-600": "hover:border-purple-300",
+   274→  "text-rose-600": "hover:border-rose-300",
+   275→  "text-cyan-600": "hover:border-cyan-300",
+   276→};
+   277→
+   278→// Policy object type → color map (color-coded per §29/§32/§33/§34/§35 categories)
+   279→const POLICY_TYPE_COLORS: Record<
+   280→  string,
+   281→  { bar: string; text: string; bg: string; hex: string }
+   282→> = {
+   283→  ACL: { bar: "bg-emerald-500", text: "text-emerald-700", bg: "bg-emerald-50", hex: "#10b981" },
+   284→  POLICER: { bar: "bg-amber-500", text: "text-amber-700", bg: "bg-amber-50", hex: "#f59e0b" },
+   285→  NAT: { bar: "bg-purple-500", text: "text-purple-700", bg: "bg-purple-50", hex: "#a855f7" },
+   286→  VRF: { bar: "bg-slate-500", text: "text-slate-700", bg: "bg-slate-50", hex: "#64748b" },
+   287→  QOS: { bar: "bg-rose-500", text: "text-rose-700", bg: "bg-rose-50", hex: "#f43f5e" },
+   288→  CLASSIFICATION: { bar: "bg-cyan-500", text: "text-cyan-700", bg: "bg-cyan-50", hex: "#06b6d4" },
+   289→};
+   290→const POLICY_TYPE_DEFAULT = {
+   291→  bar: "bg-slate-400",
+   292→  text: "text-slate-600",
+   293→  bg: "bg-slate-50",
+   294→  hex: "#94a3b8",
+   295→};
+   296→
+   297→// Map a recovery log event string to a chart cell color (no indigo/blue).
+   298→function recoveryEventColor(event: string): string {
+   299→  const e = (event || "").toUpperCase();
+   300→  if (e.includes("FAIL")) return "#e11d48"; // rose-600
+   301→  if (e.includes("RESTART")) return "#dc2626"; // red-600
+   302→  if (e.includes("REBUILD") || e.includes("RECOVER")) return "#059669"; // emerald-600
+   303→  if (e.includes("SNAPSHOT") || e.includes("PERSIST")) return "#9333ea"; // purple-600
+   304→  return "#71717a"; // zinc-500
+   305→}
+   306→
+   307→// Format adapter uptime (seconds → "5m 30s" / "1h 12m" / "45s")
+   308→function formatUptime(seconds: number | string | undefined | null): string {
+   309→  if (seconds === undefined || seconds === null) return "—";
+   310→  const s = typeof seconds === "string" ? parseInt(seconds, 10) : seconds;
+   311→  if (isNaN(s) || s < 0) return "—";
+   312→  if (s < 60) return `${s}s`;
+   313→  const m = Math.floor(s / 60);
+   314→  const sec = s % 60;
+   315→  if (m < 60) return `${m}m ${sec}s`;
+   316→  const h = Math.floor(m / 60);
+   317→  const mm = m % 60;
+   318→  return `${h}h ${mm}m`;
+   319→}
+   320→
+   321→// Tiny inline sparkline for StatCard trend display (recharts Area mini-chart)
+   322→function Sparkline({
+   323→  data,
+   324→  color,
+   325→  id,
+   326→}: {
+   327→  data: number[];
+   328→  color: string;
+   329→  id: string;
+   330→}) {
+   331→  if (!data || data.length < 2) return null;
+   332→  const chartData = data.map((v, i) => ({ i, v }));
+   333→  const gradientId = `spark-grad-${id}`;
+   334→  return (
+   335→    <ResponsiveContainer width="100%" height={28}>
+   336→      <RechartsAreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
+   337→        <defs>
+   338→          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+   339→            <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+   340→            <stop offset="95%" stopColor={color} stopOpacity={0} />
+   341→          </linearGradient>
+   342→        </defs>
+   343→        <RechartsArea
+   344→          type="monotone"
+   345→          dataKey="v"
+   346→          stroke={color}
+   347→          strokeWidth={1.5}
+   348→          fill={`url(#${gradientId})`}
+   349→          isAnimationActive={false}
+   350→        />
+   351→      </RechartsAreaChart>
+   352→    </ResponsiveContainer>
+   353→  );
+   354→}
+   355→
+   356→// Compact labeled row for the Adapter Stats card grid
+   357→function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
+   358→  return (
+   359→    <div className="flex items-center justify-between py-2 border-b border-border/40 last:border-0">
+   360→      <span className="text-muted-foreground text-xs">{label}</span>
+   361→      <span className="font-mono text-sm font-medium text-foreground">{value}</span>
+   362→    </div>
+   363→  );
+   364→}
+   365→
+   366→// Enhanced StatCard: framer-motion hover lift + optional sparkline + optional delta arrow + tooltip
+   367→function StatCard({
+   368→  icon: Icon,
+   369→  label,
+   370→  value,
+   371→  color,
+   372→  loading,
+   373→  sub,
+   374→  trend,
+   375→  delta,
+   376→  tooltip,
+   377→  index = 0,
+   378→}: {
+   379→  icon: React.ElementType;
+   380→  label: string;
+   381→  value: React.ReactNode;
+   382→  color: string;
+   383→  loading?: boolean;
+   384→  sub?: React.ReactNode;
+   385→  trend?: { value: number; label: string }[];
+   386→  delta?: { value: number; positive: boolean };
+   387→  tooltip?: string;
+   388→  index?: number;
+   389→}) {
+   390→  const sparkColor = STAT_COLOR_HEX[color] || "#475569";
+   391→  const hoverBorder = STAT_COLOR_BORDER[color] || "hover:border-slate-300";
+   392→  const sparkId = React.useId();
+   393→  const trendValues = trend?.map((t) => t.value) || [];
+   394→
+   395→  const card = (
+   396→    <Card className={`transition-colors border ${hoverBorder} h-full`}>
+   397→      <CardHeader className="pb-2">
+   398→        <CardTitle className="text-sm flex items-center gap-2 font-medium text-muted-foreground">
+   399→          <Icon className={`h-4 w-4 ${color}`} />
+   400→          {label}
+   401→          {tooltip && <Info className="h-3 w-3 text-muted-foreground/50 ml-auto" />}
+   402→        </CardTitle>
+   403→      </CardHeader>
+   404→      <CardContent>
+   405→        {loading ? (
+   406→          <>
+   407→            <Skeleton className="h-7 w-20 mb-2 animate-pulse" />
+   408→            <Skeleton className="h-1.5 w-full animate-pulse" />
+   409→          </>
+   410→        ) : (
+   411→          <div className="space-y-1.5">
+   412→            <div className="flex items-baseline gap-2">
+   413→              <div className="text-2xl font-bold tracking-tight">{value}</div>
+   414→              {delta && (
+   415→                <span
+   416→                  className={`text-xs font-semibold flex items-center gap-0.5 ${
+   417→                    delta.positive ? "text-emerald-600" : "text-red-600"
+   418→                  }`}
+   419→                >
+   420→                  {delta.positive ? (
+   421→                    <ArrowUp className="h-3 w-3" />
+   422→                  ) : (
+   423→                    <ArrowDown className="h-3 w-3" />
+   424→                  )}
+   425→                  {Math.abs(delta.value)}
+   426→                </span>
+   427→              )}
+   428→            </div>
+   429→            {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+   430→            {trendValues.length > 1 && (
+   431→              <div className="mt-2 -mb-1">
+   432→                <Sparkline data={trendValues} color={sparkColor} id={sparkId} />
+   433→              </div>
+   434→            )}
+   435→          </div>
+   436→        )}
+   437→      </CardContent>
+   438→    </Card>
+   439→  );
+   440→
+   441→  return (
+   442→    <motion.div
+   443→      initial={{ opacity: 0, y: 10 }}
+   444→      animate={{ opacity: 1, y: 0 }}
+   445→      transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
+   446→      className="h-full"
+   447→    >
+   448→      {tooltip ? (
+   449→        <UITooltip>
+   450→          <TooltipTrigger asChild>
+   451→            <motion.div
+   452→              whileHover={{ y: -2 }}
+   453→              transition={{ type: "spring", stiffness: 200 }}
+   454→              className="h-full"
+   455→            >
+   456→              {card}
+   457→            </motion.div>
+   458→          </TooltipTrigger>
+   459→          <TooltipContent side="top">
+   460→            <p className="max-w-[220px] text-xs">{tooltip}</p>
+   461→          </TooltipContent>
+   462→        </UITooltip>
+   463→      ) : (
+   464→        <motion.div
+   465→          whileHover={{ y: -2 }}
+   466→          transition={{ type: "spring", stiffness: 200 }}
+   467→          className="h-full"
+   468→        >
+   469→          {card}
+   470→        </motion.div>
+   471→      )}
+   472→    </motion.div>
+   473→  );
+   474→}
+   475→
+   476→function OverviewTab() {
+   477→  const queryClient = useQueryClient();
+   478→  const [autoRefresh, setAutoRefresh] = useState(true);
+   479→  const [showInterfacesDialog, setShowInterfacesDialog] = useState(false);
+   480→
+   481→  const healthQ = useQuery({
+   482→    queryKey: ["vpp-health"],
+   483→    queryFn: async () => {
+   484→      const res = await fetch("/api/vpp?action=health");
+   485→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   486→      return res.json();
+   487→    },
+   488→    refetchInterval: autoRefresh ? 5000 : false,
+   489→    retry: 1,
+   490→  });
+   491→
+   492→  const stateQ = useQuery({
+   493→    queryKey: ["vpp-state"],
+   494→    queryFn: async () => {
+   495→      const res = await fetch("/api/vpp?action=state");
+   496→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   497→      return res.json();
+   498→    },
+   499→    refetchInterval: autoRefresh ? 10000 : false,
+   500→    retry: 1,
+   501→  });
+   502→
+   503→  const interfacesQ = useQuery({
+   504→    queryKey: ["vpp-interfaces"],
+   505→    queryFn: async () => {
+   506→      const res = await fetch("/api/vpp?action=interfaces");
+   507→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   508→      return res.json();
+   509→    },
+   510→    refetchInterval: autoRefresh ? 10000 : false,
+   511→    retry: 1,
+   512→  });
+   513→
+   514→  const configQ = useQuery({
+   515→    queryKey: ["vpp-config"],
+   516→    queryFn: async () => {
+   517→      const res = await fetch("/api/vpp?action=config-generate");
+   518→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   519→      return res.json();
+   520→    },
+   521→    refetchInterval: false,
+   522→    retry: 1,
+   523→  });
+   524→
+   525→  const recoveryQ = useQuery({
+   526→    queryKey: ["vpp-recovery-logs"],
+   527→    queryFn: async () => {
+   528→      const res = await fetch("/api/vpp?action=recovery-logs");
+   529→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   530→      return res.json();
+   531→    },
+   532→    refetchInterval: autoRefresh ? 10000 : false,
+   533→    retry: 1,
+   534→  });
+   535→
+   536→  const simulateRestartMut = useMutation({
+   537→    mutationFn: async () => {
+   538→      const res = await fetch("/api/vpp?action=simulate-restart", { method: "POST" });
+   539→      const data = await res.json().catch(() => ({}));
+   540→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   541→      return data;
+   542→    },
+   543→    onSuccess: () => {
+   544→      toast.success("VPP restart simulated — recovery should begin");
+   545→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   546→      queryClient.invalidateQueries({ queryKey: ["vpp-health"] });
+   547→    },
+   548→    onError: (err: Error) => toast.error(err.message || "Simulate restart failed"),
+   549→  });
+   550→
+   551→  const triggerRecoveryMut = useMutation({
+   552→    mutationFn: async () => {
+   553→      const res = await fetch("/api/vpp?action=restart-recovery", { method: "POST" });
+   554→      const data = await res.json().catch(() => ({}));
+   555→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   556→      return data;
+   557→    },
+   558→    onSuccess: () => {
+   559→      toast.success("VPP recovery triggered");
+   560→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   561→      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+   562→    },
+   563→    onError: (err: Error) => toast.error(err.message || "Recovery trigger failed"),
+   564→  });
+   565→
+   566→  const reconcileMut = useMutation({
+   567→    mutationFn: async () => {
+   568→      const res = await fetch("/api/vpp?action=reconcile", { method: "POST" });
+   569→      const data = await res.json().catch(() => ({}));
+   570→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   571→      return data;
+   572→    },
+   573→    onSuccess: () => {
+   574→      toast.success("Dataplane reconciliation complete");
+   575→      queryClient.invalidateQueries({ queryKey: ["vpp-config"] });
+   576→      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+   577→    },
+   578→    onError: (err: Error) => toast.error(err.message || "Reconcile failed"),
+   579→  });
+   580→
+   581→  // Trigger session-engine reconciliation (§40) — iterates ACTIVE sessions, calls /vpp/rebuild
+   582→  const reconcileSessionsMut = useMutation({
+   583→    mutationFn: async () => {
+   584→      const res = await fetch("/api/vpp?action=reconcile-sessions", { method: "POST" });
+   585→      const data = await res.json().catch(() => ({}));
+   586→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   587→      return data;
+   588→    },
+   589→    onSuccess: () => {
+   590→      toast.success("Session reconciliation triggered");
+   591→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   592→      queryClient.invalidateQueries({ queryKey: ["vpp-reconciliation-logs"] });
+   593→    },
+   594→    onError: (err: Error) => toast.error(err.message || "Session reconciliation failed"),
+   595→  });
+   596→
+   597→  // ─── Enhancement 1: GoVPP Adapter (Binary API) health indicator ──
+   598→  // Polls /api/vpp?action=govpp-health which proxies through vpp-adapter (port 3015)
+   599→  // to govpp-adapter (port 3016). Response shape: { status, port, vppConnected,
+   600→  // vppSocket, mode, govppVersion, uptime } — all from govpp-adapter's /health handler.
+   601→  const govppHealthQ = useQuery({
+   602→    queryKey: ["vpp-govpp-health"],
+   603→    queryFn: async () => {
+   604→      const res = await fetch("/api/vpp?action=govpp-health");
+   605→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   606→      return res.json();
+   607→    },
+   608→    refetchInterval: autoRefresh ? 5000 : false,
+   609→    retry: 1,
+   610→  });
+   611→
+   612→  // ─── Enhancement 2: /vpp/rebuild trigger (reprogram all active sessions) ──
+   613→  // POST /api/vpp?action=rebuild → vpp-adapter /vpp/rebuild → iterates SessionSnapshot
+   614→  // rows where vppRecoveryState ≠ "VERIFIED", calls govpp /subscriber/program for each.
+   615→  // Returns: { rebuilt: number, failed: number, results: [{sessionId, status, error?}] }
+   616→  const rebuildAllMut = useMutation({
+   617→    mutationFn: async () => {
+   618→      const res = await fetch("/api/vpp?action=rebuild", { method: "POST" });
+   619→      const data = await res.json().catch(() => ({}));
+   620→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   621→      return data;
+   622→    },
+   623→    onSuccess: (data: AnyRecord) => {
+   624→      toast.success(
+   625→        `VPP rebuild complete: ${data?.rebuilt ?? 0} rebuilt, ${data?.failed ?? 0} failed`
+   626→      );
+   627→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   628→      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+   629→    },
+   630→    onError: (err: Error) => toast.error(err.message || "Rebuild failed"),
+   631→  });
+   632→
+   633→  const downloadConfig = () => {
+   634→    const txt =
+   635→      configQ.data?.config || configQ.data?.configText || JSON.stringify(configQ.data || {}, null, 2);
+   636→    const blob = new Blob([txt], { type: "text/plain" });
+   637→    const url = URL.createObjectURL(blob);
+   638→    const a = document.createElement("a");
+   639→    a.href = url;
+   640→    a.download = `vpp-config-${Date.now()}.conf`;
+   641→    a.click();
+   642→    URL.revokeObjectURL(url);
+   643→    toast.success("Config downloaded");
+   644→  };
+   645→
+   646→  const health: AnyRecord = healthQ.data || {};
+   647→  const state: AnyRecord = stateQ.data || {};
+   648→  const interfaces: AnyRecord[] = interfacesQ.data?.interfaces || interfacesQ.data?.items || [];
+   649→  const recoveryLogs: AnyRecord[] = recoveryQ.data?.logs || recoveryQ.data?.items || recoveryQ.data?.data || [];
+   650→  const stats: AnyRecord = health.stats || state.stats || state.policyObjects ? state : {};
+   651→  // Clean stats accessor (prefers health.stats then state.stats; the `stats` var above has odd ternary precedence)
+   652→  const statsObj: AnyRecord = (health.stats as AnyRecord) || (state.stats as AnyRecord) || {};
+   653→  const configText: string = configQ.data?.config || configQ.data?.configText || "";
+   654→
+   655→  const vppEpoch = state.epoch ?? health.epoch ?? state.vppEpoch ?? "—";
+   656→  const policyObjectsRaw =
+   657→    state.policyObjects ?? state.policyObjectsCount ?? health.policyObjects ?? 0;
+   658→  // policyObjects may be either a number (count) OR an object {ACL:N, POLICER:N, ...}
+   659→  const policyObjectsCount: number =
+   660→    typeof policyObjectsRaw === "number"
+   661→      ? Number(policyObjectsRaw)
+   662→      : policyObjectsRaw && typeof policyObjectsRaw === "object"
+   663→        ? (Object.values(policyObjectsRaw).reduce(
+   664→            (sum: number, v: unknown) => sum + (typeof v === "number" ? v : 0),
+   665→            0
+   666→          ) as number)
+   667→        : 0;
+   668→  const subscribersProgrammed =
+   669→    state.subscribersProgrammed ?? state.activeSubscribers ?? health.subscribersProgrammed ?? 0;
+   670→  // API returns vppLastRestartAt (camelCase) — fall back to legacy lastRestartAt
+   671→  const lastRestartAt =
+   672→    state.vppLastRestartAt ?? health.vppLastRestartAt ?? state.lastRestartAt ?? health.lastRestartAt;
+   673→
+   674→  // Derived values for the 5 NEW stat cards (uptime, rebuilds, restarts, configs, errors)
+   675→  const adapterUptime = formatUptime(health.uptime ?? state.uptime);
+   676→  const rebuildsTotal = Number(statsObj.rebuilds ?? 0);
+   677→  const restartsSimulated = Number(statsObj.restartsSimulated ?? 0);
+   678→  const configsGenerated = Number(statsObj.configsGenerated ?? 0);
+   679→  const errorsCount = Number(statsObj.errors ?? 0);
+   680→  const programmedCount = Number(statsObj.programmed ?? 0);
+   681→  const removedCount = Number(statsObj.removed ?? 0);
+   682→  const lastGenerateAt = statsObj.lastGenerateAt;
+   683→
+   684→  // Policy object breakdown (object form: {ACL:N, POLICER:N, NAT:N, VRF:N, QoS:N, CLASSIFICATION:N})
+   685→  const policyObjectsBreakdown: Record<string, number> | null =
+   686→    policyObjectsRaw && typeof policyObjectsRaw === "object" && !Array.isArray(policyObjectsRaw)
+   687→      ? (Object.fromEntries(
+   688→          Object.entries(policyObjectsRaw as Record<string, unknown>)
+   689→            .filter(([, v]) => typeof v === "number")
+   690→            .map(([k, v]) => [k, v] as [string, number])
+   691→        ) as Record<string, number>)
+   692→      : null;
+   693→
+   694→  // Recovery timeline chart data (last 10 logs, reversed → oldest first for left-to-right reading)
+   695→  const recoveryChartData = recoveryLogs
+   696→    .slice(0, 10)
+   697→    .map((log) => {
+   698→      const ts = log.createdAt || log.timestamp;
+   699→      let timeLabel = "—";
+   700→      try {
+   701→        if (ts) {
+   702→          const d = new Date(ts);
+   703→          if (!isNaN(d.getTime())) {
+   704→            timeLabel = d.toLocaleTimeString(undefined, {
+   705→              hour: "2-digit",
+   706→              minute: "2-digit",
+   707→              second: "2-digit",
+   708→              hour12: false,
+   709→            });
+   710→          }
+   711→        }
+   712→      } catch {
+   713→        /* keep default "—" */
+   714→      }
+   715→      return {
+   716→        time: timeLabel,
+   717→        sessionsAffected: Number(log.sessionsAffected ?? log.affected ?? 0),
+   718→        event: (log.event || log.eventType || "RECOVERY") as string,
+   719→      };
+   720→    })
+   721→    .reverse();
+   722→
+   723→  const healthErr = healthQ.error;
+   724→  const stateErr = stateQ.error;
+   725→  const recoveryErr = recoveryQ.error;
+   726→
+   727→  return (
+   728→    <AnimatePresence mode="wait">
+   729→      <motion.div
+   730→        key="overview-content"
+   731→        initial={{ opacity: 0 }}
+   732→        animate={{ opacity: 1 }}
+   733→        exit={{ opacity: 0 }}
+   734→        transition={{ duration: 0.3 }}
+   735→        className="space-y-6"
+   736→      >
+   737→        {/* Header */}
+   738→        <div className="flex flex-wrap items-center justify-between gap-3">
+   739→          <div>
+   740→            <h2 className="text-lg font-semibold flex items-center gap-2">
+   741→              <Activity className="h-5 w-5 text-emerald-600" />
+   742→              Dataplane Overview
+   743→            </h2>
+   744→            <p className="text-sm text-muted-foreground mt-0.5">
+   745→              VPP v26.06 + DPDK live state, restart recovery, and reconciliation.
+   746→            </p>
+   747→          </div>
+   748→          <Button
+   749→            variant={autoRefresh ? "default" : "outline"}
+   750→            size="sm"
+   751→            onClick={() => setAutoRefresh(!autoRefresh)}
+   752→          >
+   753→            <RefreshCw className={`h-4 w-4 mr-1.5 ${autoRefresh ? "animate-spin" : ""}`} />
+   754→            {autoRefresh ? "Auto ON (5s)" : "Auto OFF"}
+   755→          </Button>
+   756→        </div>
+   757→
+   758→        {/* Stats grid — 9 cards (4-col on lg+, stacks on sm) */}
+   759→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+   760→          <StatCard
+   761→            icon={Zap}
+   762→            label="VPP Epoch"
+   763→            value={vppEpoch}
+   764→            color="text-amber-600"
+   765→            loading={stateQ.isLoading && !stateErr}
+   766→            sub={stateErr ? undefined : "Rebuild counter"}
+   767→            tooltip="Increments every time VPP restarts. The session-engine detects the bump and rebuilds all subscriber policies."
+   768→            index={0}
+   769→          />
+   770→          <StatCard
+   771→            icon={Boxes}
+   772→            label="Policy Objects"
+   773→            value={policyObjectsCount}
+   774→            color="text-emerald-600"
+   775→            loading={stateQ.isLoading && !stateErr}
+   776→            sub="ACL/Policer/QoS/NAT/VRF"
+   777→            tooltip="Total policy objects programmed into VPP across all types (ACL, POLICER, NAT, VRF, QoS, CLASSIFICATION)."
+   778→            index={1}
+   779→          />
+   780→          <StatCard
+   781→            icon={Users}
+   782→            label="Subscribers Programmed"
+   783→            value={subscribersProgrammed}
+   784→            color="text-slate-600"
+   785→            loading={stateQ.isLoading && !stateErr}
+   786→            tooltip="Active subscriber sessions with VPP policy state (policer + NAT + ACL) in the dataplane."
+   787→            index={2}
+   788→          />
+   789→          <StatCard
+   790→            icon={Clock}
+   791→            label="Last Restart"
+   792→            value={lastRestartAt ? formatTime(lastRestartAt) : "—"}
+   793→            color="text-red-600"
+   794→            loading={stateQ.isLoading && !stateErr}
+   795→            sub={lastRestartAt ? "Detected by session-engine" : "No restarts detected"}
+   796→            tooltip="Timestamp of the most recent VPP epoch bump detected by the session-engine restart poller (5s interval)."
+   797→            index={3}
+   798→          />
+   799→          <StatCard
+   800→            icon={Timer}
+   801→            label="Adapter Uptime"
+   802→            value={adapterUptime}
+   803→            color="text-cyan-600"
+   804→            loading={healthQ.isLoading && !healthErr}
+   805→            sub="vpp-adapter process"
+   806→            tooltip="Time since the vpp-adapter service (port 3015) started. Resets on adapter restart."
+   807→            index={4}
+   808→          />
+   809→          <StatCard
+   810→            icon={RotateCcw}
+   811→            label="Rebuilds Total"
+   812→            value={rebuildsTotal}
+   813→            color="text-purple-600"
+   814→            loading={healthQ.isLoading && !healthErr}
+   815→            sub="Policy rebuilds"
+   816→            tooltip="Total number of times VPP policies have been rebuilt from session snapshots (restart recovery + manual triggers)."
+   817→            index={5}
+   818→          />
+   819→          <StatCard
+   820→            icon={Power}
+   821→            label="Restarts Simulated"
+   822→            value={restartsSimulated}
+   823→            color="text-amber-600"
+   824→            loading={healthQ.isLoading && !healthErr}
+   825→            sub="Simulated epoch bumps"
+   826→            tooltip="Number of times the 'Simulate VPP Restart' button has been clicked (dev/test only — production VPP restarts come from real binary crashes)."
+   827→            index={6}
+   828→          />
+   829→          <StatCard
+   830→            icon={FileCode}
+   831→            label="Configs Generated"
+   832→            value={configsGenerated}
+   833→            color="text-emerald-600"
+   834→            loading={healthQ.isLoading && !healthErr}
+   835→            sub=".conf files generated"
+   836→            tooltip="Total VPP config generations. Each /config/generate call increments this counter."
+   837→            index={7}
+   838→          />
+   839→          <StatCard
+   840→            icon={Bug}
+   841→            label="Errors"
+   842→            value={errorsCount}
+   843→            color={errorsCount > 0 ? "text-red-600" : "text-emerald-600"}
+   844→            loading={healthQ.isLoading && !healthErr}
+   845→            sub={errorsCount > 0 ? "Investigate immediately" : "All systems nominal"}
+   846→            delta={errorsCount > 0 ? { value: errorsCount, positive: false } : undefined}
+   847→            tooltip="Cumulative count of VPP adapter errors (programming failures, verification failures, config generation errors)."
+   848→            index={8}
+   849→          />
+   850→        </div>
+   851→
+   852→        {/* Health state + connection status */}
+   853→        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+   854→          <Card>
+   855→            <CardHeader>
+   856→              <CardTitle className="flex items-center gap-2">
+   857→                <Server className="h-5 w-5 text-emerald-600" />
+   858→                VPP Adapter Health
+   859→              </CardTitle>
+   860→              <CardDescription>
+   861→                Live status from <code>/api/vpp?action=health</code>
+   862→              </CardDescription>
+   863→            </CardHeader>
+   864→            <CardContent>
+   865→              {healthErr ? (
+   866→                <ServiceUnavailable
+   867→                  message={healthErr.message}
+   868→                  onRetry={() => healthQ.refetch()}
+   869→                />
+   870→              ) : healthQ.isLoading ? (
+   871→                <div className="space-y-2">
+   872→                  <Skeleton className="h-6 w-48 animate-pulse" />
+   873→                  <Skeleton className="h-4 w-full animate-pulse" />
+   874→                  <Skeleton className="h-4 w-3/4 animate-pulse" />
+   875→                </div>
+   876→              ) : (
+   877→                <div className="space-y-2 text-sm">
+   878→                  <div className="flex items-center justify-between">
+   879→                    <span className="text-muted-foreground">Status</span>
+   880→                    <Badge
+   881→                      className={
+   882→                        health.vppConnected
+   883→                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+   884→                          : "bg-red-100 text-red-800 border-red-200"
+   885→                      }
+   886→                    >
+   887→                      {health.status || (health.vppConnected ? "OK" : "DOWN")}
+   888→                    </Badge>
+   889→                  </div>
+   890→                  <div className="flex items-center justify-between">
+   891→                    <span className="text-muted-foreground">VPP Connected</span>
+   892→                    <span className="font-mono">
+   893→                      {health.vppConnected ? "YES" : "NO"}
+   894→                    </span>
+   895→                  </div>
+   896→                  <div className="flex items-center justify-between">
+   897→                    <span className="text-muted-foreground">Uptime</span>
+   898→                    <span className="font-mono">
+   899→                      {typeof health.uptime === "number" ? `${health.uptime}s` : health.uptime || "—"}
+   900→                    </span>
+   901→                  </div>
+   902→                  <div className="flex items-center justify-between">
+   903→                    <span className="text-muted-foreground">Interfaces</span>
+   904→                    <span className="font-mono">
+   905→                      {health.interfaces ?? interfaces.length}
+   906→                    </span>
+   907→                  </div>
+   908→                  {health.stats && (
+   909→                    <div className="flex items-center justify-between">
+   910→                      <span className="text-muted-foreground">Configs Generated</span>
+   911→                      <span className="font-mono">
+   912→                        {health.stats.configsGenerated ?? 0}
+   913→                      </span>
+   914→                    </div>
+   915→                  )}
+   916→                </div>
+   917→              )}
+   918→            </CardContent>
+   919→          </Card>
+   920→
+   921→          {/* Enhancement 1: GoVPP Adapter (Binary API) health indicator.
+   922→              Proxies /api/vpp?action=govpp-health → vpp-adapter /govpp/health
+   923→              → govpp-adapter (port 3016) /health handler. Shows real VPP binary
+   924→              API connection state from the Go adapter (not the TS adapter proxy). */}
+   925→          <Card>
+   926→            <CardHeader>
+   927→              <CardTitle className="flex items-center gap-2">
+   928→                <Server className="h-5 w-5 text-emerald-600" />
+   929→                GoVPP Adapter (Binary API)
+   930→              </CardTitle>
+   931→              <CardDescription>
+   932→                Live status from <code>/api/vpp?action=govpp-health</code> (port 3016)
+   933→              </CardDescription>
+   934→            </CardHeader>
+   935→            <CardContent>
+   936→              {govppHealthQ.error ? (
+   937→                <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-3 flex items-start gap-2">
+   938→                  <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+   939→                  <div className="flex-1">
+   940→                    <div className="font-medium text-red-900 dark:text-red-200 text-sm">
+   941→                      GoVPP Adapter unreachable
+   942→                    </div>
+   943→                    <div className="text-xs text-red-700/80 dark:text-red-300/80 mt-1">
+   944→                      The Go binary API adapter (port 3016) is not responding. The TS
+   945→                      vpp-adapter (port 3015) cannot reach it via <code>/govpp/health</code>.
+   946→                      Real VPP binapi programming will fail until it recovers.
+   947→                    </div>
+   948→                    <Button
+   949→                      variant="outline"
+   950→                      size="sm"
+   951→                      className="mt-2 border-red-300 text-red-700 hover:bg-red-100 h-7"
+   952→                      onClick={() => govppHealthQ.refetch()}
+   953→                    >
+   954→                      <RefreshCw className="h-3 w-3 mr-1" />
+   955→                      Retry
+   956→                    </Button>
+   957→                  </div>
+   958→                </div>
+   959→              ) : govppHealthQ.isLoading ? (
+   960→                <div className="space-y-2">
+   961→                  <Skeleton className="h-6 w-32 animate-pulse" />
+   962→                  <Skeleton className="h-4 w-full animate-pulse" />
+   963→                  <Skeleton className="h-4 w-3/4 animate-pulse" />
+   964→                </div>
+   965→              ) : (
+   966→                <div className="space-y-2 text-sm">
+   967→                  <div className="flex items-center justify-between">
+   968→                    <span className="text-muted-foreground">Status</span>
+   969→                    <Badge
+   970→                      className={
+   971→                        govppHealthQ.data?.status === "ok"
+   972→                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+   973→                          : "bg-red-100 text-red-800 border-red-200"
+   974→                      }
+   975→                    >
+   976→                      {govppHealthQ.data?.status || "DOWN"}
+   977→                    </Badge>
+   978→                  </div>
+   979→                  <div className="flex items-center justify-between">
+   980→                    <span className="text-muted-foreground">VPP Connected</span>
+   981→                    <span className="font-mono">
+   982→                      {govppHealthQ.data?.vppConnected ? "YES ✓" : "NO ✗"}
+   983→                    </span>
+   984→                  </div>
+   985→                  <div className="flex items-center justify-between">
+   986→                    <span className="text-muted-foreground">GoVPP Version</span>
+   987→                    <span className="font-mono">
+   988→                      {govppHealthQ.data?.govppVersion || "—"}
+   989→                    </span>
+   990→                  </div>
+   991→                  <div className="flex items-center justify-between">
+   992→                    <span className="text-muted-foreground">Mode</span>
+   993→                    <span className="font-mono">
+   994→                      {govppHealthQ.data?.mode || "—"}
+   995→                    </span>
+   996→                  </div>
+   997→                  <div className="flex items-center justify-between">
+   998→                    <span className="text-muted-foreground">Uptime</span>
+   999→                    <span className="font-mono">
+  1000→                      {typeof govppHealthQ.data?.uptime === "number"
+  1001→                        ? `${govppHealthQ.data.uptime.toFixed(0)}s`
+  1002→                        : "—"}
+  1003→                    </span>
+  1004→                  </div>
+  1005→                  <div className="flex items-center justify-between">
+  1006→                    <span className="text-muted-foreground">VPP Socket</span>
+  1007→                    <span className="font-mono text-xs truncate max-w-[160px]" title={govppHealthQ.data?.vppSocket}>
+  1008→                      {govppHealthQ.data?.vppSocket || "—"}
+  1009→                    </span>
+  1010→                  </div>
+  1011→                </div>
+  1012→              )}
+  1013→            </CardContent>
+  1014→          </Card>
+  1015→
+  1016→          <Card>
+  1017→            <CardHeader>
+  1018→              <CardTitle className="flex items-center gap-2">
+  1019→                <Network className="h-5 w-5 text-emerald-600" />
+  1020→                VPP Interfaces
+  1021→              </CardTitle>
+  1022→              <CardDescription>
+  1023→                Dataplane interfaces registered with VPP
+  1024→              </CardDescription>
+  1025→            </CardHeader>
+  1026→            <CardContent>
+  1027→              {interfacesQ.isLoading ? (
+  1028→                <div className="space-y-2">
+  1029→                  {Array.from({ length: 3 }).map((_, i) => (
+  1030→                    <Skeleton key={i} className="h-12 w-full animate-pulse" />
+  1031→                  ))}
+  1032→                </div>
+  1033→              ) : interfacesQ.error ? (
+  1034→                <ServiceUnavailable
+  1035→                  message={(interfacesQ.error as Error).message}
+  1036→                  onRetry={() => interfacesQ.refetch()}
+  1037→                />
+  1038→              ) : interfaces.length === 0 ? (
+  1039→                <EmptyState
+  1040→                  icon={Network}
+  1041→                  title="VPP Binary Not Connected"
+  1042→                  description="The VPP adapter is running in policy-management mode. In production with DPDK + VPP binary, live interfaces will appear here."
+  1043→                  size="sm"
+  1044→                >
+  1045→                  <Button
+  1046→                    variant="outline"
+  1047→                    size="sm"
+  1048→                    className="w-full"
+  1049→                    onClick={() => setShowInterfacesDialog(true)}
+  1050→                  >
+  1051→                    <Info className="h-4 w-4 mr-1.5" />
+  1052→                    Learn More
+  1053→                  </Button>
+  1054→                </EmptyState>
+  1055→              ) : (
+  1056→                <div className="space-y-2 max-h-72 overflow-y-auto cryptsk-scrollbar">
+  1057→                  {interfaces.map((iface, i) => (
+  1058→                    <div
+  1059→                      key={i}
+  1060→                      className="flex items-center justify-between border rounded-md p-3 bg-muted/30"
+  1061→                    >
+  1062→                      <div className="min-w-0">
+  1063→                        <div className="font-mono font-medium truncate">
+  1064→                          {iface.name || iface.dev_name || `iface-${i}`}
+  1065→                        </div>
+  1066→                        {iface.mac && (
+  1067→                          <div className="text-xs text-muted-foreground">{iface.mac}</div>
+  1068→                        )}
+  1069→                      </div>
+  1070→                      <div className="flex items-center gap-2 shrink-0">
+  1071→                        <Badge
+  1072→                          className={
+  1073→                            (iface.state === "up" || iface.link === "up")
+  1074→                              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+  1075→                              : "bg-slate-100 text-slate-700 border-slate-200"
+  1076→                          }
+  1077→                        >
+  1078→                          {iface.state || iface.link || "?"}
+  1079→                        </Badge>
+  1080→                        {iface.speed && (
+  1081→                          <span className="text-xs text-muted-foreground">
+  1082→                            {iface.speed}
+  1083→                          </span>
+  1084→                        )}
+  1085→                      </div>
+  1086→                    </div>
+  1087→                  ))}
+  1088→                </div>
+  1089→              )}
+  1090→            </CardContent>
+  1091→          </Card>
+  1092→        </div>
+  1093→
+  1094→        {/* Adapter Stats + Policy Object Breakdown */}
+  1095→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  1096→          <Card>
+  1097→            <CardHeader>
+  1098→              <CardTitle className="flex items-center gap-2">
+  1099→                <BarChart3 className="h-5 w-5 text-slate-600" />
+  1100→                Adapter Stats
+  1101→              </CardTitle>
+  1102→              <CardDescription>
+  1103→                Cumulative counters from vpp-adapter since process start
+  1104→              </CardDescription>
+  1105→            </CardHeader>
+  1106→            <CardContent>
+  1107→              <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+  1108→                <StatRow label="Configs Generated" value={configsGenerated} />
+  1109→                <StatRow label="Programmed" value={programmedCount} />
+  1110→                <StatRow label="Removed" value={removedCount} />
+  1111→                <StatRow label="Rebuilds" value={rebuildsTotal} />
+  1112→                <StatRow label="Restarts Simulated" value={restartsSimulated} />
+  1113→                <StatRow
+  1114→                  label="Errors"
+  1115→                  value={
+  1116→                    <span className="flex items-center gap-2">
+  1117→                      {errorsCount}
+  1118→                      {errorsCount > 0 && (
+  1119→                        <Badge className="bg-red-100 text-red-800 border-red-200 text-[10px] px-1.5 py-0">
+  1120→                          ATTENTION
+  1121→                        </Badge>
+  1122→                      )}
+  1123→                    </span>
+  1124→                  }
+  1125→                />
+  1126→                <StatRow
+  1127→                  label="Last Generate At"
+  1128→                  value={lastGenerateAt ? formatTime(lastGenerateAt) : "—"}
+  1129→                />
+  1130→                <StatRow label="Adapter Uptime" value={adapterUptime} />
+  1131→              </div>
+  1132→            </CardContent>
+  1133→          </Card>
+  1134→
+  1135→          <Card>
+  1136→            <CardHeader>
+  1137→              <CardTitle className="flex items-center gap-2">
+  1138→                <Layers className="h-5 w-5 text-emerald-600" />
+  1139→                Policy Objects by Type
+  1140→              </CardTitle>
+  1141→              <CardDescription>
+  1142→                Breakdown of VPP policy objects across all categories
+  1143→              </CardDescription>
+  1144→            </CardHeader>
+  1145→            <CardContent>
+  1146→              {policyObjectsBreakdown && Object.keys(policyObjectsBreakdown).length > 0 ? (
+  1147→                <div className="space-y-3">
+  1148→                  {Object.entries(policyObjectsBreakdown).map(([type, count]) => {
+  1149→                    const key = type.toUpperCase();
+  1150→                    const colors = POLICY_TYPE_COLORS[key] || POLICY_TYPE_DEFAULT;
+  1151→                    const pct =
+  1152→                      policyObjectsCount > 0 ? (count / policyObjectsCount) * 100 : 0;
+  1153→                    return (
+  1154→                      <div key={type} className="space-y-1">
+  1155→                        <div className="flex items-center justify-between text-sm">
+  1156→                          <span className={`font-medium ${colors.text}`}>{type}</span>
+  1157→                          <span className="font-mono text-muted-foreground">{count}</span>
+  1158→                        </div>
+  1159→                        <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
+  1160→                          <motion.div
+  1161→                            className={`h-full ${colors.bar} rounded-full`}
+  1162→                            initial={{ width: 0 }}
+  1163→                            animate={{ width: `${pct}%` }}
+  1164→                            transition={{ duration: 0.6, ease: "easeOut" }}
+  1165→                          />
+  1166→                        </div>
+  1167→                      </div>
+  1168→                    );
+  1169→                  })}
+  1170→                  <div className="pt-3 mt-3 border-t flex items-center justify-between text-sm">
+  1171→                    <span className="text-muted-foreground font-medium">Total</span>
+  1172→                    <span className="font-mono font-bold text-foreground">
+  1173→                      {policyObjectsCount}
+  1174→                    </span>
+  1175→                  </div>
+  1176→                </div>
+  1177→              ) : (
+  1178→                <div className="text-sm text-muted-foreground py-6 text-center">
+  1179→                  No policy object breakdown available.
+  1180→                  <br />
+  1181→                  <span className="text-xs">
+  1182→                    Policy objects are counted in aggregate only.
+  1183→                  </span>
+  1184→                </div>
+  1185→              )}
+  1186→            </CardContent>
+  1187→          </Card>
+  1188→        </div>
+  1189→
+  1190→        {/* Recovery Timeline — bar chart + compact table */}
+  1191→        <Card>
+  1192→          <CardHeader>
+  1193→            <CardTitle className="flex items-center gap-2">
+  1194→              <Power className="h-5 w-5 text-amber-600" />
+  1195→              VPP Restart Recovery
+  1196→            </CardTitle>
+  1197→            <CardDescription>
+  1198→              Last 10 recovery events (§41). The session-engine detects VPP restart,
+  1199→              loads active session snapshots, rebuilds VPP policies, and verifies.
+  1200→            </CardDescription>
+  1201→          </CardHeader>
+  1202→          <CardContent>
+  1203→            <div className="flex flex-wrap gap-2 mb-4">
+  1204→              <Button
+  1205→                size="sm"
+  1206→                variant="outline"
+  1207→                onClick={() => simulateRestartMut.mutate()}
+  1208→                disabled={simulateRestartMut.isPending}
+  1209→              >
+  1210→                <Power className="h-4 w-4 mr-1.5" />
+  1211→                {simulateRestartMut.isPending ? "Simulating…" : "Simulate VPP Restart"}
+  1212→              </Button>
+  1213→              <Button
+  1214→                size="sm"
+  1215→                onClick={() => triggerRecoveryMut.mutate()}
+  1216→                disabled={triggerRecoveryMut.isPending}
+  1217→              >
+  1218→                <RefreshCw className="h-4 w-4 mr-1.5" />
+  1219→                {triggerRecoveryMut.isPending ? "Triggering…" : "Trigger Recovery"}
+  1220→              </Button>
+  1221→            </div>
+  1222→
+  1223→            {recoveryErr ? (
+  1224→              <ServiceUnavailable
+  1225→                message={(recoveryErr as Error).message}
+  1226→                onRetry={() => recoveryQ.refetch()}
+  1227→              />
+  1228→            ) : recoveryQ.isLoading ? (
+  1229→              <TableSkeleton rows={4} cols={6} />
+  1230→            ) : recoveryLogs.length === 0 ? (
+  1231→              <EmptyState
+  1232→                icon={Power}
+  1233→                title="No recovery events yet"
+  1234→                description="VPP restart recovery has not been triggered. Click 'Simulate VPP Restart' to test."
+  1235→                size="sm"
+  1236→              />
+  1237→            ) : (
+  1238→              <div className="space-y-4">
+  1239→                {/* Bar chart — sessionsAffected per recovery event, colored by event type */}
+  1240→                <div className="h-48 w-full">
+  1241→                  <ResponsiveContainer width="100%" height="100%">
+  1242→                    <RechartsBarChart
+  1243→                      data={recoveryChartData}
+  1244→                      margin={{ top: 8, right: 8, bottom: 8, left: 0 }}
+  1245→                    >
+  1246→                      <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+  1247→                      <YAxis
+  1248→                        tick={{ fontSize: 10 }}
+  1249→                        stroke="#94a3b8"
+  1250→                        allowDecimals={false}
+  1251→                        width={32}
+  1252→                      />
+  1253→                      <RechartsTooltip
+  1254→                        cursor={{ fill: "rgba(148, 163, 184, 0.1)" }}
+  1255→                        contentStyle={{
+  1256→                          borderRadius: 8,
+  1257→                          border: "1px solid #e2e8f0",
+  1258→                          fontSize: 12,
+  1259→                          padding: "8px 12px",
+  1260→                          background: "#ffffff",
+  1261→                        }}
+  1262→                        formatter={(value, _name, item) => [
+  1263→                          `${value} session${Number(value) === 1 ? "" : "s"}`,
+  1264→                          ((item as AnyRecord)?.payload?.event as string) || "Recovery",
+  1265→                        ]}
+  1266→                        labelFormatter={(label) => `Time: ${label}`}
+  1267→                      />
+  1268→                      <RechartsBar dataKey="sessionsAffected" radius={[4, 4, 0, 0]}>
+  1269→                        {recoveryChartData.map((entry, i) => (
+  1270→                          <Cell key={`cell-${i}`} fill={recoveryEventColor(entry.event)} />
+  1271→                        ))}
+  1272→                      </RechartsBar>
+  1273→                    </RechartsBarChart>
+  1274→                  </ResponsiveContainer>
+  1275→                </div>
+  1276→
+  1277→                {/* Compact recovery logs table */}
+  1278→                <div className="max-h-72 overflow-y-auto cryptsk-scrollbar rounded-md border">
+  1279→                  <Table>
+  1280→                    <TableHeader>
+  1281→                      <TableRow>
+  1282→                        <TableHead className="text-xs">Event</TableHead>
+  1283→                        <TableHead className="text-xs">Epoch</TableHead>
+  1284→                        <TableHead className="text-xs">Sessions Affected</TableHead>
+  1285→                        <TableHead className="text-xs">Recovered / Failed</TableHead>
+  1286→                        <TableHead className="text-xs">Duration</TableHead>
+  1287→                        <TableHead className="text-xs">Time</TableHead>
+  1288→                      </TableRow>
+  1289→                    </TableHeader>
+  1290→                    <TableBody>
+  1291→                      {recoveryLogs.slice(0, 10).map((log, i) => {
+  1292→                        const prevEpoch = log.prevEpoch ?? log.previousEpoch;
+  1293→                        const newEpoch = log.newEpoch ?? log.currentEpoch;
+  1294→                        return (
+  1295→                          <TableRow key={i}>
+  1296→                            <TableCell className="text-xs">
+  1297→                              <Badge
+  1298→                                variant="outline"
+  1299→                                className={
+  1300→                                  (log.event || "").includes("FAIL")
+  1301→                                    ? "bg-red-100 text-red-800 border-red-200"
+  1302→                                    : "bg-emerald-100 text-emerald-800 border-emerald-200"
+  1303→                                }
+  1304→                              >
+  1305→                                {log.event || log.eventType || "RECOVERY"}
+  1306→                              </Badge>
+  1307→                            </TableCell>
+  1308→                            <TableCell className="font-mono text-xs">
+  1309→                              {prevEpoch !== undefined ? `${prevEpoch} → ${newEpoch}` : newEpoch ?? "—"}
+  1310→                            </TableCell>
+  1311→                            <TableCell className="text-xs">{log.sessionsAffected ?? log.affected ?? "—"}</TableCell>
+  1312→                            <TableCell className="text-xs">
+  1313→                              <span className="text-emerald-700 font-medium">
+  1314→                                {log.sessionsRecovered ?? log.recovered ?? 0}
+  1315→                              </span>
+  1316→                              {" / "}
+  1317→                              <span className="text-red-700 font-medium">
+  1318→                                {log.sessionsFailed ?? log.failed ?? 0}
+  1319→                              </span>
+  1320→                            </TableCell>
+  1321→                            <TableCell className="text-xs">{formatDuration(log.durationMs ?? log.duration)}</TableCell>
+  1322→                            <TableCell className="text-xs text-muted-foreground">
+  1323→                              {formatTime(log.createdAt ?? log.timestamp)}
+  1324→                            </TableCell>
+  1325→                          </TableRow>
+  1326→                        );
+  1327→                      })}
+  1328→                    </TableBody>
+  1329→                  </Table>
+  1330→                </div>
+  1331→              </div>
+  1332→            )}
+  1333→          </CardContent>
+  1334→        </Card>
+  1335→
+  1336→        {/* Config + Reconciliation */}
+  1337→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  1338→          <Card>
+  1339→            <CardHeader>
+  1340→              <CardTitle className="flex items-center gap-2">
+  1341→                <Settings className="h-5 w-5 text-slate-600" />
+  1342→                Generated VPP Config
+  1343→              </CardTitle>
+  1344→              <CardDescription>
+  1345→                Live-generated dataplane configuration
+  1346→              </CardDescription>
+  1347→            </CardHeader>
+  1348→            <CardContent>
+  1349→              {configQ.isLoading ? (
+  1350→                <Skeleton className="h-48 w-full animate-pulse" />
+  1351→              ) : configQ.error ? (
+  1352→                <ServiceUnavailable
+  1353→                  message={(configQ.error as Error).message}
+  1354→                  onRetry={() => configQ.refetch()}
+  1355→                />
+  1356→              ) : (
+  1357→                <>
+  1358→                  <pre className="text-xs bg-muted/60 dark:bg-muted/30 p-3 rounded-md overflow-auto max-h-96 cryptsk-scrollbar whitespace-pre-wrap border">
+  1359→                    {configText || "No config generated"}
+  1360→                  </pre>
+  1361→                  <Button
+  1362→                    size="sm"
+  1363→                    variant="outline"
+  1364→                    className="mt-3"
+  1365→                    onClick={downloadConfig}
+  1366→                    disabled={!configText}
+  1367→                  >
+  1368→                    <Download className="h-4 w-4 mr-1.5" />
+  1369→                    Download .conf
+  1370→                  </Button>
+  1371→                </>
+  1372→              )}
+  1373→            </CardContent>
+  1374→          </Card>
+  1375→
+  1376→          <Card>
+  1377→            <CardHeader>
+  1378→              <CardTitle className="flex items-center gap-2">
+  1379→                <RefreshCw className="h-5 w-5 text-slate-600" />
+  1380→                Dataplane Reconciliation
+  1381→              </CardTitle>
+  1382→              <CardDescription>
+  1383→                Force VPP config regeneration from OSS/BSS state (subscribers, policies, NAS).
+  1384→              </CardDescription>
+  1385→            </CardHeader>
+  1386→            <CardContent>
+  1387→              <div className="flex flex-wrap gap-2">
+  1388→                <Button
+  1389→                  onClick={() => reconcileMut.mutate()}
+  1390→                  disabled={reconcileMut.isPending}
+  1391→                >
+  1392→                  <RefreshCw
+  1393→                    className={`h-4 w-4 mr-1.5 ${reconcileMut.isPending ? "animate-spin" : ""}`}
+  1394→                  />
+  1395→                  {reconcileMut.isPending ? "Reconciling…" : "Reconcile Now"}
+  1396→                </Button>
+  1397→                <Button
+  1398→                  variant="outline"
+  1399→                  onClick={() => reconcileSessionsMut.mutate()}
+  1400→                  disabled={reconcileSessionsMut.isPending}
+  1401→                >
+  1402→                  <RefreshCw
+  1403→                    className={`h-4 w-4 mr-1.5 ${reconcileSessionsMut.isPending ? "animate-spin" : ""}`}
+  1404→                  />
+  1405→                  {reconcileSessionsMut.isPending ? "Reconciling…" : "Trigger Session Reconciliation"}
+  1406→                </Button>
+  1407→              </div>
+  1408→              {reconcileMut.data && (
+  1409→                <pre className="mt-3 text-xs bg-muted/60 dark:bg-muted/30 p-2 rounded-md border max-h-48 overflow-auto cryptsk-scrollbar">
+  1410→                  {JSON.stringify(reconcileMut.data, null, 2)}
+  1411→                </pre>
+  1412→              )}
+  1413→              {reconcileSessionsMut.data && (
+  1414→                <pre className="mt-3 text-xs bg-muted/60 dark:bg-muted/30 p-2 rounded-md border max-h-48 overflow-auto cryptsk-scrollbar">
+  1415→                  {JSON.stringify(reconcileSessionsMut.data, null, 2)}
+  1416→                </pre>
+  1417→              )}
+  1418→            </CardContent>
+  1419→          </Card>
+  1420→        </div>
+  1421→
+  1422→        {/* Enhancement 2: VPP Rebuild from Snapshots.
+  1423→            POST /api/vpp?action=rebuild → vpp-adapter /vpp/rebuild → iterates
+  1424→            SessionSnapshot rows where vppRecoveryState ≠ "VERIFIED", calls
+  1425→            govpp-adapter /subscriber/program for each (real binary API: CreatePolicer,
+  1426→            AddStaticNat, ACLAddReplace). Returns { rebuilt, failed, results[] } where
+  1427→            each result row has { sessionId, status: VERIFIED|FAILED, error? }.
+  1428→            Used when VPP restarts and loses all in-memory dataplane state. */}
+  1429→        <Card>
+  1430→          <CardHeader>
+  1431→            <CardTitle className="flex items-center gap-2">
+  1432→              <RotateCcw className="h-5 w-5 text-emerald-600" />
+  1433→              VPP Rebuild from Snapshots
+  1434→            </CardTitle>
+  1435→            <CardDescription>
+  1436→              Trigger <code>/vpp/rebuild</code> — reprograms all active sessions from
+  1437→              SessionSnapshot DB rows (used when VPP restarts and loses all in-memory state)
+  1438→            </CardDescription>
+  1439→          </CardHeader>
+  1440→          <CardContent>
+  1441→            <div className="flex flex-wrap items-center gap-3">
+  1442→              <Button
+  1443→                onClick={() => rebuildAllMut.mutate()}
+  1444→                disabled={rebuildAllMut.isPending}
+  1445→                variant="default"
+  1446→              >
+  1447→                <RotateCw className={`h-4 w-4 mr-1.5 ${rebuildAllMut.isPending ? "animate-spin" : ""}`} />
+  1448→                {rebuildAllMut.isPending ? "Rebuilding…" : "Rebuild All Sessions"}
+  1449→              </Button>
+  1450→              {rebuildAllMut.isPending && (
+  1451→                <span className="text-xs text-muted-foreground">
+  1452→                  Replaying session snapshots through govpp-adapter…
+  1453→                </span>
+  1454→              )}
+  1455→              {!rebuildAllMut.isPending && !rebuildAllMut.data && !rebuildAllMut.error && (
+  1456→                <span className="text-xs text-muted-foreground">
+  1457→                  No rebuild run yet — click the button to reprogram all sessions.
+  1458→                </span>
+  1459→              )}
+  1460→              {rebuildAllMut.error && (
+  1461→                <span className="text-xs text-red-600">
+  1462→                  Last run failed: {(rebuildAllMut.error as Error).message}
+  1463→                </span>
+  1464→              )}
+  1465→            </div>
+  1466→
+  1467→            {rebuildAllMut.data && (
+  1468→              <div className="mt-4 space-y-3">
+  1469→                <div className="grid grid-cols-3 gap-4">
+  1470→                  <div className="text-center rounded-md border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 p-3">
+  1471→                    <div className="text-2xl font-bold text-emerald-600">
+  1472→                      {rebuildAllMut.data.rebuilt ?? 0}
+  1473→                    </div>
+  1474→                    <div className="text-xs text-muted-foreground mt-0.5">Rebuilt</div>
+  1475→                  </div>
+  1476→                  <div className="text-center rounded-md border border-red-200 bg-red-50 dark:bg-red-950/30 p-3">
+  1477→                    <div className="text-2xl font-bold text-red-600">
+  1478→                      {rebuildAllMut.data.failed ?? 0}
+  1479→                    </div>
+  1480→                    <div className="text-xs text-muted-foreground mt-0.5">Failed</div>
+  1481→                  </div>
+  1482→                  <div className="text-center rounded-md border border-slate-200 bg-slate-50 dark:bg-slate-950/30 p-3">
+  1483→                    <div className="text-2xl font-bold text-slate-600">
+  1484→                      {rebuildAllMut.data.results?.length ?? 0}
+  1485→                    </div>
+  1486→                    <div className="text-xs text-muted-foreground mt-0.5">Total</div>
+  1487→                  </div>
+  1488→                </div>
+  1489→
+  1490→                {Array.isArray(rebuildAllMut.data.results) && rebuildAllMut.data.results.length > 0 ? (
+  1491→                  <div className="border rounded-md overflow-hidden">
+  1492→                    <div className="max-h-72 overflow-y-auto cryptsk-scrollbar">
+  1493→                      <Table>
+  1494→                        <TableHeader className="sticky top-0 bg-card z-10">
+  1495→                          <TableRow>
+  1496→                            <TableHead className="text-xs">Session ID</TableHead>
+  1497→                            <TableHead className="text-xs">Status</TableHead>
+  1498→                            <TableHead className="text-xs">Error / Notes</TableHead>
+  1499→                          </TableRow>
+  1500→                        </TableHeader>
+  1501→                        <TableBody>
+  1502→                          {rebuildAllMut.data.results.map((r: AnyRecord, i: number) => {
+  1503→                            const st = String(r?.status || "").toUpperCase();
+  1504→                            const ok = st === "VERIFIED" || st === "OK";
+  1505→                            return (
+  1506→                              <TableRow key={i}>
+  1507→                                <TableCell className="font-mono text-xs">
+  1508→                                  {r?.sessionId || "—"}
+  1509→                                </TableCell>
+  1510→                                <TableCell>
+  1511→                                  <Badge
+  1512→                                    className={
+  1513→                                      ok
+  1514→                                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+  1515→                                        : "bg-red-100 text-red-800 border-red-200"
+  1516→                                    }
+  1517→                                  >
+  1518→                                    {r?.status || "UNKNOWN"}
+  1519→                                  </Badge>
+  1520→                                </TableCell>
+  1521→                                <TableCell className="text-xs text-muted-foreground">
+  1522→                                  {r?.error
+  1523→                                    ? r.error
+  1524→                                    : r?.programmed
+  1525→                                      ? `policer=${r.programmed.policer || "—"} acl=${r.programmed.acl || "—"} nat=${r.programmed.natMapping ? "yes" : "no"}`
+  1526→                                      : "—"}
+  1527→                                </TableCell>
+  1528→                              </TableRow>
+  1529→                            );
+  1530→                          })}
+  1531→                        </TableBody>
+  1532→                      </Table>
+  1533→                    </div>
+  1534→                  </div>
+  1535→                ) : (
+  1536→                  <div className="text-sm text-muted-foreground text-center py-3 border rounded-md">
+  1537→                    No per-session results returned. Snapshot table may be empty or
+  1538→                    no sessions required rebuilding.
+  1539→                  </div>
+  1540→                )}
+  1541→
+  1542→                <div className="text-xs text-muted-foreground">
+  1543→                  <span className="font-medium text-foreground">Note:</span> Each row
+  1544→                  reflects a <code className="text-xs">SessionSnapshot</code> row replayed
+  1545→                  through <code className="text-xs">govpp-adapter /subscriber/program</code>
+  1546→                  (CreatePolicer + AddStaticNat + ACLAddReplace via the real GoVPP binary API).
+  1547→                  Failed sessions are marked <code className="text-xs">STALE</code> in the
+  1548→                  DB for the reconciliation loop to retry.
+  1549→                </div>
+  1550→              </div>
+  1551→            )}
+  1552→          </CardContent>
+  1553→        </Card>
+  1554→
+  1555→        {/* Interfaces architecture dialog — opened by "Learn More" in the empty state */}
+  1556→        <Dialog open={showInterfacesDialog} onOpenChange={setShowInterfacesDialog}>
+  1557→          <DialogContent className="sm:max-w-lg">
+  1558→            <DialogHeader>
+  1559→              <DialogTitle>VPP Interfaces Architecture</DialogTitle>
+  1560→              <DialogDescription>
+  1561→                Why interfaces may not appear in policy-management mode
+  1562→              </DialogDescription>
+  1563→            </DialogHeader>
+  1564→            <div className="space-y-3 text-sm text-muted-foreground">
+  1565→              <p>
+  1566→                The CRYPTSK ISP Platform uses a three-tier architecture for VPP dataplane
+  1567→                management:
+  1568→              </p>
+  1569→              <ol className="list-decimal list-inside space-y-2 ml-2">
+  1570→                <li>
+  1571→                  <span className="font-medium text-foreground">OSS/BSS Layer</span> — Next.js
+  1572→                  UI + PostgreSQL. Manages subscribers, plans, policies, and sessions.
+  1573→                </li>
+  1574→                <li>
+  1575→                  <span className="font-medium text-foreground">Session Engine</span> (port
+  1576→                  3010) — Orchestrates login/logout flows. Calls VPP adapter via HTTP API
+  1577→                  (never <code className="text-xs">vppctl</code> directly) to enforce the hard
+  1578→                  boundary between control plane and dataplane.
+  1579→                </li>
+  1580→                <li>
+  1581→                  <span className="font-medium text-foreground">VPP Adapter</span> (port
+  1582→                  3015) — Translates REST calls into VPP binary API operations. In
+  1583→                  production, connects to a real VPP/DPDK binary via the GoVPP gateway.
+  1584→                </li>
+  1585→              </ol>
+  1586→              <p>
+  1587→                In this sandbox, the VPP adapter runs in{" "}
+  1588→                <span className="font-medium text-foreground">policy-management mode</span> —
+  1589→                it maintains in-memory policy state (policers, NAT mappings, ACLs) and
+  1590→                persists SessionSnapshots to the database, but does not connect to a real VPP
+  1591→                binary, so no live interfaces are reported.
+  1592→              </p>
+  1593→              <p>
+  1594→                In production with DPDK + VPP binary deployed, this card will show all
+  1595→                dataplane interfaces (DPDK, af_packet, virtio, tap, vxlan, etc.) with their
+  1596→                state, MAC address, link speed, and live statistics counters.
+  1597→              </p>
+  1598→            </div>
+  1599→            <DialogClose asChild>
+  1600→              <Button variant="outline" className="w-full">
+  1601→                Got it
+  1602→              </Button>
+  1603→            </DialogClose>
+  1604→          </DialogContent>
+  1605→        </Dialog>
+  1606→      </motion.div>
+  1607→    </AnimatePresence>
+  1608→  );
+  1609→}
+  1610→
+  1611→// ─────────────────────────────────────────────────────────────────
+  1612→// TAB 2: POLICY OBJECTS
+  1613→// ─────────────────────────────────────────────────────────────────
+  1614→function PolicyObjectRow({
+  1615→  obj,
+  1616→  kind,
+  1617→  onDelete,
+  1618→}: {
+  1619→  obj: AnyRecord;
+  1620→  kind: "acl" | "nat" | "policy";
+  1621→  onDelete: (obj: AnyRecord) => void;
+  1622→}) {
+  1623→  const id = obj.id || obj._id || obj.name;
+  1624→  const name = obj.name || obj.profileName || "(unnamed)";
+  1625→  const desc = obj.description || obj.desc;
+  1626→  const isEnabled = obj.isEnabled ?? obj.enabled ?? true;
+  1627→  const type = obj.type || obj.policyType || obj.mode;
+  1628→  const created = obj.createdAt || obj.created;
+  1629→  const updated = obj.updatedAt || obj.updated;
+  1630→
+  1631→  return (
+  1632→    <TableRow>
+  1633→      <TableCell className="font-mono font-medium">{name}</TableCell>
+  1634→      {(kind === "policy" || kind === "acl") && (
+  1635→        <TableCell>
+  1636→          {type && <Badge variant="secondary">{type}</Badge>}
+  1637→        </TableCell>
+  1638→      )}
+  1639→      <TableCell className="text-muted-foreground text-xs max-w-xs truncate">
+  1640→        {desc || "—"}
+  1641→      </TableCell>
+  1642→      <TableCell>
+  1643→        <Badge
+  1644→          variant="outline"
+  1645→          className={
+  1646→            isEnabled
+  1647→              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+  1648→              : "bg-slate-100 text-slate-600 border-slate-200"
+  1649→          }
+  1650→        >
+  1651→          {isEnabled ? "ENABLED" : "DISABLED"}
+  1652→        </Badge>
+  1653→      </TableCell>
+  1654→      <TableCell className="text-xs text-muted-foreground">
+  1655→        {formatTime(created)}
+  1656→      </TableCell>
+  1657→      <TableCell className="text-right">
+  1658→        <Button
+  1659→          size="sm"
+  1660→          variant="ghost"
+  1661→          className="text-red-600 hover:bg-red-50"
+  1662→          onClick={() => onDelete(obj)}
+  1663→        >
+  1664→          <Trash2 className="h-4 w-4" />
+  1665→        </Button>
+  1666→      </TableCell>
+  1667→    </TableRow>
+  1668→  );
+  1669→}
+  1670→
+  1671→function CreatePolicyObjectForm({
+  1672→  kind,
+  1673→  onCreate,
+  1674→}: {
+  1675→  kind: "acl" | "nat" | "policy";
+  1676→  onCreate: (payload: AnyRecord) => void;
+  1677→}) {
+  1678→  // Local form state
+  1679→  const [name, setName] = useState("");
+  1680→  const [description, setDescription] = useState("");
+  1681→  const [defaultAction, setDefaultAction] = useState("PERMIT");
+  1682→  const [rulesJson, setRulesJson] = useState("[]");
+  1683→  const [publicIpStart, setPublicIpStart] = useState("");
+  1684→  const [publicIpEnd, setPublicIpEnd] = useState("");
+  1685→  const [portStart, setPortStart] = useState("1024");
+  1686→  const [portEnd, setPortEnd] = useState("65535");
+  1687→  const [natMode, setNatMode] = useState("NAT44");
+  1688→  const [policyType, setPolicyType] = useState("POLICER");
+  1689→  const [profileId, setProfileId] = useState("");
+  1690→  const [configJson, setConfigJson] = useState("{}");
+  1691→  const [error, setError] = useState<string | null>(null);
+  1692→
+  1693→  const submit = () => {
+  1694→    setError(null);
+  1695→    if (!name.trim()) {
+  1696→      setError("Name is required");
+  1697→      return;
+  1698→    }
+  1699→    let payload: AnyRecord = { name, description };
+  1700→    if (kind === "acl") {
+  1701→      payload.defaultAction = defaultAction;
+  1702→      try {
+  1703→        payload.rules = JSON.parse(rulesJson);
+  1704→      } catch {
+  1705→        setError("rulesJson must be valid JSON");
+  1706→        return;
+  1707→      }
+  1708→    } else if (kind === "nat") {
+  1709→      payload.publicIpStart = publicIpStart;
+  1710→      payload.publicIpEnd = publicIpEnd;
+  1711→      payload.portStart = parseInt(portStart, 10);
+  1712→      payload.portEnd = parseInt(portEnd, 10);
+  1713→      payload.mode = natMode;
+  1714→    } else if (kind === "policy") {
+  1715→      payload.type = policyType;
+  1716→      if (profileId) payload.profileId = profileId;
+  1717→      try {
+  1718→        payload.config = JSON.parse(configJson);
+  1719→      } catch {
+  1720→        setError("config must be valid JSON");
+  1721→        return;
+  1722→      }
+  1723→    }
+  1724→    onCreate(payload);
+  1725→    // Reset
+  1726→    setName("");
+  1727→    setDescription("");
+  1728→    setRulesJson("[]");
+  1729→    setConfigJson("{}");
+  1730→  };
+  1731→
+  1732→  return (
+  1733→    <div className="space-y-3 rounded-md border bg-muted/30 dark:bg-muted/20 p-4">
+  1734→      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+  1735→        <div>
+  1736→          <Label htmlFor={`name-${kind}`}>Name</Label>
+  1737→          <Input
+  1738→            id={`name-${kind}`}
+  1739→            value={name}
+  1740→            onChange={(e) => setName(e.target.value)}
+  1741→            placeholder="e.g. ACL-INTERNET-ONLY"
+  1742→          />
+  1743→        </div>
+  1744→        <div>
+  1745→          <Label htmlFor={`desc-${kind}`}>Description</Label>
+  1746→          <Input
+  1747→            id={`desc-${kind}`}
+  1748→            value={description}
+  1749→            onChange={(e) => setDescription(e.target.value)}
+  1750→            placeholder="Optional"
+  1751→          />
+  1752→        </div>
+  1753→      </div>
+  1754→
+  1755→      {kind === "acl" && (
+  1756→        <>
+  1757→          <div>
+  1758→            <Label>Default Action</Label>
+  1759→            <Select value={defaultAction} onValueChange={setDefaultAction}>
+  1760→              <SelectTrigger className="w-full">
+  1761→                <SelectValue placeholder="Action" />
+  1762→              </SelectTrigger>
+  1763→              <SelectContent>
+  1764→                <SelectItem value="PERMIT">PERMIT</SelectItem>
+  1765→                <SelectItem value="DENY">DENY</SelectItem>
+  1766→              </SelectContent>
+  1767→            </Select>
+  1768→          </div>
+  1769→          <div>
+  1770→            <Label htmlFor={`rules-${kind}`}>Rules (JSON array)</Label>
+  1771→            <Textarea
+  1772→              id={`rules-${kind}`}
+  1773→              value={rulesJson}
+  1774→              onChange={(e) => setRulesJson(e.target.value)}
+  1775→              className="font-mono text-xs"
+  1776→              rows={5}
+  1777→              placeholder='[{"action":"PERMIT","src":"10.0.0.0/8","dst":"any"}]'
+  1778→            />
+  1779→          </div>
+  1780→        </>
+  1781→      )}
+  1782→
+  1783→      {kind === "nat" && (
+  1784→        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+  1785→          <div>
+  1786→            <Label>Public IP Start</Label>
+  1787→            <Input
+  1788→              value={publicIpStart}
+  1789→              onChange={(e) => setPublicIpStart(e.target.value)}
+  1790→              placeholder="203.0.113.10"
+  1791→            />
+  1792→          </div>
+  1793→          <div>
+  1794→            <Label>Public IP End</Label>
+  1795→            <Input
+  1796→              value={publicIpEnd}
+  1797→              onChange={(e) => setPublicIpEnd(e.target.value)}
+  1798→              placeholder="203.0.113.100"
+  1799→            />
+  1800→          </div>
+  1801→          <div>
+  1802→            <Label>Port Start</Label>
+  1803→            <Input
+  1804→              type="number"
+  1805→              value={portStart}
+  1806→              onChange={(e) => setPortStart(e.target.value)}
+  1807→            />
+  1808→          </div>
+  1809→          <div>
+  1810→            <Label>Port End</Label>
+  1811→            <Input
+  1812→              type="number"
+  1813→              value={portEnd}
+  1814→              onChange={(e) => setPortEnd(e.target.value)}
+  1815→            />
+  1816→          </div>
+  1817→          <div className="col-span-2 md:col-span-4">
+  1818→            <Label>NAT Mode</Label>
+  1819→            <Select value={natMode} onValueChange={setNatMode}>
+  1820→              <SelectTrigger className="w-full">
+  1821→                <SelectValue placeholder="Mode" />
+  1822→              </SelectTrigger>
+  1823→              <SelectContent>
+  1824→                <SelectItem value="NAT44">NAT44</SelectItem>
+  1825→                <SelectItem value="NAT66">NAT66</SelectItem>
+  1826→                <SelectItem value="CGNAT">CGNAT (carrier-grade)</SelectItem>
+  1827→              </SelectContent>
+  1828→            </Select>
+  1829→          </div>
+  1830→        </div>
+  1831→      )}
+  1832→
+  1833→      {kind === "policy" && (
+  1834→        <>
+  1835→          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+  1836→            <div>
+  1837→              <Label>Type</Label>
+  1838→              <Select value={policyType} onValueChange={setPolicyType}>
+  1839→                <SelectTrigger className="w-full">
+  1840→                  <SelectValue placeholder="Type" />
+  1841→                </SelectTrigger>
+  1842→                <SelectContent>
+  1843→                  <SelectItem value="POLICER">POLICER</SelectItem>
+  1844→                  <SelectItem value="ACL">ACL</SelectItem>
+  1845→                  <SelectItem value="NAT">NAT</SelectItem>
+  1846→                  <SelectItem value="VRF">VRF</SelectItem>
+  1847→                  <SelectItem value="QOS">QoS</SelectItem>
+  1848→                  <SelectItem value="CLASSIFICATION">CLASSIFICATION</SelectItem>
+  1849→                </SelectContent>
+  1850→              </Select>
+  1851→            </div>
+  1852→            <div>
+  1853→              <Label>Profile ID (optional)</Label>
+  1854→              <Input
+  1855→                value={profileId}
+  1856→                onChange={(e) => setProfileId(e.target.value)}
+  1857→                placeholder="Link to an ACL/NAT profile"
+  1858→              />
+  1859→            </div>
+  1860→          </div>
+  1861→          <div>
+  1862→            <Label htmlFor={`config-${kind}`}>Config (JSON)</Label>
+  1863→            <Textarea
+  1864→              id={`config-${kind}`}
+  1865→              value={configJson}
+  1866→              onChange={(e) => setConfigJson(e.target.value)}
+  1867→              className="font-mono text-xs"
+  1868→              rows={4}
+  1869→              placeholder='{"rate":100000000,"burst":1000000}'
+  1870→            />
+  1871→          </div>
+  1872→        </>
+  1873→      )}
+  1874→
+  1875→      {error && (
+  1876→        <div className="text-xs text-red-600 flex items-center gap-1.5">
+  1877→          <AlertTriangle className="h-3.5 w-3.5" />
+  1878→          {error}
+  1879→        </div>
+  1880→      )}
+  1881→
+  1882→      <Button size="sm" onClick={submit}>
+  1883→        <Plus className="h-4 w-4 mr-1.5" />
+  1884→        Create
+  1885→      </Button>
+  1886→    </div>
+  1887→  );
+  1888→}
+  1889→
+  1890→function PolicyObjectsTab() {
+  1891→  const queryClient = useQueryClient();
+  1892→  const [showAclForm, setShowAclForm] = useState(false);
+  1893→  const [showNatForm, setShowNatForm] = useState(false);
+  1894→  const [showPolicyForm, setShowPolicyForm] = useState(false);
+  1895→
+  1896→  const aclQ = useQuery({
+  1897→    queryKey: ["vpp-acl-profiles"],
+  1898→    queryFn: async () => {
+  1899→      const res = await fetch("/api/vpp?action=acl-profiles");
+  1900→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1901→      return res.json();
+  1902→    },
+  1903→    retry: 1,
+  1904→  });
+  1905→
+  1906→  const natQ = useQuery({
+  1907→    queryKey: ["vpp-nat-pools"],
+  1908→    queryFn: async () => {
+  1909→      const res = await fetch("/api/vpp?action=nat-pools");
+  1910→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1911→      return res.json();
+  1912→    },
+  1913→    retry: 1,
+  1914→  });
+  1915→
+  1916→  const policyQ = useQuery({
+  1917→    queryKey: ["vpp-policy-objects"],
+  1918→    queryFn: async () => {
+  1919→      const res = await fetch("/api/vpp?action=policy-objects");
+  1920→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1921→      return res.json();
+  1922→    },
+  1923→    retry: 1,
+  1924→  });
+  1925→
+  1926→  const aclProfiles: AnyRecord[] = aclQ.data?.profiles || aclQ.data?.items || aclQ.data?.data || [];
+  1927→  const natPools: AnyRecord[] = natQ.data?.pools || natQ.data?.items || natQ.data?.data || [];
+  1928→  const policyObjects: AnyRecord[] = policyQ.data?.objects || policyQ.data?.items || policyQ.data?.data || [];
+  1929→
+  1930→  const createMut = useMutation({
+  1931→    mutationFn: async ({ kind, payload }: { kind: "acl" | "nat" | "policy"; payload: AnyRecord }) => {
+  1932→      const action =
+  1933→        kind === "acl"
+  1934→          ? "acl-profiles-create"
+  1935→          : kind === "nat"
+  1936→          ? "nat-pools-create"
+  1937→          : "policy-objects-create";
+  1938→      const res = await fetch(`/api/vpp?action=${action}`, {
+  1939→        method: "POST",
+  1940→        headers: { "Content-Type": "application/json" },
+  1941→        body: JSON.stringify(payload),
+  1942→      });
+  1943→      const data = await res.json().catch(() => ({}));
+  1944→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1945→      return data;
+  1946→    },
+  1947→    onSuccess: (_data, vars) => {
+  1948→      const qk =
+  1949→        vars.kind === "acl"
+  1950→          ? "vpp-acl-profiles"
+  1951→          : vars.kind === "nat"
+  1952→          ? "vpp-nat-pools"
+  1953→          : "vpp-policy-objects";
+  1954→      queryClient.invalidateQueries({ queryKey: [qk] });
+  1955→      toast.success(`${vars.kind.toUpperCase()} object created`);
+  1956→    },
+  1957→    onError: (err: Error) => toast.error(err.message || "Create failed"),
+  1958→  });
+  1959→
+  1960→  const deleteMut = useMutation({
+  1961→    mutationFn: async ({ kind, id }: { kind: "acl" | "nat" | "policy"; id: string }) => {
+  1962→      const action =
+  1963→        kind === "acl"
+  1964→          ? "acl-profiles-delete"
+  1965→          : kind === "nat"
+  1966→          ? "nat-pools-delete"
+  1967→          : "policy-objects-delete";
+  1968→      const res = await fetch(`/api/vpp?action=${action}&id=${encodeURIComponent(id)}`, {
+  1969→        method: "DELETE",
+  1970→      });
+  1971→      const data = await res.json().catch(() => ({}));
+  1972→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1973→      return data;
+  1974→    },
+  1975→    onSuccess: (_data, vars) => {
+  1976→      const qk =
+  1977→        vars.kind === "acl"
+  1978→          ? "vpp-acl-profiles"
+  1979→          : vars.kind === "nat"
+  1980→          ? "vpp-nat-pools"
+  1981→          : "vpp-policy-objects";
+  1982→      queryClient.invalidateQueries({ queryKey: [qk] });
+  1983→      toast.success("Object deleted");
+  1984→    },
+  1985→    onError: (err: Error) => toast.error(err.message || "Delete failed"),
+  1986→  });
+  1987→
+  1988→  const onDelete = (kind: "acl" | "nat" | "policy") => (obj: AnyRecord) => {
+  1989→    const id = String(obj.id || obj._id || obj.name);
+  1990→    if (!id) {
+  1991→      toast.error("Cannot delete — object has no identifier");
+  1992→      return;
+  1993→    }
+  1994→    if (!window.confirm(`Delete ${obj.name || id}?`)) return;
+  1995→    deleteMut.mutate({ kind, id });
+  1996→  };
+  1997→
+  1998→  return (
+  1999→    <div className="space-y-6">
+  2000→      <div>
+
+[showing lines 1-2000 of 5254; use offset=2001 with limit to continue reading]
