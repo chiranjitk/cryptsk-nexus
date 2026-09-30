@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, formatINR, cn } from "@/lib/utils";
 import {
@@ -41,6 +41,7 @@ import { toast } from "sonner";
 import PageHeader from "@/components/page-header";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleStore } from "@/store/module-store";
+import { useAppStore } from "@/store/app-store";
 import SubscriberQuickView from "@/components/subscriber-quick-view";
 
 // ─── Types ──────────────────────────────────────────────
@@ -578,6 +579,25 @@ export default function SubscribersPage() {
   const openDetail = (id: string) => { setSelectedId(id); setDetailOpen(true); };
   const openDelete = (sub: Subscriber) => { setSelectedId(sub.id); setSelectedSub(sub); setDeleteOpen(true); };
 
+  // Open the edit dialog by subscriber id only — openEdit() fetches the
+  // full detail itself; the stub object only covers the failure fallback.
+  const openEditById = (id: string) => {
+    openEdit({ id, code: "", name: "", email: "", phone: "", address: "", status: "ACTIVE", connectionType: "FTTH", area: null, plan: null, balance: 0, createdAt: "", updatedAt: "" });
+  };
+
+  // ─── Cross-page handshake (Subscriber Quick View "Edit"/"View") ───
+  // QuickView navigates via setCurrentPage() and stores a pending action;
+  // consume + clear it here so it fires exactly once.
+  const pendingSubscriberAction = useAppStore((s) => s.pendingSubscriberAction);
+  const setPendingSubscriberAction = useAppStore((s) => s.setPendingSubscriberAction);
+  useEffect(() => {
+    if (!pendingSubscriberAction) return;
+    const { id, action } = pendingSubscriberAction;
+    setPendingSubscriberAction(null);
+    if (action === "edit") openEditById(id);
+    else if (action === "view") openDetail(id);
+  }, [pendingSubscriberAction]);
+
   const handleKickSession = async (sub: Subscriber) => {
     if (!sub.serviceUsername) {
       toast.error("No RADIUS username for this subscriber");
@@ -880,7 +900,7 @@ export default function SubscribersPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">Revenue</p>
-                <p className="text-sm sm:text-lg font-bold tabular-nums leading-tight mt-0.5">
+                <p className="text-xs sm:text-lg font-bold tabular-nums leading-tight mt-0.5">
                   {statsData ? formatINR(statsData.totalMonthlyRevenue) : "—"}
                 </p>
               </div>

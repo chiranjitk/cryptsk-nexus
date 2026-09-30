@@ -393,6 +393,7 @@ export function CommandPalette() {
     currentPage,
     currentSection,
     setCurrentPage,
+    setPendingSubscriberAction,
   } = useAppStore();
   const mounted = useSyncExternalStore(
     emptySubscribe,
@@ -493,12 +494,13 @@ export function CommandPalette() {
   const handleSubscriberSelect = useCallback(
     (subscriber: SubscriberResult) => {
       setCommandPaletteOpen(false);
-      // Navigate to subscribers page with the specific subscriber
-      setCurrentPage("Subscribers", "MAIN");
-      window.location.hash = `subscribers?id=${subscriber.id}`;
+      // SPA routing: hand the subscriber id to the Subscribers page,
+      // which opens the detail view (hash URLs are not routed in this app)
+      setPendingSubscriberAction({ id: subscriber.id, action: "view" });
+      setCurrentPage("Subscribers", "SUBSCRIBERS");
       toast.success(`Viewing ${subscriber.name}`);
     },
-    [setCommandPaletteOpen, setCurrentPage]
+    [setCommandPaletteOpen, setCurrentPage, setPendingSubscriberAction]
   );
 
   // Handle quick action

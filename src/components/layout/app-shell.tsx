@@ -90,9 +90,9 @@ export function AppShell({ children }: AppShellProps) {
         <div className="hidden lg:block">
           <AppSidebar />
         </div>
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <AppHeader />
-          <main className="flex-1 content-area">{children}</main>
+          <main className="flex-1 min-w-0 content-area">{children}</main>
           <AppFooter />
         </SidebarInset>
         <QuickActionsWidget />

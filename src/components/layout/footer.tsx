@@ -175,7 +175,7 @@ export function AppFooter() {
         )}
       >
         {/* ── Left: System Info ── */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground/80">
+        <div className="flex min-w-0 shrink items-center gap-4 text-xs text-muted-foreground/80">
           {/* Network Status */}
           <div className={cn(
             "flex items-center gap-1.5 px-2 py-0.5 rounded-full transition-all duration-200",
@@ -216,10 +216,10 @@ export function AppFooter() {
             </span>
           </div>
 
-          <span className="hidden lg:inline text-border/50">|</span>
+          <span className="hidden 2xl:inline text-border/50">|</span>
 
           {/* Online Subscribers */}
-          <div className="hidden lg:flex items-center gap-1.5">
+          <div className="hidden 2xl:flex items-center gap-1.5">
             <Wifi className="h-3 w-3 shrink-0 text-emerald-500" />
             <span>
               Online:{" "}
@@ -250,7 +250,7 @@ export function AppFooter() {
         </div>
 
         {/* ── Center: Subscriber Info ── */}
-        <div className="hidden lg:flex items-center gap-4 text-xs text-muted-foreground/80">
+        <div className="hidden 2xl:flex items-center gap-4 text-xs text-muted-foreground/80">
           <div className="flex items-center gap-1.5">
             <Globe className="h-3 w-3 shrink-0" />
             <span>
@@ -263,7 +263,7 @@ export function AppFooter() {
         </div>
 
         {/* ── Right: Date, Time, Environment ── */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground/80">
+        <div className="flex min-w-0 shrink items-center gap-4 text-xs text-muted-foreground/80">
           <div className="hidden sm:flex items-center gap-1.5">
             <Database className="h-3 w-3 shrink-0" />
             <span className="font-medium text-foreground/70 dark:text-foreground/60">PostgreSQL</span>
@@ -285,9 +285,9 @@ export function AppFooter() {
             <span className="whitespace-nowrap text-foreground/70 dark:text-foreground/60" suppressHydrationWarning>{currentDate}</span>
           </div>
 
-          <span className="hidden lg:inline text-border/50">|</span>
+          <span className="hidden 2xl:inline text-border/50">|</span>
 
-          <div className="hidden lg:flex items-center gap-1.5">
+          <div className="hidden 2xl:flex items-center gap-1.5">
             <ShieldCheck className="h-3 w-3 shrink-0" />
             <span className="font-medium text-emerald-600 dark:text-emerald-400">Secure</span>
           </div>

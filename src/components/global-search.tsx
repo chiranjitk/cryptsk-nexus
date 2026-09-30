@@ -144,7 +144,7 @@ export function GlobalSearch({ open: controlledOpen, onOpenChange: controlledOnO
   const [search, setSearch] = useState("");
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const { setCurrentPage } = useAppStore();
+  const { setCurrentPage, setPendingSubscriberAction } = useAppStore();
 
   // Support both controlled and uncontrolled modes
   const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
@@ -213,11 +213,13 @@ export function GlobalSearch({ open: controlledOpen, onOpenChange: controlledOnO
       setOpen(false);
       setSearch("");
       setDebouncedSearch("");
-      // Navigate to subscribers page with the specific ID
-      window.location.hash = `subscribers?id=${subscriber.id}`;
+      // SPA routing: hand the subscriber id to the Subscribers page,
+      // which opens the detail view (hash URLs are not routed in this app)
+      setPendingSubscriberAction({ id: subscriber.id, action: "view" });
+      setCurrentPage("Subscribers", "SUBSCRIBERS");
       toast.success(`Viewing ${subscriber.name}`);
     },
-    [setOpen]
+    [setOpen, setCurrentPage, setPendingSubscriberAction]
   );
 
   // Handle quick action
