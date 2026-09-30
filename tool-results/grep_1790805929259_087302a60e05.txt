@@ -1,0 +1,252 @@
+/home/z/my-project/src/components/pages/collection-page.tsx:218:        <DialogHeader><DialogTitle>Set Collection Targets</DialogTitle><DialogDescription>Configure monthly collection targets per agent</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/collection-page.tsx:698:          <DialogHeader><DialogTitle className="flex items-center gap-2"><Plus className="h-5 w-5 text-red-600" />Record Payment</DialogTitle><DialogDescription>Enter payment (partial or full amount)</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1628:            <DialogDescription>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1672:            <DialogDescription>Create a new VLAN on a parent physical interface.</DialogDescription>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1738:            <DialogDescription>Create a new bridge and assign member interfaces.</DialogDescription>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1809:            <DialogDescription>Create a new bonded interface for link aggregation.</DialogDescription>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1916:            <DialogDescription>
+/home/z/my-project/src/components/pages/interfaces-page.tsx:2011:            <DialogDescription>
+/home/z/my-project/src/components/pages/ipam-cgnat-tab.tsx:930:            <DialogDescription>
+/home/z/my-project/src/components/pages/ipam-cgnat-tab.tsx:1033:            <DialogDescription>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1080:            <DialogDescription>{editId ? "Update technician information" : "Add a new field technician"}</DialogDescription>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1135:                <DialogDescription>Technician details and performance metrics</DialogDescription>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1513:          <DialogHeader><DialogTitle>Apply Leave</DialogTitle><DialogDescription>Submit a leave request for this technician</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1529:          <DialogHeader><DialogTitle>Set Availability</DialogTitle><DialogDescription>Configure working hours and days off for this technician</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1554:          <DialogHeader><DialogTitle>Dispatch {dispatchType === "complaint" ? "Complaint" : "Installation"}</DialogTitle><DialogDescription>Create and assign a task</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1581:          <DialogHeader><DialogTitle>Set Status</DialogTitle><DialogDescription>Change status for {selectedIds.size} technicians</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1602:          <DialogHeader><DialogTitle>Edit Compensation</DialogTitle><DialogDescription>Update salary breakdown for this technician</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1620:          <DialogHeader><DialogTitle>Edit Bank Details</DialogTitle><DialogDescription>Update bank account and payment information</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1649:          <DialogHeader><DialogTitle>{editingCertIdx !== null ? "Edit Certification" : "Add Certification"}</DialogTitle><DialogDescription>{editingCertIdx !== null ? "Update certification details" : "Add a new professional certification"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1666:          <DialogHeader><DialogTitle>Login Account Created</DialogTitle><DialogDescription>User account has been set up for this technician</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/technicians-page.tsx:1690:          <DialogHeader><DialogTitle>Mark Attendance</DialogTitle><DialogDescription>Date: {attendanceStatusDate}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/areas-page.tsx:775:              <DialogDescription className="text-xs text-muted-foreground">
+/home/z/my-project/src/components/pages/areas-page.tsx:886:            <DialogDescription className="text-xs text-muted-foreground">
+/home/z/my-project/src/components/pages/complaints-page.tsx:1419:            <DialogDescription>Create a new support ticket</DialogDescription>
+/home/z/my-project/src/components/pages/complaints-page.tsx:1529:                <DialogDescription className="flex items-center gap-2 flex-wrap">
+/home/z/my-project/src/components/pages/complaints-page.tsx:2023:            <DialogDescription>
+/home/z/my-project/src/components/pages/complaints-page.tsx:2062:            <DialogDescription>Configure automatic SLA escalation for complaints</DialogDescription>
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:601:            <DialogDescription>
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:671:            <DialogDescription>Assign a custom RADIUS attribute to {selectedSubscriberName}.</DialogDescription>
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:711:            <DialogDescription>Set a custom attribute for multiple subscribers at once.</DialogDescription>
+/home/z/my-project/src/components/pages/partner-users-page.tsx:507:            <DialogDescription>
+/home/z/my-project/src/components/pages/partner-users-page.tsx:644:            <DialogDescription>
+/home/z/my-project/src/components/pages/audit-log-page.tsx:2818:            <DialogDescription>
+/home/z/my-project/src/components/pages/audit-log-page.tsx:3003:            <DialogDescription>
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1047:            <DialogDescription>Enter the connection details for the MikroTik device</DialogDescription>
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1087:            <DialogDescription>Add a new IP address to the device</DialogDescription>
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1120:            <DialogDescription>Add a new static route to the routing table</DialogDescription>
+/home/z/my-project/src/components/pages/time-access-page.tsx:463:            <DialogDescription>{editOpen ? "Update the time access policy." : "Define a new time-based access policy."}</DialogDescription>
+/home/z/my-project/src/components/pages/time-access-page.tsx:514:            <DialogDescription>Assign a time access policy to a subscriber.</DialogDescription>
+/home/z/my-project/src/components/pages/smart-collections-page.tsx:1151:              <DialogDescription>
+/home/z/my-project/src/components/pages/referral-page.tsx:511:          <DialogHeader><DialogTitle>Manual Points Adjustment</DialogTitle><DialogDescription>Manually add or deduct points for a loyalty member.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/aaa-sessions-page.tsx:998:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-sessions-page.tsx:1235:          <DialogDescription>
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1274:            <DialogHeader><DialogTitle>{editingId ? "Edit Portal" : "Create Portal"}</DialogTitle><DialogDescription>{editingId ? "Update portal configuration" : "Configure a new captive portal"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:1864:            <DialogDescription>{editingLink ? "Update an existing WAN link configuration." : "Add a new WAN link with OS interface binding."}</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:1983:            <DialogDescription>{editingRule ? "Update the failover rule configuration." : "Create a new failover rule between WAN links."}</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2028:            <DialogDescription>Set the monthly cost budget for <strong>{budgetTarget?.name}</strong>.</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2056:            <DialogDescription>Configure max bandwidth for <strong>{shapingTarget?.name}</strong>.</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2100:            <DialogDescription>Configure automatic failback for <strong>{failbackTarget?.name}</strong>.</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2149:            <DialogDescription>Test network connectivity{pingTarget && pingTarget.name !== "Quick Test" ? ` via <strong>${pingTarget.name}</strong>` : ""}.</DialogDescription>
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2217:            <DialogDescription>Configure IP address on the network interface. This directly modifies the OS network configuration.</DialogDescription>
+/home/z/my-project/src/components/pages/ddos-protection-page.tsx:797:                <DialogDescription>
+/home/z/my-project/src/components/pages/agents-page.tsx:733:          <DialogHeader><DialogTitle>{editId ? "Edit Agent" : "Add Agent"}</DialogTitle><DialogDescription>{editId ? "Update agent details and targets" : "Add a new collection agent to the team"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:992:          <DialogHeader><DialogTitle className="flex items-center gap-2"><FileSpreadsheet className="h-5 w-5 text-red-500" />Import Agents from CSV</DialogTitle><DialogDescription>Upload a CSV file to bulk-create collection agents</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:1020:          <DialogHeader><DialogTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-red-500" />Create Login Account</DialogTitle><DialogDescription>Set up platform login credentials for this agent</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:1053:          <DialogHeader><DialogTitle className="flex items-center gap-2"><Banknote className="h-5 w-5 text-red-500" />Reconcile Cash</DialogTitle><DialogDescription>Compare expected vs collected amount for the day</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:1077:          <DialogHeader><DialogTitle>Add Follow-up</DialogTitle><DialogDescription>Schedule a follow-up task for this agent</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:1094:          <DialogHeader><DialogTitle>Record Commission Payout</DialogTitle><DialogDescription>Record a commission payout for this agent</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/agents-page.tsx:1110:          <DialogHeader><DialogTitle className="flex items-center gap-2"><Target className="h-5 w-5 text-red-500" />Configure Collection Targets</DialogTitle><DialogDescription>Set daily and monthly collection targets for this agent</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/selfcare/selfcare-services.tsx:437:          <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-services.tsx:664:          <DialogDescription>
+/home/z/my-project/src/components/pages/app-awareness-page.tsx:1288:                <DialogDescription>Detailed traffic analysis for this application</DialogDescription>
+/home/z/my-project/src/components/pages/app-awareness-page.tsx:1629:                <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-payments.tsx:801:              <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-payments.tsx:1031:              <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-payments.tsx:1094:              <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-dashboard.tsx:681:          <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-dashboard.tsx:869:          <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-dashboard.tsx:1022:          <DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-dashboard.tsx:1596:            <DialogDescription>
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:642:                <DialogDescription>{subnetEditId ? "Modify the DHCPv6 subnet configuration." : "Define a new DHCPv6 subnet with address allocation settings."}</DialogDescription>
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:823:                <DialogDescription>{resEditId ? "Modify the host reservation." : "Add a new IPv6 host reservation by DUID."}</DialogDescription>
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:989:                <DialogDescription>{pdEditId ? "Modify the prefix delegation pool." : "Configure a new IA_PD prefix delegation for downstream CPEs."}</DialogDescription>
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:1198:                  <DialogDescription>Full generated configuration based on current platform DHCPv6 settings.</DialogDescription>
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:527:            <DialogDescription>
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:624:            <DialogDescription>Select a template and provide subscriber data to provision in bulk.</DialogDescription>
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:674:            <DialogDescription>Details for job #{viewingJob?.id.slice(-8)}</DialogDescription>
+/home/z/my-project/src/components/pages/selfcare/selfcare-usage.tsx:353:          <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:851:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:935:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:973:            <DialogDescription>Record a new payment from a subscriber.</DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:1108:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:1138:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:1187:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:1212:            <DialogDescription>
+/home/z/my-project/src/components/pages/payments-page.tsx:1243:            <DialogDescription>Receipt for {selectedPayment?.receiptNumber}</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1287:            <DialogDescription>Schedule a new connection installation</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1379:            <DialogDescription>Modify scheduled installation details</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1462:            <DialogDescription>Are you sure you want to cancel this installation?</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1484:            <DialogDescription>How was the installation experience?</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1510:            <DialogDescription>Create multiple installations for a date range</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1574:            <DialogDescription>Automatically assign available technicians to scheduled installations</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1608:            <DialogDescription>Today&apos;s installation summary</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1683:            <DialogDescription>Select equipment to allocate</DialogDescription>
+/home/z/my-project/src/components/pages/installations-page.tsx:1724:                <DialogDescription>Scheduled for {formatDateTime(detailInst.scheduledDate)} {detailInst.scheduledTime && `at ${detailInst.scheduledTime}`}</DialogDescription>
+/home/z/my-project/src/components/pages/ssh-device-manager-page.tsx:396:              <DialogDescription>Configure a new device to connect via SSH</DialogDescription>
+/home/z/my-project/src/components/pages/grafana-dashboards-page.tsx:220:            <DialogDescription>
+/home/z/my-project/src/components/pages/grace-periods-page.tsx:499:            <DialogDescription>Grant a grace period to a subscriber to delay suspension actions.</DialogDescription>
+/home/z/my-project/src/components/pages/grace-periods-page.tsx:573:            <DialogDescription>Change the status for <span className="font-semibold">{selectedName}</span>.</DialogDescription>
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1528:              <DialogDescription>
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1577:              <DialogDescription>
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1625:              <DialogDescription>
+/home/z/my-project/src/components/pages/vouchers-page.tsx:281:          <DialogHeader><DialogTitle>Voucher Detail</DialogTitle><DialogDescription>Full voucher information and usage history</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/vouchers-page.tsx:579:              <DialogHeader><DialogTitle>Voucher Templates</DialogTitle><DialogDescription>Create and manage reusable voucher templates with pre-defined plan, price, and validity</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/vouchers-page.tsx:782:          <DialogHeader><DialogTitle>Generate Vouchers</DialogTitle><DialogDescription>Create new vouchers with custom denomination and validity</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/vouchers-page.tsx:818:          <DialogHeader><DialogTitle><Download className="h-5 w-5 mr-2 inline" />Import Vouchers from CSV</DialogTitle><DialogDescription>Upload a CSV file to bulk-create vouchers. Max 500 vouchers per import.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:1739:              <DialogDescription>
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:2807:          <DialogDescription>
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:3037:          <DialogDescription>
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:5366:            <DialogDescription>
+/home/z/my-project/src/components/pages/vpn-server-page.tsx:694:                          <DialogDescription>Add a new peer to the WireGuard server</DialogDescription>
+/home/z/my-project/src/components/pages/vpn-server-page.tsx:900:                            <DialogDescription>Configure a new IPsec tunnel</DialogDescription>
+/home/z/my-project/src/components/pages/loyalty-gamification-page.tsx:554:                <DialogDescription>{selectedBadge?.description}</DialogDescription>
+/home/z/my-project/src/components/pages/dns-page.tsx:615:                <DialogDescription>
+/home/z/my-project/src/components/pages/dns-page.tsx:1750:                        <DialogDescription>
+/home/z/my-project/src/components/pages/dns-page.tsx:2005:            <DialogDescription>
+/home/z/my-project/src/components/pages/session-engine-page.tsx:1253:            <DialogDescription>Full session information and controls</DialogDescription>
+/home/z/my-project/src/components/pages/session-engine-page.tsx:1483:            <DialogDescription>Change plan or speed for this session</DialogDescription>
+/home/z/my-project/src/components/pages/revenue-reports-page.tsx:1041:            <DialogDescription>Record a new expense entry for tracking.</DialogDescription>
+/home/z/my-project/src/components/pages/revenue-reports-page.tsx:1066:            <DialogDescription>Define targets for key performance metrics. Leave target at 0 to exclude.</DialogDescription>
+/home/z/my-project/src/components/pages/ipam-page.tsx:693:              <DialogHeader><DialogTitle>{editingSubnet ? "Edit Subnet" : "Add Subnet"}</DialogTitle><DialogDescription>{editingSubnet ? "Update subnet configuration" : "Create a new subnet"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/ipam-page.tsx:995:              <DialogHeader><DialogTitle>{editingIp ? "Edit IP Address" : "Assign IP Address"}</DialogTitle><DialogDescription>{editingIp ? "Update IP allocation" : "Allocate a new IP address"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1030:              <DialogHeader><DialogTitle>{editingVlan ? "Edit VLAN" : "Add VLAN"}</DialogTitle><DialogDescription>{editingVlan ? "Update VLAN configuration" : "Create a new VLAN"}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1413:                      <DialogDescription>Add IP range entries to a FreeRADIUS radippool.</DialogDescription>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1554:          <DialogHeader><DialogTitle>IP Address Details</DialogTitle><DialogDescription>{viewIp?.ip}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1677:            <DialogDescription>Assign <strong className="font-mono">{viewIp?.ip}</strong> to a RADIUS subscriber via radreply.</DialogDescription>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1769:            <DialogDescription>Import subnets or IP addresses from a CSV file.</DialogDescription>
+/home/z/my-project/src/components/pages/ipam-page.tsx:1833:            <DialogDescription>Assignment/release log for <strong className="font-mono">{historyIp?.ip}</strong></DialogDescription>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1182:            <DialogDescription>Select a subscriber to enable RADIUS authentication. Service credentials and speed profile are inherited from the subscriber&apos;s plan.</DialogDescription>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1266:            <DialogDescription>Update RADIUS settings for this subscriber.</DialogDescription>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1331:          <DialogHeader><DialogTitle>Add RADIUS Group</DialogTitle><DialogDescription>Create a new RADIUS group. Link it to Plans to auto-assign speed profiles.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1376:          <DialogHeader><DialogTitle>Edit Group</DialogTitle><DialogDescription>Update RADIUS group settings. Changes affect all linked Plans and Subscribers.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1443:            <DialogDescription>Columns: subscriberCode, serviceUsername, servicePassword, group, sessionTimeout, idleTimeout</DialogDescription>
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1607:            <DialogDescription>{importResult?.message}</DialogDescription>
+/home/z/my-project/src/components/pages/partner-page.tsx:413:            <DialogDescription>
+/home/z/my-project/src/components/pages/partner-page.tsx:556:            <DialogDescription>
+/home/z/my-project/src/components/pages/sessions-page.tsx:1134:            <DialogDescription>Full information about this session.</DialogDescription>
+/home/z/my-project/src/components/pages/sessions-page.tsx:1365:            <DialogDescription>Configure session management, password policy, and brute-force protection</DialogDescription>
+/home/z/my-project/src/components/pages/sessions-page.tsx:1556:            <DialogDescription>Full information for this RADIUS session</DialogDescription>
+/home/z/my-project/src/components/pages/reseller-analytics-page.tsx:977:                <DialogDescription>
+/home/z/my-project/src/components/pages/top-ups-page.tsx:468:            <DialogDescription>{editOpen ? "Update the top-up product details." : "Create a new top-up product."}</DialogDescription>
+/home/z/my-project/src/components/pages/ips-page.tsx:1047:                <DialogDescription>
+/home/z/my-project/src/components/pages/inventory-page.tsx:1138:            <DialogDescription>{editId ? "Update equipment details" : "Add new equipment to inventory"}</DialogDescription>
+/home/z/my-project/src/components/pages/inventory-page.tsx:1253:            <DialogDescription>Scan or print this barcode label for the equipment item.</DialogDescription>
+/home/z/my-project/src/components/pages/inventory-page.tsx:1285:            <DialogDescription>Plan a maintenance session for this equipment.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2486:            <DialogDescription>Set local AS number, router ID, and advertised networks.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2538:            <DialogDescription>Establish a new BGP peering session.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2589:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2612:            <DialogDescription>Set router ID and define OSPF areas with their interfaces.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2654:            <DialogDescription>Set router ID and define OSPFv3 areas with their interfaces.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2696:            <DialogDescription>Advertise a network via the RIP protocol.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2728:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2751:            <DialogDescription>Enable RIPng on a network interface for IPv6 routing.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2783:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2806:            <DialogDescription>Configure a BFD peer for fast failure detection.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2869:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2892:            <DialogDescription>Set NET and define ISIS areas with their interfaces.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:2934:            <DialogDescription>Create a new route map entry with match and set clauses.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:3010:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:3033:            <DialogDescription>Create a new prefix list entry for filtering.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:3120:            <DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:3143:            <DialogDescription>Create a new access control list rule.</DialogDescription>
+/home/z/my-project/src/components/pages/dynamic-routing-page.tsx:3214:            <DialogDescription>
+/home/z/my-project/src/components/pages/charge-overrides-page.tsx:414:            <DialogDescription>Set a custom price for a subscriber, optionally with a validity period.</DialogDescription>
+/home/z/my-project/src/components/pages/charge-overrides-page.tsx:516:            <DialogDescription>Update pricing or validity for this override.</DialogDescription>
+/home/z/my-project/src/components/pages/users-page.tsx:1125:          <DialogHeader><DialogTitle className="text-base">Reset User Password</DialogTitle><DialogDescription>Set a new password for this user.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/users-page.tsx:1140:          <DialogHeader><DialogTitle className="text-base">Change Your Password</DialogTitle><DialogDescription>Enter your current password and choose a new one.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/users-page.tsx:1186:          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Upload className="h-5 w-5" /> Import Users from CSV</DialogTitle><DialogDescription>Upload a CSV file with columns: name, email, role (optional), phone (optional), areaId (optional). A default password will be set for imported users.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/incidents-page.tsx:287:              <DialogHeader><DialogTitle>Auto-Detect from Alerts</DialogTitle><DialogDescription>Automatically create incidents from active device-down alerts.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/incidents-page.tsx:303:              <DialogHeader><DialogTitle>Merge Duplicate Incidents</DialogTitle><DialogDescription>Select source and target. Source will be merged into target.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/incidents-page.tsx:453:                              <DialogHeader><DialogTitle>Resolve Incident</DialogTitle><DialogDescription>Fill resolution details and optionally complete RCA.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/aaa-groups-page.tsx:1322:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-groups-page.tsx:1580:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-groups-page.tsx:1649:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:954:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1116:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1614:            <DialogDescription>
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1703:            <DialogDescription>
+/home/z/my-project/src/components/pages/nas-clients-page.tsx:956:                <DialogDescription>
+/home/z/my-project/src/components/pages/nat-logs-page.tsx:1601:            <DialogDescription>Configure a remote syslog server to forward NAT and firewall logs</DialogDescription>
+/home/z/my-project/src/components/pages/firewall-page.tsx:617:                <DialogDescription>
+/home/z/my-project/src/components/pages/backup-page.tsx:879:                <DialogDescription>Select backup destinations and mode</DialogDescription>
+/home/z/my-project/src/components/pages/backup-page.tsx:1830:            <DialogDescription>Configure your cloud backup provider credentials</DialogDescription>
+/home/z/my-project/src/components/pages/backup-page.tsx:1966:            <DialogDescription>Backups stored in your cloud provider</DialogDescription>
+/home/z/my-project/src/components/pages/backup-page.tsx:2001:          <DialogHeader><DialogTitle>Restore from Backup</DialogTitle><DialogDescription>Select a local backup to restore from</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/backup-page.tsx:2081:          <DialogHeader><DialogTitle>Export Data</DialogTitle><DialogDescription>Export data from your database</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/backup-page.tsx:2151:            <DialogDescription>Select an encrypted backup to restore. This will replace the entire database.</DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:1122:            <DialogContent><DialogHeader><DialogTitle>Write Off as Unrecoverable</DialogTitle><DialogDescription>Mark {selectedIds.length} invoice(s) as unrecoverable debt.</DialogDescription></DialogHeader><div className="grid gap-4 py-4"><div><Label>Reason / Note</Label><Textarea value={writeOffNote} onChange={(e) => setWriteOffNote(e.target.value)} className="mt-1" placeholder="Why is this being written off?" /></div></div><DialogFooter><Button variant="outline" onClick={() => setWriteOffOpen(false)}>Cancel</Button><Button className="bg-orange-600 hover:bg-orange-700 text-white" onClick={() => writeOffMutation.mutate({ action: "write-off", invoiceIds: selectedIds, note: writeOffNote })}>Write Off</Button></DialogFooter></DialogContent>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:1125:            <DialogContent><DialogHeader><DialogTitle>Reactivate Subscriber</DialogTitle><DialogDescription>Reactivate {selectedIds.length} subscriber(s) after payment received.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setReactivateOpen(false)}>Cancel</Button><Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => reactivateMutation.mutate({ action: "reactivate", invoiceIds: selectedIds })}>Reactivate</Button></DialogFooter></DialogContent>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:1834:            <DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:1920:            <DialogDescription>Set up an installment payment plan for a subscriber.</DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:2190:            <DialogDescription>Select the payment mode for this installment.</DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:2252:            <DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:2334:              <DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:2551:            <DialogDescription>Set a custom SLA target for this recovery. Default tiers: &lt;₹5K = 15d, ₹5K-25K = 30d, &gt;₹25K = 45d.</DialogDescription>
+/home/z/my-project/src/components/pages/due-recovery-page.tsx:2581:            <DialogDescription>Pause the SLA countdown for this recovery. Use this for disputed amounts under review.</DialogDescription>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:846:                      <DialogDescription>{oltData.ipAddress} &middot; {oltData.vendor} {oltData.model}{oltData.firmwareVersion ? ` (v${oltData.firmwareVersion})` : ""} &middot; {oltData.totalPorts} ports ({oltData.usedPorts} used){oltData.monitorProtocol ? ` &middot; ${MONITOR_PROTOCOL_CONFIG[oltData.monitorProtocol]?.label || oltData.monitorProtocol}` : ""}</DialogDescription>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:946:                <DialogDescription>{editingOlt ? "Update OLT device configuration." : "Register a new OLT device in the system."}</DialogDescription>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:1178:                <DialogDescription>{editingPort ? "Update port configuration." : "Configure a new PON port on the OLT."}</DialogDescription>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:1258:                <DialogDescription>{historyPortName} — Status change timeline</DialogDescription>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:1339:              <DialogHeader><DialogTitle>{editingSplitter ? "Edit Splitter" : "Add Splitter"}</DialogTitle><DialogDescription>{editingSplitter ? "Update splitter configuration." : "Add a new fiber splitter."}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/ftth-gpon-page.tsx:1407:              <DialogHeader><DialogTitle>{editingTemplate ? "Edit Template" : "Add OLT Template"}</DialogTitle><DialogDescription>{editingTemplate ? "Update template configuration." : "Create a new OLT configuration template."}</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/tabs/qos-tab.tsx:212:            <DialogDescription>Configure traffic prioritization and bandwidth guarantees.</DialogDescription>
+/home/z/my-project/src/components/pages/tabs/throttling-tab.tsx:218:            <DialogDescription>Set bandwidth speed limits for a specific device.</DialogDescription>
+/home/z/my-project/src/components/pages/radius-proxy-page.tsx:531:            <DialogDescription>
+/home/z/my-project/src/components/pages/radius-proxy-page.tsx:576:            <DialogDescription>
+/home/z/my-project/src/components/pages/tabs/thresholds-tab.tsx:192:            <DialogDescription>Set up a bandwidth alert rule that notifies when thresholds are crossed.</DialogDescription>
+/home/z/my-project/src/components/pages/enterprise-auth-page.tsx:1297:            <DialogDescription>Create a new enterprise subscriber with LDAP authentication configuration.</DialogDescription>
+/home/z/my-project/src/components/pages/enterprise-auth-page.tsx:1384:            <DialogDescription>Update enterprise subscriber settings.</DialogDescription>
+/home/z/my-project/src/components/pages/leads-page.tsx:973:            <DialogDescription>{editingLead ? "Update lead information" : "Enter new lead details"}</DialogDescription>
+/home/z/my-project/src/components/pages/leads-page.tsx:1083:                <DialogDescription>Lead Details — {viewLead.id.substring(0, 8)}</DialogDescription>
+/home/z/my-project/src/components/pages/dhcp-page.tsx:1315:              <DialogDescription>
+/home/z/my-project/src/components/pages/dhcp-page.tsx:1538:              <DialogDescription>Update subnet configuration.</DialogDescription>
+/home/z/my-project/src/components/pages/dhcp-page.tsx:1709:              <DialogDescription>Create a static DHCP reservation for a device.</DialogDescription>
+/home/z/my-project/src/components/pages/dhcp-page.tsx:1807:              <DialogDescription>Update static DHCP reservation.</DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:1649:            <DialogDescription>Complete registration form — fill in all relevant details.</DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:2324:            <DialogDescription>Save these credentials for the subscriber</DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:2371:            <DialogDescription>Update subscriber details across all sections.</DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:3339:            <DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:3360:            <DialogDescription>
+/home/z/my-project/src/components/pages/subscribers-page.tsx:3451:            <DialogDescription>
+/home/z/my-project/src/components/pages/isp-profile-page.tsx:1309:          <DialogHeader><DialogTitle className="text-base">Branding Preview</DialogTitle><DialogDescription>Live preview of how your ISP branding appears on invoices, receipts, and email notifications.</DialogDescription></DialogHeader>
+/home/z/my-project/src/components/pages/billing-page.tsx:760:            <DialogDescription>Update invoice details. Changes will recalculate totals.</DialogDescription>
+/home/z/my-project/src/components/pages/billing-page.tsx:851:            <DialogDescription>Cancel invoice {selectedInvoice?.invoiceNumber}?</DialogDescription>
+/home/z/my-project/src/components/pages/billing-page.tsx:879:            <DialogDescription>
+/home/z/my-project/src/components/pages/billing-page.tsx:923:            <DialogDescription>Manually create a new invoice for a subscriber.</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:289:          <DialogDescription>Create a new invoice for a subscriber</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:426:          <DialogDescription>Create invoices for multiple subscribers at once</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:545:          <DialogDescription>Set up automatic invoice generation schedules</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:739:          <DialogDescription>Configure default tax rates for invoice generation</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:919:          <DialogDescription>Configure how invoice numbers are generated</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:1682:            <DialogDescription>Issue a credit note for invoice {selectedInvoice?.invoiceNumber}</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:1728:            <DialogDescription>Update invoice details (draft invoices only recommended)</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:1809:            <DialogDescription>Are you sure you want to cancel invoice {selectedInvoice?.invoiceNumber}?</DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:1826:            <DialogDescription>
+/home/z/my-project/src/components/pages/invoices-page.tsx:1875:                <DialogDescription className="print:hidden">Invoice details and payment history</DialogDescription>
+/home/z/my-project/src/components/pages/uptime-monitor-page.tsx:290:            <DialogDescription>Select common ISP services to start monitoring</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1507:            <DialogDescription>Viewing device parameters and information</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1612:            <DialogDescription>Manually register a CPE device. The device will need to contact the ACS for full provisioning.</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1665:            <DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1686:            <DialogDescription>Create a new task for a device (reboot, factory reset, download, set/get parameter)</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1775:            <DialogDescription>Are you sure you want to delete this task?</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1794:            <DialogDescription>Write a JavaScript provision script that runs when a device connects</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1833:            <DialogDescription>Are you sure you want to delete this provision?</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1852:            <DialogDescription>Define parameter values that will be applied to matching devices</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1902:            <DialogDescription>Are you sure you want to delete this preset?</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1921:            <DialogDescription>Upload firmware or configuration files for device provisioning</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1967:            <DialogDescription>Are you sure you want to delete this file?</DialogDescription>
+/home/z/my-project/src/components/pages/tr069-acs-page.tsx:1986:            <DialogDescription>Are you sure you want to clear this fault?</DialogDescription>
+/home/z/my-project/src/components/pages/snmp-manager-page.tsx:977:            <DialogDescription>Enter connection details for the SNMP-enabled device</DialogDescription>
+
+[Showing results with pagination = limit: 250]

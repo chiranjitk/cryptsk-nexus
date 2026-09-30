@@ -1,0 +1,1371 @@
+     1→"use client";
+     2→
+     3→import { useState, useRef, useEffect } from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import { apiFetch, formatINR } from "@/lib/utils";
+     6→import { escapeHtml } from "@/lib/utils/html-escape";
+     7→import {
+     8→  CreditCard, Plus, Search, Check, X as XIcon, IndianRupee,
+     9→  Wallet, Clock, Eye, FileSpreadsheet, Printer,
+    10→  CalendarDays, CheckCircle2, AlertCircle, Pencil, Trash2,
+    11→  ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Banknote,
+    12→  Smartphone, Globe, FileText, Building, TrendingUp,
+    13→  Calendar as CalendarIcon, type LucideIcon,
+    14→} from "lucide-react";
+    15→import { Card, CardContent } from "@/components/ui/card";
+    16→import { Button } from "@/components/ui/button";
+    17→import { Input } from "@/components/ui/input";
+    18→import { Badge } from "@/components/ui/badge";
+    19→import { Skeleton } from "@/components/ui/skeleton";
+    20→import { Label } from "@/components/ui/label";
+    21→import { Checkbox } from "@/components/ui/checkbox";
+    22→import { Calendar } from "@/components/ui/calendar";
+    23→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+    24→import {
+    25→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+    26→} from "@/components/ui/dialog";
+    27→import { Textarea } from "@/components/ui/textarea";
+    28→import {
+    29→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    30→} from "@/components/ui/select";
+    31→import {
+    32→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    33→} from "@/components/ui/table";
+    34→import { toast } from "sonner";
+    35→import PageHeader from "@/components/page-header";
+    36→
+    37→// ─── Types ──────────────────────────────────────────────
+    38→interface Payment {
+    39→  id: string; subscriberId: string; invoiceId: string | null;
+    40→  amount: number; paymentMode: string; transactionRef: string;
+    41→  status: string; receiptNumber: string; notes: string; createdAt: string;
+    42→  subscriber: { id: string; name: string; code: string; phone: string; email: string; address: string } | null;
+    43→  invoice: { id: string; invoiceNumber: string } | null;
+    44→}
+    45→
+    46→interface PaymentDetail extends Payment {
+    47→  subscriber: { id: string; name: string; code: string; phone: string; email: string; address: string } | null;
+    48→  invoice: { id: string; invoiceNumber: string; grandTotal: number; status: string } | null;
+    49→  collectedBy: { id: string; name: string } | null;
+    50→  verifiedBy: { id: string; name: string } | null;
+    51→  ispSettings?: { companyName: string; address: string; city: string; state: string; pincode: string; phone: string; email: string; gstin: string; website: string; receiptFooterText: string };
+    52→}
+    53→
+    54→interface PaymentSummary {
+    55→  todayCount: number; todayTotal: number; todayPendingCount: number; todayPendingAmount: number;
+    56→}
+    57→
+    58→interface PendingInvoice {
+    59→  id: string; invoiceNumber: string; grandTotal: number; paidAmount: number; balanceAmount: number;
+    60→  status: string; dueDate: string;
+    61→}
+    62→
+    63→interface SubBalance {
+    64→  outstandingBalance: number;
+    65→  pendingInvoices: PendingInvoice[];
+    66→}
+    67→
+    68→function formatDateTime(dateStr: string): string {
+    69→  return new Date(dateStr).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    70→}
+    71→function formatDate(dateStr: string): string {
+    72→  return new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    73→}
+    74→
+    75→const STATUS_MAP: Record<string, { label: string; class: string; dot: string }> = {
+    76→  PENDING: { label: "Pending", class: "bg-amber-500/10 text-amber-700 dark:text-amber-400", dot: "bg-amber-500" },
+    77→  VERIFIED: { label: "Verified", class: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+    78→  FAILED: { label: "Failed", class: "bg-red-500/10 text-red-700 dark:text-red-400", dot: "bg-red-500" },
+    79→  REFUNDED: { label: "Refunded", class: "bg-slate-500/10 text-slate-700 dark:text-slate-400", dot: "bg-slate-400" },
+    80→};
+    81→
+    82→const STATUS_BORDER_MAP: Record<string, string> = {
+    83→  PENDING: "border-l-amber-500",
+    84→  VERIFIED: "border-l-emerald-500",
+    85→  FAILED: "border-l-red-500",
+    86→  REFUNDED: "border-l-slate-400",
+    87→};
+    88→
+    89→const MODE_LABELS: Record<string, string> = {
+    90→  CASH: "Cash", UPI: "UPI", ONLINE: "Online", BANK_TRANSFER: "Bank Transfer", CHEQUE: "Cheque", WALLET: "Wallet",
+    91→};
+    92→
+    93→const MODE_ICONS: Record<string, LucideIcon> = {
+    94→  CASH: Banknote, UPI: Smartphone, ONLINE: Globe, BANK_TRANSFER: Building, CHEQUE: FileText, WALLET: Wallet,
+    95→};
+    96→
+    97→const MODE_PILL_MAP: Record<string, { bg: string; text: string }> = {
+    98→  CASH: { bg: "bg-green-500/10", text: "text-green-700 dark:text-green-400" },
+    99→  UPI: { bg: "bg-purple-500/10", text: "text-purple-700 dark:text-purple-400" },
+   100→  BANK_TRANSFER: { bg: "bg-blue-500/10", text: "text-blue-700 dark:text-blue-400" },
+   101→  ONLINE: { bg: "bg-teal-500/10", text: "text-teal-700 dark:text-teal-400" },
+   102→  CHEQUE: { bg: "bg-amber-500/10", text: "text-amber-700 dark:text-amber-400" },
+   103→  WALLET: { bg: "bg-slate-500/10", text: "text-slate-700 dark:text-slate-400" },
+   104→};
+   105→
+   106→interface SubOption { id: string; name: string; code: string }
+   107→
+   108→interface RefundRecord {
+   109→  id: string; amount: number; reason: string; status: string; createdAt: string;
+   110→  processedBy?: { name: string } | null;
+   111→}
+   112→
+   113→const REFUND_REASONS = ["Error", "Duplicate", "Customer Request", "Service Issue", "Other"];
+   114→const REFUND_MODES = ["Original", "Bank Transfer", "UPI"];
+   115→
+   116→type SortField = "createdAt" | "amount" | "paymentMode" | "status" | "receiptNumber";
+   117→type SortOrder = "asc" | "desc";
+   118→
+   119→export default function PaymentsPage() {
+   120→  const queryClient = useQueryClient();
+   121→  const [page, setPage] = useState(1);
+   122→  const [search, setSearch] = useState("");
+   123→  const [statusFilter, setStatusFilter] = useState("");
+   124→  const [modeFilter, setModeFilter] = useState("");
+   125→  const [dateFrom, setDateFrom] = useState<Date | undefined>();
+   126→  const [dateTo, setDateTo] = useState<Date | undefined>();
+   127→  const [dateFromOpen, setDateFromOpen] = useState(false);
+   128→  const [dateToOpen, setDateToOpen] = useState(false);
+   129→  const [sortBy, setSortBy] = useState<SortField>("createdAt");
+   130→  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+   131→
+   132→  // Multi-select mode
+   133→  const [bulkMode, setBulkMode] = useState(false);
+   134→  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+   135→
+   136→  // Dialogs
+   137→  const [collectOpen, setCollectOpen] = useState(false);
+   138→  const [verifyOpen, setVerifyOpen] = useState(false);
+   139→  const [receiptOpen, setReceiptOpen] = useState(false);
+   140→  const [editOpen, setEditOpen] = useState(false);
+   141→  const [deleteOpen, setDeleteOpen] = useState(false);
+   142→  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+   143→  const [bulkAction, setBulkAction] = useState<"verify" | "reject" | null>(null);
+   144→  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+   145→  const [refundOpen, setRefundOpen] = useState(false);
+   146→  const [refundAmount, setRefundAmount] = useState("");
+   147→  const [refundReason, setRefundReason] = useState("");
+   148→  const [refundNotes, setRefundNotes] = useState("");
+   149→  const [refundMode, setRefundMode] = useState("Original");
+   150→  const [refundHistoryOpen, setRefundHistoryOpen] = useState(false);
+   151→
+   152→  // Form state
+   153→  const [formSubId, setFormSubId] = useState("");
+   154→  const [formAmount, setFormAmount] = useState("");
+   155→  const [formMode, setFormMode] = useState("CASH");
+   156→  const [formRef, setFormRef] = useState("");
+   157→  const [formNotes, setFormNotes] = useState("");
+   158→  const [formSubSearch, setFormSubSearch] = useState("");
+   159→
+   160→  // Edit form state
+   161→  const [editAmount, setEditAmount] = useState("");
+   162→  const [editMode, setEditMode] = useState("");
+   163→  const [editNotes, setEditNotes] = useState("");
+   164→  const [editRef, setEditRef] = useState("");
+   165→
+   166→  const receiptRef = useRef<HTMLDivElement>(null);
+   167→
+   168→  // Fetch payments
+   169→  const { data, isLoading } = useQuery<{ payments: Payment[]; total: number; page: number; totalPages: number; summary: PaymentSummary; pendingVerifyCount: number }>({
+   170→    queryKey: ["payments", page, search, statusFilter, modeFilter, dateFrom, dateTo, sortBy, sortOrder],
+   171→    queryFn: () => {
+   172→      const params = new URLSearchParams({ page: String(page), limit: "15", status: statusFilter, mode: modeFilter, sortBy, sortOrder });
+   173→      if (search) params.set("search", search);
+   174→      if (dateFrom) params.set("dateFrom", dateFrom.toISOString());
+   175→      if (dateTo) params.set("dateTo", dateTo.toISOString());
+   176→      return apiFetch<{ payments: Payment[]; total: number; page: number; totalPages: number; summary: PaymentSummary; pendingVerifyCount: number }>(`/api/payments?${params}`);
+   177→    },
+   178→  });
+   179→
+   180→  // Fetch subscribers for collection form
+   181→  const { data: subscribers } = useQuery<SubOption[]>({
+   182→    queryKey: ["payment-subs"],
+   183→    queryFn: () => apiFetch("/api/subscribers?limit=200").then((d: any) => d.subscribers?.map((s: SubOption) => ({ id: s.id, name: s.name, code: s.code })) || []),
+   184→  });
+   185→
+   186→  // Fetch subscriber balance when subscriber is selected in collect form
+   187→  const { data: subBalance, isLoading: balanceLoading } = useQuery<SubBalance>({
+   188→    queryKey: ["sub-balance", formSubId],
+   189→    queryFn: () => apiFetch<SubBalance>(`/api/subscribers/${formSubId}/balance`),
+   190→    enabled: !!formSubId && collectOpen,
+   191→  });
+   192→
+   193→  // Auto-fill amount when subscriber balance loads (one-shot auto-fill)
+   194→  const outstandingBalance = subBalance?.outstandingBalance;
+   195→  const autoFilledRef = useRef(false);
+   196→  useEffect(() => {
+   197→    if (outstandingBalance && outstandingBalance > 0 && !autoFilledRef.current && formAmount === "") {
+   198→      autoFilledRef.current = true;
+   199→      // Use flushSync-like scheduling to avoid direct setState in effect
+   200→      const val = String(outstandingBalance);
+   201→      setTimeout(() => setFormAmount(val), 0);
+   202→    }
+   203→  }, [outstandingBalance, formAmount]);
+   204→
+   205→  // Fetch payment detail for receipt
+   206→  const { data: paymentDetail } = useQuery<PaymentDetail>({
+   207→    queryKey: ["payment-detail", selectedPayment?.id],
+   208→    queryFn: () => apiFetch<PaymentDetail>(`/api/payments/${selectedPayment?.id}`),
+   209→    enabled: !!selectedPayment?.id && receiptOpen,
+   210→  });
+   211→
+   212→  const filteredSubs = subscribers?.filter((s) =>
+   213→    !formSubSearch || s.name.toLowerCase().includes(formSubSearch.toLowerCase()) || s.code.toLowerCase().includes(formSubSearch.toLowerCase())
+   214→  ) ?? [];
+   215→
+   216→  // ─── Mutations ──────────────────────────────────────
+   217→  const createMutation = useMutation({
+   218→    mutationFn: () => {
+   219→      const amount = parseFloat(formAmount);
+   220→      if (!formSubId || !amount || amount <= 0) return Promise.reject("Valid subscriber and amount required");
+   221→      return apiFetch("/api/payments", {
+   222→        method: "POST",
+   223→        body: JSON.stringify({ subscriberId: formSubId, amount, paymentMode: formMode, transactionRef: formRef, notes: formNotes }),
+   224→      });
+   225→    },
+   226→    onSuccess: (d) => {
+   227→      if (d.error) { toast.error(d.error); return; }
+   228→      toast.success("Payment collected successfully");
+   229→      setCollectOpen(false);
+   230→      resetForm();
+   231→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   232→    },
+   233→    onError: (err) => toast.error(typeof err === "string" ? err : "Failed to collect payment"),
+   234→  });
+   235→
+   236→  const verifyMutation = useMutation({
+   237→    mutationFn: ({ id, status }: { id: string; status: string }) => apiFetch(`/api/payments/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),
+   238→    onSuccess: (d, vars) => {
+   239→      if (d.error) { toast.error(d.error); return; }
+   240→      toast.success(vars.status === "VERIFIED" ? "Payment verified" : "Payment rejected");
+   241→      setVerifyOpen(false);
+   242→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   243→    },
+   244→  });
+   245→
+   246→  const editMutation = useMutation({
+   247→    mutationFn: ({ id, amount, paymentMode, notes, transactionRef }: { id: string; amount: number; paymentMode: string; notes: string; transactionRef: string }) =>
+   248→      apiFetch(`/api/payments/${id}`, {
+   249→        method: "PUT",
+   250→        body: JSON.stringify({ amount, paymentMode, notes, transactionRef }),
+   251→      }),
+   252→    onSuccess: (d) => {
+   253→      if (d.error) { toast.error(d.error); return; }
+   254→      toast.success("Payment updated successfully");
+   255→      setEditOpen(false);
+   256→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   257→    },
+   258→    onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to update payment"),
+   259→  });
+   260→
+   261→  const deleteMutation = useMutation({
+   262→    mutationFn: (id: string) => apiFetch(`/api/payments/${id}`, { method: "DELETE" }),
+   263→    onSuccess: (d) => {
+   264→      if (d.error) { toast.error(d.error); return; }
+   265→      toast.success("Payment deleted successfully");
+   266→      setDeleteOpen(false);
+   267→      setSelectedPayment(null);
+   268→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   269→    },
+   270→    onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to delete payment"),
+   271→  });
+   272→
+   273→  // Fetch refund history for a payment
+   274→  const { data: refundHistory } = useQuery<{ refunds: RefundRecord[] }>({
+   275→    queryKey: ["payment-refunds", selectedPayment?.id],
+   276→    queryFn: () => apiFetch(`/api/payments/${selectedPayment?.id}/refund`),
+   277→    enabled: refundHistoryOpen && !!selectedPayment?.id,
+   278→  });
+   279→
+   280→  const refundMutation = useMutation({
+   281→    mutationFn: ({ id, amount, reason, notes, refundMode }: { id: string; amount: number; reason: string; notes: string; refundMode: string }) =>
+   282→      apiFetch(`/api/payments/${id}/refund`, {
+   283→        method: "POST",
+   284→        body: JSON.stringify({ amount, reason, notes, refundMode }),
+   285→      }),
+   286→    onSuccess: (d) => {
+   287→      if (d.error) { toast.error(d.error); return; }
+   288→      toast.success(d.message || "Refund processed successfully");
+   289→      setRefundOpen(false);
+   290→      setSelectedPayment(null);
+   291→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   292→    },
+   293→    onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to process refund"),
+   294→  });
+   295→
+   296→  const bulkVerifyMutation = useMutation({
+   297→    mutationFn: ({ action, ids }: { action: string; ids: string[] }) => apiFetch("/api/payments", {
+   298→      method: "POST",
+   299→      body: JSON.stringify({ action, paymentIds: ids }),
+   300→    }),
+   301→    onSuccess: (d) => {
+   302→      if (d.error) { toast.error(d.error); return; }
+   303→      toast.success(d.message || `Action completed`);
+   304→      setSelectedIds(new Set());
+   305→      setBulkMode(false);
+   306→      setBulkConfirmOpen(false);
+   307→      setBulkAction(null);
+   308→      queryClient.invalidateQueries({ queryKey: ["payments"] });
+   309→    },
+   310→    onError: (err) => toast.error(err instanceof Error ? err.message : "Bulk action failed"),
+   311→  });
+   312→
+   313→  // ─── Handlers ───────────────────────────────────────
+   314→  const handleSort = (field: SortField) => {
+   315→    if (sortBy === field) {
+   316→      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+   317→    } else {
+   318→      setSortBy(field);
+   319→      setSortOrder("desc");
+   320→    }
+   321→    setPage(1);
+   322→  };
+   323→
+   324→  const openVerify = (payment: Payment) => {
+   325→    setSelectedPayment(payment);
+   326→    setVerifyOpen(true);
+   327→  };
+   328→
+   329→  const openReceipt = (payment: Payment) => {
+   330→    setSelectedPayment(payment);
+   331→    setReceiptOpen(true);
+   332→  };
+   333→
+   334→  const openEdit = (payment: Payment) => {
+   335→    setSelectedPayment(payment);
+   336→    setEditAmount(String(payment.amount));
+   337→    setEditMode(payment.paymentMode);
+   338→    setEditNotes(payment.notes || "");
+   339→    setEditRef(payment.transactionRef || "");
+   340→    setEditOpen(true);
+   341→  };
+   342→
+   343→  const openDelete = (payment: Payment) => {
+   344→    setSelectedPayment(payment);
+   345→    setDeleteOpen(true);
+   346→  };
+   347→
+   348→  const openRefund = (payment: Payment) => {
+   349→    setSelectedPayment(payment);
+   350→    setRefundAmount(String(payment.amount));
+   351→    setRefundReason("");
+   352→    setRefundNotes("");
+   353→    setRefundMode("Original");
+   354→    setRefundOpen(true);
+   355→  };
+   356→
+   357→  const handleRefund = () => {
+   358→    if (!selectedPayment) return;
+   359→    const amount = parseFloat(refundAmount);
+   360→    if (!amount || amount <= 0) { toast.error("Please enter a valid refund amount"); return; }
+   361→    if (amount > selectedPayment.amount) { toast.error(`Refund amount cannot exceed ${formatINR(selectedPayment.amount)}`); return; }
+   362→    if (!refundReason.trim()) { toast.error("Please enter a reason for the refund"); return; }
+   363→    refundMutation.mutate({ id: selectedPayment.id, amount, reason: refundReason.trim(), notes: refundNotes.trim(), refundMode });
+   364→  };
+   365→
+   366→  const handleEditSave = () => {
+   367→    if (!selectedPayment) return;
+   368→    const amount = parseFloat(editAmount);
+   369→    if (!amount || amount <= 0) { toast.error("Please enter a valid amount"); return; }
+   370→    editMutation.mutate({ id: selectedPayment.id, amount, paymentMode: editMode, notes: editNotes, transactionRef: editRef });
+   371→  };
+   372→
+   373→  const handleBulkAction = (action: "verify" | "reject") => {
+   374→    setBulkAction(action);
+   375→    setBulkConfirmOpen(true);
+   376→  };
+   377→
+   378→  const confirmBulkAction = () => {
+   379→    if (!bulkAction || selectedIds.size === 0) return;
+   380→    const actionStr = bulkAction === "verify" ? "bulk_verify" : "bulk_reject";
+   381→    bulkVerifyMutation.mutate({ action: actionStr, ids: Array.from(selectedIds) });
+   382→  };
+   383→
+   384→  const handlePrintReceipt = () => {
+   385→    if (!paymentDetail) return;
+   386→    const printWindow = window.open("", "_blank");
+   387→    if (!printWindow) return;
+   388→    const ispName = paymentDetail.ispSettings?.companyName || "My ISP";
+   389→    const ispAddress = [
+   390→      paymentDetail.ispSettings?.address,
+   391→      paymentDetail.ispSettings?.city,
+   392→      paymentDetail.ispSettings?.state,
+   393→      paymentDetail.ispSettings?.pincode,
+   394→    ].filter(Boolean).join(", ");
+   395→    const ispPhone = paymentDetail.ispSettings?.phone || "";
+   396→    const ispEmail = paymentDetail.ispSettings?.email || "";
+   397→    const ispGstin = paymentDetail.ispSettings?.gstin || "";
+   398→    const footerText = paymentDetail.ispSettings?.receiptFooterText || "Thank you for your payment!";
+   399→
+   400→    printWindow.document.write(`
+   401→      <html>
+   402→        <head>
+   403→          <title>Receipt - ${escapeHtml(paymentDetail.receiptNumber || "")}</title>
+   404→          <style>
+   405→            body { font-family: Arial, sans-serif; padding: 40px; max-width: 400px; margin: 0 auto; color: #333; }
+   406→            .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 16px; margin-bottom: 20px; }
+   407→            .header h1 { font-size: 20px; margin: 0 0 4px 0; }
+   408→            .header p { font-size: 11px; color: #666; margin: 2px 0; }
+   409→            .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #ddd; font-size: 14px; }
+   410→            .row .label { color: #666; }
+   411→            .row .value { font-weight: 600; }
+   412→            .total { font-size: 18px; font-weight: 700; border-top: 2px solid #333; border-bottom: none; padding-top: 12px; }
+   413→            .footer { text-align: center; margin-top: 30px; font-size: 11px; color: #999; }
+   414→            .verified { display: inline-block; padding: 4px 12px; background: #dcfce7; color: #166534; border-radius: 4px; font-weight: 600; font-size: 12px; margin-top: 10px; }
+   415→            @media print { body { padding: 20px; } }
+   416→          </style>
+   417→        </head>
+   418→        <body>
+   419→          <div class="header">
+   420→            <h1>${escapeHtml(ispName)}</h1>
+   421→            ${ispAddress ? `<p>${escapeHtml(ispAddress)}</p>` : ""}
+   422→            ${ispPhone ? `<p>Phone: ${escapeHtml(ispPhone)}</p>` : ""}
+   423→            ${ispEmail ? `<p>${escapeHtml(ispEmail)}</p>` : ""}
+   424→            ${ispGstin ? `<p>GSTIN: ${escapeHtml(ispGstin)}</p>` : ""}
+   425→          </div>
+   426→          <div class="row"><span class="label">Receipt #</span><span class="value">${escapeHtml(paymentDetail.receiptNumber || "—")}</span></div>
+   427→          <div class="row"><span class="label">Date</span><span class="value">${formatDateTime(paymentDetail.createdAt)}</span></div>
+   428→          <div class="row"><span class="label">Subscriber</span><span class="value">${escapeHtml(paymentDetail.subscriber?.name || "—")}</span></div>
+   429→          <div class="row"><span class="label">Code</span><span class="value">${escapeHtml(paymentDetail.subscriber?.code || "—")}</span></div>
+   430→          ${paymentDetail.subscriber?.phone ? `<div class="row"><span class="label">Phone</span><span class="value">${escapeHtml(paymentDetail.subscriber.phone)}</span></div>` : ""}
+   431→          ${paymentDetail.invoice ? `<div class="row"><span class="label">Invoice</span><span class="value">${escapeHtml(paymentDetail.invoice.invoiceNumber)}</span></div>` : ""}
+   432→          <div class="row"><span class="label">Payment Mode</span><span class="value">${MODE_LABELS[paymentDetail.paymentMode] || paymentDetail.paymentMode}</span></div>
+   433→          ${paymentDetail.transactionRef ? `<div class="row"><span class="label">Reference</span><span class="value">${escapeHtml(paymentDetail.transactionRef)}</span></div>` : ""}
+   434→          ${paymentDetail.verifiedBy ? `<div class="row"><span class="label">Verified By</span><span class="value">${escapeHtml(paymentDetail.verifiedBy.name)}</span></div>` : ""}
+   435→          ${paymentDetail.collectedBy ? `<div class="row"><span class="label">Collected By</span><span class="value">${escapeHtml(paymentDetail.collectedBy.name)}</span></div>` : ""}
+   436→          <div class="row total"><span class="label">Amount</span><span class="value">${formatINR(paymentDetail.amount)}</span></div>
+   437→          <div style="text-align:center">
+   438→            <span class="verified">✓ ${paymentDetail.status || "VERIFIED"}</span>
+   439→          </div>
+   440→          <div class="footer">
+   441→            <p>${escapeHtml(footerText)}</p>
+   442→            <p>Generated on ${new Date().toLocaleString("en-IN")}</p>
+   443→          </div>
+   444→        </body>
+   445→      </html>
+   446→    `);
+   447→    printWindow.document.close();
+   448→    printWindow.focus();
+   449→    setTimeout(() => { printWindow.print(); }, 500);
+   450→  };
+   451→
+   452→  const handleExportCSV = () => {
+   453→    const params = new URLSearchParams();
+   454→    if (statusFilter) params.set("status", statusFilter);
+   455→    if (modeFilter) params.set("mode", modeFilter);
+   456→    if (search) params.set("search", search);
+   457→    if (dateFrom) params.set("dateFrom", dateFrom.toISOString());
+   458→    if (dateTo) params.set("dateTo", dateTo.toISOString());
+   459→    window.open(`/api/payments/export?${params}`, "_blank");
+   460→    toast.success("Exporting CSV...");
+   461→  };
+   462→
+   463→  const resetForm = () => {
+   464→    setFormSubId(""); setFormAmount(""); setFormMode("CASH"); setFormRef(""); setFormNotes(""); setFormSubSearch("");
+   465→  };
+   466→
+   467→  const handleCollect = () => {
+   468→    if (!formSubId) { toast.error("Please select a subscriber"); return; }
+   469→    const amount = parseFloat(formAmount);
+   470→    if (!amount || amount <= 0) { toast.error("Please enter a valid amount"); return; }
+   471→    createMutation.mutate();
+   472→  };
+   473→
+   474→  const toggleSelect = (id: string) => {
+   475→    setSelectedIds((prev) => {
+   476→      const next = new Set(prev);
+   477→      if (next.has(id)) next.delete(id); else next.add(id);
+   478→      return next;
+   479→    });
+   480→  };
+   481→
+   482→  const toggleSelectAll = () => {
+   483→    if (selectedIds.size === pendingPayments.length && pendingPayments.length > 0) {
+   484→      setSelectedIds(new Set());
+   485→    } else {
+   486→      setSelectedIds(new Set(pendingPayments.map((i) => i.id)));
+   487→    }
+   488→  };
+   489→
+   490→  const summary = data?.summary;
+   491→  const pendingVerifyCount = data?.pendingVerifyCount ?? 0;
+   492→
+   493→  const renderSortIcon = (field: SortField) => {
+   494→    if (sortBy !== field) return <ArrowUpDown className="h-3 w-3 ml-1 inline opacity-40" />;
+   495→    return sortOrder === "asc"
+   496→      ? <ArrowUp className="h-3 w-3 ml-1 inline text-foreground" />
+   497→      : <ArrowDown className="h-3 w-3 ml-1 inline text-foreground" />;
+   498→  };
+   499→
+   500→  const renderSkeleton = () => (
+   501→    <div className="space-y-6 animate-in fade-in duration-300">
+   502→      <Skeleton className="skeleton-wave h-7 w-40 mb-2" />
+   503→      <Skeleton className="skeleton-wave h-4 w-60" />
+   504→      <Skeleton className="skeleton-wave h-20 w-full rounded-xl" />
+   505→      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+   506→        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+   507→      </div>
+   508→      <Card className="border shadow-sm"><CardContent className="p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full mb-2" />)}</CardContent></Card>
+   509→    </div>
+   510→  );
+   511→
+   512→  if (isLoading) return renderSkeleton();
+   513→
+   514→  const payments = data?.payments ?? [];
+   515→  const total = data?.total ?? 0;
+   516→  const pendingPayments = payments.filter((p) => p.status === "PENDING");
+   517→
+   518→  return (
+   519→    <div className="space-y-6 animate-in fade-in duration-500">
+   520→      {/* Header */}
+   521→      <PageHeader
+   522→        icon={Wallet}
+   523→        title="Payments"
+   524→        description="Track and manage payment collections, verifications, and refunds."
+   525→        actions={
+   526→          <>
+   527→            <Button variant="outline" size="sm" onClick={handleExportCSV}>
+   528→              <FileSpreadsheet className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
+   529→            </Button>
+   530→            <Button variant="outline" size="sm" onClick={() => { setBulkMode(!bulkMode); setSelectedIds(new Set()); }}>
+   531→              {bulkMode ? "Cancel" : "Bulk"}
+   532→            </Button>
+   533→            <Button onClick={() => setCollectOpen(true)} className="bg-red-600 hover:bg-red-700 text-white">
+   534→              <Plus className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Collect Payment</span><span className="sm:hidden">Collect</span>
+   535→            </Button>
+   536→          </>
+   537→        }
+   538→      />
+   539→
+   540→      {/* Total Collected Today Highlight */}
+   541→      <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg animate-slide-up" style={{ animationDelay: "50ms" }}>
+   542→        <div className="p-3 rounded-xl bg-white/20 backdrop-blur-sm">
+   543→          <IndianRupee className="h-6 w-6" />
+   544→        </div>
+   545→        <div className="flex-1 min-w-0">
+   546→          <p className="text-sm font-medium text-green-100">Total Collected Today</p>
+   547→          <p className="text-2xl font-bold tracking-tight sm:text-3xl">{summary ? formatINR(summary.todayTotal) : formatINR(0)}</p>
+   548→        </div>
+   549→        <div className="hidden sm:flex items-center gap-4 text-sm">
+   550→          <div className="text-center">
+   551→            <p className="text-green-100 text-xs">Verified</p>
+   552→            <p className="font-bold text-lg">{summary?.todayCount ?? 0}</p>
+   553→          </div>
+   554→          <div className="w-px h-8 bg-white/20" />
+   555→          <div className="text-center">
+   556→            <p className="text-green-100 text-xs">Pending</p>
+   557→            <p className="font-bold text-lg">{summary?.todayPendingCount ?? 0}</p>
+   558→          </div>
+   559→        </div>
+   560→      </div>
+   561→
+   562→      {/* Summary Stats Cards */}
+   563→      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+   564→        <Card className="rounded-xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 ring-1 ring-border/50 shadow-sm hover:scale-[1.02] transition-all duration-200">
+   565→          <CardContent className="p-4">
+   566→            <div className="flex items-center gap-3">
+   567→              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg"><Wallet className="h-5 w-5 text-white" /></div>
+   568→              <div>
+   569→                <p className="text-2xl font-bold tabular-nums">{total}</p>
+   570→                <p className="text-xs text-muted-foreground">Total Payments</p>
+   571→              </div>
+   572→            </div>
+   573→          </CardContent>
+   574→        </Card>
+   575→        <Card className="rounded-xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 ring-1 ring-border/50 shadow-sm hover:scale-[1.02] transition-all duration-200">
+   576→          <CardContent className="p-4">
+   577→            <div className="flex items-center gap-3">
+   578→              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg"><CalendarIcon className="h-5 w-5 text-white" /></div>
+   579→              <div>
+   580→                <p className="text-2xl font-bold tabular-nums">{summary ? formatINR(summary.todayTotal) : formatINR(0)}</p>
+   581→                <p className="text-xs text-muted-foreground">This Month</p>
+   582→              </div>
+   583→            </div>
+   584→          </CardContent>
+   585→        </Card>
+   586→        <Card className="rounded-xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 ring-1 ring-border/50 shadow-sm hover:scale-[1.02] transition-all duration-200">
+   587→          <CardContent className="p-4">
+   588→            <div className="flex items-center gap-3">
+   589→              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg"><RotateCcw className="h-5 w-5 text-white" /></div>
+   590→              <div>
+   591→                <div className="flex items-center gap-2">
+   592→                  <p className="text-2xl font-bold tabular-nums">{pendingVerifyCount}</p>
+   593→                  {pendingVerifyCount > 0 && <span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" /><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" /></span>}
+   594→                </div>
+   595→                <p className="text-xs text-muted-foreground">Pending Refunds</p>
+   596→              </div>
+   597→            </div>
+   598→          </CardContent>
+   599→        </Card>
+   600→        <Card className="rounded-xl bg-gradient-to-br from-red-500/10 to-red-600/5 ring-1 ring-border/50 shadow-sm hover:scale-[1.02] transition-all duration-200">
+   601→          <CardContent className="p-4">
+   602→            <div className="flex items-center gap-3">
+   603→              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-lg"><AlertCircle className="h-5 w-5 text-white" /></div>
+   604→              <div>
+   605→                <p className="text-2xl font-bold tabular-nums">{payments.filter((p) => p.status === "FAILED").length}</p>
+   606→                <p className="text-xs text-muted-foreground">Failed Transactions</p>
+   607→              </div>
+   608→            </div>
+   609→          </CardContent>
+   610→        </Card>
+   611→      </div>
+   612→
+   613→      {/* Filters */}
+   614→      <Card className="rounded-xl border shadow-sm animate-slide-up" style={{ animationDelay: "250ms" }}>
+   615→        <CardContent className="p-4">
+   616→          <div className="flex flex-wrap gap-3">
+   617→            <div className="relative flex-1 min-w-[200px]">
+   618→              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   619→              <Input placeholder="Search receipt # or subscriber..." className="pl-9" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+   620→            </div>
+   621→            <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
+   622→              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
+   623→              <SelectContent>
+   624→                <SelectItem value="all">All Status</SelectItem>
+   625→                <SelectItem value="PENDING">Pending</SelectItem>
+   626→                <SelectItem value="VERIFIED">Verified</SelectItem>
+   627→                <SelectItem value="FAILED">Failed</SelectItem>
+   628→                <SelectItem value="REFUNDED">Refunded</SelectItem>
+   629→              </SelectContent>
+   630→            </Select>
+   631→            <Select value={modeFilter || "all"} onValueChange={(v) => { setModeFilter(v === "all" ? "" : v); setPage(1); }}>
+   632→              <SelectTrigger className="w-[160px]"><SelectValue placeholder="Mode" /></SelectTrigger>
+   633→              <SelectContent>
+   634→                <SelectItem value="all">All Modes</SelectItem>
+   635→                <SelectItem value="CASH">Cash</SelectItem>
+   636→                <SelectItem value="UPI">UPI</SelectItem>
+   637→                <SelectItem value="ONLINE">Online</SelectItem>
+   638→                <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+   639→                <SelectItem value="CHEQUE">Cheque</SelectItem>
+   640→                <SelectItem value="WALLET">Wallet</SelectItem>
+   641→              </SelectContent>
+   642→            </Select>
+   643→            <Popover open={dateFromOpen} onOpenChange={setDateFromOpen}>
+   644→              <PopoverTrigger asChild>
+   645→                <Button variant="outline" size="sm" className="h-9 w-[140px] justify-start text-left font-normal">
+   646→                  <CalendarDays className="mr-2 h-4 w-4" />
+   647→                  {dateFrom ? formatDate(dateFrom.toISOString()) : "From date"}
+   648→                </Button>
+   649→              </PopoverTrigger>
+   650→              <PopoverContent className="w-auto p-0" align="start">
+   651→                <Calendar mode="single" selected={dateFrom} onSelect={(d) => { setDateFrom(d); setDateFromOpen(false); setPage(1); }} initialFocus />
+   652→              </PopoverContent>
+   653→            </Popover>
+   654→            <Popover open={dateToOpen} onOpenChange={setDateToOpen}>
+   655→              <PopoverTrigger asChild>
+   656→                <Button variant="outline" size="sm" className="h-9 w-[140px] justify-start text-left font-normal">
+   657→                  <CalendarDays className="mr-2 h-4 w-4" />
+   658→                  {dateTo ? formatDate(dateTo.toISOString()) : "To date"}
+   659→                </Button>
+   660→              </PopoverTrigger>
+   661→              <PopoverContent className="w-auto p-0" align="start">
+   662→                <Calendar mode="single" selected={dateTo} onSelect={(d) => { setDateTo(d); setDateToOpen(false); setPage(1); }} initialFocus />
+   663→              </PopoverContent>
+   664→            </Popover>
+   665→            {(statusFilter || modeFilter || search || dateFrom || dateTo) && (
+   666→              <Button variant="outline" size="sm" onClick={() => { setStatusFilter(""); setModeFilter(""); setSearch(""); setPage(1); setDateFrom(undefined); setDateTo(undefined); }}>
+   667→                <XIcon className="h-3 w-3 mr-1" />Clear
+   668→              </Button>
+   669→            )}
+   670→          </div>
+   671→        </CardContent>
+   672→      </Card>
+   673→
+   674→      {/* Bulk actions bar */}
+   675→      {bulkMode && selectedIds.size > 0 && (
+   676→        <Card className="rounded-xl border shadow-sm bg-muted/50">
+   677→          <CardContent className="p-3 flex items-center justify-between">
+   678→            <span className="text-sm font-medium">{selectedIds.size} payment(s) selected</span>
+   679→            <div className="flex gap-2">
+   680→              <Button size="sm" onClick={() => handleBulkAction("verify")} disabled={bulkVerifyMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white">
+   681→                <CheckCircle2 className="h-4 w-4 mr-2" />Verify Selected
+   682→              </Button>
+   683→              <Button size="sm" variant="destructive" onClick={() => handleBulkAction("reject")} disabled={bulkVerifyMutation.isPending}>
+   684→                <XIcon className="h-4 w-4 mr-2" />Reject Selected
+   685→              </Button>
+   686→              <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+   687→            </div>
+   688→          </CardContent>
+   689→        </Card>
+   690→      )}
+   691→
+   692→      {/* Payment Table */}
+   693→      <Card className="rounded-xl border shadow-sm animate-slide-up" style={{ animationDelay: "300ms" }}>
+   694→        <CardContent className="p-0">
+   695→          <div className="overflow-x-auto">
+   696→            <Table>
+   697→              <TableHeader>
+   698→                <TableRow className="bg-muted/50 hover:bg-muted/50">
+   699→                  {bulkMode && (
+   700→                    <TableHead className="text-xs font-semibold uppercase tracking-wider w-10">
+   701→                      <Checkbox
+   702→                        checked={pendingPayments.length > 0 && selectedIds.size === pendingPayments.length}
+   703→                        onCheckedChange={toggleSelectAll}
+   704→                      />
+   705→                    </TableHead>
+   706→                  )}
+   707→                  <TableHead className="text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("receiptNumber")}>
+   708→                    Receipt # {renderSortIcon("receiptNumber")}
+   709→                  </TableHead>
+   710→                  <TableHead className="text-xs font-semibold uppercase tracking-wider">Subscriber</TableHead>
+   711→                  <TableHead className="text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("amount")}>
+   712→                    Amount {renderSortIcon("amount")}
+   713→                  </TableHead>
+   714→                  <TableHead className="text-xs font-semibold uppercase tracking-wider hidden sm:table-cell cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("paymentMode")}>
+   715→                    Mode {renderSortIcon("paymentMode")}
+   716→                  </TableHead>
+   717→                  <TableHead className="text-xs font-semibold uppercase tracking-wider hidden md:table-cell">Reference</TableHead>
+   718→                  <TableHead className="text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("status")}>
+   719→                    Status {renderSortIcon("status")}
+   720→                  </TableHead>
+   721→                  <TableHead className="text-xs font-semibold uppercase tracking-wider hidden lg:table-cell cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("createdAt")}>
+   722→                    Date {renderSortIcon("createdAt")}
+   723→                  </TableHead>
+   724→                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-right">Actions</TableHead>
+   725→                </TableRow>
+   726→              </TableHeader>
+   727→              <TableBody>
+   728→                {!payments.length ? (
+   729→                  <TableRow>
+   730→                    <TableCell colSpan={bulkMode ? 9 : 8} className="text-center py-20">
+   731→                      <div className="h-16 w-16 rounded-2xl bg-red-50 dark:bg-red-950/20 flex items-center justify-center mx-auto mb-4">
+   732→                        <CreditCard className="h-8 w-8 text-red-400/60" />
+   733→                      </div>
+   734→                      <p className="text-foreground font-semibold text-base">No payments found</p>
+   735→                      <p className="text-xs text-muted-foreground/70 mt-1 mb-4">Collect your first payment to get started</p>
+   736→                      <Button size="sm" onClick={() => setCollectOpen(true)} className="bg-red-600 hover:bg-red-700 text-white">
+   737→                        <Plus className="h-4 w-4 mr-1.5" />Collect Payment
+   738→                      </Button>
+   739→                    </TableCell>
+   740→                  </TableRow>
+   741→                ) : (
+   742→                  payments.map((pay) => (
+   743→                    <TableRow key={pay.id} className={`border-l-4 ${STATUS_BORDER_MAP[pay.status] || "border-l-muted"} odd:bg-muted/10 hover:bg-muted/30 transition-colors duration-150`}>
+   744→                      {bulkMode && (
+   745→                        <TableCell>
+   746→                          {pay.status === "PENDING" ? (
+   747→                            <Checkbox
+   748→                              checked={selectedIds.has(pay.id)}
+   749→                              onCheckedChange={() => toggleSelect(pay.id)}
+   750→                            />
+   751→                          ) : null}
+   752→                        </TableCell>
+   753→                      )}
+   754→                      <TableCell className="font-mono text-xs font-medium">{pay.receiptNumber || "—"}</TableCell>
+   755→                      <TableCell>
+   756→                        <div>
+   757→                          <p className="text-sm font-medium">{pay.subscriber?.name || "—"}</p>
+   758→                          <p className="text-xs text-muted-foreground">{pay.subscriber?.code || ""}</p>
+   759→                        </div>
+   760→                      </TableCell>
+   761→                      <TableCell className="text-sm font-semibold tabular-nums text-foreground">{formatINR(pay.amount)}</TableCell>
+   762→                      <TableCell className="text-xs hidden sm:table-cell">
+   763→                        {(() => { const pill = MODE_PILL_MAP[pay.paymentMode]; return pill ? (
+   764→                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${pill.bg} ${pill.text}`}>
+   765→                            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />
+   766→                            {MODE_LABELS[pay.paymentMode] || pay.paymentMode}
+   767→                          </span>
+   768→                        ) : <span className="text-xs font-medium text-muted-foreground">{pay.paymentMode}</span>; })()}
+   769→                      </TableCell>
+   770→                      <TableCell className="text-xs hidden md:table-cell text-muted-foreground">
+   771→                        {pay.transactionRef || "—"}
+   772→                        {pay.invoice && (
+   773→                          <span className="ml-2 font-mono text-[10px]">
+   774→                            → {pay.invoice.invoiceNumber}
+   775→                          </span>
+   776→                        )}
+   777→                      </TableCell>
+   778→                      <TableCell>
+   779→                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_MAP[pay.status]?.class || ""}`}>
+   780→                          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_MAP[pay.status]?.dot || "bg-gray-400"} ${pay.status === "PENDING" ? "animate-pulse" : ""}`} />
+   781→                          {STATUS_MAP[pay.status]?.label || pay.status}
+   782→                        </span>
+   783→                      </TableCell>
+   784→                      <TableCell className="text-xs hidden lg:table-cell text-muted-foreground whitespace-nowrap">{formatDateTime(pay.createdAt)}</TableCell>
+   785→                      <TableCell className="text-right">
+   786→                        <div className="flex items-center justify-end gap-1">
+   787→                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReceipt(pay)} title="Print Receipt">
+   788→                            <Printer className="h-3.5 w-3.5" />
+   789→                          </Button>
+   790→                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReceipt(pay)} title="View Details">
+   791→                            <Eye className="h-3.5 w-3.5" />
+   792→                          </Button>
+   793→                          {pay.status === "PENDING" && (
+   794→                            <>
+   795→                              <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => openVerify(pay)}>
+   796→                                <Check className="h-3.5 w-3.5 mr-1" />Verify
+   797→                              </Button>
+   798→                              <Button variant="ghost" size="sm" className="h-7 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => openVerify(pay)}>
+   799→                                <XIcon className="h-3.5 w-3.5 mr-1" />Reject
+   800→                              </Button>
+   801→                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(pay)} title="Edit Payment">
+   802→                                <Pencil className="h-3.5 w-3.5" />
+   803→                              </Button>
+   804→                              <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => openDelete(pay)} title="Delete Payment">
+   805→                                <Trash2 className="h-3.5 w-3.5" />
+   806→                              </Button>
+   807→                            </>
+   808→                          )}
+   809→                          {pay.status === "VERIFIED" && (
+   810→                            <Button variant="ghost" size="sm" className="h-7 text-orange-600 hover:text-orange-700 hover:bg-orange-50" onClick={() => openRefund(pay)}>
+   811→                              <RotateCcw className="h-3.5 w-3.5 mr-1" />Refund
+   812→                            </Button>
+   813→                          )}
+   814→                          {pay.status === "REFUNDED" && (
+   815→                            <Button variant="ghost" size="sm" className="h-7" onClick={() => { setSelectedPayment(pay); setRefundHistoryOpen(true); }}>
+   816→                              <RotateCcw className="h-3.5 w-3.5 mr-1" />History
+   817→                            </Button>
+   818→                          )}
+   819→                        </div>
+   820→                      </TableCell>
+   821→                    </TableRow>
+   822→                  ))
+   823→                )}
+   824→              </TableBody>
+   825→            </Table>
+   826→          </div>
+   827→        </CardContent>
+   828→      </Card>
+   829→
+   830→      {/* Pagination */}
+   831→      {data && data.totalPages > 1 && (
+   832→        <div className="flex items-center justify-between">
+   833→          <p className="text-sm text-muted-foreground">
+   834→            Showing {((page - 1) * 15) + 1}–{Math.min(page * 15, total)} of {total}
+   835→          </p>
+   836→          <div className="flex gap-2">
+   837→            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+   838→            <Button variant="outline" size="sm" disabled={page >= data.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+   839→          </div>
+   840→        </div>
+   841→      )}
+   842→
+   843→      {/* ─── Refund Dialog ─── */}
+   844→      <Dialog open={refundOpen} onOpenChange={setRefundOpen}>
+   845→        <DialogContent className="sm:max-w-[450px]">
+   846→          <DialogHeader>
+   847→            <DialogTitle className="flex items-center gap-2">
+   848→              <RotateCcw className="h-5 w-5 text-orange-600" />
+   849→              Process Refund
+   850→            </DialogTitle>
+   851→            <DialogDescription>
+   852→              Issue a refund for payment {selectedPayment?.receiptNumber || ""} ({selectedPayment?.subscriber?.name || ""})
+   853→            </DialogDescription>
+   854→          </DialogHeader>
+   855→          <div className="space-y-4 py-2">
+   856→            <div className="p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
+   857→              <div className="flex items-center justify-between">
+   858→                <span className="text-sm font-medium text-orange-800 dark:text-orange-300">Payment Amount</span>
+   859→                <span className="text-lg font-bold text-orange-700 dark:text-orange-400">{selectedPayment ? formatINR(selectedPayment.amount) : formatINR(0)}</span>
+   860→              </div>
+   861→            </div>
+   862→            <div className="space-y-2">
+   863→              <Label>Refund Amount *</Label>
+   864→              <div className="relative">
+   865→                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   866→                <Input
+   867→                  type="number"
+   868→                  placeholder="0.00"
+   869→                  value={refundAmount}
+   870→                  onChange={(e) => setRefundAmount(e.target.value)}
+   871→                  min={0}
+   872→                  max={selectedPayment?.amount || 0}
+   873→                  className="pl-9"
+   874→                />
+   875→              </div>
+   876→              <p className="text-xs text-muted-foreground">Max: {selectedPayment ? formatINR(selectedPayment.amount) : formatINR(0)}</p>
+   877→            </div>
+   878→            <div className="space-y-2">
+   879→              <Label>Reason *</Label>
+   880→              <Select value={refundReason} onValueChange={setRefundReason}>
+   881→                <SelectTrigger><SelectValue placeholder="Select reason" /></SelectTrigger>
+   882→                <SelectContent>
+   883→                  {REFUND_REASONS.map((r) => (
+   884→                    <SelectItem key={r} value={r}>{r}</SelectItem>
+   885→                  ))}
+   886→                </SelectContent>
+   887→              </Select>
+   888→            </div>
+   889→            <div className="space-y-2">
+   890→              <Label>Notes</Label>
+   891→              <Textarea
+   892→                placeholder="Additional notes about this refund..."
+   893→                value={refundNotes}
+   894→                onChange={(e) => setRefundNotes(e.target.value)}
+   895→                rows={2}
+   896→              />
+   897→            </div>
+   898→            <div className="space-y-2">
+   899→              <Label>Refund Mode</Label>
+   900→              <Select value={refundMode} onValueChange={setRefundMode}>
+   901→                <SelectTrigger><SelectValue /></SelectTrigger>
+   902→                <SelectContent>
+   903→                  {REFUND_MODES.map((m) => (
+   904→                    <SelectItem key={m} value={m}>{m}</SelectItem>
+   905→                  ))}
+   906→                </SelectContent>
+   907→              </Select>
+   908→            </div>
+   909→            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+   910→              <p className="text-xs text-red-700 dark:text-red-400 font-medium">⚠ This action cannot be undone</p>
+   911→              <p className="text-xs text-red-600/80 dark:text-red-400/70 mt-1">The payment will be marked as REFUNDED and the amount will be added to the subscriber&apos;s balance. If linked to an invoice, the invoice status will be updated.</p>
+   912→            </div>
+   913→          </div>
+   914→          <DialogFooter>
+   915→            <Button variant="outline" onClick={() => setRefundOpen(false)}>Cancel</Button>
+   916→            <Button
+   917→              onClick={handleRefund}
+   918→              disabled={refundMutation.isPending}
+   919→              className="bg-orange-600 hover:bg-orange-700 text-white"
+   920→            >
+   921→              {refundMutation.isPending ? "Processing..." : "Process Refund"}
+   922→            </Button>
+   923→          </DialogFooter>
+   924→        </DialogContent>
+   925→      </Dialog>
+   926→
+   927→      {/* ─── Refund History Dialog ─── */}
+   928→      <Dialog open={refundHistoryOpen} onOpenChange={setRefundHistoryOpen}>
+   929→        <DialogContent className="sm:max-w-[450px]">
+   930→          <DialogHeader>
+   931→            <DialogTitle className="flex items-center gap-2">
+   932→              <RotateCcw className="h-5 w-5 text-orange-600" />
+   933→              Refund History
+   934→            </DialogTitle>
+   935→            <DialogDescription>
+   936→              Refunds for payment {selectedPayment?.receiptNumber}
+   937→            </DialogDescription>
+   938→          </DialogHeader>
+   939→          {refundHistory?.refunds && refundHistory.refunds.length > 0 ? (
+   940→            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+   941→              {refundHistory.refunds.map((r) => (
+   942→                <div key={r.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/30">
+   943→                  <div className="flex-1 min-w-0">
+   944→                    <p className="text-sm font-semibold text-orange-700">{formatINR(r.amount)}</p>
+   945→                    <p className="text-xs text-muted-foreground">{r.reason}</p>
+   946→                    <p className="text-[10px] text-muted-foreground">
+   947→                      {formatDateTime(r.createdAt)}{r.processedBy ? ` — by ${r.processedBy.name}` : ""}
+   948→                    </p>
+   949→                  </div>
+   950→                  <Badge variant="outline" className={`text-[10px] shrink-0 ${r.status === "PROCESSED" ? "bg-green-100 text-green-700 border-green-200" : "bg-yellow-100 text-yellow-700 border-yellow-200"}`}>
+   951→                    {r.status}
+   952→                  </Badge>
+   953→                </div>
+   954→              ))}
+   955→            </div>
+   956→          ) : (
+   957→            <p className="text-sm text-muted-foreground text-center py-6">No refunds found for this payment.</p>
+   958→          )}
+   959→          <DialogFooter>
+   960→            <Button variant="outline" onClick={() => setRefundHistoryOpen(false)}>Close</Button>
+   961→          </DialogFooter>
+   962→        </DialogContent>
+   963→      </Dialog>
+   964→
+   965→      {/* ─── Collect Payment Dialog ─── */}
+   966→      <Dialog open={collectOpen} onOpenChange={(open) => { setCollectOpen(open); if (!open) resetForm(); }}>
+   967→        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
+   968→          <DialogHeader>
+   969→            <DialogTitle className="flex items-center gap-2">
+   970→              <div className="p-1.5 rounded-lg bg-red-100 dark:bg-red-900/30"><Wallet className="h-5 w-5 text-red-600" /></div>
+   971→              Collect Payment
+   972→            </DialogTitle>
+   973→            <DialogDescription>Record a new payment from a subscriber.</DialogDescription>
+   974→          </DialogHeader>
+   975→          <div className="space-y-4 py-2">
+   976→            {/* Subscriber search */}
+   977→            <div className="space-y-2">
+   978→              <Label className="text-sm font-medium">Search Subscriber *</Label>
+   979→              <div className="relative">
+   980→                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   981→                <Input
+   982→                  placeholder="Type name or code..."
+   983→                  value={formSubSearch}
+   984→                  onChange={(e) => setFormSubSearch(e.target.value)}
+   985→                  className="pl-9"
+   986→                />
+   987→              </div>
+   988→            </div>
+   989→            <div className="space-y-2">
+   990→              <Label className="text-sm font-medium">Select Subscriber</Label>
+   991→              <Select value={formSubId} onValueChange={(v) => { setFormSubId(v); setFormAmount(""); }}>
+   992→                <SelectTrigger><SelectValue placeholder="Choose subscriber" /></SelectTrigger>
+   993→                <SelectContent>
+   994→                  <div className="max-h-60 overflow-y-auto">
+   995→                    {filteredSubs.map((s) => (
+   996→                      <SelectItem key={s.id} value={s.id}>
+   997→                        {s.name} ({s.code})
+   998→                      </SelectItem>
+   999→                    ))}
+  1000→                    {!filteredSubs.length && (
+  1001→                      <SelectItem value="none" disabled>No subscribers found</SelectItem>
+  1002→                    )}
+  1003→                  </div>
+  1004→                </SelectContent>
+  1005→              </Select>
+  1006→            </div>
+  1007→
+  1008→            {/* Outstanding Balance */}
+  1009→            {formSubId && (
+  1010→              <div className="space-y-2">
+  1011→                {balanceLoading ? (
+  1012→                  <Skeleton className="skeleton-wave h-12 w-full" />
+  1013→                ) : subBalance ? (
+  1014→                  <>
+  1015→                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+  1016→                      <div className="flex items-center justify-between">
+  1017→                        <div className="flex items-center gap-2">
+  1018→                          <AlertCircle className="h-4 w-4 text-amber-600" />
+  1019→                          <span className="text-sm font-medium text-amber-800 dark:text-amber-300">Outstanding Balance</span>
+  1020→                        </div>
+  1021→                        <span className="text-lg font-bold text-amber-700 dark:text-amber-400">
+  1022→                          {formatINR(subBalance.outstandingBalance)}
+  1023→                        </span>
+  1024→                      </div>
+  1025→                    </div>
+  1026→
+  1027→                    {/* Pending Invoices */}
+  1028→                    {subBalance.pendingInvoices.length > 0 && (
+  1029→                      <div className="space-y-1">
+  1030→                        <p className="text-xs font-medium text-muted-foreground">Pending Invoices</p>
+  1031→                        <div className="max-h-40 overflow-y-auto rounded-lg border">
+  1032→                          <Table>
+  1033→                            <TableHeader><TableRow>
+  1034→                              <TableHead className="text-[10px]">Invoice</TableHead>
+  1035→                              <TableHead className="text-[10px] text-right">Balance</TableHead>
+  1036→                              <TableHead className="text-[10px] hidden sm:table-cell">Due Date</TableHead>
+  1037→                            </TableRow></TableHeader>
+  1038→                            <TableBody>
+  1039→                              {subBalance.pendingInvoices.map((inv) => (
+  1040→                                <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => setFormAmount(String(inv.balanceAmount))}>
+  1041→                                  <TableCell className="text-xs font-mono">{inv.invoiceNumber}</TableCell>
+  1042→                                  <TableCell className="text-xs text-right font-semibold text-red-600">{formatINR(inv.balanceAmount)}</TableCell>
+  1043→                                  <TableCell className="text-xs text-muted-foreground hidden sm:table-cell">{formatDate(inv.dueDate)}</TableCell>
+  1044→                                </TableRow>
+  1045→                              ))}
+  1046→                            </TableBody>
+  1047→                          </Table>
+  1048→                        </div>
+  1049→                        <p className="text-[10px] text-muted-foreground">Click an invoice to auto-fill the amount</p>
+  1050→                      </div>
+  1051→                    )}
+  1052→                  </>
+  1053→                ) : (
+  1054→                  <p className="text-xs text-muted-foreground">No outstanding balance found</p>
+  1055→                )}
+  1056→              </div>
+  1057→            )}
+  1058→
+  1059→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1060→              {/* Payment amount */}
+  1061→              <div className="space-y-2">
+  1062→                <Label className="text-sm font-medium">Amount *</Label>
+  1063→                <div className="relative">
+  1064→                  <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+  1065→                  <Input type="number" className="pl-9" placeholder="Enter amount" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} />
+  1066→                </div>
+  1067→              </div>
+  1068→              <div className="space-y-2">
+  1069→                <Label className="text-sm font-medium">Payment Mode</Label>
+  1070→                <Select value={formMode} onValueChange={setFormMode}>
+  1071→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1072→                  <SelectContent>
+  1073→                    <SelectItem value="CASH">Cash</SelectItem>
+  1074→                    <SelectItem value="UPI">UPI</SelectItem>
+  1075→                    <SelectItem value="ONLINE">Online</SelectItem>
+  1076→                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+  1077→                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+  1078→                    <SelectItem value="WALLET">Wallet</SelectItem>
+  1079→                  </SelectContent>
+  1080→                </Select>
+  1081→              </div>
+  1082→            </div>
+  1083→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1084→              <div className="space-y-2">
+  1085→                <Label className="text-sm font-medium">Reference / Transaction ID</Label>
+  1086→                <Input placeholder="UPI ref, cheque number..." value={formRef} onChange={(e) => setFormRef(e.target.value)} />
+  1087→              </div>
+  1088→              <div className="space-y-2">
+  1089→                <Label className="text-sm font-medium">Notes</Label>
+  1090→                <Input placeholder="Optional notes" value={formNotes} onChange={(e) => setFormNotes(e.target.value)} />
+  1091→              </div>
+  1092→            </div>
+  1093→          </div>
+  1094→          <DialogFooter>
+  1095→            <Button variant="outline" onClick={() => { setCollectOpen(false); resetForm(); }}>Cancel</Button>
+  1096→            <Button onClick={handleCollect} disabled={createMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
+  1097→              {createMutation.isPending ? "Collecting..." : "Collect Payment"}
+  1098→            </Button>
+  1099→          </DialogFooter>
+  1100→        </DialogContent>
+  1101→      </Dialog>
+  1102→
+  1103→      {/* ─── Verify/Reject Confirm ─── */}
+  1104→      <Dialog open={verifyOpen} onOpenChange={setVerifyOpen}>
+  1105→        <DialogContent className="sm:max-w-[400px]">
+  1106→          <DialogHeader>
+  1107→            <DialogTitle>Verify Payment</DialogTitle>
+  1108→            <DialogDescription>
+  1109→              Verify payment details before confirming.
+  1110→            </DialogDescription>
+  1111→            <div className="space-y-1 mt-2">
+  1112→              <p className="text-sm">Amount: <span className="font-semibold">{selectedPayment ? formatINR(selectedPayment.amount) : ""}</span></p>
+  1113→              <p className="text-sm">Subscriber: <span className="font-semibold">{selectedPayment?.subscriber?.name}</span></p>
+  1114→              <p className="text-sm">Mode: <span className="font-semibold">{selectedPayment ? MODE_LABELS[selectedPayment.paymentMode] : ""}</span></p>
+  1115→              {selectedPayment?.transactionRef && <p className="text-sm">Reference: <span className="font-mono">{selectedPayment.transactionRef}</span></p>}
+  1116→            </div>
+  1117→          </DialogHeader>
+  1118→          <DialogFooter className="gap-2">
+  1119→            <Button variant="outline" onClick={() => setVerifyOpen(false)}>Cancel</Button>
+  1120→            <Button variant="destructive" onClick={() => selectedPayment && verifyMutation.mutate({ id: selectedPayment.id, status: "FAILED" })} disabled={verifyMutation.isPending}>
+  1121→              Reject
+  1122→            </Button>
+  1123→            <Button onClick={() => selectedPayment && verifyMutation.mutate({ id: selectedPayment.id, status: "VERIFIED" })} disabled={verifyMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white">
+  1124→              {verifyMutation.isPending ? "Processing..." : "Verify"}
+  1125→            </Button>
+  1126→          </DialogFooter>
+  1127→        </DialogContent>
+  1128→      </Dialog>
+  1129→
+  1130→      {/* ─── Edit Payment Dialog ─── */}
+  1131→      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+  1132→        <DialogContent className="sm:max-w-[450px]">
+  1133→          <DialogHeader>
+  1134→            <DialogTitle className="flex items-center gap-2">
+  1135→              <Pencil className="h-5 w-5" />
+  1136→              Edit Payment
+  1137→            </DialogTitle>
+  1138→            <DialogDescription>
+  1139→              Edit details for receipt <span className="font-mono font-medium">{selectedPayment?.receiptNumber}</span>
+  1140→            </DialogDescription>
+  1141→          </DialogHeader>
+  1142→          <div className="space-y-4 py-2">
+  1143→            <div className="space-y-2">
+  1144→              <Label>Amount *</Label>
+  1145→              <div className="relative">
+  1146→                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+  1147→                <Input type="number" className="pl-9" placeholder="Enter amount" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
+  1148→              </div>
+  1149→            </div>
+  1150→            <div className="space-y-2">
+  1151→              <Label>Payment Mode</Label>
+  1152→              <Select value={editMode} onValueChange={setEditMode}>
+  1153→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1154→                <SelectContent>
+  1155→                  <SelectItem value="CASH">Cash</SelectItem>
+  1156→                  <SelectItem value="UPI">UPI</SelectItem>
+  1157→                  <SelectItem value="ONLINE">Online</SelectItem>
+  1158→                  <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+  1159→                  <SelectItem value="CHEQUE">Cheque</SelectItem>
+  1160→                  <SelectItem value="WALLET">Wallet</SelectItem>
+  1161→                </SelectContent>
+  1162→              </Select>
+  1163→            </div>
+  1164→            <div className="space-y-2">
+  1165→              <Label>Reference / Transaction ID</Label>
+  1166→              <Input placeholder="UPI ref, cheque number, etc." value={editRef} onChange={(e) => setEditRef(e.target.value)} />
+  1167→            </div>
+  1168→            <div className="space-y-2">
+  1169→              <Label>Notes</Label>
+  1170→              <Input placeholder="Optional notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+  1171→            </div>
+  1172→          </div>
+  1173→          <DialogFooter className="gap-2">
+  1174→            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+  1175→            <Button onClick={handleEditSave} disabled={editMutation.isPending}>
+  1176→              {editMutation.isPending ? "Saving..." : "Save Changes"}
+  1177→            </Button>
+  1178→          </DialogFooter>
+  1179→        </DialogContent>
+  1180→      </Dialog>
+  1181→
+  1182→      {/* ─── Delete Payment Confirm ─── */}
+  1183→      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+  1184→        <DialogContent className="sm:max-w-[400px]">
+  1185→          <DialogHeader>
+  1186→            <DialogTitle className="text-red-600">Delete Payment</DialogTitle>
+  1187→            <DialogDescription>
+  1188→              Are you sure you want to delete this payment? This action cannot be undone.
+  1189→            </DialogDescription>
+  1190→            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 space-y-1 mt-2">
+  1191→              <p className="text-sm">Receipt: <span className="font-mono font-medium">{selectedPayment?.receiptNumber}</span></p>
+  1192→              <p className="text-sm">Subscriber: <span className="font-medium">{selectedPayment?.subscriber?.name}</span></p>
+  1193→              <p className="text-sm">Amount: <span className="font-semibold">{selectedPayment ? formatINR(selectedPayment.amount) : ""}</span></p>
+  1194→            </div>
+  1195→          </DialogHeader>
+  1196→          <DialogFooter className="gap-2">
+  1197→            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+  1198→            <Button variant="destructive" onClick={() => selectedPayment && deleteMutation.mutate(selectedPayment.id)} disabled={deleteMutation.isPending}>
+  1199→              {deleteMutation.isPending ? "Deleting..." : "Delete Payment"}
+  1200→            </Button>
+  1201→          </DialogFooter>
+  1202→        </DialogContent>
+  1203→      </Dialog>
+  1204→
+  1205→      {/* ─── Bulk Action Confirm ─── */}
+  1206→      <Dialog open={bulkConfirmOpen} onOpenChange={setBulkConfirmOpen}>
+  1207→        <DialogContent className="sm:max-w-[400px]">
+  1208→          <DialogHeader>
+  1209→            <DialogTitle>
+  1210→              {bulkAction === "verify" ? "Verify Selected Payments" : "Reject Selected Payments"}
+  1211→            </DialogTitle>
+  1212→            <DialogDescription>
+  1213→              Are you sure you want to {bulkAction} {selectedIds.size} payment(s)?
+  1214→              {bulkAction === "reject" && (
+  1215→                <span className="text-xs text-red-600 font-medium block mt-1">
+  1216→                  Rejected payments will be marked as failed and cannot be recovered.
+  1217→                </span>
+  1218→              )}
+  1219→            </DialogDescription>
+  1220→          </DialogHeader>
+  1221→          <DialogFooter className="gap-2">
+  1222→            <Button variant="outline" onClick={() => setBulkConfirmOpen(false)}>Cancel</Button>
+  1223→            <Button
+  1224→              variant={bulkAction === "verify" ? "default" : "destructive"}
+  1225→              onClick={confirmBulkAction}
+  1226→              disabled={bulkVerifyMutation.isPending}
+  1227→              className={bulkAction === "verify" ? "bg-green-600 hover:bg-green-700 text-white" : ""}
+  1228→            >
+  1229→              {bulkVerifyMutation.isPending ? "Processing..." : bulkAction === "verify" ? "Verify" : "Reject"}
+  1230→            </Button>
+  1231→          </DialogFooter>
+  1232→        </DialogContent>
+  1233→      </Dialog>
+  1234→
+  1235→      {/* ─── Receipt Dialog ─── */}
+  1236→      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+  1237→        <DialogContent className="sm:max-w-[480px]">
+  1238→          <DialogHeader>
+  1239→            <DialogTitle className="flex items-center gap-2">
+  1240→              <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/30"><Printer className="h-5 w-5 text-emerald-600" /></div>
+  1241→              Payment Receipt
+  1242→            </DialogTitle>
+  1243→            <DialogDescription>Receipt for {selectedPayment?.receiptNumber}</DialogDescription>
+  1244→          </DialogHeader>
+  1245→          {paymentDetail ? (
+  1246→            <div ref={receiptRef}>
+  1247→              <div className="border-2 border-dashed border-muted rounded-xl p-5 space-y-4 bg-gradient-to-b from-muted/20 to-transparent">
+  1248→                {/* ISP Header */}
+  1249→                <div className="text-center pb-4 border-b-2 border-border">
+  1250→                  <h2 className="text-lg font-bold tracking-tight">{paymentDetail.ispSettings?.companyName || "My ISP"}</h2>
+  1251→                  {paymentDetail.ispSettings?.address && (
+  1252→                    <p className="text-xs text-muted-foreground mt-1">{[
+  1253→                      paymentDetail.ispSettings.address,
+  1254→                      paymentDetail.ispSettings.city,
+  1255→                      paymentDetail.ispSettings.state,
+  1256→                      paymentDetail.ispSettings.pincode,
+  1257→                    ].filter(Boolean).join(", ")}</p>
+  1258→                  )}
+  1259→                  {(paymentDetail.ispSettings?.phone || paymentDetail.ispSettings?.email) && (
+  1260→                    <p className="text-xs text-muted-foreground mt-0.5">
+  1261→                      {paymentDetail.ispSettings?.phone && `Phone: ${paymentDetail.ispSettings.phone}`}
+  1262→                      {paymentDetail.ispSettings?.phone && paymentDetail.ispSettings?.email && " | "}
+  1263→                      {paymentDetail.ispSettings?.email}
+  1264→                    </p>
+  1265→                  )}
+  1266→                  {paymentDetail.ispSettings?.gstin && (
+  1267→                    <p className="text-[10px] text-muted-foreground mt-0.5">GSTIN: {paymentDetail.ispSettings.gstin}</p>
+  1268→                  )}
+  1269→                </div>
+  1270→                {/* Receipt Details */}
+  1271→                <div className="space-y-1.5">
+  1272→                  <div className="flex justify-between text-sm">
+  1273→                    <span className="text-muted-foreground">Receipt #</span>
+  1274→                    <span className="font-mono font-medium text-xs">{paymentDetail.receiptNumber}</span>
+  1275→                  </div>
+  1276→                  <div className="flex justify-between text-sm">
+  1277→                    <span className="text-muted-foreground">Date</span>
+  1278→                    <span className="text-xs">{formatDateTime(paymentDetail.createdAt)}</span>
+  1279→                  </div>
+  1280→                  <div className="flex justify-between items-center text-sm">
+  1281→                    <span className="text-muted-foreground">Status</span>
+  1282→                    <div className="flex items-center gap-1.5">
+  1283→                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_MAP[paymentDetail.status]?.dot || "bg-gray-400"}`} />
+  1284→                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 badge-bounce ${STATUS_MAP[paymentDetail.status]?.class || ""}`}>
+  1285→                        {STATUS_MAP[paymentDetail.status]?.label || paymentDetail.status}
+  1286→                      </Badge>
+  1287→                    </div>
+  1288→                  </div>
+  1289→                </div>
+  1290→                {/* Subscriber Info */}
+  1291→                <div className="bg-muted/40 rounded-lg p-3 space-y-1.5">
+  1292→                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Subscriber Details</p>
+  1293→                  <div className="flex justify-between text-sm">
+  1294→                    <span className="text-muted-foreground">Name</span>
+  1295→                    <span className="font-medium">{paymentDetail.subscriber?.name || "—"}</span>
+  1296→                  </div>
+  1297→                  <div className="flex justify-between text-sm">
+  1298→                    <span className="text-muted-foreground">Code</span>
+  1299→                    <span className="font-mono text-xs">{paymentDetail.subscriber?.code || "—"}</span>
+  1300→                  </div>
+  1301→                  {paymentDetail.subscriber?.phone && (
+  1302→                    <div className="flex justify-between text-sm">
+  1303→                      <span className="text-muted-foreground">Phone</span>
+  1304→                      <span className="text-xs">{paymentDetail.subscriber.phone}</span>
+  1305→                    </div>
+  1306→                  )}
+  1307→                </div>
+  1308→                {/* Payment Info */}
+  1309→                <div className="space-y-1.5">
+  1310→                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Payment Details</p>
+  1311→                  {paymentDetail.invoice && (
+  1312→                    <div className="flex justify-between text-sm">
+  1313→                      <span className="text-muted-foreground">Invoice</span>
+  1314→                      <span className="font-mono text-xs">{paymentDetail.invoice.invoiceNumber}</span>
+  1315→                    </div>
+  1316→                  )}
+  1317→                  <div className="flex justify-between items-center text-sm">
+  1318→                    <span className="text-muted-foreground">Payment Mode</span>
+  1319→                    <div className="flex items-center gap-1.5">
+  1320→                      {(() => { const ModeIcon = MODE_ICONS[paymentDetail.paymentMode]; return ModeIcon ? <ModeIcon className="h-3.5 w-3.5 text-muted-foreground" /> : null; })()}
+  1321→                      <span className="text-xs font-medium">{MODE_LABELS[paymentDetail.paymentMode] || paymentDetail.paymentMode}</span>
+  1322→                    </div>
+  1323→                  </div>
+  1324→                  {paymentDetail.transactionRef && (
+  1325→                    <div className="flex justify-between text-sm">
+  1326→                      <span className="text-muted-foreground">Reference</span>
+  1327→                      <span className="font-mono text-xs">{paymentDetail.transactionRef}</span>
+  1328→                    </div>
+  1329→                  )}
+  1330→                  {paymentDetail.verifiedBy && (
+  1331→                    <div className="flex justify-between text-sm">
+  1332→                      <span className="text-muted-foreground">Verified By</span>
+  1333→                      <span className="text-xs">{paymentDetail.verifiedBy.name}</span>
+  1334→                    </div>
+  1335→                  )}
+  1336→                  {paymentDetail.collectedBy && (
+  1337→                    <div className="flex justify-between text-sm">
+  1338→                      <span className="text-muted-foreground">Collected By</span>
+  1339→                      <span className="text-xs">{paymentDetail.collectedBy.name}</span>
+  1340→                    </div>
+  1341→                  )}
+  1342→                </div>
+  1343→                {/* Amount */}
+  1344→                <div className="flex justify-between items-center pt-3 border-t-2 border-border">
+  1345→                  <span className="text-sm font-bold">Total Amount</span>
+  1346→                  <span className="text-xl font-bold tracking-tight">{formatINR(paymentDetail.amount)}</span>
+  1347→                </div>
+  1348→                {paymentDetail.notes && (
+  1349→                  <p className="text-xs text-muted-foreground italic border-l-2 border-muted pl-2">
+  1350→                    {paymentDetail.notes}
+  1351→                  </p>
+  1352→                )}
+  1353→              </div>
+  1354→            </div>
+  1355→          ) : (
+  1356→            <div className="flex items-center justify-center py-8">
+  1357→              <Skeleton className="skeleton-wave h-40 w-full" />
+  1358→            </div>
+  1359→          )}
+  1360→          <DialogFooter>
+  1361→            <Button variant="outline" onClick={() => setReceiptOpen(false)}>Close</Button>
+  1362→            <Button onClick={handlePrintReceipt} className="bg-red-600 hover:bg-red-700 text-white">
+  1363→              <Printer className="h-4 w-4 mr-2" />Print Receipt
+  1364→            </Button>
+  1365→          </DialogFooter>
+  1366→        </DialogContent>
+  1367→      </Dialog>
+  1368→    </div>
+  1369→  );
+  1370→}
+  1371→
