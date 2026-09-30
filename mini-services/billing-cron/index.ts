@@ -620,6 +620,73 @@ async function jobGracePeriodSweep(): Promise<Record<string, unknown>> {
   return { active: activePeriods.length, markedUsed, notified };
 }
 
+// ─── Job 009: Retention & Archival Sweep ────────────────────
+// [NEW-FEATURE] Data-retention automation (GST/tax law requires keeping
+// financial records; audit/event logs should not grow unbounded).
+// Two-stage archival for AuditLog: mark isArchived after AUDIT_ARCHIVE_DAYS,
+// hard-delete after AUDIT_PURGE_DAYS. Sessions, delivered notifications and
+// stale PENDING notifications are pruned on their own schedules.
+// Configurable via env: RETENTION_AUDIT_ARCHIVE_DAYS (90), RETENTION_AUDIT_PURGE_DAYS (180),
+// RETENTION_SESSION_DAYS (30), RETENTION_NOTIFICATION_DAYS (60).
+
+function envDays(name: string, fallback: number): number {
+  const v = parseInt(process.env[name] || "", 10);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+async function jobRetentionSweep(): Promise<Record<string, unknown>> {
+  const now = new Date();
+  const archiveDays = envDays("RETENTION_AUDIT_ARCHIVE_DAYS", 90);
+  const purgeDays = envDays("RETENTION_AUDIT_PURGE_DAYS", 180);
+  const sessionDays = envDays("RETENTION_SESSION_DAYS", 30);
+  const notificationDays = envDays("RETENTION_NOTIFICATION_DAYS", 60);
+
+  const archiveCutoff = new Date(now.getTime() - archiveDays * 86400000);
+  const purgeCutoff = new Date(now.getTime() - purgeDays * 86400000);
+  const sessionCutoff = new Date(now.getTime() - sessionDays * 86400000);
+  const notificationCutoff = new Date(now.getTime() - notificationDays * 86400000);
+
+  // ── Stage 1: archive audit logs past retention window (idempotent) ──
+  const archived = await db.auditLog.updateMany({
+    where: { timestamp: { lt: archiveCutoff }, isArchived: false },
+    data: { isArchived: true, archivedAt: now },
+  });
+
+  // ── Stage 2: hard-delete audit logs past the purge window (2x retention) ──
+  const purgedAuditLogs = await db.auditLog.deleteMany({
+    where: { timestamp: { lt: purgeCutoff } },
+  });
+
+  // ── Sessions: any row (active or revoked) untouched past the window is dead.
+  // Cookie life is 7 days, so nothing legitimately survives 30 days inactive. ──
+  const purgedSessions = await db.userSession.deleteMany({
+    where: { updatedAt: { lt: sessionCutoff } },
+  });
+
+  // ── Notifications: DELIVERED read-notifications past window + ancient PENDING ──
+  const purgedDeliveredNotifications = await db.notification.deleteMany({
+    where: {
+      status: "DELIVERED",
+      OR: [{ deliveredAt: { lt: notificationCutoff } }, { createdAt: { lt: notificationCutoff } }],
+    },
+  });
+  const purgedStaleNotifications = await db.notification.deleteMany({
+    where: { status: "PENDING", createdAt: { lt: new Date(now.getTime() - 90 * 86400000) } },
+  });
+
+  const result = {
+    archivedAuditLogs: archived.count,
+    purgedAuditLogs: purgedAuditLogs.count,
+    purgedSessions: purgedSessions.count,
+    purgedDeliveredNotifications: purgedDeliveredNotifications.count,
+    purgedStaleNotifications: purgedStaleNotifications.count,
+    retention: { auditArchiveDays: archiveDays, auditPurgeDays: purgeDays, sessionDays, notificationDays },
+  };
+
+  logger.info("Retention sweep complete", result);
+  return result;
+}
+
 // ─── Job Registry ───────────────────────────────────────────
 
 function getNextRun(cron: string): string {
@@ -651,6 +718,10 @@ function getNextRun(cron: string): string {
     // Daily 7:30 AM (grace period sweep)
     if (next.getHours() > 7 || (next.getHours() === 7 && next.getMinutes() >= 30)) next.setDate(next.getDate() + 1);
     next.setHours(7, 30, 0, 0);
+  } else if (cron === "30 4 * * *") {
+    // Daily 4:30 AM (retention & archival sweep)
+    if (next.getHours() > 4 || (next.getHours() === 4 && next.getMinutes() >= 30)) next.setDate(next.getDate() + 1);
+    next.setHours(4, 30, 0, 0);
   } else {
     next.setMinutes(next.getMinutes() + 5, 0, 0);
   }
@@ -777,6 +848,21 @@ const jobs: ScheduledJob[] = [
     failCount: 0,
     history: [],
     handler: jobGracePeriodSweep,
+  },
+  {
+    id: "job-009",
+    name: "Retention & Archival Sweep",
+    description: "Two-stage audit-log archival (mark 90d → purge 180d), prune dead sessions (30d) and delivered/stale notifications (60d/90d); windows configurable via RETENTION_* env vars [NEW-FEATURE]",
+    type: "retention-sweep",
+    cron: "30 4 * * *",
+    enabled: true,
+    nextRun: getNextRun("30 4 * * *"),
+    status: "idle",
+    totalRuns: 0,
+    successCount: 0,
+    failCount: 0,
+    history: [],
+    handler: jobRetentionSweep,
   },
 ];
 
@@ -1023,6 +1109,18 @@ Bun.serve({
         executeJob(expiryJob, `manual:${auth.userId}`).catch(() => {});
       }
       return json({ success: true, message: "Expiry enforcement job started", timestamp: new Date().toISOString() });
+    }
+
+    // ── POST /api/retention-sweep (direct trigger) [NEW-FEATURE] ──
+    if (path === "/api/retention-sweep" && req.method === "POST") {
+      const retentionJob = jobs.find((j) => j.type === "retention-sweep");
+      if (retentionJob && retentionJob.status === "running") {
+        return jsonErr("Retention sweep already in progress", 409);
+      }
+      if (retentionJob) {
+        executeJob(retentionJob, `manual:${auth.userId}`).catch(() => {});
+      }
+      return json({ success: true, message: "Retention & archival sweep started", timestamp: new Date().toISOString() });
     }
 
     // ── POST /api/usage-reset (direct trigger) ──

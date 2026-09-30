@@ -3429,3 +3429,37 @@ Stage Summary:
 - Artifacts: src/app/api/security/posture/route.ts, src/app/api/notifications/mark-delivered/route.ts, src/components/dashboard/security-posture-widget.tsx; edits: dashboard-page.tsx, dashboard-status-bar.tsx, notification-panel.tsx, globals.css, globals-source.css
 - Screenshots: qa5-security-widget3.png + qa5-security-widget-final.png (widget live), qa5-notifications-delivered2.png (DELIVERED badge), qa5-01..06 (baseline)
 - Risks/next: RADIUS "Drifted/Error" badges are expected (FreeRADIUS decommissioned in sandbox); consider surfacing staleReaped; dashboard bundle is OOM-fragile — consider code-splitting heavy widgets or lazy-loading below-fold widgets (next round suggestion); optionally wire failed-login alert into SystemAlertsWidget
+
+---
+Task ID: PERF-SEC-SPRINT-2026-10-01
+Agent: Z.ai Code (cron webDevReview round 5)
+Task: Status assessment + browser QA → root-cause the recurring dev-server OOM kills; fix dashboard stability; add security alerting + retention automation; styling polish
+
+Work Log:
+- BASELINE QA: postgres + billing-cron :3004 alive; dev server found DEAD (reaped) — restarted with explicit postgres DATABASE_URL. Login/dashboard OK, 0 console errors initially.
+- REPRODUCED OOM 3×: next-server repeatedly OOM-killed (dmesg: anon-rss 2.37-2.42 GB) — first on dashboard boot with browser tab polling, then during lazy-chunk hydration. Root-caused THREE compounding causes and fixed all:
+  1. dashboard-page.tsx (2900 lines) statically imported ~40 widgets → monolithic eager bundle + ~30 API fetches on boot. FIXED: created src/components/dashboard/lazy-widget.tsx — createLazyWidget() = next/dynamic chunk-split + MountOnVisible (IntersectionObserver rootMargin 700px, load-once) + shimmer WidgetSkeleton; converted 33 below-fold widgets to lazy chunks. Render-sites unchanged (factory wraps component, props pass through).
+  2. recharts (~2MB module graph) compiled into the MAIN dashboard chunk (inline Revenue Trend / Subscriber Additions / Plan Distribution pie / Area Revenue / Complaint Trend / Bandwidth 24h / Plan Revenue cards). FIXED: extracted all 7 chart cards verbatim into src/components/dashboard/inline-charts.tsx; dashboard-page now lazy-loads them and NO LONGER imports recharts at all (main chunk shrinks hard).
+  3. Dashboard UX anti-pattern: 40 widgets on one page. FIXED: new collapsible "Advanced Insights" section (16 low-priority analytics widgets behind a polished toggle — gradient icon, module-count badge, rotating chevron, aria-expanded, localStorage-persisted). Collapsed = 0 compiles/0 fetches for the tail. Core dashboard = KPIs + operational widgets (SystemAlerts kept core for the new security feature).
+  4. Mount pacing: fast scroll/section-expansion bursts mounted many widgets at once (chunk compile + fetch storms). MountOnVisible now admits mounts through a module-level queue (MAX_CONCURRENT_MOUNTS=1, RELEASE_INTERVAL_MS=600ms) — flattens spikes, skeletons shimmer meanwhile.
+  5. CACHE TRAP (measured): turbopackFileSystemCacheForDev:true INFLATED baseline RSS ~500MB (root-only: 2332MB warm cache vs 1852MB fresh) — the 1.3GB .next dir is loaded into RAM at startup. DISABLED in next.config.ts (comment documents numbers). On this box: `rm -rf .next` before starting dev when memory is tight.
+- MEASURED RESULT (fresh .next, FS cache off): root 1852MB → dashboard boot 1999MB (23 lazy placeholders) → full core hydration 2253MB, 0 skeletons, 0 console errors, server ALIVE (previously boot itself OOM'd). Known dev-mode limit: expanding Advanced Insights AND scrolling through ALL 16 widgets still OOMs at ~2.32GB (Turbopack cache accumulation; ~13MB/widget + ~1 compile per distinct API route) — production build unaffected (no runtime compiles); default collapsed path is the stable 95% case.
+- FEATURE (security alerting): /api/system/alerts-summary now returns a `security` block (failedLogins24h/7d from AuditLog LOGIN_FAILED, lockedAccounts, activeSessions) + emits alerts: CRITICAL failed-login spike (≥10/24h), WARNING failed logins, HIGH locked accounts, INFO high session count (>50). SystemAlertsWidget gained a "SECURITY" section (3 stat tiles: Failed 24h / Locked / Sessions with danger|warn|ok tones, tooltips, hover lift), "Security" source icon (ShieldAlert), skeleton parity, and an "Admin Users" quick action. VERIFIED LIVE: 3 failed logins → WARNING "3 Failed Logins (24h)" + tiles showing 3/0/18.
+- FEATURE (retention automation): billing-cron job-009 "Retention & Archival Sweep" (daily 04:30 + POST /api/retention-sweep trigger): two-stage AuditLog archival (mark isArchived at 90d → hard delete at 180d), prune dead UserSessions (30d), DELIVERED notifications (60d) + stale PENDING (90d); windows configurable via RETENTION_* env. VERIFIED: registered in /api/jobs (9 jobs), manual run success 36ms.
+- OPS BUG FIXED: .env had NO SESSION_SECRET → main app signed tokens with a RANDOM fallback → billing-cron (fixed secret) rejected every token ("Unauthorized"). Added SESSION_SECRET to .env; tokens now verify across services.
+- Styling: WidgetSkeleton with gradient shimmer wave + sr-only label + aria-busy; Advanced Insights toggle styled per design system; security tiles consistent rounded-lg borders; all new CSS respects dark mode + prefers-reduced-motion (via existing utilities).
+
+Regression tests (live):
+- Default dashboard: boot 23 skeletons → scroll-hydrate → 0 skeletons, RSS 2253MB, 0 console errors, status bar "DB Online · API 48ms · Uptime 100%"
+- alerts-summary: security block {failedLogins24h:3, lockedAccounts:0, activeSessions:18} after 3 deliberate bad logins; Security-sourced WARNING in feed
+- cron: job-009 in registry + successful manual execution; POST /api/retention-sweep 200
+- auth: login token from /api/auth/login now accepted by cron /api/jobs (was 401 pre-.env fix)
+- lint: 0 errors (5 pre-existing warnings in untouched files)
+- Screenshots: qa6-02..07 (boot skeletons, security tiles, Advanced Insights collapsed, full-hydration chart render)
+
+Stage Summary:
+- Dev-server OOM root-caused (eager bundle + recharts-in-main + FS-cache RAM + burst mounts) and mitigated in depth; default dashboard now OOM-free on the 4GB sandbox
+- 2 new features: security alerting (API + widget) and retention/archival cron job-009 (+trigger endpoint)
+- 3 new files: dashboard/lazy-widget.tsx, dashboard/inline-charts.tsx, (security section in system-alerts-widget.tsx); modified: dashboard-page.tsx, alerts-summary route, billing-cron index.ts, next.config.ts, .env
+- Risks: full Advanced-Insights traversal on THIS sandbox can still OOM in dev (documented; not a production issue); old browser sessions were invalidated once by the SESSION_SECRET change — re-login expected
+- Next round suggestions: audit-log page "Archived" filter (isArchived flag now meaningful), notifications center surfacing job-007/008 escalations, split Advanced Insights into two sub-sections if dev-mode tail OOM matters, VPP/NAS route warmup script

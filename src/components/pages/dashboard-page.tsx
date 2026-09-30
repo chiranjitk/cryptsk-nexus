@@ -49,6 +49,8 @@ import {
   Info,
   ArrowUpRight,
   Globe,
+  Sparkles,
+  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
@@ -64,39 +66,6 @@ import { SubscriberGrowthWidget } from "@/components/dashboard/subscriber-growth
 import { RevenueBreakdownWidget } from "@/components/dashboard/revenue-breakdown-widget";
 import { LiveActivityFeedWidget } from "@/components/dashboard/live-activity-feed-widget";
 import { SlaMonitorWidget } from "@/components/dashboard/sla-monitor-widget";
-import { IspHealthScoreWidget } from "@/components/dashboard/isp-health-score-widget";
-import { NetworkHealthEnhancedWidget } from "@/components/dashboard/network-health-enhanced-widget";
-import { BandwidthTrendsWidget } from "@/components/dashboard/bandwidth-trends-widget";
-import { TopAreasWidget } from "@/components/dashboard/top-areas-widget";
-import { AreaDistributionWidget } from "@/components/dashboard/area-distribution-widget";
-import { ConnectionTypeWidget } from "@/components/dashboard/connection-type-widget";
-import { RevenuePaymentModeWidget } from "@/components/dashboard/revenue-payment-mode-widget";
-import { ComplaintsAnalyticsWidget } from "@/components/dashboard/complaints-analytics-widget";
-import { PlanPerformanceWidget } from "@/components/dashboard/plan-performance-widget";
-import { RecentPaymentsTimelineWidget } from "@/components/dashboard/recent-payments-timeline-widget";
-import { SystemAlertsWidget } from "@/components/dashboard/system-alerts-widget";
-import { RetentionChurnWidget } from "@/components/dashboard/retention-churn-widget";
-import { InvoiceAgingWidget } from "@/components/dashboard/invoice-aging-widget";
-import { PaymentAnalyticsWidget } from "@/components/dashboard/payment-analytics-widget";
-import { SubscriberLifecycleWidget } from "@/components/dashboard/subscriber-lifecycle-widget";
-import { TechnicianPerformanceWidget } from "@/components/dashboard/technician-performance-widget";
-import { ExpiringSubscriptionsWidget } from "@/components/dashboard/expiring-subscriptions-widget";
-import { TopSubscribersWidget } from "@/components/dashboard/top-subscribers-widget";
-import { PlanComparisonWidget } from "@/components/dashboard/plan-comparison-widget";
-import { OverduePaymentsWidget } from "@/components/dashboard/overdue-payments-widget";
-import { CollectionPerformanceWidget } from "@/components/dashboard/collection-performance-widget";
-import { ChurnRiskWidget } from "@/components/dashboard/churn-risk-widget";
-import { ChurnPredictionWidget } from "@/components/dashboard/churn-prediction-widget";
-import { ResponseTimeWidget } from "@/components/dashboard/response-time-widget";
-import { RevenueForecastWidget } from "@/components/dashboard/revenue-forecast-widget";
-import { CollectionTargetWidget } from "@/components/dashboard/collection-target-widget";
-import { RadiusSyncStatusWidget } from "@/components/dashboard/radius-sync-status-widget";
-import { SystemOverviewWidget } from "@/components/dashboard/system-overview-widget";
-import { SecurityPostureWidget } from "@/components/dashboard/security-posture-widget";
-import { PlanRecommendationWidget } from "@/components/dashboard/plan-recommendation-widget";
-import { RecentSignupsWidget } from "@/components/dashboard/recent-signups-widget";
-import { SubscriberAnalyticsWidget } from "@/components/dashboard/subscriber-analytics-widget";
-import { SystemPerformanceWidget } from "@/components/dashboard/system-performance-widget";
 import { SystemAlertBanner } from "@/components/system-alert-banner";
 import DashboardStatusBar from "@/components/dashboard/dashboard-status-bar";
 import SubscriberQuickView from "@/components/subscriber-quick-view";
@@ -119,9 +88,141 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AreaChart, Area, LineChart, Line, PieChart, Pie, Cell, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend,
-} from "recharts";
+// recharts is NOT imported here — chart cards live in dashboard/inline-charts.tsx (lazy)
+import { createLazyWidget } from "@/components/dashboard/lazy-widget";
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Below-fold widgets are LAZY-LOADED (chunk-split + mount-on-visible).
+ *
+ * Rationale: statically importing 40 widgets produced a monolithic bundle that
+ * OOM-killed the server during compile (next-server RSS 2.4 GB) and fired ~30
+ * API requests on boot. Each createLazyWidget() below compiles to its own
+ * chunk, shows a shimmer skeleton, and only mounts — i.e. fetches — when the
+ * placeholder scrolls within 700px of the viewport.
+ *                                                                        ── */
+const IspHealthScoreWidget = createLazyWidget(
+  () => import("@/components/dashboard/isp-health-score-widget"), "IspHealthScoreWidget"
+);
+const NetworkHealthEnhancedWidget = createLazyWidget(
+  () => import("@/components/dashboard/network-health-enhanced-widget"), "NetworkHealthEnhancedWidget"
+);
+const BandwidthTrendsWidget = createLazyWidget(
+  () => import("@/components/dashboard/bandwidth-trends-widget"), "BandwidthTrendsWidget"
+);
+const TopAreasWidget = createLazyWidget(
+  () => import("@/components/dashboard/top-areas-widget"), "TopAreasWidget"
+);
+const AreaDistributionWidget = createLazyWidget(
+  () => import("@/components/dashboard/area-distribution-widget"), "AreaDistributionWidget"
+);
+const ConnectionTypeWidget = createLazyWidget(
+  () => import("@/components/dashboard/connection-type-widget"), "ConnectionTypeWidget"
+);
+const RevenuePaymentModeWidget = createLazyWidget(
+  () => import("@/components/dashboard/revenue-payment-mode-widget"), "RevenuePaymentModeWidget"
+);
+const ComplaintsAnalyticsWidget = createLazyWidget(
+  () => import("@/components/dashboard/complaints-analytics-widget"), "ComplaintsAnalyticsWidget"
+);
+const PlanPerformanceWidget = createLazyWidget(
+  () => import("@/components/dashboard/plan-performance-widget"), "PlanPerformanceWidget"
+);
+const TopSubscribersWidget = createLazyWidget(
+  () => import("@/components/dashboard/top-subscribers-widget"), "TopSubscribersWidget"
+);
+const PlanComparisonWidget = createLazyWidget(
+  () => import("@/components/dashboard/plan-comparison-widget"), "PlanComparisonWidget"
+);
+const CollectionPerformanceWidget = createLazyWidget(
+  () => import("@/components/dashboard/collection-performance-widget"), "CollectionPerformanceWidget"
+);
+const SystemAlertsWidget = createLazyWidget(
+  () => import("@/components/dashboard/system-alerts-widget"), "SystemAlertsWidget"
+);
+const RecentPaymentsTimelineWidget = createLazyWidget(
+  () => import("@/components/dashboard/recent-payments-timeline-widget"), "RecentPaymentsTimelineWidget"
+);
+const ExpiringSubscriptionsWidget = createLazyWidget(
+  () => import("@/components/dashboard/expiring-subscriptions-widget"), "ExpiringSubscriptionsWidget"
+);
+const OverduePaymentsWidget = createLazyWidget(
+  () => import("@/components/dashboard/overdue-payments-widget"), "OverduePaymentsWidget"
+);
+const RetentionChurnWidget = createLazyWidget(
+  () => import("@/components/dashboard/retention-churn-widget"), "RetentionChurnWidget"
+);
+const InvoiceAgingWidget = createLazyWidget(
+  () => import("@/components/dashboard/invoice-aging-widget"), "InvoiceAgingWidget"
+);
+const ChurnRiskWidget = createLazyWidget(
+  () => import("@/components/dashboard/churn-risk-widget"), "ChurnRiskWidget"
+);
+const ChurnPredictionWidget = createLazyWidget(
+  () => import("@/components/dashboard/churn-prediction-widget"), "ChurnPredictionWidget"
+);
+const PaymentAnalyticsWidget = createLazyWidget(
+  () => import("@/components/dashboard/payment-analytics-widget"), "PaymentAnalyticsWidget"
+);
+const SubscriberLifecycleWidget = createLazyWidget(
+  () => import("@/components/dashboard/subscriber-lifecycle-widget"), "SubscriberLifecycleWidget"
+);
+const TechnicianPerformanceWidget = createLazyWidget(
+  () => import("@/components/dashboard/technician-performance-widget"), "TechnicianPerformanceWidget"
+);
+const SubscriberAnalyticsWidget = createLazyWidget(
+  () => import("@/components/dashboard/subscriber-analytics-widget"), "SubscriberAnalyticsWidget"
+);
+const SystemOverviewWidget = createLazyWidget(
+  () => import("@/components/dashboard/system-overview-widget"), "SystemOverviewWidget"
+);
+const SystemPerformanceWidget = createLazyWidget(
+  () => import("@/components/dashboard/system-performance-widget"), "SystemPerformanceWidget"
+);
+const SecurityPostureWidget = createLazyWidget(
+  () => import("@/components/dashboard/security-posture-widget"), "SecurityPostureWidget"
+);
+const RadiusSyncStatusWidget = createLazyWidget(
+  () => import("@/components/dashboard/radius-sync-status-widget"), "RadiusSyncStatusWidget"
+);
+const PlanRecommendationWidget = createLazyWidget(
+  () => import("@/components/dashboard/plan-recommendation-widget"), "PlanRecommendationWidget"
+);
+const ResponseTimeWidget = createLazyWidget(
+  () => import("@/components/dashboard/response-time-widget"), "ResponseTimeWidget"
+);
+const CollectionTargetWidget = createLazyWidget(
+  () => import("@/components/dashboard/collection-target-widget"), "CollectionTargetWidget"
+);
+const RecentSignupsWidget = createLazyWidget(
+  () => import("@/components/dashboard/recent-signups-widget"), "RecentSignupsWidget"
+);
+const RevenueForecastWidget = createLazyWidget(
+  () => import("@/components/dashboard/revenue-forecast-widget"), "RevenueForecastWidget"
+);
+
+// Chart cards (recharts) — extracted into their own chunk so the recharts
+// module graph stays OUT of the main dashboard bundle (see inline-charts.tsx).
+const BandwidthUtilizationCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "BandwidthUtilizationCard"
+);
+const RevenueGrowthChartsRow = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "RevenueGrowthChartsRow"
+);
+const PlanDistributionCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "PlanDistributionCard"
+);
+const AreaRevenueCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "AreaRevenueCard"
+);
+const ComplaintTrendCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "ComplaintTrendCard"
+);
+const BandwidthUsageCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "BandwidthUsageCard"
+);
+const PlanRevenueCard = createLazyWidget(
+  () => import("@/components/dashboard/inline-charts"), "PlanRevenueCard"
+);
 
 interface DashboardData {
   totalActive: number;
@@ -201,13 +302,6 @@ function formatShortDate(dateStr: string): string {
   });
 }
 
-const PIE_COLORS = [
-  "#DC2626", "#16A34A", "#D97706", "#7C3AED", "#EC4899", "#14B8A6",
-  "#2563EB", "#F43F5E", "#84CC16", "#06B6D4", "#8B5CF6", "#F97316",
-  "#10B981", "#E11D48", "#A855F7", "#0EA5E9", "#EF4444", "#22C55E",
-  "#F59E0B", "#6366F1",
-];
-
 const PRIORITY_BADGE: Record<string, { label: string; class: string }> = {
   P1_CRITICAL: { label: "Critical", class: "bg-red-100 text-red-700 border-red-200" },
   P2_HIGH: { label: "High", class: "bg-orange-100 text-orange-700 border-orange-200" },
@@ -273,34 +367,6 @@ function StatCard({ title, value, subtitle, icon: Icon, gradient, trend, trendVa
   );
 }
 
-function CustomTooltip({ active, payload, label, isCurrency = false, isPercent = false, isBandwidth = false }: {
-  active?: boolean; payload?: { value: number; name: string; color: string; dataKey?: string }[];
-  label?: string; isCurrency?: boolean; isPercent?: boolean; isBandwidth?: boolean;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-card/90 border border-border/80 rounded-xl shadow-2xl px-4 py-3 text-xs backdrop-blur-md glass-card">
-      <p className="font-semibold text-foreground mb-2 text-[11px]">{label}</p>
-      {payload.map((item, i) => (
-        <p key={i} className="text-muted-foreground flex items-center justify-between gap-4 py-0.5">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
-            {item.name}
-          </span>
-          <span className="font-semibold text-foreground tabular-nums">
-            {isBandwidth
-              ? `${(item.value / 1000000).toFixed(1)} Mbps`
-              : isCurrency
-                ? formatINR(item.value)
-                : isPercent
-                  ? `${item.value}%`
-                  : item.value.toLocaleString("en-IN")}
-          </span>
-        </p>
-      ))}
-    </div>
-  );
-}
 
 interface SubscriberGrowthData {
   totalSubscribers: number;
@@ -349,6 +415,24 @@ export default function DashboardPage() {
   const { setCurrentPage, user } = useAppStore();
   const { isModuleEnabled } = useModuleStore();
   const queryClient = useQueryClient();
+
+  // Advanced Insights: the dashboard's long tail of analytics widgets is
+  // collapsed by default — they only compile + fetch when the operator opens
+  // the section. Keeps boot fast and memory lean (16 widgets ≈ 16 chunks).
+  const INSIGHTS_KEY = "dashboard-advanced-insights";
+  const [showAdvancedInsights, setShowAdvancedInsights] = useState(false);
+  useEffect(() => {
+    try {
+      setShowAdvancedInsights(localStorage.getItem(INSIGHTS_KEY) === "expanded");
+    } catch { /* private mode */ }
+  }, []);
+  const toggleAdvancedInsights = useCallback(() => {
+    setShowAdvancedInsights((v) => {
+      const next = !v;
+      try { localStorage.setItem(INSIGHTS_KEY, next ? "expanded" : "collapsed"); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
 
   // Welcome banner: dismissed per day
   const WELCOME_DISMISS_KEY = "dashboard-welcome-dismissed";
@@ -1296,76 +1380,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Bandwidth Usage Indicator ── */}
-      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-teal-200 dark:hover:border-teal-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "535ms" }}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Zap className="h-4 w-4 text-teal-500" />
-            Bandwidth Utilization
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-teal-200 text-teal-600">
-              Current: {(data.currentBandwidth / 1000000).toFixed(1)} Mbps
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0 space-y-4">
-          {/* Utilization bar */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {(data.currentBandwidth / 1000000).toFixed(1)} Mbps <span className="mx-1">/</span> {(data.peakBandwidth / 1000000).toFixed(1)} Mbps Peak
-              </span>
-              <span className={`text-xs font-bold tabular-nums ${data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.85 ? "text-red-600" : data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.6 ? "text-yellow-600" : "text-green-600"}`}>
-                {data.peakBandwidth > 0 ? ((data.currentBandwidth / data.peakBandwidth) * 100).toFixed(1) : 0}%
-              </span>
-            </div>
-            <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full animate-progress transition-colors duration-500"
-                style={{
-                  "--progress": `${data.peakBandwidth > 0 ? Math.min((data.currentBandwidth / data.peakBandwidth) * 100, 100) : 0}%`,
-                  width: `${data.peakBandwidth > 0 ? Math.min((data.currentBandwidth / data.peakBandwidth) * 100, 100) : 0}%`,
-                  background: data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.85
-                    ? "linear-gradient(90deg, #DC2626, #F87171)"
-                    : data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.6
-                      ? "linear-gradient(90deg, #D97706, #FBBF24)"
-                      : "linear-gradient(90deg, #16A34A, #4ADE80)",
-                } as React.CSSProperties}
-              />
-            </div>
-          </div>
-          {/* Bandwidth area chart */}
-          {data.bandwidthUsageData.length > 0 ? (
-            <div className="h-36">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.bandwidthUsageData}>
-                  <defs>
-                    <linearGradient id="bwCurrentGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                  <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickFormatter={(v) => `${(v / 1000000).toFixed(0)}`} />
-                  <RechartsTooltip content={<CustomTooltip isBandwidth />} />
-                  <Area type="monotone" dataKey="downloadBps" name="Download" stroke="#0D9488" strokeWidth={1.5} fill="url(#bwCurrentGradient)" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-36 text-xs text-muted-foreground">No bandwidth data</div>
-          )}
-          {isModuleEnabled("ipv6") && (
-            <div className="flex items-center gap-3 text-xs">
-              <div className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-cyan-500"></span>
-                <span>IPv6 Traffic</span>
-              </div>
-              <span className="text-muted-foreground">{data.ipv6TrafficPercent || 0}% of total</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Bandwidth Usage Indicator (lazy — recharts) ── */}
+      <BandwidthUtilizationCard
+        currentBandwidth={data.currentBandwidth}
+        peakBandwidth={data.peakBandwidth}
+        bandwidthUsageData={data.bandwidthUsageData}
+        ipv6TrafficPercent={data.ipv6TrafficPercent}
+        showIpv6={isModuleEnabled("ipv6")}
+      />
 
       {/* ── New Dashboard Widgets Row ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1419,133 +1441,114 @@ export default function DashboardPage() {
         <OverduePaymentsWidget />
       </div>
 
-      {/* ── Retention & Financial Health Row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RetentionChurnWidget />
-        <InvoiceAgingWidget />
-      </div>
+      {/* ══════════ Advanced Insights (collapsed by default) ══════════
+          The analytics long-tail below lives behind a toggle: nothing here
+          compiles, mounts or fetches until the operator expands the section.
+          State persists per browser via localStorage. */}
+      <section aria-label="Advanced insights" className="rounded-xl border bg-card shadow-sm overflow-hidden">
+        <button
+          type="button"
+          onClick={toggleAdvancedInsights}
+          aria-expanded={showAdvancedInsights}
+          className={cn(
+            "w-full flex items-center gap-3 px-5 py-4 text-left transition-colors duration-200",
+            "bg-gradient-to-r from-slate-50 via-card to-card dark:from-slate-900/60 dark:via-card dark:to-card",
+            "hover:from-muted/70 hover:to-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+          )}
+        >
+          <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-sm shrink-0">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+              Advanced Insights
+              <Badge
+                variant="outline"
+                className="h-5 text-[10px] px-1.5 py-0 font-medium text-muted-foreground border-border/60"
+              >
+                {showAdvancedInsights ? "16 modules active" : "16 modules"}
+              </Badge>
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+              {showAdvancedInsights
+                ? "Churn, retention, security posture, lifecycle analytics and forecasts — loaded on demand."
+                : "Churn prediction, retention health, security posture, lifecycle analytics and forecasts. Expand to load."}
+            </p>
+          </div>
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-300",
+              showAdvancedInsights && "rotate-180"
+            )}
+          />
+        </button>
+        {showAdvancedInsights && (
+          <div className="p-5 pt-0 space-y-6 border-t border-border/40">
 
-      {/* ── Churn Risk Alerts ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChurnRiskWidget />
-        <ChurnPredictionWidget />
-      </div>
-
-      {/* ── Payment Analytics & Subscriber Lifecycle Row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PaymentAnalyticsWidget />
-        <SubscriberLifecycleWidget />
-      </div>
-
-      {/* ── Technician Performance ── */}
-      <TechnicianPerformanceWidget />
-
-      {/* ── Subscriber Analytics ── */}
-      <SubscriberAnalyticsWidget />
-
-      {/* ── System Overview & System Performance Row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <SystemOverviewWidget />
-        <SystemPerformanceWidget />
-      </div>
-
-      {/* ── Security Posture (sessions + auth events) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <SecurityPostureWidget />
-        <RadiusSyncStatusWidget />
-      </div>
-
-      {/* ── Smart Plan Recommendations ── */}
-      <PlanRecommendationWidget />
-
-      {/* ── Response Time, Collection Target & Recent Signups Row ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <ResponseTimeWidget />
-        <CollectionTargetWidget />
-        <RecentSignupsWidget />
-      </div>
-
-      {/* ── Revenue Forecast Widget ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RevenueForecastWidget />
-      </div>
-
-      {/* ── Charts Row 1: Revenue + Subscriber Growth ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "550ms" }}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <IndianRupee className="h-4 w-4 text-chart-1" />
-              Revenue Trend (6 Months)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.monthlyRevenueData}>
-                  <defs>
-                    <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#DC2626" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#DC2626" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                  <XAxis dataKey="month" tick={{ fill: "#94A3B8", fontSize: 12 }} />
-                  <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
-                  <RechartsTooltip content={<CustomTooltip isCurrency />} />
-                  <Area type="monotone" dataKey="revenue" stroke="#DC2626" strokeWidth={2.5} fill="url(#revGradient)" dot={{ r: 4, fill: "#DC2626", strokeWidth: 2, stroke: "#fff" }} />
-                </AreaChart>
-              </ResponsiveContainer>
+            {/* ── Retention & Financial Health Row ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-5">
+              <RetentionChurnWidget />
+              <InvoiceAgingWidget />
             </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-green-200 dark:hover:border-green-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "600ms" }}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Users className="h-4 w-4 text-chart-2" />
-              Subscriber Additions ({rangeLabel})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.subscriberGrowthData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                  <XAxis dataKey="month" tick={{ fill: "#94A3B8", fontSize: 11 }} angle={-20} textAnchor="end" height={50} />
-                  <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} allowDecimals={false} />
-                  <RechartsTooltip content={<CustomTooltip />} />
-                  <Bar dataKey="additions" name="New Subscribers" fill="#16A34A" radius={[4, 4, 0, 0]} barSize={20} />
-                </BarChart>
-              </ResponsiveContainer>
+
+            {/* ── Churn Risk Alerts ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <ChurnRiskWidget />
+              <ChurnPredictionWidget />
             </div>
-          </CardContent>
-        </Card>
-      </div>
+
+            {/* ── Payment Analytics & Subscriber Lifecycle Row ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <PaymentAnalyticsWidget />
+              <SubscriberLifecycleWidget />
+            </div>
+
+            {/* ── Technician Performance ── */}
+            <TechnicianPerformanceWidget />
+
+            {/* ── Subscriber Analytics ── */}
+            <SubscriberAnalyticsWidget />
+
+            {/* ── System Overview & System Performance Row ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <SystemOverviewWidget />
+              <SystemPerformanceWidget />
+            </div>
+
+            {/* ── Security Posture (sessions + auth events) ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <SecurityPostureWidget />
+              <RadiusSyncStatusWidget />
+            </div>
+
+            {/* ── Smart Plan Recommendations ── */}
+            <PlanRecommendationWidget />
+
+            {/* ── Response Time, Collection Target & Recent Signups Row ── */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <ResponseTimeWidget />
+              <CollectionTargetWidget />
+              <RecentSignupsWidget />
+            </div>
+
+            {/* ── Revenue Forecast Widget ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <RevenueForecastWidget />
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── Charts Row 1: Revenue + Subscriber Growth (lazy — recharts) ── */}
+      <RevenueGrowthChartsRow
+        monthlyRevenueData={data.monthlyRevenueData}
+        subscriberGrowthData={data.subscriberGrowthData}
+        rangeLabel={rangeLabel}
+ />
 
       {/* ── Charts Row 2: Plan Distribution + Collection + Area Revenue ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "650ms" }}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Wifi className="h-4 w-4 text-chart-3" />Plan Distribution
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={data.planDistribution} cx="50%" cy="50%" innerRadius={50} outerRadius={85} paddingAngle={2} dataKey="count" nameKey="plan" strokeWidth={2} stroke="#fff">
-                    {data.planDistribution.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip formatter={(value: number, name: string) => [`${value} users`, name]} />
-                  <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: "11px" }} formatter={(value: string) => <span className="text-muted-foreground">{value}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        <PlanDistributionCard planDistribution={data.planDistribution} />
         <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "700ms" }}>
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -1589,30 +1592,7 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "750ms" }}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Activity className="h-4 w-4 text-chart-5" />Area-wise Revenue
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.areaWiseRevenue} layout="vertical" margin={{ left: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
-                  <YAxis dataKey="area" type="category" tick={{ fill: "#64748B", fontSize: 11 }} width={85} />
-                  <RechartsTooltip content={<CustomTooltip isCurrency />} />
-                  <Bar dataKey="revenue" name="Revenue" fill="#DC2626" radius={[0, 4, 4, 0]} barSize={18}>
-                    {data.areaWiseRevenue.map((_, index) => (
-                      <Cell key={`bar-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        <AreaRevenueCard areaWiseRevenue={data.areaWiseRevenue} />
       </div>
 
       {/* ── Recent Activity Feed ── */}
@@ -1657,124 +1637,21 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* ── Complaint Trend Chart ── */}
-      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "800ms" }}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-500" />
-            Complaint Trend ({rangeLabel})
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-red-200 text-red-600">
-              {data.openComplaints} open
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.complaintTrendData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} angle={-20} textAnchor="end" height={50} />
-                <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} allowDecimals={false} />
-                <RechartsTooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="complaints" name="Complaints" stroke="#DC2626" strokeWidth={2.5} dot={{ r: 3, fill: "#DC2626", strokeWidth: 2, stroke: "#fff" }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Complaint Trend (lazy — recharts) ── */}
+      <ComplaintTrendCard
+        complaintTrendData={data.complaintTrendData}
+        openComplaints={data.openComplaints}
+        rangeLabel={rangeLabel}
+      />
 
-      {/* ── Bandwidth Usage Chart (24h) ── */}
-      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-green-200 dark:hover:border-green-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "810ms" }}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Monitor className="h-4 w-4 text-green-500" />
-            Bandwidth Usage (24h)
-            {data.peakBandwidth > 0 && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-200 text-green-600">
-                Peak: {(data.peakBandwidth / 1000000).toFixed(1)} Mbps
-              </Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {data.bandwidthUsageData.length === 0 ? (
-            <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">No bandwidth data available</div>
-          ) : (
-            <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.bandwidthUsageData}>
-                  <defs>
-                    <linearGradient id="dlGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#16A34A" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#16A34A" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="ulGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                  <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `${(v / 1000000).toFixed(0)}`} />
-                  <RechartsTooltip content={<CustomTooltip isBandwidth />} />
-                  <Legend wrapperStyle={{ fontSize: "11px" }} formatter={(value: string) => <span className="text-muted-foreground">{value}</span>} />
-                  <Area type="monotone" dataKey="downloadBps" name="Download" stroke="#16A34A" strokeWidth={2} fill="url(#dlGradient)" />
-                  <Area type="monotone" dataKey="uploadBps" name="Upload" stroke="#0D9488" strokeWidth={2} fill="url(#ulGradient)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Bandwidth Usage Chart 24h (lazy — recharts) ── */}
+      <BandwidthUsageCard
+        bandwidthUsageData={data.bandwidthUsageData}
+        peakBandwidth={data.peakBandwidth}
+      />
 
-      {/* ── Plan Revenue Breakdown ── */}
-      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "820ms" }}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-amber-500" />
-            Plan Revenue Breakdown
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {data.planRevenueBreakdown.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-56 gap-3 text-muted-foreground">
-              <div className="p-3 rounded-2xl bg-amber-100 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400">
-                <BarChart3 className="h-8 w-8" />
-              </div>
-              <p className="text-sm">No revenue data available</p>
-            </div>
-          ) : (
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.planRevenueBreakdown} layout="vertical" margin={{ left: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
-                  <YAxis dataKey="plan" type="category" tick={{ fill: "#64748B", fontSize: 11 }} width={90} />
-                  <RechartsTooltip
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload?.length) return null;
-                      const item = payload[0];
-                      const planData = data.planRevenueBreakdown.find((p) => p.plan === label);
-                      return (
-                        <div className="bg-card border border-border rounded-lg shadow-xl px-3 py-2 text-xs">
-                          <p className="font-medium text-foreground mb-1">{label}</p>
-                          <p className="text-muted-foreground">Revenue: {formatINR(item.value != null ? Number(item.value) : 0)}</p>
-                          {planData && <p className="text-muted-foreground">{planData.subscribers} subscribers</p>}
-                        </div>
-                      );
-                    }}
-                  />
-                  <Bar dataKey="revenue" name="Revenue" radius={[0, 4, 4, 0]} barSize={20}>
-                    {data.planRevenueBreakdown.map((_, index) => (
-                      <Cell key={`plan-bar-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Plan Revenue Breakdown (lazy — recharts) ── */}
+      <PlanRevenueCard planRevenueBreakdown={data.planRevenueBreakdown} />
 
       {/* ── Network Device Health Overview ── */}
       <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "830ms" }}>
