@@ -6,10 +6,12 @@
 // Real nDPI requires libndpi + packet capture (pcap on a mirror port) and
 // is not feasible in a Node sandbox. Instead, this service consumes NatLog
 // rows written by mini-services/nat-logger (port 3016) and correlates
-// dstDomain → application using a hardcoded catalog of ~30 known apps.
+// dstDomain → application using a hardcoded catalog of 100+ known apps
+// plus TLD-based fallback for unknown domains.
 //
 // Resulting DpiClassification rows are aggregated per (subscriberIp, appName,
-// hour bucket) and persisted via Prisma.
+// hour bucket) and persisted via Prisma `upsert()` against the
+// (subscriberIp, appName, detectedAt) @@unique constraint.
 //
 // Endpoints:
 //   GET  /health                — service status
@@ -62,8 +64,11 @@ function jsonErr(message: string, status = 400): Response {
 }
 
 // ─── Domain → Application Map ─────────────────────────────────────
-// 30 entries covering common ISP subscriber traffic.
-// Match priority: exact match (lowercase) → suffix match (.youtube.com) → default.
+// 100+ entries covering common ISP subscriber traffic across streaming,
+// music, social, messaging, collaboration, gaming, cloud, developer, AI,
+// CDN, search, shopping, news, P2P/anonymizer, and general categories.
+// Match priority: exact match (lowercase) → suffix match (subdomain of a
+// known app) → TLD-based fallback → DEFAULT_APP.
 
 interface AppInfo {
   name: string;
@@ -73,36 +78,139 @@ interface AppInfo {
 }
 
 const APP_MAP: Record<string, AppInfo> = {
-  "youtube.com":      { name: "YouTube",      category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
-  "youtu.be":         { name: "YouTube",      category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
-  "netflix.com":      { name: "Netflix",      category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
-  "whatsapp.com":     { name: "WhatsApp",     category: "Messaging",      protocol: "TLS",     risk: "LOW" },
-  "instagram.com":    { name: "Instagram",    category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
-  "tiktok.com":       { name: "TikTok",       category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
-  "zoom.us":          { name: "Zoom",         category: "Collaboration",   protocol: "UDP",      risk: "LOW" },
-  "fortnite.com":     { name: "Fortnite",     category: "Gaming",          protocol: "UDP",      risk: "MEDIUM" },
-  "bittorrent.com":   { name: "BitTorrent",   category: "P2P",             protocol: "TCP/UDP",  risk: "HIGH" },
-  "torproject.org":   { name: "Tor",          category: "Anonymizer",      protocol: "TLS",      risk: "CRITICAL" },
-  "spotify.com":      { name: "Spotify",      category: "Music",           protocol: "HTTPS",   risk: "LOW" },
-  "github.com":       { name: "GitHub",       category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
-  "microsoft.com":    { name: "Microsoft 365", category: "Cloud",          protocol: "HTTPS",   risk: "LOW" },
-  "telegram.org":     { name: "Telegram",     category: "Messaging",       protocol: "TLS",     risk: "LOW" },
-  "twitch.tv":        { name: "Twitch",       category: "Streaming",      protocol: "HTTPS",   risk: "MEDIUM" },
-  "steampowered.com": { name: "Steam",        category: "Gaming",          protocol: "HTTPS",   risk: "LOW" },
-  "google.com":       { name: "Google",       category: "Search",          protocol: "HTTPS",   risk: "LOW" },
-  "facebook.com":     { name: "Facebook",     category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
-  "twitter.com":      { name: "Twitter",      category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
-  "amazon.com":       { name: "Amazon",       category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
-  "cloudflare.com":   { name: "Cloudflare",   category: "CDN",             protocol: "HTTPS",   risk: "LOW" },
-  "reddit.com":       { name: "Reddit",       category: "Social",          protocol: "HTTPS",   risk: "LOW" },
-  "linkedin.com":     { name: "LinkedIn",     category: "Social",          protocol: "HTTPS",   risk: "LOW" },
-  "discord.com":      { name: "Discord",       category: "Messaging",       protocol: "TLS",     risk: "LOW" },
-  "slack.com":        { name: "Slack",         category: "Collaboration",   protocol: "HTTPS",   risk: "LOW" },
-  "dropbox.com":      { name: "Dropbox",       category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
-  "apple.com":        { name: "Apple",          category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
-  "wikipedia.org":    { name: "Wikipedia",     category: "Reference",       protocol: "HTTPS",   risk: "LOW" },
-  "openai.com":       { name: "OpenAI",        category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
-  "chatgpt.com":      { name: "ChatGPT",        category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+  // ── Streaming (17) ──
+  "youtube.com":        { name: "YouTube",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "youtu.be":           { name: "YouTube",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "tv.youtube.com":     { name: "YouTube TV",        category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "netflix.com":        { name: "Netflix",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "primevideo.com":     { name: "Prime Video",       category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "disneyplus.com":     { name: "Disney+",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "hulu.com":           { name: "Hulu",              category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "hbomax.com":         { name: "HBO Max",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "paramountplus.com":  { name: "Paramount+",        category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "peacocktv.com":      { name: "Peacock",           category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "tv.apple.com":       { name: "Apple TV+",         category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "crunchyroll.com":    { name: "Crunchyroll",       category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "bbc.co.uk":          { name: "BBC iPlayer",       category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "sling.com":          { name: "Sling TV",          category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "pluto.tv":           { name: "Pluto TV",          category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "tubitv.com":         { name: "Tubi",              category: "Streaming",      protocol: "HTTPS",   risk: "LOW" },
+  "twitch.tv":          { name: "Twitch",            category: "Streaming",      protocol: "HTTPS",   risk: "MEDIUM" },
+
+  // ── Music (10) ──
+  "spotify.com":         { name: "Spotify",            category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "music.apple.com":    { name: "Apple Music",        category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "music.youtube.com":  { name: "YouTube Music",      category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "music.amazon.com":   { name: "Amazon Music",       category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "soundcloud.com":     { name: "SoundCloud",         category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "pandora.com":        { name: "Pandora",            category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "deezer.com":         { name: "Deezer",             category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "tidal.com":          { name: "Tidal",              category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "iheart.com":         { name: "iHeartRadio",        category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+  "audible.com":        { name: "Audible",            category: "Music",          protocol: "HTTPS",   risk: "LOW" },
+
+  // ── Social (14) ──
+  "facebook.com":       { name: "Facebook",           category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "fb.com":             { name: "Facebook",           category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "instagram.com":     { name: "Instagram",          category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "twitter.com":        { name: "Twitter/X",          category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "x.com":              { name: "Twitter/X",          category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "tiktok.com":         { name: "TikTok",             category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "linkedin.com":       { name: "LinkedIn",           category: "Social",          protocol: "HTTPS",   risk: "LOW" },
+  "reddit.com":         { name: "Reddit",             category: "Social",          protocol: "HTTPS",   risk: "LOW" },
+  "pinterest.com":      { name: "Pinterest",          category: "Social",          protocol: "HTTPS",   risk: "LOW" },
+  "snapchat.com":       { name: "Snapchat",           category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "tumblr.com":         { name: "Tumblr",             category: "Social",          protocol: "HTTPS",   risk: "LOW" },
+  "threads.net":        { name: "Threads",            category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+  "mastodon.social":    { name: "Mastodon",           category: "Social",          protocol: "HTTPS",   risk: "LOW" },
+  "vk.com":             { name: "VK",                 category: "Social",          protocol: "HTTPS",   risk: "MEDIUM" },
+
+  // ── Messaging (8) ──
+  "whatsapp.com":       { name: "WhatsApp",           category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+  "telegram.org":       { name: "Telegram",           category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+  "discord.com":        { name: "Discord",            category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+  "slack.com":          { name: "Slack",              category: "Messaging",       protocol: "HTTPS",   risk: "LOW" },
+  "teams.microsoft.com":{ name: "Microsoft Teams",   category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+  "signal.org":         { name: "Signal",             category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+  "weixin.qq.com":      { name: "WeChat",             category: "Messaging",       protocol: "TLS",     risk: "MEDIUM" },
+  "line.me":            { name: "Line",               category: "Messaging",       protocol: "TLS",     risk: "LOW" },
+
+  // ── Collaboration (5) ──
+  "zoom.us":            { name: "Zoom",               category: "Collaboration",   protocol: "UDP",      risk: "LOW" },
+  "meet.google.com":    { name: "Google Meet",        category: "Collaboration",   protocol: "HTTPS",   risk: "LOW" },
+  "webex.com":          { name: "Webex",              category: "Collaboration",   protocol: "HTTPS",   risk: "LOW" },
+  "gotomeeting.com":    { name: "GoToMeeting",        category: "Collaboration",   protocol: "HTTPS",   risk: "LOW" },
+  "bluejeans.com":      { name: "BlueJeans",          category: "Collaboration",   protocol: "HTTPS",   risk: "LOW" },
+
+  // ── Gaming (8) ──
+  "steampowered.com":   { name: "Steam",              category: "Gaming",          protocol: "HTTPS",   risk: "LOW" },
+  "epicgames.com":      { name: "Epic Games",         category: "Gaming",          protocol: "HTTPS",   risk: "LOW" },
+  "fortnite.com":       { name: "Fortnite",           category: "Gaming",          protocol: "UDP",      risk: "MEDIUM" },
+  "roblox.com":         { name: "Roblox",             category: "Gaming",          protocol: "UDP",      risk: "MEDIUM" },
+  "minecraft.net":      { name: "Minecraft",          category: "Gaming",          protocol: "TCP/UDP",  risk: "LOW" },
+  "playstation.com":    { name: "PlayStation Network", category: "Gaming",          protocol: "HTTPS",   risk: "LOW" },
+  "xbox.com":           { name: "Xbox Live",          category: "Gaming",          protocol: "HTTPS",   risk: "LOW" },
+  "battle.net":         { name: "Battle.net",         category: "Gaming",          protocol: "TCP/UDP",  risk: "LOW" },
+
+  // ── Cloud/Storage (6) ──
+  "drive.google.com":   { name: "Google Drive",       category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "dropbox.com":        { name: "Dropbox",            category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "onedrive.live.com":  { name: "OneDrive",           category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "icloud.com":         { name: "iCloud",             category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "box.com":             { name: "Box",                 category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "wetransfer.com":      { name: "WeTransfer",         category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+
+  // ── Developer (6) ──
+  "github.com":         { name: "GitHub",             category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+  "gitlab.com":         { name: "GitLab",             category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+  "bitbucket.org":      { name: "Bitbucket",          category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+  "stackoverflow.com":  { name: "Stack Overflow",     category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+  "npmjs.com":          { name: "npm",                category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+  "hub.docker.com":     { name: "Docker Hub",          category: "Developer",       protocol: "HTTPS",   risk: "LOW" },
+
+  // ── AI (5) ──
+  "openai.com":         { name: "OpenAI",             category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+  "chatgpt.com":        { name: "ChatGPT",            category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+  "anthropic.com":      { name: "Claude",              category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+  "gemini.google.com":  { name: "Google Gemini",      category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+  "copilot.microsoft.com":{ name: "Microsoft Copilot",  category: "AI",              protocol: "HTTPS",   risk: "MEDIUM" },
+
+  // ── CDN/Infrastructure (4) ──
+  "cloudflare.com":     { name: "Cloudflare",         category: "CDN",             protocol: "HTTPS",   risk: "LOW" },
+  "fastly.com":         { name: "Fastly",             category: "CDN",             protocol: "HTTPS",   risk: "LOW" },
+  "akamai.com":         { name: "Akamai",             category: "CDN",             protocol: "HTTPS",   risk: "LOW" },
+  "s3.amazonaws.com":   { name: "AWS S3",             category: "CDN",             protocol: "HTTPS",   risk: "LOW" },
+
+  // ── Search/Reference (4) ──
+  "google.com":         { name: "Google Search",      category: "Search",          protocol: "HTTPS",   risk: "LOW" },
+  "bing.com":           { name: "Bing",               category: "Search",          protocol: "HTTPS",   risk: "LOW" },
+  "duckduckgo.com":     { name: "DuckDuckGo",         category: "Search",          protocol: "HTTPS",   risk: "LOW" },
+  "wikipedia.org":      { name: "Wikipedia",         category: "Reference",       protocol: "HTTPS",   risk: "LOW" },
+
+  // ── Shopping (5) ──
+  "amazon.com":         { name: "Amazon",             category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
+  "ebay.com":           { name: "eBay",               category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
+  "walmart.com":        { name: "Walmart",            category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
+  "alibaba.com":        { name: "Alibaba",            category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
+  "flipkart.com":       { name: "Flipkart",           category: "Shopping",        protocol: "HTTPS",   risk: "LOW" },
+
+  // ── News (4) ──
+  "cnn.com":            { name: "CNN",                category: "News",            protocol: "HTTPS",   risk: "LOW" },
+  "bbc.com":            { name: "BBC",                category: "News",            protocol: "HTTPS",   risk: "LOW" },
+  "reuters.com":        { name: "Reuters",            category: "News",            protocol: "HTTPS",   risk: "LOW" },
+  "nytimes.com":        { name: "New York Times",     category: "News",            protocol: "HTTPS",   risk: "LOW" },
+
+  // ── P2P/Anonymizer (4) ──
+  "bittorrent.com":     { name: "BitTorrent",         category: "P2P",             protocol: "TCP/UDP",  risk: "HIGH" },
+  "torproject.org":     { name: "Tor",                category: "Anonymizer",      protocol: "TLS",      risk: "CRITICAL" },
+  "protonvpn.com":       { name: "ProtonVPN",           category: "Anonymizer",      protocol: "TLS",      risk: "HIGH" },
+  "nordvpn.com":         { name: "NordVPN",            category: "Anonymizer",      protocol: "TLS",      risk: "HIGH" },
+
+  // ── Other (4) ──
+  "apple.com":          { name: "Apple",              category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "microsoft.com":      { name: "Microsoft",          category: "Cloud",           protocol: "HTTPS",   risk: "LOW" },
+  "yahoo.com":          { name: "Yahoo",              category: "Search",          protocol: "HTTPS",   risk: "LOW" },
+  "baidu.com":          { name: "Baidu",              category: "Search",          protocol: "HTTPS",   risk: "LOW" },
 };
 
 const DEFAULT_APP: AppInfo = {
@@ -110,6 +218,19 @@ const DEFAULT_APP: AppInfo = {
   category: "Other",
   protocol: "HTTPS",
   risk: "LOW",
+};
+
+// TLD-based fallback for domains not in APP_MAP. Provides a more useful
+// classification than DEFAULT_APP when the domain has a recognizable TLD.
+// TLD is extracted as the last segment after the final dot in the hostname.
+const TLD_FALLBACK: Record<string, AppInfo> = {
+  gov:  { name: "Government Site",  category: "Reference", protocol: "HTTPS", risk: "LOW" },
+  edu:  { name: "Educational Site", category: "Reference", protocol: "HTTPS", risk: "LOW" },
+  mil:  { name: "Military Site",    category: "Reference", protocol: "HTTPS", risk: "LOW" },
+  dev:  { name: "Developer Site",   category: "Developer",  protocol: "HTTPS", risk: "LOW" },
+  io:   { name: "Tech Startup",    category: "Cloud",      protocol: "HTTPS", risk: "LOW" },
+  ai:   { name: "AI Service",       category: "AI",          protocol: "HTTPS", risk: "MEDIUM" },
+  xxx:  { name: "Adult Content",    category: "Adult",       protocol: "HTTPS", risk: "HIGH" },
 };
 
 // Pre-compute sorted list of known suffix domains for suffix matching.
@@ -136,6 +257,11 @@ function lookupApp(rawDomain: string): AppInfo {
     }
   }
 
+  // 3. TLD-based fallback for unknown domains (better than DEFAULT_APP).
+  // Extracts the last segment after the final dot in the hostname.
+  const tld = cleaned.split(".").pop() || "";
+  if (tld && TLD_FALLBACK[tld]) return TLD_FALLBACK[tld];
+
   return DEFAULT_APP;
 }
 
@@ -160,9 +286,10 @@ function hourBucket(d: Date): Date {
 // Pulls NatLog rows newer than lastProcessedNatLogAt, aggregates by
 // (subscriberIp, appName, hour bucket), and upserts DpiClassification rows.
 //
-// Upsert is "manual" because DpiClassification has no @@unique constraint
-// on (subscriberIp, appName, detectedAt) — we look up the existing row
-// first, then either create or increment.
+// Uses Prisma's native upsert() against the @@unique([subscriberIp, appName,
+// detectedAt]) composite key — no manual findFirst→update/create, which
+// eliminates the race window where two concurrent runs could both create
+// duplicate rows for the same (subscriberIp, appName, hour) triple.
 
 interface AggBucket {
   subscriberIp: string;
@@ -254,51 +381,46 @@ async function runCorrelation(): Promise<CorrelateResult> {
     }
   }
 
-  // Upsert each bucket. We do this sequentially (not in parallel) to avoid
-  // overwhelming Prisma's connection pool. With ~30 distinct apps per subscriber
-  // and ~100 subscribers, that's at most ~3000 buckets per run — well within budget.
+  // Upsert each bucket via Prisma's native upsert() against the composite
+  // unique key (subscriberIp_appName_detectedAt) — created in schema.prisma
+  // by @@unique([subscriberIp, appName, detectedAt]). This eliminates the
+  // findFirst+create race condition that produced duplicate rows under
+  // concurrent correlation runs. We do this sequentially (not in parallel)
+  // to avoid overwhelming Prisma's connection pool. With ~100 distinct apps
+  // per subscriber and ~100 subscribers, that's at most ~10000 buckets per
+  // run — well within budget.
   let rowsUpserted = 0;
   for (const bucket of buckets.values()) {
     try {
-      // Look up existing row for (subscriberIp, appName, bucket).
-      const existing = await db.dpiClassification.findFirst({
+      await db.dpiClassification.upsert({
         where: {
-          subscriberIp: bucket.subscriberIp,
-          appName: bucket.appName,
-          detectedAt: bucket.bucket,
-        },
-      });
-
-      if (existing) {
-        // Increment bytes/flows on the existing row.
-        await db.dpiClassification.update({
-          where: { id: existing.id },
-          data: {
-            bytesIn: { increment: bucket.bytesIn },
-            bytesOut: { increment: bucket.bytesOut },
-            flows: { increment: bucket.flows },
-            // refresh subscriberId if we have a better one
-            ...(bucket.subscriberId && !existing.subscriberId
-              ? { subscriberId: bucket.subscriberId }
-              : {}),
-          },
-        });
-      } else {
-        await db.dpiClassification.create({
-          data: {
+          subscriberIp_appName_detectedAt: {
             subscriberIp: bucket.subscriberIp,
-            subscriberId: bucket.subscriberId,
             appName: bucket.appName,
-            appCategory: bucket.appCategory,
-            protocol: bucket.protocol,
-            bytesIn: bucket.bytesIn,
-            bytesOut: bucket.bytesOut,
-            flows: bucket.flows,
-            riskLevel: bucket.riskLevel,
             detectedAt: bucket.bucket,
           },
-        });
-      }
+        },
+        create: {
+          subscriberIp: bucket.subscriberIp,
+          subscriberId: bucket.subscriberId,
+          appName: bucket.appName,
+          appCategory: bucket.appCategory,
+          protocol: bucket.protocol,
+          bytesIn: bucket.bytesIn,
+          bytesOut: bucket.bytesOut,
+          flows: bucket.flows,
+          riskLevel: bucket.riskLevel,
+          detectedAt: bucket.bucket,
+        },
+        update: {
+          bytesIn: { increment: bucket.bytesIn },
+          bytesOut: { increment: bucket.bytesOut },
+          flows: { increment: bucket.flows },
+          // Refresh subscriberId with the latest non-empty value (last-write-wins).
+          // Skipped when bucket has no subscriberId to avoid blanking the field.
+          ...(bucket.subscriberId ? { subscriberId: bucket.subscriberId } : {}),
+        },
+      });
       rowsUpserted++;
     } catch (err: unknown) {
       // Log and continue — one bad bucket shouldn't fail the whole run.
@@ -533,7 +655,7 @@ setTimeout(() => {
 // ─── Startup Banner ──────────────────────────────────────────────
 console.log("╔══════════════════════════════════════════╗");
 console.log(`║  CRYPTSK nDPI Service — Port ${PORT}          ║`);
-console.log(`║  Domain-to-App correlator (30 apps)       ║`);
+console.log(`║  Domain-to-App correlator (${Object.keys(APP_MAP).length} apps + TLD fallback) ║`);
 console.log(`║  Correlation interval: ${CORRELATION_INTERVAL_MS / 1000}s           ║`);
 console.log("╚══════════════════════════════════════════╝");
 

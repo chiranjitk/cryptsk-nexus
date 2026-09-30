@@ -102,6 +102,12 @@ export async function GET(request: NextRequest) {
     case "nat-pools":
       return proxyRequest(VPP_ADAPTER_URL, `/policy/nat-pools${extraQs}`);
 
+    // ─── GoVPP Adapter (port 3015 → 3016) — real binary API health ───
+    // Proxies vpp-adapter `/govpp/health` which in turn calls govpp-adapter `/health`
+    // Response shape: { status, port, vppConnected, vppSocket, mode, govppVersion, uptime }
+    case "govpp-health":
+      return proxyRequest(VPP_ADAPTER_URL, `/govpp/health${extraQs}`);
+
     case "subscriber-state": {
       const sessionId = searchParams.get("sessionId");
       if (!sessionId) {
@@ -163,7 +169,7 @@ export async function GET(request: NextRequest) {
     default:
       return NextResponse.json(
         {
-          error: `Unknown action: ${action}. Use: health, state, epoch, status, interfaces, config-generate, policy-objects, acl-profiles, nat-pools, subscriber-state, config-subscriber, recovery-logs, reconciliation-logs, snapshots, snapshot, dpi-classifications, nat-events, duplicate-login-policy, session-vpp-state, events-feed`,
+          error: `Unknown action: ${action}. Use: health, govpp-health, state, vpp-state, epoch, status, interfaces, config-generate, policy-objects, acl-profiles, nat-pools, subscriber-state, config-subscriber, recovery-logs, reconciliation-logs, snapshots, snapshot, dpi-classifications, nat-events, duplicate-login-policy, session-vpp-state, events-feed`,
         },
         { status: 400 }
       );

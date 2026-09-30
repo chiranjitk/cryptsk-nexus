@@ -116,6 +116,7 @@ import {
   Info,
   Timer,
   RotateCcw,
+  RotateCw,
   FileCode,
   Bug,
 } from "lucide-react";
@@ -593,6 +594,42 @@ function OverviewTab() {
     onError: (err: Error) => toast.error(err.message || "Session reconciliation failed"),
   });
 
+  // ─── Enhancement 1: GoVPP Adapter (Binary API) health indicator ──
+  // Polls /api/vpp?action=govpp-health which proxies through vpp-adapter (port 3015)
+  // to govpp-adapter (port 3016). Response shape: { status, port, vppConnected,
+  // vppSocket, mode, govppVersion, uptime } — all from govpp-adapter's /health handler.
+  const govppHealthQ = useQuery({
+    queryKey: ["vpp-govpp-health"],
+    queryFn: async () => {
+      const res = await fetch("/api/vpp?action=govpp-health");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: autoRefresh ? 5000 : false,
+    retry: 1,
+  });
+
+  // ─── Enhancement 2: /vpp/rebuild trigger (reprogram all active sessions) ──
+  // POST /api/vpp?action=rebuild → vpp-adapter /vpp/rebuild → iterates SessionSnapshot
+  // rows where vppRecoveryState ≠ "VERIFIED", calls govpp /subscriber/program for each.
+  // Returns: { rebuilt: number, failed: number, results: [{sessionId, status, error?}] }
+  const rebuildAllMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/vpp?action=rebuild", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      return data;
+    },
+    onSuccess: (data: AnyRecord) => {
+      toast.success(
+        `VPP rebuild complete: ${data?.rebuilt ?? 0} rebuilt, ${data?.failed ?? 0} failed`
+      );
+      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+    },
+    onError: (err: Error) => toast.error(err.message || "Rebuild failed"),
+  });
+
   const downloadConfig = () => {
     const txt =
       configQ.data?.config || configQ.data?.configText || JSON.stringify(configQ.data || {}, null, 2);
@@ -813,7 +850,7 @@ function OverviewTab() {
         </div>
 
         {/* Health state + connection status */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -876,6 +913,101 @@ function OverviewTab() {
                       </span>
                     </div>
                   )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Enhancement 1: GoVPP Adapter (Binary API) health indicator.
+              Proxies /api/vpp?action=govpp-health → vpp-adapter /govpp/health
+              → govpp-adapter (port 3016) /health handler. Shows real VPP binary
+              API connection state from the Go adapter (not the TS adapter proxy). */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Server className="h-5 w-5 text-emerald-600" />
+                GoVPP Adapter (Binary API)
+              </CardTitle>
+              <CardDescription>
+                Live status from <code>/api/vpp?action=govpp-health</code> (port 3016)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {govppHealthQ.error ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-3 flex items-start gap-2">
+                  <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="font-medium text-red-900 dark:text-red-200 text-sm">
+                      GoVPP Adapter unreachable
+                    </div>
+                    <div className="text-xs text-red-700/80 dark:text-red-300/80 mt-1">
+                      The Go binary API adapter (port 3016) is not responding. The TS
+                      vpp-adapter (port 3015) cannot reach it via <code>/govpp/health</code>.
+                      Real VPP binapi programming will fail until it recovers.
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 border-red-300 text-red-700 hover:bg-red-100 h-7"
+                      onClick={() => govppHealthQ.refetch()}
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              ) : govppHealthQ.isLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-6 w-32 animate-pulse" />
+                  <Skeleton className="h-4 w-full animate-pulse" />
+                  <Skeleton className="h-4 w-3/4 animate-pulse" />
+                </div>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Status</span>
+                    <Badge
+                      className={
+                        govppHealthQ.data?.status === "ok"
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                          : "bg-red-100 text-red-800 border-red-200"
+                      }
+                    >
+                      {govppHealthQ.data?.status || "DOWN"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">VPP Connected</span>
+                    <span className="font-mono">
+                      {govppHealthQ.data?.vppConnected ? "YES ✓" : "NO ✗"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">GoVPP Version</span>
+                    <span className="font-mono">
+                      {govppHealthQ.data?.govppVersion || "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Mode</span>
+                    <span className="font-mono">
+                      {govppHealthQ.data?.mode || "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Uptime</span>
+                    <span className="font-mono">
+                      {typeof govppHealthQ.data?.uptime === "number"
+                        ? `${govppHealthQ.data.uptime.toFixed(0)}s`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">VPP Socket</span>
+                    <span className="font-mono text-xs truncate max-w-[160px]" title={govppHealthQ.data?.vppSocket}>
+                      {govppHealthQ.data?.vppSocket || "—"}
+                    </span>
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -1286,6 +1418,139 @@ function OverviewTab() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Enhancement 2: VPP Rebuild from Snapshots.
+            POST /api/vpp?action=rebuild → vpp-adapter /vpp/rebuild → iterates
+            SessionSnapshot rows where vppRecoveryState ≠ "VERIFIED", calls
+            govpp-adapter /subscriber/program for each (real binary API: CreatePolicer,
+            AddStaticNat, ACLAddReplace). Returns { rebuilt, failed, results[] } where
+            each result row has { sessionId, status: VERIFIED|FAILED, error? }.
+            Used when VPP restarts and loses all in-memory dataplane state. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <RotateCcw className="h-5 w-5 text-emerald-600" />
+              VPP Rebuild from Snapshots
+            </CardTitle>
+            <CardDescription>
+              Trigger <code>/vpp/rebuild</code> — reprograms all active sessions from
+              SessionSnapshot DB rows (used when VPP restarts and loses all in-memory state)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => rebuildAllMut.mutate()}
+                disabled={rebuildAllMut.isPending}
+                variant="default"
+              >
+                <RotateCw className={`h-4 w-4 mr-1.5 ${rebuildAllMut.isPending ? "animate-spin" : ""}`} />
+                {rebuildAllMut.isPending ? "Rebuilding…" : "Rebuild All Sessions"}
+              </Button>
+              {rebuildAllMut.isPending && (
+                <span className="text-xs text-muted-foreground">
+                  Replaying session snapshots through govpp-adapter…
+                </span>
+              )}
+              {!rebuildAllMut.isPending && !rebuildAllMut.data && !rebuildAllMut.error && (
+                <span className="text-xs text-muted-foreground">
+                  No rebuild run yet — click the button to reprogram all sessions.
+                </span>
+              )}
+              {rebuildAllMut.error && (
+                <span className="text-xs text-red-600">
+                  Last run failed: {(rebuildAllMut.error as Error).message}
+                </span>
+              )}
+            </div>
+
+            {rebuildAllMut.data && (
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center rounded-md border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 p-3">
+                    <div className="text-2xl font-bold text-emerald-600">
+                      {rebuildAllMut.data.rebuilt ?? 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">Rebuilt</div>
+                  </div>
+                  <div className="text-center rounded-md border border-red-200 bg-red-50 dark:bg-red-950/30 p-3">
+                    <div className="text-2xl font-bold text-red-600">
+                      {rebuildAllMut.data.failed ?? 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">Failed</div>
+                  </div>
+                  <div className="text-center rounded-md border border-slate-200 bg-slate-50 dark:bg-slate-950/30 p-3">
+                    <div className="text-2xl font-bold text-slate-600">
+                      {rebuildAllMut.data.results?.length ?? 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">Total</div>
+                  </div>
+                </div>
+
+                {Array.isArray(rebuildAllMut.data.results) && rebuildAllMut.data.results.length > 0 ? (
+                  <div className="border rounded-md overflow-hidden">
+                    <div className="max-h-72 overflow-y-auto cryptsk-scrollbar">
+                      <Table>
+                        <TableHeader className="sticky top-0 bg-card z-10">
+                          <TableRow>
+                            <TableHead className="text-xs">Session ID</TableHead>
+                            <TableHead className="text-xs">Status</TableHead>
+                            <TableHead className="text-xs">Error / Notes</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rebuildAllMut.data.results.map((r: AnyRecord, i: number) => {
+                            const st = String(r?.status || "").toUpperCase();
+                            const ok = st === "VERIFIED" || st === "OK";
+                            return (
+                              <TableRow key={i}>
+                                <TableCell className="font-mono text-xs">
+                                  {r?.sessionId || "—"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge
+                                    className={
+                                      ok
+                                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                        : "bg-red-100 text-red-800 border-red-200"
+                                    }
+                                  >
+                                    {r?.status || "UNKNOWN"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {r?.error
+                                    ? r.error
+                                    : r?.programmed
+                                      ? `policer=${r.programmed.policer || "—"} acl=${r.programmed.acl || "—"} nat=${r.programmed.natMapping ? "yes" : "no"}`
+                                      : "—"}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground text-center py-3 border rounded-md">
+                    No per-session results returned. Snapshot table may be empty or
+                    no sessions required rebuilding.
+                  </div>
+                )}
+
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Note:</span> Each row
+                  reflects a <code className="text-xs">SessionSnapshot</code> row replayed
+                  through <code className="text-xs">govpp-adapter /subscriber/program</code>
+                  (CreatePolicer + AddStaticNat + ACLAddReplace via the real GoVPP binary API).
+                  Failed sessions are marked <code className="text-xs">STALE</code> in the
+                  DB for the reconciliation loop to retry.
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Interfaces architecture dialog — opened by "Learn More" in the empty state */}
         <Dialog open={showInterfacesDialog} onOpenChange={setShowInterfacesDialog}>
@@ -3883,6 +4148,33 @@ function DpiTab() {
     return m || 1;
   }, [classifications]);
 
+  // ─── Per-subscriber breakdown (top 10 by total bytes, with their top 3 apps) ──
+  // Group classifications by subscriberIp, sum bytesIn+bytesOut per subscriber,
+  // sort desc, take top 10. For each subscriber, find top 3 apps by total bytes.
+  const perSubscriberData = useMemo(() => {
+    const byIp: Record<string, { totalBytes: number; apps: Record<string, number> }> = {};
+    for (const c of classifications) {
+      const ip = String(c.subscriberIp || "").trim();
+      if (!ip) continue; // skip rows without a subscriber IP
+      const bytes = numBytes(c.bytesIn) + numBytes(c.bytesOut);
+      if (!byIp[ip]) byIp[ip] = { totalBytes: 0, apps: {} };
+      byIp[ip].totalBytes += bytes;
+      const app = String(c.appName || "—");
+      byIp[ip].apps[app] = (byIp[ip].apps[app] || 0) + bytes;
+    }
+    return Object.entries(byIp)
+      .map(([ip, info]) => ({
+        subscriberIp: ip,
+        totalBytes: info.totalBytes,
+        topApps: Object.entries(info.apps)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([app, bytes]) => ({ app, bytes })),
+      }))
+      .sort((a, b) => b.totalBytes - a.totalBytes)
+      .slice(0, 10);
+  }, [classifications]);
+
   // ─── Risk filter chip click handler ────────────────────────
   const setRiskChip = (lvl: string) => {
     setRiskFilter(lvl);
@@ -4405,6 +4697,100 @@ function DpiTab() {
                             <Eye className="h-3.5 w-3.5 mr-1" />
                             <span className="text-xs">Flows</span>
                           </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Enhancement 3: Per-Subscriber Breakdown.
+          Aggregates DPI classifications by subscriberIp, sorted by total bandwidth
+          (bytesIn+bytesOut), shows top 10 subscribers with their top 3 apps each.
+          Additive — does not replace the existing Risk donut + Top apps bar + table. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Users className="h-5 w-5 text-emerald-600" />
+            Per-Subscriber Breakdown
+            <Badge variant="secondary" className="ml-1">
+              {perSubscriberData.length}
+            </Badge>
+          </CardTitle>
+          <CardDescription>
+            Top 10 subscribers by total bandwidth, with their top 3 apps
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {perSubscriberData.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No subscriber-aggregated data"
+              description="Per-subscriber breakdown will populate once classifications with a subscriberIp are ingested."
+              size="sm"
+            />
+          ) : (
+            <div className="rounded-md border max-h-[560px] overflow-y-auto cryptsk-scrollbar">
+              <Table>
+                <TableHeader className="sticky top-0 bg-card z-10">
+                  <TableRow>
+                    <TableHead className="text-xs">#</TableHead>
+                    <TableHead className="text-xs">Subscriber IP</TableHead>
+                    <TableHead className="text-xs">Total Bytes</TableHead>
+                    <TableHead className="min-w-[280px]">Top 3 Apps</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {perSubscriberData.map((s, i) => {
+                    const maxAppBytes = s.topApps.length > 0 ? s.topApps[0].bytes : 1;
+                    return (
+                      <TableRow key={`${s.subscriberIp}-${i}`}>
+                        <TableCell className="text-xs text-muted-foreground font-mono">
+                          {i + 1}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {s.subscriberIp}
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-mono text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                            {formatBytes(s.totalBytes)}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1.5">
+                            {s.topApps.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : (
+                              s.topApps.map((a, j) => (
+                                <div key={`${a.app}-${j}`} className="flex items-center gap-2 text-xs">
+                                  <span className="font-mono w-32 truncate" title={a.app}>
+                                    {a.app}
+                                  </span>
+                                  <div className="flex-1 h-2 bg-muted rounded overflow-hidden">
+                                    <div
+                                      className={`h-full rounded ${
+                                        j === 0
+                                          ? "bg-emerald-500"
+                                          : j === 1
+                                            ? "bg-amber-500"
+                                            : "bg-slate-400"
+                                      }`}
+                                      style={{
+                                        width: `${Math.min(100, (a.bytes / maxAppBytes) * 100)}%`,
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="font-mono w-20 text-right text-muted-foreground">
+                                    {formatBytes(a.bytes)}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

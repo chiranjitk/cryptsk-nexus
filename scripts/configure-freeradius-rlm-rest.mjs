@@ -43,19 +43,30 @@ const SSH_CONFIG = {
 // check_cert = no (which is moot over plain HTTP, but included for
 // completeness).
 //
-// Body mapping: rlm_rest's `body = "json"` sets Content-Type:
-// application/json. We use `data = '...'` to override the body with a
-// hand-rolled JSON template using xlat expansion to pull values from
-// RADIUS request attributes. The keys match session-engine /api/auth's
-// expected schema (camelCase).
+// Body mapping (FIX #1 — switch to body="json" auto-serialization):
+//   We use `body = "json"` and DO NOT specify a `data` template.
+//   rlm_rest will auto-serialize ALL RADIUS request attributes
+//   (User-Name, User-Password, NAS-IP-Address, NAS-Port,
+//   Calling-Station-Id, Called-Station-Id, etc.) as JSON keys with
+//   PROPER ESCAPING. This fixes the malformed-JSON bug where the
+//   previous `data` xlat template emitted raw values, breaking on
+//   passwords containing double-quotes or backslashes.
 //
-// KNOWN LIMITATION: rlm_rest's `data` xlat expansion does NOT JSON-escape
-// values. If a User-Password contains a double-quote or backslash, the
-// resulting JSON will be malformed. Mitigation: in production, validate
-// passwords on the session-engine side and reject any with quotes; or
-// use `body = "json"` (auto-serializes RADIUS attributes with proper
-// escaping) and update session-engine /api/auth to accept RADIUS-style
-// attribute names (User-Name, User-Password, NAS-IP-Address, etc).
+// Shared secret (rlm_rest cannot easily add custom HTTP headers):
+//   Passed via the URI query string as ?_radiusSecret=...
+//   The session-engine /api/radius/auth handler checks:
+//     1. X-RADIUS-Secret header (preferred when supported)
+//     2. _radiusSecret URL query parameter (used here)
+//     3. _radiusSecret JSON body field (legacy fallback)
+//
+// Auth-Type Accept (FIX #2 — bypass authenticate{}):
+//   When session-engine returns 2xx with a JSON body containing
+//   {radius:{control:{Auth-Type:"Accept"}, reply:{...}}}, rlm_rest
+//   maps the response back to RADIUS reply/control items. Combined
+//   with the `if (ok) { update control { Auth-Type := Accept } }`
+//   block injected into sites-available/default authorize{}
+//   (see Step 3 below), this bypasses the authenticate{} section
+//   entirely — no pap/mschap fallback needed.
 const REST_CONFIG = `
 rest {
     # Connect to session-engine on localhost:3010 (no TLS)
@@ -68,22 +79,34 @@ rest {
         check_cert_cn = no
     }
 
-    # Authorize phase: POST /api/auth with JSON body.
-    # The body uses camelCase keys matching session-engine /api/auth schema.
-    # Values are expanded from RADIUS request attributes via xlat.
+    # Authorize phase: POST /api/radius/auth with JSON body.
+    # body = "json" → rlm_rest auto-serializes ALL RADIUS request
+    # attributes (User-Name, User-Password, NAS-IP-Address,
+    # Calling-Station-Id, Called-Station-Id, etc.) as JSON keys
+    # with proper escaping. No 'data' template required.
+    #
+    # The session-engine /api/radius/auth handler accepts BOTH
+    # camelCase (legacy) AND RADIUS attribute names (User-Name,
+    # NAS-IP-Address, etc.).
+    #
+    # _radiusSecret passed via query string (rlm_rest cannot easily
+    # add custom HTTP headers via its config).
     authorize {
         method = "post"
-        uri = "/api/auth"
+        uri = "/api/radius/auth?_radiusSecret=cryptsk-radius-shared-secret-2026"
         body = "json"
         timeout = 5.0
-        data = '{"username":"%{User-Name}","password":"%{User-Password}","nasIp":"%{NAS-IP-Address}","nasPort":"%{NAS-Port}","callingStationId":"%{Calling-Station-Id}","calledStationId":"%{Called-Station-Id}"}'
+        # No 'data' template — rlm_rest auto-serializes RADIUS attrs.
     }
 
-    # Authenticate phase: rlm_rest has no authenticate{} subsection —
-    # the authorize call above is what triggers the HTTP request.
-    # If session-engine returns 2xx, rlm_rest returns RLM_MODULE_OK
-    # and FreeRADIUS proceeds to the post-auth phase. If 4xx, rlm_rest
-    # returns RLM_MODULE_REJECT/FAIL and FreeRADIUS rejects the user.
+    # Authenticate phase: rlm_rest has no authenticate{} subsection.
+    # The authorize call above triggers the HTTP request.
+    #   HTTP 2xx + JSON {radius:{control, reply}} → rlm_rest returns
+    #     RLM_MODULE_OK and maps response attrs back to RADIUS items.
+    #     The injected 'if (ok)' block in sites-available/default
+    #     sets control:Auth-Type := Accept → skips authenticate{}.
+    #   HTTP 4xx/5xx → rlm_rest returns RLM_MODULE_NOTFOUND/FAIL →
+    #     falls through to sql + pap fallback in authorize/authenticate.
 }
 `.trim();
 
@@ -155,28 +178,47 @@ conn.on("ready", async () => {
     );
     console.log(r.stdout || r.stderr);
 
-    // ── Step 3: Insert `rest` into authorize{} block ─────────
-    banner("Step 3: Insert `rest` into authorize{} of sites-available/default");
+    // ── Step 3: Insert `rest` + `if (ok) { Auth-Type := Accept }`
+    //            block at the TOP of authorize{} (FIX #2 + FIX #3).
+    //            rlm_rest must run BEFORE sql so it can short-circuit
+    //            authorization (when session-engine returns 200 with
+    //            Auth-Type=Accept in the JSON response, we bypass
+    //            the authenticate{} section entirely).
+    banner("Step 3: Insert `rest` + `if (ok) { Auth-Type := Accept }` block at top of authorize{}");
     r = await runCommand(
       conn,
-      `# Idempotent: skip if ` +
-        `if grep -E '^[[:space:]]*rest[[:space:]]*(#.*)?$' /etc/raddb/sites-available/default > /dev/null 2>&1; then
-           echo "rest already present in sites-available/default — skipping"
-         else
-           cp /etc/raddb/sites-available/default /etc/raddb/sites-available/default.bak.${ts}
-           awk '
-             /^[[:space:]]*authorize[[:space:]]*\\{/ {
-               print
-               print "\\trest  # P-NDPI-FREERADIUS: invoke rlm_rest to POST /api/auth on session-engine"
-               next
-             }
-             { print }
-           ' /etc/raddb/sites-available/default.bak.${ts} > /tmp/default.new && \\
-           mv /tmp/default.new /etc/raddb/sites-available/default
-           echo "rest added to authorize section of sites-available/default"
-         fi
-         echo "---AUTHORIZE-NOW---"
-         awk '/^[[:space:]]*authorize[[:space:]]*\\{/,/^\\}/' /etc/raddb/sites-available/default | head -20`,
+      `# Idempotent: skip if our marker block already present
+       if grep -q "CRYPTSK-RLMREST-AUTHOK" /etc/raddb/sites-available/default 2>/dev/null; then
+         echo "rest + Auth-Type Accept block already present in sites-available/default — skipping"
+       else
+         cp /etc/raddb/sites-available/default /etc/raddb/sites-available/default.bak.${ts}
+         # awk: insert rest + if(ok){Auth-Type:=Accept} block immediately after
+         # 'authorize {', and skip any pre-existing standalone 'rest' line
+         # inside the authorize{} section (so re-running the script after a
+         # previous, older-style insertion doesn't leave duplicates).
+         awk '
+           BEGIN { in_auth = 0 }
+           /^[[:space:]]*authorize[[:space:]]*\\{/ {
+             in_auth = 1
+             print
+             print "\\trest  # CRYPTSK rlm_rest: POST /api/radius/auth on session-engine"
+             print "\\tif (ok) {"
+             print "\\t\\tupdate control {"
+             print "\\t\\t\\tAuth-Type := Accept"
+             print "\\t\\t}"
+             print "\\t}"
+             print "\\t# CRYPTSK-RLMREST-AUTHOK (marker for idempotency)"
+             next
+           }
+           in_auth && /^[[:space:]]*rest[[:space:]]*(#.*)?$/ { next }
+           /^\\}/ { in_auth = 0 }
+           { print }
+         ' /etc/raddb/sites-available/default.bak.${ts} > /tmp/default.new && \\
+         mv /tmp/default.new /etc/raddb/sites-available/default
+         echo "rest + Auth-Type Accept block inserted at top of authorize section of sites-available/default"
+       fi
+       echo "---AUTHORIZE-NOW---"
+       awk '/^[[:space:]]*authorize[[:space:]]*\\{/,/^\\}/' /etc/raddb/sites-available/default | head -25`,
       "insert-rest-in-authorize"
     );
     console.log(r.stdout || r.stderr);
@@ -218,23 +260,26 @@ conn.on("ready", async () => {
         `⚠️  radiusd -C exited with code ${radiusdExit} — review the output above for errors.`
       );
       console.log(
-        "   Common issues: rlm_rest syntax errors, missing attribute refs in data template."
+        "   Common issues: rlm_rest syntax errors, unbalanced braces in sites-available/default, missing freeradius-rest package."
       );
     }
     console.log("\nNext steps (operator-run on prod):");
     console.log("  1. Review the new /etc/raddb/mods-available/rest file.");
-    console.log("  2. Verify `rest` is in the authorize{} block:");
-    console.log("       awk '/^authorize \\{/,/^\\}/' /etc/raddb/sites-available/default");
+    console.log("  2. Verify `rest` + `if (ok)` block is at the top of authorize{}:");
+    console.log("       awk '/^authorize \\{/,/^\\}/' /etc/raddb/sites-available/default | head -25");
     console.log("  3. If satisfied, restart radiusd:");
     console.log("       systemctl restart radiusd");
     console.log("  4. Test with radtest (using the test client):");
-    console.log("       radtest alice secret 127.0.0.1 0 testing123");
+    console.log("       radtest rajesh.kumar Cryptsk@003 127.0.0.1:1812 0 testing123");
     console.log("  5. Check radiusd log for rlm_rest POST errors:");
     console.log("       journalctl -u radiusd -n 100 --no-pager");
-    console.log("\nNOTE: session-engine /api/auth currently requires admin session cookie.");
-    console.log("      The rlm_rest POST will receive 401 until session-engine is updated to");
-    console.log("      accept machine-to-machine calls (e.g. via a shared-secret header).");
-    console.log("      Track this as a follow-up task on session-engine.");
+    console.log("\nNOTE: session-engine /api/radius/auth accepts BOTH camelCase AND");
+    console.log("      RADIUS attribute names (User-Name, NAS-IP-Address, etc.). The");
+    console.log("      shared secret is passed via the URI query string");
+    console.log("      (?_radiusSecret=...). Response includes a `radius` object");
+    console.log("      with control.Auth-Type=Accept + reply items (Framed-IP-Address,");
+    console.log("      Session-Timeout, Mikrotik-Rate-Limit, Idle-Timeout) that rlm_rest");
+    console.log("      maps back to RADIUS reply attributes.");
 
     conn.end();
     process.exit(radiusdExit === 0 ? 0 : 1);

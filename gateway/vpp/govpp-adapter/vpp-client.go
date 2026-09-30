@@ -499,21 +499,29 @@ func (c *VPPLiveClient) CreatePolicer(name string, cirBps, eirBps uint64) (uint3
         return reply.PolicerIndex, nil
 }
 
-// ApplyPolicerToInterface binds a policer to an interface. VPP uses classify tables
-// for this: create a classify table, add a session that fires the policer, then
-// bind the table to the interface via policer_classify_set_interface.
+// ApplyPolicerToInterface binds a policer to an interface so that every
+// packet on that interface is policed. VPP uses classify tables for this:
+//   1. Create a classify table whose Mask is all-zero (matches everything
+//      in the masked-key space → every packet produces the same key, 0).
+//   2. Add a ClassifyAddDelSession with HitNextIndex = policerIndex. When
+//      a packet matches (which it always will, because the masked key is 0
+//      and the session Match is 0), VPP redirects to the policer_classify
+//      graph node and applies the policer at that index.
+//   3. Bind the classify table to the interface via policer_classify_set_interface
+//      so the IP4 input feature invokes the table for every IP4 packet.
 //
-// Best-effort: VPP's full policer-on-interface requires ClassifyAddDelTable +
-// ClassifyAddDelSession + PolicerClassifySetInterface. Here we create a per-interface
-// classify table and bind it. The session must reference the policer by node index,
-// which differs per VPP build — for now we only do the table + interface bind and
-// log if the policer is not actually attached.
+// If any step fails the function returns an error — callers should treat it
+// as non-fatal (the policer still exists in VPP's pool, it just isn't
+// attached to a traffic flow).
 func (c *VPPLiveClient) ApplyPolicerToInterface(swIfIndex uint32, policerIndex uint32) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
         }
 
-        // Step 1: create a classify table for IP4 input
+        // Step 1: create a wildcard classify table for IP4 input.
+        // Mask = all zeros (16 bytes) → masked-key is 0 for every packet →
+        // any session with Match=zeros hits every packet.
+        // MatchNVectors=1 → examine first 16 bytes (IP4 src + dst + proto + ports).
         tableReq := &classify.ClassifyAddDelTable{
                 IsAdd:         true,
                 TableIndex:    0xFFFFFFFF, // auto-assign
@@ -522,13 +530,13 @@ func (c *VPPLiveClient) ApplyPolicerToInterface(swIfIndex uint32, policerIndex u
                 SkipNVectors:  0,
                 MatchNVectors: 1, // match on first 16 bytes (IP4 src+dst+proto+ports)
                 NextTableIndex: 0xFFFFFFFF,
-                MissNextIndex: 0xFFFFFFFF,
+                MissNextIndex:  0xFFFFFFFF,
                 MaskLen:        16,
                 Mask: []byte{
-                        0xFF, 0xFF, 0xFF, 0xFF, // IP src
-                        0xFF, 0xFF, 0xFF, 0xFF, // IP dst
-                        0xFF, 0x00, 0x00, 0x00, // proto + 3 bytes pad
-                        0xFF, 0xFF, 0xFF, 0xFF, // ports
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
                 },
         }
         tableReply := &classify.ClassifyAddDelTableReply{}
@@ -540,7 +548,39 @@ func (c *VPPLiveClient) ApplyPolicerToInterface(swIfIndex uint32, policerIndex u
         }
         tableIndex := tableReply.NewTableIndex
 
-        // Step 2: bind the classify table to the interface as the IP4 policer-classify table
+        // Step 2: add a wildcard classify session that hits the policer.
+        // HitNextIndex = policerIndex: VPP's policer_classify graph node uses
+        // this to look up the actual policer in the pool and apply it.
+        // Match = all zeros → matches every packet given the all-zero table mask.
+        // Action = SET_METADATA (lowest-impact action; the metadata field is
+        // unused here — the policer itself is the real action).
+        sessionReq := &classify.ClassifyAddDelSession{
+                IsAdd:        true,
+                TableIndex:   tableIndex,
+                HitNextIndex: policerIndex, // <-- the key wiring to the policer
+                OpaqueIndex:  0xFFFFFFFF,  // ~0 = unused
+                Advance:      0,
+                Action:       classify.CLASSIFY_API_ACTION_SET_METADATA,
+                Metadata:     0,
+                MatchLen:     16,
+                Match: []byte{
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                },
+        }
+        sessionReply := &classify.ClassifyAddDelSessionReply{}
+        if err := c.ch.SendRequest(sessionReq).ReceiveReply(sessionReply); err != nil {
+                return fmt.Errorf("classify_add_del_session failed: %w", err)
+        }
+        if sessionReply.Retval != 0 {
+                return fmt.Errorf("classify_add_del_session retval=%d", sessionReply.Retval)
+        }
+
+        // Step 3: bind the classify table to the interface as the IP4 policer-classify
+        // table. This makes the IP4 input feature invoke our table for every IP4
+        // packet on this interface.
         bindReq := &classify.PolicerClassifySetInterface{
                 SwIfIndex:     interface_types.InterfaceIndex(swIfIndex),
                 IP4TableIndex: tableIndex,
@@ -556,12 +596,8 @@ func (c *VPPLiveClient) ApplyPolicerToInterface(swIfIndex uint32, policerIndex u
                 return fmt.Errorf("policer_classify_set_interface retval=%d", bindReply.Retval)
         }
 
-        log.Printf("[vpp] Applied policer %d to interface %d via classify table %d (best-effort) via binapi",
-                policerIndex, swIfIndex, tableIndex)
-        // NOTE: this is a best-effort binding. Full per-subscriber policer attachment
-        // requires a ClassifyAddDelSession with HitNextIndex pointing to the policer
-        // graph node, which is environment-specific. The current implementation sets
-        // up the table+interface but does NOT inject a matching session.
+        log.Printf("[vpp] Applied policer %d to interface %d via classify table %d + wildcard session (hit_next=%d) via binapi",
+                policerIndex, swIfIndex, tableIndex, policerIndex)
         return nil
 }
 
@@ -602,7 +638,10 @@ func (c *VPPLiveClient) AddNatAddress(startIP, endIP string) error {
 }
 
 // AddStaticNat creates a 1:1 static NAT mapping (internalIP → externalIP).
-// Uses nat44_add_del_static_mapping_v2 with NAT_IS_STATIC flag.
+// Tries nat44_add_del_static_mapping_v2 first; if that message is unsupported
+// on the VPP build (error contains "Unsupported" or "-126"), falls back to
+// the V1 nat44_add_del_static_mapping message (same fields minus V2-only
+// MatchPool/PoolIPAddress).
 func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
@@ -615,30 +654,66 @@ func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
         if err != nil {
                 return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
         }
+        tag := fmt.Sprintf("static-%s->%s", internalIP, externalIP)
 
-        req := &nat44_ed.Nat44AddDelStaticMappingV2{
+        // --- Step 1: try V2 message (nat44_add_del_static_mapping_v2) ---
+        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
                 IsAdd:             true,
                 MatchPool:         false,
                 Flags:             nat_types.NAT_IS_STATIC, // 1:1 static mapping
                 PoolIPAddress:     ip_types.IP4Address{0, 0, 0, 0}, // unused for static
-                LocalIPAddress:   localIP,
+                LocalIPAddress:    localIP,
                 ExternalIPAddress: extIP,
                 Protocol:          0, // 0 = all protocols (identity mapping)
                 LocalPort:         0,
                 ExternalPort:      0,
-                ExternalSwIfIndex:  interface_types.InterfaceIndex(0xFFFFFFFF), // ~0 = use specific external IP
+                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF), // ~0 = use specific external IP
                 VrfID:             0,
-                Tag:               fmt.Sprintf("static-%s->%s", internalIP, externalIP),
+                Tag:               tag,
         }
-        reply := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
+        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
+        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
+                if replyV2.Retval == 0 {
+                        log.Printf("[vpp] Added static NAT V2 %s -> %s via binary API", internalIP, externalIP)
+                        return nil
+                }
+                // V2 message accepted but retval != 0 — fall through to V1
+                log.Printf("[vpp] AddStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
+        } else {
+                // V2 message error — fall back to V1 only if it's the "Unsupported (-126)" case
+                errMsg := errV2.Error()
+                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
+                        log.Printf("[vpp] AddStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
+                } else {
+                        return fmt.Errorf("nat44_add_del_static_mapping_v2 failed: %w", errV2)
+                }
+        }
 
-        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
-                return fmt.Errorf("nat44_add_del_static_mapping_v2 failed: %w", err)
+        // --- Step 2: fall back to V1 message (nat44_add_del_static_mapping) ---
+        // V1 struct has the same LocalIPAddress/ExternalIPAddress/Flags/Protocol/
+        // LocalPort/ExternalPort/ExternalSwIfIndex/VrfID/Tag fields as V2 — it just
+        // lacks V2's MatchPool/PoolIPAddress pair (no pool-assigned static mapping
+        // support, which we don't use anyway).
+        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
+                IsAdd:             true,
+                Flags:             nat_types.NAT_IS_STATIC,
+                LocalIPAddress:    localIP,
+                ExternalIPAddress: extIP,
+                Protocol:          0, // identity mapping (all protocols)
+                LocalPort:         0,
+                ExternalPort:      0,
+                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
+                VrfID:             0,
+                Tag:               tag,
         }
-        if reply.Retval != 0 {
-                return fmt.Errorf("nat44_add_del_static_mapping_v2 retval=%d", reply.Retval)
+        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
+        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
+                return fmt.Errorf("nat44_add_del_static_mapping V1 also failed: %w", errV1)
         }
-        log.Printf("[vpp] Added static NAT %s -> %s via binary API", internalIP, externalIP)
+        if replyV1.Retval != 0 {
+                return fmt.Errorf("nat44_add_del_static_mapping V1 retval=%d", replyV1.Retval)
+        }
+        log.Printf("[vpp] Added static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
         return nil
 }
 
@@ -740,7 +815,8 @@ func (c *VPPLiveClient) DeletePolicer(name string) error {
         return nil
 }
 
-// DeleteStaticNat removes a 1:1 static NAT mapping.
+// DeleteStaticNat removes a 1:1 static NAT mapping. Mirrors AddStaticNat:
+// tries V2 first, falls back to V1 if V2 is unsupported on this VPP build.
 func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
@@ -753,7 +829,9 @@ func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
         if err != nil {
                 return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
         }
-        req := &nat44_ed.Nat44AddDelStaticMappingV2{
+
+        // --- Step 1: try V2 delete ---
+        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
                 IsAdd:             false,
                 Flags:             nat_types.NAT_IS_STATIC,
                 LocalIPAddress:   localIP,
@@ -761,11 +839,39 @@ func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
                 ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
                 VrfID:             0,
         }
-        reply := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
-        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
-                return fmt.Errorf("nat44_add_del_static_mapping_v2 (delete) failed: %w", err)
+        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
+        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
+                if replyV2.Retval == 0 {
+                        log.Printf("[vpp] Deleted static NAT V2 %s -> %s via binary API", internalIP, externalIP)
+                        return nil
+                }
+                log.Printf("[vpp] DeleteStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
+        } else {
+                errMsg := errV2.Error()
+                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
+                        log.Printf("[vpp] DeleteStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
+                } else {
+                        return fmt.Errorf("nat44_add_del_static_mapping_v2 (delete) failed: %w", errV2)
+                }
         }
-        log.Printf("[vpp] Deleted static NAT %s -> %s via binary API", internalIP, externalIP)
+
+        // --- Step 2: fall back to V1 delete ---
+        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
+                IsAdd:             false,
+                Flags:             nat_types.NAT_IS_STATIC,
+                LocalIPAddress:   localIP,
+                ExternalIPAddress: extIP,
+                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
+                VrfID:             0,
+        }
+        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
+        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
+                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) failed: %w", errV1)
+        }
+        if replyV1.Retval != 0 {
+                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) retval=%d", replyV1.Retval)
+        }
+        log.Printf("[vpp] Deleted static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
         return nil
 }
 

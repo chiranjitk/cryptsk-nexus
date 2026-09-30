@@ -460,6 +460,9 @@ func subscriberProgramHandler(w http.ResponseWriter, r *http.Request) {
                 DHCPClientID    string `json:"dhcpClientId"`
                 ExternalIP      string `json:"externalIp"`
                 ACLRules        []ACLRule `json:"aclRules"`
+                // SwIfIndex is the VPP interface index to apply the policer to.
+                // Defaults to 2 (tap0 in the standard CRYPTSK VPP config) when unset.
+                SwIfIndex       uint32 `json:"swIfIndex"`
         }
         if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
                 writeError(w, http.StatusBadRequest, err.Error())
@@ -472,6 +475,11 @@ func subscriberProgramHandler(w http.ResponseWriter, r *http.Request) {
         if req.FramedIP == "" {
                 writeError(w, http.StatusBadRequest, "framedIp is required")
                 return
+        }
+        // Default swIfIndex to 2 (tap0 — the subscriber-facing interface in the
+        // standard CRYPTSK VPP config) when the caller doesn't specify one.
+        if req.SwIfIndex == 0 {
+                req.SwIfIndex = 2
         }
 
         policy := &SessionPolicy{
@@ -524,6 +532,14 @@ func subscriberProgramHandler(w http.ResponseWriter, r *http.Request) {
                                 ExternalIP:   req.ExternalIP,
                                 CreatedAt:    time.Now(),
                         })
+                        // Step 1b: attach the policer to the subscriber-facing interface.
+                        // Non-fatal: if this fails, the policer still exists in VPP's pool
+                        // but is not bound to a traffic flow. Logged as a warning so the
+                        // program call still succeeds and the session-engine continues.
+                        if err := vppClient.ApplyPolicerToInterface(req.SwIfIndex, policerIdx); err != nil {
+                                log.Printf("[govpp] /subscriber/program: ApplyPolicerToInterface WARNING swIfIndex=%d policer=%d: %v (policer exists but not bound to traffic flow)",
+                                        req.SwIfIndex, policerIdx, err)
+                        }
                 }
         }
 

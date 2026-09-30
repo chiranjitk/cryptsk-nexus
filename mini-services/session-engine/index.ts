@@ -805,7 +805,17 @@ async function handleRequest(req: Request, path: string, url: URL) {
   if (path === "/api/radius/auth" && req.method === "POST") {
     // Read raw body to extract _radiusSecret before main handler parses it
     const rawBody = await req.text().catch(() => "");
-    let providedSecret = req.headers.get("x-radius-secret") || "";
+    // _radiusSecret can be provided via:
+    //   1. X-RADIUS-Secret HTTP header (preferred when supported by client)
+    //   2. _radiusSecret URL query parameter (used by rlm_rest — it cannot
+    //      easily add custom HTTP headers via its config; we pass it in the
+    //      `uri = "/api/radius/auth?_radiusSecret=..."` config directive)
+    //   3. _radiusSecret JSON body field (legacy fallback for clients that
+    //      send the secret in the body — works with the older `data` xlat
+    //      template approach in rlm_rest)
+    let providedSecret = req.headers.get("x-radius-secret")
+      || url.searchParams.get("_radiusSecret")
+      || "";
     if (!providedSecret) {
       try {
         const parsed = JSON.parse(rawBody);
@@ -861,15 +871,24 @@ async function handleRequest(req: Request, path: string, url: URL) {
     } else {
       body = await req.json().catch(() => ({}));
     }
-    // Accept both new + legacy field names
-    const username = body.username || body.serviceUsername || "";
-    const password = body.password || body.servicePassword || "";
-    const mac = body.callingStationId || body.macAddress || "";
+    // Accept both new + legacy field names, AND RADIUS attribute names
+    // (User-Name, User-Password, NAS-IP-Address, NAS-Port,
+    // Calling-Station-Id, Called-Station-Id, Packet-Src-IP-Address)
+    // sent by rlm_rest when configured with `body = "json"` (auto-
+    // serialization). camelCase keys take precedence (admin UI flow
+    // /api/auth); RADIUS attribute names act as fallbacks (rlm_rest
+    // machine-to-machine flow /api/radius/auth).
+    const username = body.username || body["User-Name"] || body.serviceUsername || "";
+    const password = body.password || body["User-Password"] || body.servicePassword || "";
+    const mac = body.callingStationId || body["Calling-Station-Id"] || body.macAddress || "";
     const {
-      nasIp, nasPort, calledStationId, clientIp,
       vlanId, circuitId, remoteId, pppoeSessionId, dhcpClientId,
       framedIp,
     } = body;
+    const nasIp = body.nasIp || body["NAS-IP-Address"] || "";
+    const nasPort = body.nasPort || body["NAS-Port"] || "0";
+    const calledStationId = body.calledStationId || body["Called-Station-Id"] || "";
+    const clientIp = body.clientIp || body["Packet-Src-IP-Address"] || "";
 
     if (!username || password === undefined || password === null) {
       return jsonErr("username and password are required");
@@ -1181,7 +1200,13 @@ async function handleRequest(req: Request, path: string, url: URL) {
       sessionId, username, subscriberId: subscriber.id, speeds, vppEpoch: finalEpoch,
     });
 
-    // (m) Return 200 with §8 contract
+    // (m) Return 200 with §8 contract + RADIUS control/reply attributes.
+    // The `radius` object is consumed by rlm_rest on the /api/radius/auth
+    // machine-to-machine path: rlm_rest maps these back to RADIUS reply
+    // items (sent to the NAS in Access-Accept) and control items
+    // (Auth-Type=Accept → bypasses the authenticate{} section in
+    // sites-available/default). This object is harmless on the admin
+    // UI /api/auth flow (admin UI consumers ignore it).
     return json({
       success: true,
       authResult: "Access-Accept",
@@ -1194,6 +1219,23 @@ async function handleRequest(req: Request, path: string, url: URL) {
       vppEpoch: finalEpoch,
       vppProgrammedAt: now,
       vppVerifiedAt: now,
+      // RADIUS control + reply attributes — consumed by rlm_rest on the
+      // machine-to-machine path. rlm_rest maps these back to RADIUS items
+      // when the response is JSON (Content-Type: application/json).
+      radius: {
+        control: {
+          "Auth-Type": "Accept",
+        },
+        reply: {
+          "Framed-IP-Address": allocatedIp,
+          "Session-Timeout": effectiveTimeout,
+          // Mikrotik-Rate-Limit format: "downk/upk" (kbps). Used as a NAS-
+          // side fallback if the VPP policer fails (e.g., NAT44 plugin
+          // disabled — see FIX-VPP-PRODUCTION-READY stage summary).
+          "Mikrotik-Rate-Limit": `${speeds.speedDown}k/${speeds.speedUp}k`,
+          "Idle-Timeout": effectiveIdle,
+        },
+      },
     }, 201);
   }
 
