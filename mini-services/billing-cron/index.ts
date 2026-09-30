@@ -1114,6 +1114,11 @@ Bun.serve({
         logger.error("Manual job trigger failed", { jobId, error: String(err) });
       });
 
+      // [QA8-IMP-C] Response extended with a `job` snapshot (lastRun/nextRun/counters +
+      // history head) so the Automation Jobs UI can react without a round-trip.
+      // executeJob is async — history[0] is the "running" execution at this point;
+      // the result itself is picked up by the client's GET /api/jobs polling.
+      // All original fields kept for backward compatibility.
       return json({
         success: true,
         message: `Job "${job.name}" started`,
@@ -1121,6 +1126,60 @@ Bun.serve({
         status: "running",
         triggeredBy: auth.userId,
         timestamp: new Date().toISOString(),
+        job: {
+          id: job.id,
+          name: job.name,
+          type: job.type,
+          status: job.status,
+          lastRun: job.lastRun ?? null,
+          nextRun: job.nextRun,
+          totalRuns: job.totalRuns,
+          successCount: job.successCount,
+          failCount: job.failCount,
+          history: job.history.slice(0, 5),
+        },
+      });
+    }
+
+    // ── PATCH /api/jobs/:id (enable/disable — in-memory flag) [QA8-IMP-C] ──
+    // Persists NOTHING to the DB: the registry entry's `enabled` flag is flipped,
+    // which the scheduler tick already honors (`if (!job.enabled ...) continue`).
+    // Flag reverts when the service restarts — documented in the UI hint.
+    const jobMatch = path.match(/^\/api\/jobs\/(job-\d+)$/);
+    if (jobMatch && req.method === "PATCH") {
+      const jobId = jobMatch[1];
+      const job = jobs.find((j) => j.id === jobId);
+      if (!job) return jsonErr("Job not found", 404);
+
+      let body: { enabled?: unknown };
+      try {
+        body = await req.json();
+      } catch {
+        return jsonErr("Invalid JSON body", 400);
+      }
+      if (typeof body?.enabled !== "boolean") {
+        return jsonErr("Field 'enabled' is required and must be a boolean", 400);
+      }
+
+      const previous = job.enabled;
+      job.enabled = body.enabled;
+      logger.info(`Job "${job.name}" ${body.enabled ? "enabled" : "disabled"}`, {
+        jobId,
+        by: auth.userId,
+        previous,
+      });
+
+      return json({
+        success: true,
+        job: {
+          id: job.id,
+          name: job.name,
+          type: job.type,
+          cron: job.cron,
+          enabled: job.enabled,
+          nextRun: job.nextRun,
+          status: job.status,
+        },
       });
     }
 

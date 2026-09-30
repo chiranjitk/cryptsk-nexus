@@ -52,6 +52,7 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Notifications", section: "SETTINGS", required: true },
       { label: "API Keys", section: "SETTINGS", required: true },
       { label: "Audit Log", section: "SETTINGS", required: true },
+      { label: "Automation Jobs", section: "SETTINGS", required: true },
       { label: "Backup", section: "SETTINGS", required: true },
       { label: "Integrations", section: "SETTINGS", required: true },
       { label: "Knowledge Base", section: "SETTINGS", required: true },

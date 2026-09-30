@@ -760,7 +760,7 @@ export default function ChurnPredictionPage() {
 
       {/* ── Retention Action Dialog ── */}
       <Dialog open={actionDialog.open} onOpenChange={(open) => { if (!open) closeActionDialog(); }}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 text-red-600" />

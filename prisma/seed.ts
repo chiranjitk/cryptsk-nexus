@@ -79,8 +79,9 @@ const PLANS = [
   {
     name: "Basic 30 Mbps",
     category: "FTTH" as const,
-    downloadSpeed: 30720,
-    uploadSpeed: 15360,
+    downloadSpeed: 30,
+    uploadSpeed: 15,
+    speedUnit: "MBPS" as const,
     priceMonthly: 399,
     installationCharge: 500,
     securityDeposit: 500,
@@ -95,8 +96,9 @@ const PLANS = [
   {
     name: "Standard 50 Mbps",
     category: "FTTH" as const,
-    downloadSpeed: 51200,
-    uploadSpeed: 25600,
+    downloadSpeed: 50,
+    uploadSpeed: 25,
+    speedUnit: "MBPS" as const,
     priceMonthly: 599,
     installationCharge: 500,
     securityDeposit: 500,
@@ -111,8 +113,9 @@ const PLANS = [
   {
     name: "Premium 100 Mbps",
     category: "FTTH" as const,
-    downloadSpeed: 102400,
-    uploadSpeed: 51200,
+    downloadSpeed: 100,
+    uploadSpeed: 50,
+    speedUnit: "MBPS" as const,
     priceMonthly: 999,
     installationCharge: 0,
     securityDeposit: 1000,
@@ -127,8 +130,9 @@ const PLANS = [
   {
     name: "Ultra 200 Mbps",
     category: "FTTH" as const,
-    downloadSpeed: 204800,
-    uploadSpeed: 102400,
+    downloadSpeed: 200,
+    uploadSpeed: 100,
+    speedUnit: "MBPS" as const,
     priceMonthly: 1499,
     installationCharge: 0,
     securityDeposit: 1000,
@@ -138,15 +142,16 @@ const PLANS = [
     isPopular: false,
     sortOrder: 4,
     contentionRatio: "1:8",
-    burstSpeed: 256000,
+    burstSpeed: 250,
     burstDuration: 30,
     slaUptime: 99.7,
   },
   {
     name: "Enterprise 500 Mbps",
     category: "FTTH" as const,
-    downloadSpeed: 512000,
-    uploadSpeed: 256000,
+    downloadSpeed: 500,
+    uploadSpeed: 250,
+    speedUnit: "MBPS" as const,
     priceMonthly: 2999,
     installationCharge: 0,
     securityDeposit: 0,
@@ -156,15 +161,16 @@ const PLANS = [
     isPopular: false,
     sortOrder: 5,
     contentionRatio: "1:4",
-    burstSpeed: 614400,
+    burstSpeed: 600,
     burstDuration: 60,
     slaUptime: 99.9,
   },
   {
     name: "Wireless 20 Mbps",
     category: "WIRELESS" as const,
-    downloadSpeed: 20480,
-    uploadSpeed: 10240,
+    downloadSpeed: 20,
+    uploadSpeed: 10,
+    speedUnit: "MBPS" as const,
     priceMonthly: 349,
     installationCharge: 800,
     securityDeposit: 500,
@@ -179,8 +185,9 @@ const PLANS = [
   {
     name: "Wireless 40 Mbps",
     category: "WIRELESS" as const,
-    downloadSpeed: 40960,
-    uploadSpeed: 20480,
+    downloadSpeed: 40,
+    uploadSpeed: 20,
+    speedUnit: "MBPS" as const,
     priceMonthly: 549,
     installationCharge: 800,
     securityDeposit: 500,
@@ -195,8 +202,9 @@ const PLANS = [
   {
     name: "Cable 30 Mbps",
     category: "CABLE" as const,
-    downloadSpeed: 30720,
-    uploadSpeed: 15360,
+    downloadSpeed: 30,
+    uploadSpeed: 15,
+    speedUnit: "MBPS" as const,
     priceMonthly: 299,
     installationCharge: 300,
     securityDeposit: 300,
@@ -466,8 +474,9 @@ async function main() {
     });
     if (!existingPlan) {
       const groupName = plan.name.replace(/\s+/g, "-").toLowerCase();
-      const dlMbps = Math.round(plan.downloadSpeed / 1024);
-      const ulMbps = Math.round(plan.uploadSpeed / 1024);
+      // PLANS speeds are already in Mbps (speedUnit: "MBPS") — no Kbps conversion needed
+      const dlMbps = Math.round(plan.downloadSpeed);
+      const ulMbps = Math.round(plan.uploadSpeed);
 
       // Create or reuse RADIUS group
       const existingGroup = await prisma.radiusGroup.findUnique({

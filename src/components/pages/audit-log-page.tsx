@@ -2124,7 +2124,7 @@ ${logs.map((l, i) => `<tr>
 
       {/* ── Detail Dialog ───────────────────────────────── */}
       <Dialog open={!!detailLog} onOpenChange={() => setDetailLog(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2 flex-wrap">
               {detailLog && (
@@ -2766,7 +2766,12 @@ ${logs.map((l, i) => `<tr>
       {/* ── Retention Config Dialog ───────────────────── */}
       <Dialog open={retentionOpen} onOpenChange={setRetentionOpen}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Settings className="h-4 w-4" />Configure Retention</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2"><Settings className="h-4 w-4" />Configure Retention</DialogTitle>
+            <DialogDescription>
+              Set the retention window before log entries are automatically archived and purged.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs">Retention Period (days)</Label>

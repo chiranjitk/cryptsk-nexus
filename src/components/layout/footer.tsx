@@ -237,13 +237,18 @@ export function AppFooter() {
             <StatusDot status={radiusStatus} />
             <span>
               RADIUS:{" "}
-              <span className={cn(
-                "font-medium inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold",
-                radiusData?.status === "synced" && "badge-success",
-                radiusData?.status === "minor_drift" && "badge-warning",
-                (!radiusData?.status || radiusData?.status === "drifted") && "badge-danger"
-              )}>
-                {radiusData?.status === "synced" ? "Synced" : radiusData?.status === "minor_drift" ? "Drift" : radiusData?.status === "drifted" ? "Error" : "…"}
+              <span
+                className={cn(
+                  "font-medium inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold",
+                  radiusData?.status === "synced" && "badge-success",
+                  radiusData?.status === "minor_drift" && "badge-warning",
+                  (!radiusData?.status || radiusData?.status === "drifted") && "badge-danger"
+                )}
+                title={(!radiusData?.status || radiusData?.status === "drifted")
+                  ? "FreeRADIUS integration is decommissioned in this environment"
+                  : undefined}
+              >
+                {radiusData?.status === "synced" ? "Synced" : radiusData?.status === "minor_drift" ? "Drift" : radiusData?.status === "drifted" ? "Error" : "N/A"}
               </span>
             </span>
           </div>

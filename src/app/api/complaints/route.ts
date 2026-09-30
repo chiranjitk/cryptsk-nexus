@@ -186,8 +186,21 @@ export async function GET(req: NextRequest) {
       _commentCount: commentCountMap[c.id] || 0,
     }));
 
+    // Prisma relation keys are capitalized (Subscriber/Area/Technician) but the
+    // client contract is lowercase (subscriber/area/assignedTo) — remap per row
+    // and drop the capitalized keys (computed repeat-caller fields survive).
+    const mappedComplaints = complaintsWithRepeat.map((c) => {
+      const { Subscriber, Area, Technician, ...rest } = c;
+      return {
+        ...rest,
+        subscriber: Subscriber ?? null,
+        area: Area ?? null,
+        assignedTo: Technician ?? null,
+      };
+    });
+
     return NextResponse.json({
-      complaints: complaintsWithRepeat,
+      complaints: mappedComplaints,
       statusCounts,
       total,
       page,

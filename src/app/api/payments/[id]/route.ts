@@ -31,8 +31,16 @@ export async function GET(
       select: { companyName: true, address: true, city: true, state: true, pincode: true, phone: true, email: true, gstin: true, website: true, receiptFooterText: true },
     });
 
+    // Prisma relation keys are capitalized but the client contract is lowercase —
+    // remap and drop the capitalized keys (mirrors the list route in api/payments/route.ts).
+    const { Subscriber, Invoice, User_Payment_collectedByIdToUser, User_Payment_verifiedByIdToUser, ...rest } = payment;
+
     return NextResponse.json({
-      ...payment,
+      ...rest,
+      subscriber: Subscriber ?? null,
+      invoice: Invoice ?? null,
+      collectedBy: User_Payment_collectedByIdToUser ?? null,
+      verifiedBy: User_Payment_verifiedByIdToUser ?? null,
       ispSettings: ispSettings || { companyName: "My ISP" },
     });
   } catch (error) {

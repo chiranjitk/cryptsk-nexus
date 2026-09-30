@@ -70,8 +70,15 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    // Prisma relation keys are capitalized (Subscriber/Invoice) but the client
+    // contract is lowercase — remap per row and drop the capitalized keys.
+    const mappedPayments = payments.map((p) => {
+      const { Subscriber, Invoice, ...rest } = p;
+      return { ...rest, subscriber: Subscriber ?? null, invoice: Invoice ?? null };
+    });
+
     return NextResponse.json({
-      payments,
+      payments: mappedPayments,
       total,
       page,
       totalPages: Math.ceil(total / limit),

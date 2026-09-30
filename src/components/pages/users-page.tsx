@@ -698,7 +698,7 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Users</h1>
+          <h1 className="text-2xl font-bold text-foreground">Admin Users</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Manage team members and their access roles.</p>
         </div>
         <div className="flex gap-2 flex-wrap">

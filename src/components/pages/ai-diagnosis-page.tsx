@@ -858,7 +858,7 @@ export default function AiDiagnosisPage() {
 
       {/* Diagnosis History Dialog */}
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><History className="h-4 w-4 text-red-600" />Diagnosis History</DialogTitle></DialogHeader>
           <div className="space-y-2 max-h-80 overflow-y-auto">
             {history.length === 0 ? (
@@ -893,7 +893,7 @@ export default function AiDiagnosisPage() {
 
       {/* Create Complaint Dialog */}
       <Dialog open={complaintDialog} onOpenChange={setComplaintDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><PlusCircle className="h-4 w-4 text-red-600" />Create Complaint from Diagnosis</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div><p className="text-xs text-muted-foreground">Subscriber</p><p className="text-sm font-medium">{diagnosis?.subscriberName}</p></div>
@@ -911,7 +911,7 @@ export default function AiDiagnosisPage() {
 
       {/* Bulk Diagnosis Dialog */}
       <Dialog open={bulkOpen} onOpenChange={(open) => { if (!open) { setBulkOpen(false); setBulkDone(false); setBulkResults([]); setBulkSelected(new Set()); } }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Users className="h-4 w-4 text-red-600" />Bulk Diagnosis</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="relative" ref={bulkSearchRef}>

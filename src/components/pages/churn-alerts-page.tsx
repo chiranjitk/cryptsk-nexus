@@ -502,7 +502,7 @@ export default function ChurnAlertsPage() {
 
       {/* Subscriber Detail with Communication History */}
       <Dialog open={!!detailSubscriber} onOpenChange={(open) => { if (!open) { setDetailSubscriber(null); } }}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="text-base">Subscriber Details</DialogTitle></DialogHeader>
           {detailSubscriber && (
             <div className="space-y-4">
@@ -576,7 +576,7 @@ export default function ChurnAlertsPage() {
 
       {/* Action Dialog */}
       <Dialog open={actionDialog.open} onOpenChange={(open) => { setActionDialog({ ...actionDialog, open }); if (!open) setActionNote(""); }}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader><DialogTitle className="text-base capitalize">{actionDialog.action} - {actionDialog.subscriberName}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <Textarea placeholder={`Add a note for this ${actionDialog.action} action...`} value={actionNote} onChange={(e) => setActionNote(e.target.value)} rows={3} />
@@ -593,7 +593,7 @@ export default function ChurnAlertsPage() {
 
       {/* Bulk Action Dialog */}
       <Dialog open={bulkActionOpen} onOpenChange={setBulkActionOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Gift className="h-4 w-4 text-red-600" />Bulk Retention Offer</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">Send retention offers to <span className="font-semibold text-foreground">{selectedIds.size}</span> selected subscriber(s).</p>
@@ -608,7 +608,7 @@ export default function ChurnAlertsPage() {
 
       {/* Workflow Config Dialog */}
       <Dialog open={workflowOpen} onOpenChange={setWorkflowOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Settings className="h-4 w-4 text-red-600" />Automated Workflows</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-xs text-muted-foreground">Configure automatic actions when subscriber risk crosses thresholds. Actions run during churn alert refresh.</p>

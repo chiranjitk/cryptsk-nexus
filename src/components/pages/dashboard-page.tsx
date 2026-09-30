@@ -388,6 +388,15 @@ const CONNECTION_TYPE_COLORS: Record<string, string> = {
   ETHERNET: "from-slate-400 to-slate-500",
 };
 
+// Greeting hour follows the dashboard's pinned IST clock (Asia/Kolkata), not the
+// browser's local time. % 24 normalizes the ICU "24" midnight quirk (h24 cycle).
+function istHour(date: Date): number {
+  return parseInt(
+    new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }).format(date),
+    10
+  ) % 24;
+}
+
 export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -396,7 +405,7 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const hour = currentTime.getHours();
+  const hour = istHour(currentTime);
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   const formattedDate = currentTime.toLocaleDateString("en-IN", {
@@ -404,11 +413,13 @@ export default function DashboardPage() {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "Asia/Kolkata",
   });
 
   const formattedTime = currentTime.toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Kolkata",
   });
 
   const [dateRange, setDateRange] = useState("30d");
@@ -762,7 +773,7 @@ export default function DashboardPage() {
 
       {/* ── Welcome Banner ── */}
       {showWelcomeBanner && (() => {
-        const bannerHour = new Date().getHours();
+        const bannerHour = istHour(new Date());
         const bannerGreeting = bannerHour >= 5 && bannerHour < 12
           ? "Good Morning"
           : bannerHour >= 12 && bannerHour < 17

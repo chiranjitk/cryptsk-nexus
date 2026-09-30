@@ -158,6 +158,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Notifications': () => import('@/components/pages/notifications-page'),
   'API Keys': () => import('@/components/pages/api-keys-page'),
   'Audit Log': () => import('@/components/pages/audit-log-page'),
+  'Automation Jobs': () => import('@/components/pages/automation-jobs-page'),
   'Backup': () => import('@/components/pages/backup-page'),
   'Integrations': () => import('@/components/pages/integrations-page'),
   'Knowledge Base': () => import('@/components/pages/knowledge-base-page'),

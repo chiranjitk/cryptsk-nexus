@@ -306,7 +306,9 @@ function RefundsSection() {
   const [refundReason, setRefundReason] = useState("");
   const [refundMode, setRefundMode] = useState("Original");
 
-  const { data, isLoading } = useQuery<{ refunds: { id: string; amount: number; reason: string; mode: string; status: string; notes: string; createdAt: string; payment: { id: string; amount: number; paymentMode: string; receiptNumber: string; subscriber: { name: string; code: string } } }[] }>({
+  // GET /api/payments returns { payments, … } (not { refunds }) — query the real
+  // shape and remap each REFUNDED payment row into the fields the table renders.
+  const { data, isLoading } = useQuery<{ payments: { id: string; amount: number; paymentMode: string; status: string; notes: string; receiptNumber: string; createdAt: string; subscriber: { name: string; code: string } | null }[] }>({
     queryKey: ["collection-refunds"],
     queryFn: () => fetch("/api/payments?status=REFUNDED&limit=50").then((r) => r.json()),
   });
@@ -317,8 +319,19 @@ function RefundsSection() {
     onError: () => toast.error("Refund failed"),
   });
 
-  const refunds = (data?.refunds || []).map((r: any) => r.refund || r);
-  const refundTotal = refunds.reduce((s: number, r: any) => s + (r.amount || 0), 0);
+  // Refund reason/mode live on the Refund record, which this endpoint does not
+  // expose — fall back to the payment's own notes/mode so rows stay meaningful.
+  const refunds = (data?.payments || []).map((p) => ({
+    id: p.id,
+    amount: p.amount,
+    status: p.status,
+    createdAt: p.createdAt,
+    receiptNumber: p.receiptNumber,
+    mode: p.paymentMode,
+    reason: p.notes,
+    subscriber: p.subscriber,
+  }));
+  const refundTotal = refunds.reduce((s, r) => s + (r.amount || 0), 0);
 
   return (
     <div className="space-y-4">
@@ -340,7 +353,7 @@ function RefundsSection() {
       <Card className="border shadow-sm"><CardContent className="p-0"><div className="overflow-x-auto max-h-96 overflow-y-auto">
         <Table><TableHeader><TableRow><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Receipt #</TableHead><TableHead className="text-xs">Subscriber</TableHead><TableHead className="text-xs text-right">Amount</TableHead><TableHead className="text-xs">Mode</TableHead><TableHead className="text-xs">Reason</TableHead><TableHead className="text-xs">Status</TableHead></TableRow></TableHeader>
         <TableBody>{isLoading ? Array.from({ length: 3 }).map((_, i) => <TableRow key={i}><TableCell colSpan={8}><Skeleton className="skeleton-wave h-8" /></TableCell></TableRow>) : refunds.length === 0 ? <TableRow><TableCell colSpan={8} className="text-center py-10"><div className="flex flex-col items-center"><Undo2 className="h-8 w-8 text-muted-foreground/30 mb-2" /><p className="text-muted-foreground">No refunds processed</p></div></TableCell></TableRow> : refunds.map((r: any, i: number) => (
-          <TableRow key={r.id || i}><TableCell className="text-xs">{r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-IN") : "—"}</TableCell><TableCell className="font-mono text-xs">{r.payment?.receiptNumber || "—"}</TableCell><TableCell className="text-xs">{r.payment?.subscriber?.name || "—"}</TableCell><TableCell className="text-xs text-right font-semibold tabular-nums">{formatINR(r.amount || 0)}</TableCell><TableCell className="text-xs">{r.mode || "—"}</TableCell><TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">{r.reason || "—"}</TableCell><TableCell><Badge variant="outline" className={`text-[10px] ${r.status === "PENDING" ? "bg-yellow-100 text-yellow-700" : r.status === "COMPLETED" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>{r.status}</Badge></TableCell></TableRow>
+          <TableRow key={r.id || i}><TableCell className="text-xs">{r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-IN") : "—"}</TableCell><TableCell className="font-mono text-xs">{r.receiptNumber || "—"}</TableCell><TableCell className="text-xs">{r.subscriber?.name || "—"}</TableCell><TableCell className="text-xs text-right font-semibold tabular-nums">{formatINR(r.amount || 0)}</TableCell><TableCell className="text-xs">{r.mode || "—"}</TableCell><TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">{r.reason || "—"}</TableCell><TableCell><Badge variant="outline" className={`text-[10px] ${r.status === "PENDING" ? "bg-yellow-100 text-yellow-700" : r.status === "COMPLETED" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>{r.status}</Badge></TableCell></TableRow>
         ))}</TableBody></Table>
       </div></CardContent></Card>
     </div>
