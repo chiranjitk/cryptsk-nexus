@@ -1,6 +1,6 @@
-# CRYPTSKINTELLIGENT-ISP-PLATFORM — Fresh Sandbox Setup Guide
+# cryptsk-nexus — Fresh Sandbox Setup Guide
 
-You are setting up CRYPTSKINTELLIGENT-ISP-PLATFORM from scratch on a FRESH sandbox.
+You are setting up cryptsk-nexus from scratch on a FRESH sandbox.
 
 ---
 
@@ -9,7 +9,7 @@ You are setting up CRYPTSKINTELLIGENT-ISP-PLATFORM from scratch on a FRESH sandb
 ```bash
 cd /home/z/
 rm -rf my-project
-git clone https://github.com/chiranjitk/CRYPTSKINTELLIGENT-ISP-PLATFORM.git my-project
+git clone https://github.com/chiranjitk/cryptsk-nexus.git my-project
 cd my-project   # this is git root
 ```
 
