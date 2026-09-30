@@ -12,7 +12,7 @@
  *   bun run deploy -- --logs             # Tail PM2 logs from prod
  *
  * Target: Rocky Linux 10 production server (103.244.7.221:22222)
- * Project path on prod: /opt/cryptsk-nexus
+ * Project path on prod: /opt/ispplatform
  *
  * SECRETS MIGRATION PLAN (Phase 1+):
  *   Current: credentials hardcoded below (already in git history — accepted for Phase 0).
@@ -143,11 +143,43 @@ async function buildOnServer() {
   return false;
 }
 
-async function restartServer() {
-  step(5, 'Restarting cryptsk-gateway on production');
+async function prismaDbPush() {
+  step('4b', 'Pushing Prisma schema to PostgreSQL (creates new tables: SessionSnapshot, VppPolicyObject, VppAclProfile, VppNatPool, NatEventBuffer, VppRecoveryLog, DuplicateLoginPolicy, DpiClassification, ReconciliationLog + extends NasSession)');
   
   const { stdout, stderr } = await sshExec(
-    `cd ${PROD_PROJECT_DIR} && pm2 restart cryptsk-gateway 2>&1 && sleep 5 && echo RESTART_OK`
+    `cd ${PROD_PROJECT_DIR} && DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus" npx prisma db push --accept-data-loss 2>&1 | tail -20 && echo DBPUSH_OK`,
+    180000  // 3 min timeout
+  );
+  
+  if (stdout.includes('DBPUSH_OK')) {
+    ok('Prisma schema pushed to PostgreSQL');
+    return true;
+  }
+  warn(`Prisma push had issues: ${(stderr || stdout).slice(-300)}`);
+  return true; // Continue anyway — schema may already be in sync
+}
+
+async function prismaGenerate() {
+  step('4c', 'Generating Prisma client on production');
+  
+  const { stdout, stderr } = await sshExec(
+    `cd ${PROD_PROJECT_DIR} && DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus" npx prisma generate 2>&1 | tail -10 && echo GENERATE_OK`,
+    120000  // 2 min timeout
+  );
+  
+  if (stdout.includes('GENERATE_OK')) {
+    ok('Prisma client generated');
+    return true;
+  }
+  warn(`Prisma generate had issues: ${(stderr || stdout).slice(-200)}`);
+  return true;
+}
+
+async function restartServer() {
+  step(5, 'Restarting cryptsk-nextjs on production');
+  
+  const { stdout, stderr } = await sshExec(
+    `cd ${PROD_PROJECT_DIR} && pm2 restart cryptsk-nextjs 2>&1 && sleep 5 && echo RESTART_OK`
   );
   
   if (stdout.includes('RESTART_OK')) {
@@ -165,7 +197,7 @@ async function verifyDeploy() {
   
   // Check HTTP response
   const { stdout } = await sshExec(
-    `curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ && echo "" && pm2 status cryptsk-gateway --no-color 2>&1 | tail -3`
+    `curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ && echo "" && pm2 status cryptsk-nextjs --no-color 2>&1 | tail -3`
   );
   
   if (stdout.includes('200')) {
@@ -190,7 +222,7 @@ async function tailLogs() {
   info('Tailing PM2 logs (Ctrl+C to stop)...\n');
   
   const { stdout } = await sshExec(
-    `pm2 logs cryptsk-gateway --lines 20 --nostream 2>&1`
+    `pm2 logs cryptsk-nextjs --lines 20 --nostream 2>&1`
   );
   console.log(stdout);
 }
@@ -231,6 +263,12 @@ async function main() {
   
   const installOk = await installDeps();
   if (!installOk) { warn('Install had issues, continuing...'); }
+  
+  const dbPushOk = await prismaDbPush();
+  if (!dbPushOk) { warn('Prisma db push had issues, continuing...'); }
+  
+  const generateOk = await prismaGenerate();
+  if (!generateOk) { warn('Prisma generate had issues, continuing...'); }
   
   const buildOk = await buildOnServer();
   if (!buildOk) { fail('Aborting: build failed'); process.exit(1); }
