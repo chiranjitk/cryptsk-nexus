@@ -1051,6 +1051,22 @@ async function main() {
             );
           }
 
+          // ── Resolve externalIp for NAT mapping ──
+          // govpp-adapter only creates a static NAT mapping if externalIp is provided.
+          // Pick from VppNatPool table (first enabled pool's publicIpStart); fallback
+          // to a default test range if no pool configured.
+          if (!body.externalIp) {
+            try {
+              const pool = await db.vppNatPool.findFirst({
+                where: { isEnabled: true },
+                orderBy: { createdAt: "asc" },
+              });
+              body.externalIp = pool?.publicIpStart || "203.0.113.100";
+            } catch {
+              body.externalIp = "203.0.113.100";
+            }
+          }
+
           // ── Delegate REAL VPP programming to govpp-adapter ──
           const govpp = await callGovpp<any>("/subscriber/program", body, "POST");
           if (!govpp.ok || !govpp.data?.success) {
