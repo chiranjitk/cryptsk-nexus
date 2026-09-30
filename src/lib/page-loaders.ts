@@ -140,6 +140,14 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'WhatsApp Bot': () => import('@/components/pages/whatsapp-bot-page'),
 
   // ══════════════════════════════════════════════════════════════
+  // PARTNER MANAGEMENT
+  // ══════════════════════════════════════════════════════════════
+  'Distribution Hubs': () => import('@/components/pages/distribution-hub-page'),
+  'Partners': () => import('@/components/pages/partner-page'),
+  'Partner Users': () => import('@/components/pages/partner-users-page'),
+  'Partner Reports': () => import('@/components/pages/partner-reports-page'),
+
+  // ══════════════════════════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════════════════════════
   'ISP Profile': () => import('@/components/pages/isp-profile-page'),

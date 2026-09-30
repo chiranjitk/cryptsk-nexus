@@ -285,6 +285,21 @@ export const navGroups: NavGroup[] = [
   },
 
   // ══════════════════════════════════════════════════════════════
+  // PARTNER MANAGEMENT
+  // ══════════════════════════════════════════════════════════════
+  {
+    id: "PARTNER MANAGEMENT",
+    label: "PARTNER MANAGEMENT",
+    defaultOpen: true,
+    items: [
+      { label: "Distribution Hubs", href: "/distribution-hubs", icon: Building2 },
+      { label: "Partners", href: "/partners", icon: Handshake },
+      { label: "Partner Users", href: "/partner-users", icon: UserCircle },
+      { label: "Partner Reports", href: "/partner-reports", icon: BarChart3 },
+    ],
+  },
+
+  // ══════════════════════════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════════════════════════
   {

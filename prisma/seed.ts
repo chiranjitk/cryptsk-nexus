@@ -644,6 +644,116 @@ async function main() {
   }
   console.log(`  ✅ ${invoicesCreated} invoice(s) created`);
 
+  // 7b. Seed Partner Management (distribution hub, partners, partner users, permissions)
+  console.log("▸ Seeding partner management...");
+  const existingHubs = await prisma.distributionHub.count();
+  if (existingHubs === 0) {
+    const hub = await prisma.distributionHub.create({
+      data: {
+        id: randomUUID(),
+        name: "Kolkata Central",
+        code: "KOL-CENTRAL",
+        description: "Central Kolkata distribution hub",
+        status: "ACTIVE",
+        updatedAt: new Date(),
+      },
+    });
+
+    const partner1 = await prisma.partner.create({
+      data: {
+        id: randomUUID(),
+        distributionHubId: hub.id,
+        name: "ABC Cable",
+        code: "ABC-CBL",
+        description: "ABC Cable Network",
+        status: "ACTIVE",
+        contactName: "ABC Manager",
+        contactPhone: "+91-9000-000-011",
+        contactEmail: "admin@abccable.com",
+        address: "Salt Lake, Kolkata",
+        updatedAt: new Date(),
+      },
+    });
+
+    const partner2 = await prisma.partner.create({
+      data: {
+        id: randomUUID(),
+        distributionHubId: hub.id,
+        name: "XYZ Network",
+        code: "XYZ-NET",
+        description: "XYZ Network Services",
+        status: "ACTIVE",
+        contactName: "XYZ Billing",
+        contactPhone: "+91-9000-000-022",
+        contactEmail: "billing@xyznet.com",
+        address: "New Town, Kolkata",
+        updatedAt: new Date(),
+      },
+    });
+
+    // Partner users — passwords hashed with bcryptjs (12 rounds)
+    const partnerUser1Password = await hash("Partner@2026", 12);
+    await prisma.partnerUser.create({
+      data: {
+        id: randomUUID(),
+        partnerId: partner1.id,
+        email: "admin@abccable.com",
+        password: partnerUser1Password,
+        name: "ABC Admin",
+        phone: "+91-9000-000-011",
+        role: "PARTNER_ADMIN",
+        status: "ACTIVE",
+        updatedAt: new Date(),
+      },
+    });
+
+    const partnerUser2Password = await hash("Billing@2026", 12);
+    await prisma.partnerUser.create({
+      data: {
+        id: randomUUID(),
+        partnerId: partner2.id,
+        email: "billing@xyznet.com",
+        password: partnerUser2Password,
+        name: "XYZ Billing",
+        phone: "+91-9000-000-022",
+        role: "BILLING_USER",
+        status: "ACTIVE",
+        updatedAt: new Date(),
+      },
+    });
+
+    // 10 partner permissions
+    const PERMISSION_DEFS: Array<{ key: string; description: string; category: string }> = [
+      { key: "subscriber.view", description: "View subscribers under partner", category: "subscriber" },
+      { key: "subscriber.create", description: "Create new subscribers", category: "subscriber" },
+      { key: "subscriber.update", description: "Update subscriber details", category: "subscriber" },
+      { key: "subscriber.suspend", description: "Suspend/restore subscribers", category: "subscriber" },
+      { key: "billing.view", description: "View invoices and billing", category: "billing" },
+      { key: "billing.invoice", description: "Generate invoices", category: "billing" },
+      { key: "billing.payment", description: "Record payments", category: "billing" },
+      { key: "session.view", description: "View active sessions", category: "session" },
+      { key: "session.disconnect", description: "Disconnect active sessions", category: "session" },
+      { key: "report.view", description: "View partner reports", category: "report" },
+    ];
+    for (const def of PERMISSION_DEFS) {
+      await prisma.partnerPermission.create({
+        data: {
+          id: randomUUID(),
+          key: def.key,
+          description: def.description,
+          category: def.category,
+          isSystem: true,
+        },
+      });
+    }
+
+    console.log(`  ✅ 1 distribution hub, 2 partners, 2 partner users, 10 permissions created`);
+    console.log(`     admin@abccable.com / Partner@2026 (PARTNER_ADMIN)`);
+    console.log(`     billing@xyznet.com / Billing@2026 (BILLING_USER)`);
+  } else {
+    console.log(`  ⏭️  ${existingHubs} distribution hub(s) already exist, skipping partner management seed`);
+  }
+
   // 8. Summary
   const totalSubscribers = await prisma.subscriber.count();
   const totalPlans = await prisma.plan.count();

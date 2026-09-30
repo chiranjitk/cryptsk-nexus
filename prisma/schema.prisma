@@ -586,6 +586,7 @@ model CaptivePortal {
   PortalSession                                                 PortalSession[]
   PortalVoucherPool                                             PortalVoucherPool[]
   Subnet                                                        Subnet[]
+  PartnerPortalMapping                                           PartnerPortalMapping[]
 
   @@index([enabled])
   @@index([interfaceId])
@@ -3461,6 +3462,138 @@ model Reseller {
   @@index([status])
 }
 
+// ============================================================
+// PARTNER MANAGEMENT — ISP → Distribution Hub → Partner → Subscriber
+// Per user spec: Partner is the primary operational and billing
+// ownership boundary for subscribers. Every subscriber must belong
+// to a Partner. Partner users have scoped access (data isolation).
+// ============================================================
+
+model DistributionHub {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  description String   @default("")
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  Partner     Partner[]
+
+  @@index([status])
+}
+
+model Partner {
+  id                  String   @id @default(uuid())
+  distributionHubId   String
+  name                String
+  code                String   @unique
+  description         String   @default("")
+  status              String   @default("ACTIVE")
+  contactName         String   @default("")
+  contactPhone        String   @default("")
+  contactEmail        String   @default("")
+  address             String   @default("")
+  logoUrl             String   @default("")
+  primaryColor         String   @default("")
+  customDomain        String   @default("")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  DistributionHub     DistributionHub @relation(fields: [distributionHubId], references: [id], onDelete: Cascade)
+  PartnerUser         PartnerUser[]
+  Subscriber          Subscriber[]
+  PartnerIpPool       PartnerIpPool[]
+  PartnerPortalMapping PartnerPortalMapping[]
+
+  @@index([distributionHubId])
+  @@index([status])
+  @@index([code])
+}
+
+enum PartnerUserRole {
+  PARTNER_ADMIN
+  BILLING_USER
+  SUPPORT_USER
+  READONLY_USER
+}
+
+model PartnerUser {
+  id            String          @id @default(uuid())
+  partnerId     String
+  email         String          @unique
+  password      String
+  name          String
+  phone         String          @default("")
+  role          PartnerUserRole @default(READONLY_USER)
+  status        String          @default("ACTIVE")
+  lastLoginAt   DateTime?
+  loginAttempts Int             @default(0)
+  lockedUntil   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  Partner       Partner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  PartnerRolePermission PartnerRolePermission[]
+
+  @@index([partnerId])
+  @@index([role])
+  @@index([status])
+}
+
+model PartnerPermission {
+  id          String   @id @default(uuid())
+  key         String   @unique  // e.g., "subscriber.view", "billing.invoice"
+  description String   @default("")
+  category    String   @default("general")  // subscriber, billing, session, ip_pool, portal, report, partner_user
+  isSystem    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  PartnerRolePermission PartnerRolePermission[]
+
+  @@index([category])
+  @@index([key])
+}
+
+model PartnerRolePermission {
+  id                String @id @default(uuid())
+  partnerUserId     String
+  partnerPermissionId String
+  assignedAt        DateTime @default(now())
+  assignedBy       String?
+  PartnerUser       PartnerUser       @relation(fields: [partnerUserId], references: [id], onDelete: Cascade)
+  PartnerPermission PartnerPermission @relation(fields: [partnerPermissionId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerUserId, partnerPermissionId])
+  @@index([partnerUserId])
+  @@index([partnerPermissionId])
+}
+
+model PartnerIpPool {
+  id          String   @id @default(uuid())
+  partnerId   String
+  poolType    String   @default("IPv4")  // IPv4 | IPv6
+  startIp     String
+  endIp       String
+  subnetId    String?
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  Partner     Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@index([poolType])
+}
+
+model PartnerPortalMapping {
+  id              String   @id @default(uuid())
+  partnerId       String
+  captivePortalId String?
+  portalTemplate  String   @default("default")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  Partner         Partner       @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  CaptivePortal   CaptivePortal? @relation(fields: [captivePortalId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId])
+}
+
 model ResellerCommissionPayout {
   id               String    @id @default(uuid())
   resellerId       String
@@ -3718,6 +3851,7 @@ model Subscriber {
   landmark                                                 String                     @default("")
   pincode                                                  String                     @default("")
   planId                                                   String?
+  partnerId                                                String?
   connectionType                                           ConnectionType             @default(FTTH)
   status                                                   SubscriberStatus           @default(PENDING_ACTIVATION)
   serviceUsername                                          String                     @unique
@@ -3789,6 +3923,7 @@ model Subscriber {
   Area                                                     Area?                      @relation(fields: [areaId], references: [id])
   NetworkDevice                                            NetworkDevice?             @relation(fields: [assignedDeviceId], references: [id])
   Plan                                                     Plan?                      @relation(fields: [planId], references: [id])
+  Partner                                                  Partner?                  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
   RadiusGroup                                              RadiusGroup?               @relation(fields: [radiusGroupId], references: [id])
   Subscriber                                               Subscriber?                @relation("SubscriberToSubscriber", fields: [referredById], references: [id])
   other_Subscriber                                         Subscriber[]               @relation("SubscriberToSubscriber")
@@ -3811,6 +3946,7 @@ model Subscriber {
   @@index([macAddress])
   @@index([phone])
   @@index([planId])
+  @@index([partnerId])
   @@index([planId, status])
   @@index([radiusGroupId])
   @@index([serviceUsername])
