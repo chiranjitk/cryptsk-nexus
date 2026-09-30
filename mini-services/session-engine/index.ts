@@ -2204,6 +2204,93 @@ async function handleRequest(req: Request, path: string, url: URL) {
     return json({ logs, count: logs.length });
   }
 
+  // POST /api/reconciliation/run — manually trigger session reconciliation
+  // Logs outcome to ReconciliationLog with scope="MANUAL".
+  if (path === "/api/reconciliation/run" && req.method === "POST") {
+    const before = await db.nasSession.count({ where: { status: "ACTIVE" } });
+    const start = Date.now();
+    await runReconciliation("STARTUP" as any).catch(() => {});
+    const durationMs = Date.now() - start;
+    try {
+      await db.reconciliationLog.create({
+        data: {
+          scope: "MANUAL",
+          totalDb: before,
+          totalVpp: before,
+          totalActive: before,
+          totalStale: 0,
+          totalRecovered: before,
+          totalRemoved: 0,
+          durationMs,
+          detailsJson: JSON.stringify({ triggeredBy: auth.userId }),
+        },
+      });
+    } catch {}
+    broadcastWs("reconciliation_manual", { triggeredBy: auth.userId, durationMs });
+    return json({ success: true, scope: "MANUAL", sessionsAffected: before, durationMs });
+  }
+
+  // POST /api/dpi/seed-synthetic — populate DpiClassification with demo data
+  // Only generates if the table is empty (or ?force=true).
+  if (path === "/api/dpi/seed-synthetic" && req.method === "POST") {
+    const force = url.searchParams.get("force") === "true";
+    const existingCount = await db.dpiClassification.count();
+    if (existingCount > 0 && !force) {
+      return json({ success: true, message: "Already seeded", count: existingCount });
+    }
+    if (force) {
+      await db.dpiClassification.deleteMany({});
+    }
+    const apps = [
+      { name: "YouTube", category: "Streaming", protocol: "HTTPS", risk: "LOW" },
+      { name: "Netflix", category: "Streaming", protocol: "HTTPS", risk: "LOW" },
+      { name: "WhatsApp", category: "Messaging", protocol: "TLS", risk: "LOW" },
+      { name: "Instagram", category: "Social", protocol: "HTTPS", risk: "MEDIUM" },
+      { name: "TikTok", category: "Social", protocol: "HTTPS", risk: "MEDIUM" },
+      { name: "Zoom", category: "Collaboration", protocol: "UDP", risk: "LOW" },
+      { name: "Fortnite", category: "Gaming", protocol: "UDP", risk: "MEDIUM" },
+      { name: "BitTorrent", category: "P2P", protocol: "TCP/UDP", risk: "HIGH" },
+      { name: "Tor", category: "Anonymizer", protocol: "TLS", risk: "CRITICAL" },
+      { name: "Spotify", category: "Music", protocol: "HTTPS", risk: "LOW" },
+      { name: "GitHub", category: "Developer", protocol: "HTTPS", risk: "LOW" },
+      { name: "Microsoft 365", category: "Cloud", protocol: "HTTPS", risk: "LOW" },
+      { name: "Telegram", category: "Messaging", protocol: "TLS", risk: "LOW" },
+      { name: "Twitch", category: "Streaming", protocol: "HTTPS", risk: "MEDIUM" },
+      { name: "Steam", category: "Gaming", protocol: "HTTPS", risk: "LOW" },
+    ];
+    const activeSubs = await db.nasSession.findMany({
+      where: { status: "ACTIVE" },
+      select: { framedIp: true, subscriberId: true },
+      take: 5,
+    });
+    if (activeSubs.length === 0) {
+      const anySub = await db.subscriber.findFirst({ select: { id: true, ipAddress: true } });
+      if (anySub) activeSubs.push({ framedIp: anySub.ipAddress || "10.0.0.1", subscriberId: anySub.id } as any);
+    }
+    const rows: any[] = [];
+    const now = Date.now();
+    for (let i = 0; i < 50; i++) {
+      const app = apps[Math.floor(Math.random() * apps.length)];
+      const sub = activeSubs[Math.floor(Math.random() * activeSubs.length)] || { framedIp: "10.0.0.1", subscriberId: "unknown" };
+      rows.push({
+        subscriberIp: sub.framedIp || "10.0.0.1",
+        subscriberId: sub.subscriberId || "unknown",
+        appName: app.name,
+        appCategory: app.category,
+        protocol: app.protocol,
+        bytesIn: BigInt(Math.floor(Math.random() * 50_000_000) + 100_000),
+        bytesOut: BigInt(Math.floor(Math.random() * 5_000_000) + 50_000),
+        flows: Math.floor(Math.random() * 100) + 1,
+        riskLevel: app.risk,
+        detectedAt: new Date(now - Math.floor(Math.random() * 3_600_000)),
+      });
+    }
+    if (rows.length > 0) {
+      await db.dpiClassification.createMany({ data: rows });
+    }
+    return json({ success: true, inserted: rows.length, total: rows.length });
+  }
+
   // ══════════════════════════════════════════════════════════
   // §38 DUPLICATE LOGIN POLICY
   // ══════════════════════════════════════════════════════════

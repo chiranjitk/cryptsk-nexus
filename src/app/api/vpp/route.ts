@@ -157,10 +157,13 @@ export async function GET(request: NextRequest) {
     case "session-vpp-state":
       return proxyRequest(SESSION_ENGINE_URL, `/api/vpp/state${extraQs}`, undefined, request);
 
+    case "events-feed":
+      return proxyRequest(SESSION_ENGINE_URL, `/api/events${extraQs}`, undefined, request);
+
     default:
       return NextResponse.json(
         {
-          error: `Unknown action: ${action}. Use: health, state, epoch, status, interfaces, config-generate, policy-objects, acl-profiles, nat-pools, subscriber-state, config-subscriber, recovery-logs, reconciliation-logs, snapshots, snapshot, dpi-classifications, nat-events, duplicate-login-policy, session-vpp-state`,
+          error: `Unknown action: ${action}. Use: health, state, epoch, status, interfaces, config-generate, policy-objects, acl-profiles, nat-pools, subscriber-state, config-subscriber, recovery-logs, reconciliation-logs, snapshots, snapshot, dpi-classifications, nat-events, duplicate-login-policy, session-vpp-state, events-feed`,
         },
         { status: 400 }
       );
@@ -184,6 +187,7 @@ export async function POST(request: NextRequest) {
   }
 
   const bodyStr = JSON.stringify(body);
+  const extraQs = buildQueryString(searchParams, ["action"]);
 
   switch (action) {
     // ─── VPP Adapter (port 3015) ───────────────────────────
@@ -277,6 +281,18 @@ export async function POST(request: NextRequest) {
         body: bodyStr,
       }, request);
 
+    case "reconcile-sessions":
+      return proxyRequest(SESSION_ENGINE_URL, `/api/reconciliation/run`, {
+        method: "POST",
+        body: bodyStr,
+      }, request);
+
+    case "dpi-seed-synthetic":
+      return proxyRequest(SESSION_ENGINE_URL, `/api/dpi/seed-synthetic${extraQs}`, {
+        method: "POST",
+        body: bodyStr,
+      }, request);
+
     case "duplicate-login-policy-create":
       return proxyRequest(SESSION_ENGINE_URL, `/api/duplicate-login-policy`, {
         method: "POST",
@@ -286,7 +302,7 @@ export async function POST(request: NextRequest) {
     default:
       return NextResponse.json(
         {
-          error: `Unknown action: ${action}. Use: simulate-restart, rebuild, rebuild-session, reconcile, apply, coa, policy-objects-create, acl-profiles-create, nat-pools-create, subscriber-program, subscriber-verify, subscriber-remove, restart-recovery, duplicate-login-policy-create`,
+          error: `Unknown action: ${action}. Use: simulate-restart, rebuild, rebuild-session, reconcile, apply, coa, policy-objects-create, acl-profiles-create, nat-pools-create, subscriber-program, subscriber-verify, subscriber-remove, restart-recovery, reconcile-sessions, dpi-seed-synthetic, duplicate-login-policy-create`,
         },
         { status: 400 }
       );

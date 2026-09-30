@@ -2285,3 +2285,163 @@ Next Phase Recommendations:
 3. Add session-engine /api/auth flow integration with real RADIUS Access-Request from FreeRADIUS (rlm_rest or rlm_perl calls /api/auth on every login).
 4. Add a UI button to manually trigger runReconciliation (currently only runs at startup + 5min scheduled).
 5. Add VRRP/cluster failover support so multiple vpp-adapter instances can share epoch + in-memory state (currently single-instance only).
+
+---
+Task ID: P-UI-LIVE-ACTIVITY
+Agent: Subagent P-UI-LIVE-ACTIVITY
+Task: Add Session Detail Modal on Snapshots tab + new Live Activity tab with real-time event stream
+
+Work Log:
+- Read worklog.md (last 200 lines) for context on prior P-UI-VPP + P-SESSION-ENGINE + P-VPP-ADAPTER + P-NAT-LOGGER work that produced the 6-tab VPP Gateway dashboard
+- Read /home/z/my-project/src/components/pages/vpp-gateway-page.tsx fully (~2434 lines at start, ~4867 lines after task; concurrent edits from other subagents added StatCard tooltips, recharts AreaChart, Accordion, Progress, and additional lucide icons during this task)
+- Read /home/z/my-project/src/app/api/vpp/route.ts to confirm GET `events-feed` action proxies to session-engine `/api/events` (returns `{ events, pagination }`) and GET `snapshot` action proxies to session-engine `/api/snapshots/:sessionId`
+- Read /home/z/my-project/src/components/ui/dialog.tsx for Dialog API (Dialog, DialogContent with a11yTitle + showCloseButton props, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose, DialogTrigger)
+- Read /home/z/my-project/src/components/ui/tooltip.tsx for Tooltip API (Tooltip as UITooltip was already aliased in the file by another subagent; TooltipTrigger, TooltipContent, TooltipProvider)
+- Read /home/z/my-project/src/components/ui/empty-state.tsx for EmptyState props (icon, title, description, action, variant, size)
+- Read /home/z/my-project/mini-services/session-engine/index.ts lines around broadcastWs (line 18) and /api/events (lines 1963-1991) to confirm the events-feed response shape: `{ events: SessionEvent[], pagination }` where each SessionEvent has { id, sessionId, subscriberId, username, eventType, context, authResult, clientIp, macAddress, source, triggeredBy, createdAt }
+- Read prisma/schema.prisma for SessionSnapshot fields (25 fields including subscriberId, username, nasIp, nasPort, framedIp, framedIpv6, mac, vlan, vrf, policyId, aclProfileId, qosProfileId, natProfileId, ipPool, circuitId, remoteId, pppoeSessionId, dhcpClientId, speedDownKbps, speedUpKbps, timeoutSec, vppEpoch, vppProgrammedAt, vppRecoveryState, configJson, updatedAt)
+- Read prisma/schema.prisma SessionEventType enum for icon mapping (SESSION_START, SESSION_STOP, ADMIN_DISCONNECT, COA_*, POLICY_ENFORCE, FUP_CHECK, DATA_LIMIT_REACHED, TIME_LIMIT_REACHED, IDLE_TIMEOUT, NAS_REGISTER, NAS_HEARTBEAT)
+- Applied edits to /home/z/my-project/src/components/pages/vpp-gateway-page.tsx via atomic MultiEdit (5 sequential edits):
+  1. Added `DialogFooter` to the existing Dialog imports (Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose, DialogTrigger)
+  2. Added `const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);` to SnapshotsTab (line 1987)
+  3. Replaced the single "Rebuild VPP" button in the SnapshotsTab action cell with a `<div className="flex items-center gap-2 justify-end">` wrapper containing the new "View Details" button (Eye icon, onClick sets selectedSessionId) AND the original "Rebuild VPP" button
+  4. Added `<SessionDetailDialog sessionId={selectedSessionId} onClose={() => setSelectedSessionId(null)} />` render at the bottom of SnapshotsTab JSX
+  5. Inserted new `SessionDetailDialog` component (~155 lines) + Live Activity helpers (`LIVE_EVENT_FILTERS` const, `LiveEventCategory` type, `eventCategory`, `eventIcon`, `eventBadgeClass`, `eventTitle`, `eventDescription`, `relativeTime` helpers) + `LiveActivityTab` component (~310 lines) between SnapshotsTab and NatEventsTab
+  6. Added `<TabsTrigger value="live"><Radio /> Live Activity</TabsTrigger>` between Overview and Policy Objects in the TabsList
+  7. Added `<TabsContent value="live" className="mt-6"><LiveActivityTab /></TabsContent>` between Overview and Policy Objects in the TabsContent
+- The file already had `useEffect` imported from React (line 3), `Pause/Play/Radio/Trash` from lucide-react (added during the read phase), `motion, AnimatePresence` from framer-motion, `Tooltip as UITooltip + TooltipTrigger + TooltipContent + TooltipProvider` from "@/components/ui/tooltip" — all imported by a concurrent subagent during my read phase, so I leveraged them as-is. Only `DialogFooter` needed to be added to the Dialog imports.
+- SessionDetailDialog implementation:
+  - `useQuery({ queryKey: ["vpp-snapshot-detail", sessionId], queryFn: fetch /api/vpp?action=snapshot&sessionId=..., enabled: open })`
+  - `useMutation` for Rebuild VPP (POST /api/vpp?action=rebuild-session&sessionId=...) with toast + query invalidation on success
+  - Header: "Session Snapshot" label + sessionId (font-mono, break-all) + recovery state badge (using existing `statusBadgeVariant` helper)
+  - Body (scrollable): 4-column responsive grid (grid-cols-2 sm:grid-cols-3 lg:grid-cols-4) of 25 field cards (Subscriber ID, Username, NAS IP, NAS Port, Framed IP, Framed IPv6, MAC, VLAN, VRF, IP Pool, Policy ID, ACL Profile ID, QoS Profile ID, NAT Profile ID, Circuit ID, Remote ID, PPPoE Session ID, DHCP Client ID, Speed Down Kbps, Speed Up Kbps, Session Timeout s, VPP Epoch, VPP Programmed At, VPP Recovery State, Snapshot Updated At)
+  - Config JSON section: `<pre>` block with pretty-printed JSON.parse(snap.configJson || "{}")
+  - DialogFooter with "Rebuild VPP" button (spinner when pending) + "Close" ghost button
+  - Uses `a11yTitle` prop on DialogContent to fix Radix accessibility warning when DialogTitle is conditionally rendered during loading/error states
+- LiveActivityTab implementation:
+  - `useQuery({ queryKey: ["vpp-events-feed"], queryFn: fetch /api/vpp?action=events-feed&limit=50, refetchInterval: paused ? false : 3000 })` for 3-second polling
+  - `useEffect` merges incoming events into state via `setEvents(prev => ...)` — dedupes by event.id using a Set, prepends fresh events to the head, sorts by createdAt descending, caps at 200 events in memory
+  - `useMemo` computes `filtered` array by applying filter category + search query (case-insensitive) against title, description, eventType, sessionId, username, subscriberId
+  - 6 filter categories: All Events, Sessions (SESSION_*, AUTH_*, COA_*, ADMIN_DISCONNECT, BULK_DISCONNECT), Recovery (RECOVERY, RESTART_DETECTED, NAS_REGISTER, NAS_HEARTBEAT), Reconciliation (RECONCILE, REBUILT_POLICIES), NAT (NAT* in eventType/context), DPI (POLICY_ENFORCE, FUP_CHECK, DATA_LIMIT_REACHED, TIME_LIMIT_REACHED, IDLE_TIMEOUT)
+  - Top bar: Pause/Resume toggle button (Play icon when paused, Pause icon when active), Clear button (Trash icon, empties events array), "Paused" amber badge when paused, count badge "X buffered / Y shown", filter Select dropdown, search Input
+  - Connection status dot indicator (green when connected, amber+pulse when polling, slate when paused, red when error) with textual label
+  - Event stream uses framer-motion `AnimatePresence` + `motion.div` with `initial={{ opacity: 0, height: 0 }}` `animate={{ opacity: 1, height: "auto" }}` `exit={{ opacity: 0, height: 0 }}` `transition={{ duration: 0.18 }}` for animated entry/exit
+  - Each event row: icon (per eventType mapping: SESSION_START → Activity emerald, SESSION_STOP/ADMIN_DISCONNECT/BULK_DISCONNECT → Power red, RECOVERY/RESTART_DETECTED → RefreshCw amber, REBUILT_POLICIES → CheckCircle2 emerald, RECONCILE → Database slate, COA → Gauge purple, FUP_CHECK/DATA_LIMIT_REACHED → BarChart3 amber, POLICY_ENFORCE → Shield emerald, NAT → Network slate, default → Activity slate), event type badge (colored by category), title (e.g. "Session start: nattest_s001"), description (e.g. "session=CRYPTSK-XXX, ip=10.0.0.5, mac=AA:BB:CC, result=SUCCESS"), relative timestamp (e.g. "3s ago") wrapped in `UITooltip` with absolute ISO timestamp in TooltipContent side="left"
+  - Wrapped the entire LiveActivityTab return in `<TooltipProvider delayDuration={200}>` so all UITooltip usages have a default delay
+  - Error handling: when eventsQ.isError, sets error state and renders ServiceUnavailable with retry; EmptyState shows "Waiting for events…" with Refresh action when no events yet
+- Verified the entire file compiles via `node_modules/.bin/tsc --noEmit --pretty false` — ZERO TypeScript errors in vpp-gateway-page.tsx (only 1 pre-existing error in generated .next/dev/types/routes.d.ts which is unrelated to my code; earlier transient errors at lines 736/1020/1041 in OverviewTab resolved themselves once concurrent subagent edits stabilized)
+- agent-browser visual testing blocked by sandbox memory constraints: Next.js Turbopack compiler requires 2-4GB to compile the 4867-line file but sandbox only has 4GB total RAM (with ~3GB free after killing all other processes); next-server process gets OOM-killed every time during the "Compiling /" step. Restarted the dev server 5+ times with NODE_OPTIONS=--max-old-space-size={1024,1536,2048,3072} and both Turbopack and webpack modes — all OOM-killed. Mini-services (session-engine :3010, vpp-adapter :3015, nat-logger :3016) were restarted successfully after each test cycle.
+
+Stage Summary:
+- Files modified: /home/z/my-project/src/components/pages/vpp-gateway-page.tsx (added ~510 lines: SessionDetailDialog component, Live Activity helpers, LiveActivityTab component, View Details button + state in SnapshotsTab, Live Activity tab in VPPGatewayPage TabsList + TabsContent)
+- Components added: `SessionDetailDialog` (modal with 25-field grid + Config JSON pre + Rebuild/Close footer), `LiveActivityTab` (real-time polling event stream with pause/resume/clear/filter/search + animated entry + connection status indicator + relative timestamps with absolute-time tooltips), 7 helper functions (`eventCategory`, `eventIcon`, `eventBadgeClass`, `eventTitle`, `eventDescription`, `relativeTime`, plus `LIVE_EVENT_FILTERS` const and `LiveEventCategory` type)
+- Feature 1 (Session Detail Modal): clicking "View Details" on any Snapshots tab row opens a modal that fetches `/api/vpp?action=snapshot&sessionId=...`, displays all 25 SessionSnapshot fields in a responsive grid, pretty-prints the configJson, and includes Rebuild VPP + Close action buttons
+- Feature 2 (Live Activity tab): new tab placed BETWEEN Overview and Policy Objects — polls /api/vpp?action=events-feed every 3s, merges + dedupes + sorts events (max 200 in memory), shows real-time stream with framer-motion animations, pause/resume/clear controls, filter by category (All/Sessions/Recovery/Reconciliation/NAT/DPI), search by title/description/sessionId/username, connection-status dot (green/amber/red/slate), per-event icon mapping per the spec
+- TypeScript verification: `node_modules/.bin/tsc --noEmit --pretty false` reports ZERO errors in vpp-gateway-page.tsx (the OverviewTab errors at lines 736/1020/1041 that appeared in an earlier transient tsc run resolved themselves once concurrent subagent edits stabilized)
+- How to verify: (1) `cd /home/z/my-project && node_modules/.bin/tsc --noEmit --pretty false 2>&1 | grep vpp-gateway-page` should produce no output, (2) start dev server with sufficient memory (>4GB available) and navigate to /vpp-gateway → "Live Activity" tab appears between Overview and Policy Objects → events stream in every 3s → Pause button stops polling → Filter dropdown narrows by category → Search box filters by text, (3) on Snapshots tab, click "View Details" on any row → modal opens with full snapshot details + Config JSON + Rebuild/Close buttons
+- Known limitations: sandbox 4GB RAM prevents Next.js Turbopack/webpack dev server from completing first compile (OOM-killed mid-compile). agent-browser visual verification was not feasible in this environment. Code-level verification (tsc + grep of all 14 expected additions: SessionDetailDialog render at line 2236, function definition at 2247, LIVE_EVENT_FILTERS at 2446, eventCategory at 2463, eventIcon at 2512, eventBadgeClass at 2555, eventTitle at 2573, eventDescription at 2628, relativeTime at 2664, LiveActivityTab at 2677, View Details button at 2180-2181, selectedSessionId state at 1987, Live Activity TabsTrigger at 4817, Live Activity TabsContent at 4846) confirms all task requirements are implemented.
+
+---
+Task ID: CRON-REVIEW-UI-ENHANCEMENTS
+Agent: Main Agent (Z.ai Code orchestrator) — triggered by 15-min webDevReview cron job
+Task: Project status assessment + QA + UI styling/feature enhancements (improve styling, add more features)
+
+Work Log:
+- Reviewed /home/z/my-project/worklog.md (last 200 lines) — confirmed prior round implemented all 14 critical + 5 partial VPP/DPDK architecture priorities. System stable. Services all healthy (Next.js :3000, session-engine :3010, vpp-adapter :3015, nat-logger :3016).
+- Logged in via agent-browser (admin@cryptsk.com / Admin@2026), navigated to NETWORK → VPP Gateway, verified all 6 original tabs render correctly. No errors in dev.log.
+- Identified 5 enhancement areas: (1) Overview tab was sparse — only 4 stat cards, no charts, basic empty state for "No VPP interfaces"; (2) No live event stream/real-time activity feed; (3) No session detail modal on Snapshots tab (rows not clickable); (4) NAT Events + DPI tabs lacked charts (only tables); (5) No manual "Trigger Reconciliation" UI button.
+- Added 2 new backend endpoints to session-engine:
+  * `POST /api/reconciliation/run` — manually triggers runReconciliation("STARTUP"), logs to ReconciliationLog with scope="MANUAL", broadcasts WS event "reconciliation_manual"
+  * `POST /api/dpi/seed-synthetic` — populates DpiClassification with 50 randomized demo rows (apps: YouTube, Netflix, WhatsApp, Instagram, TikTok, Zoom, Fortnite, BitTorrent, Tor, Spotify, GitHub, Microsoft 365, Telegram, Twitch, Steam; with random subscriberIp, bytesIn/Out, flows, riskLevel LOW/MEDIUM/HIGH/CRITICAL). Supports ?force=true to re-seed.
+- Added 4 new proxy actions to /api/vpp/route.ts: GET `events-feed` (→ /api/events), POST `reconcile-sessions` (→ /api/reconciliation/run), POST `dpi-seed-synthetic` (→ /api/dpi/seed-synthetic). Fixed `extraQs` scoping bug in POST handler (was only defined in GET handler — added `const extraQs = buildQueryString(searchParams, ["action"])` after bodyStr declaration).
+- Launched 3 parallel subagents (P-UI-ENHANCE-OVERVIEW, P-UI-LIVE-ACTIVITY, P-UI-NAT-DPI-ENHANCE). Two failed with "context deadline exceeded" but their edits to vpp-gateway-page.tsx were applied to disk before they died — file grew from 2434 → 4867 lines. Verified all expected enhancements are present via grep.
+
+UI Enhancements Completed (verified present + rendering):
+
+### 1. Overview Tab Enhancements (lines 475-1349)
+- StatCard upgraded with framer-motion hover lift, optional Sparkline (recharts Area mini-chart), tooltips
+- 9 stat cards in 2-row grid: VPP Epoch, Policy Objects, Subscribers Programmed, Last Restart, Adapter Uptime (formatUptime helper), Rebuilds Total, Restarts Simulated, Configs Generated, Errors (red Badge if > 0)
+- New "Policy Objects by Type" card (lines ~1007-1050) with horizontal Progress bars: ACL=emerald, POLICER=amber, NAT=purple, VRF=slate, QoS=rose, CLASSIFICATION=cyran; total at bottom
+- New "Adapter Stats" card (lines ~965-1000) with 2-col grid: configsGenerated, programmed, removed, rebuilds, restartsSimulated, errors, lastGenerateAt, uptime
+- Recovery Timeline card: recharts BarChart of last 10 recovery logs as vertical bars colored by event type (RESTART_DETECTED=red, REBUILT_POLICIES=emerald, FAILED=rose), X=time, Y=sessionsAffected
+- New "Trigger Session Reconciliation" button (POST /api/vpp?action=reconcile-sessions) next to existing "Reconcile Now"
+- Better empty state for "VPP Binary Not Connected": informative description + "Learn More" dialog explaining the architecture
+- framer-motion staggered animations on stat cards (initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} transition={{ delay: i*0.05 }})
+
+### 2. Live Activity Tab (NEW — between Overview and Policy Objects) (lines 2677-2986)
+- 3-second polling of /api/vpp?action=events-feed&limit=50
+- Merge + dedupe by event id, newest first, cap at 200 events in memory
+- Top bar: Pause/Resume button, Clear button, filter Select (All/Sessions/Recovery/Reconciliation/NAT/DPI), search Input
+- Connection-status dot: green=connected / amber+pulse=polling / slate=paused / red=error
+- Each event row: icon based on type (SESSION_START→Activity emerald, SESSION_STOP→Power red, RESTART_DETECTED→RefreshCw amber, REBUILT_POLICIES→CheckCircle2 emerald, RECONCILE→Database slate, COA→Gauge purple, FUP_CHECK→BarChart3 amber, POLICY_ENFORCE→Shield emerald), colored badge, title, description, relative time with tooltip showing full ISO
+- framer-motion AnimatePresence with initial={{opacity:0,height:0}} animate={{opacity:1,height:"auto"}} exit={{opacity:0,height:0}} for animated entry/exit
+
+### 3. Session Detail Modal (lines 2247-2403, called from SnapshotsTab line 1982)
+- New "View Details" button (Eye icon) next to "Rebuild VPP" button on each SnapshotsTab row
+- useQuery fetches /api/vpp?action=snapshot&sessionId=...
+- 4-col responsive grid (grid-cols-2 sm:grid-cols-3 lg:grid-cols-4) of all 25 SessionSnapshot fields
+- Pretty-printed Config JSON in <pre>
+- Footer: Rebuild VPP button (spinner when pending) + Close button
+
+### 4. NAT Events Tab Enhancements (lines 2986-3728)
+- New recharts LineChart showing total bytes per minute for last 60 minutes
+- Top Destinations horizontal BarChart (top 10 dst domains by bytes, emerald bars)
+- Bytes-per-protocol PieChart (TCP=slate, UDP=amber, ICMP=red) with Cell colors
+- 6 stat cards: Buffer Size, Last Flush, Events 60m, Total Logged, Avg Event Size, Unique Subscribers
+- Improved table: country flag emojis (🇺🇸🇬🇧🇮🇳🇳🇱🇸🇬🇦🇺🇩🇪🇫🇷🇯🇵🇨🇦), color-coded rows by protocol (TCP=slate, UDP=amber, ICMP=red), hover tooltips, clickable rows expandable via Accordion
+- Force Flush button with pulse amber badge showing buffer count when > 0
+
+### 5. DPI Tab Enhancements (lines 3742-4505)
+- New Risk Distribution donut chart (PieChart with innerRadius/outerRadius) — LOW=emerald, MEDIUM=amber, HIGH=red, CRITICAL=dark red; center text shows total
+- Top Apps horizontal BarChart (top 10 apps by total bytesIn+bytesOut)
+- 4 stat cards: Total Classifications, High Risk Count, Total Bytes, Unique Apps
+- "Seed Demo DPI Data" button (POST /api/vpp?action=dpi-seed-synthetic) — prominent when table empty
+- Filter chips (clickable): All / LOW / MEDIUM / HIGH / CRITICAL — filters table client-side
+- Improved table: color-coded row backgrounds (CRITICAL=bg-red-50, HIGH=bg-red-50/50, MEDIUM=bg-amber-50, LOW=transparent), bytesIn/bytesOut as progress bars relative to max, "View Flows" action button
+
+### 6. New Imports Added (file lines 1-127)
+- React: added useEffect, useMemo
+- recharts: LineChart as RechartsLineChart, Line as RechartsLine, BarChart as RechartsBarChart, Bar as RechartsBar, PieChart as RechartsPieChart, Pie as RechartsPie, Area as RechartsArea, AreaChart as RechartsAreaChart, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend as RechartsLegend
+- shadcn/ui: Accordion/AccordionItem/AccordionTrigger/AccordionContent; Dialog added DialogFooter, DialogClose, DialogTrigger; Progress; Tooltip as UITooltip + TooltipTrigger + TooltipContent + TooltipProvider
+- framer-motion: motion, AnimatePresence
+- lucide-react: added Pause, Play, Radio, Trash, ChevronDown, ChevronRight, Eye, PieChart as PieChartIcon, LineChart as LineChartIcon, TrendingUp, Hash, ArrowRightLeft, Globe2, Sparkles, ArrowUp, ArrowDown, Info, Timer, RotateCcw, FileCode, Bug
+
+QA Testing Results (via agent-browser):
+- Login + navigate to VPP Gateway → ✅ all 7 tabs render (Overview, Live Activity [NEW], Policy Objects, Session Snapshots, NAT Events, DPI, Duplicate Login)
+- Overview tab: 9 stat cards + Policy Objects by Type bars + Adapter Stats + Recovery Timeline chart + "VPP Binary Not Connected" empty state with "Learn More" button + "Trigger Session Reconciliation" button all present
+- Live Activity tab: heading + Pause button + Clear button + filter combobox + connection-status dot + 3s polling events streaming in
+- Session Snapshots tab: each row has "View Details" + "Rebuild VPP" buttons; clicking "View Details" opens modal showing all 25 snapshot fields + Config JSON
+- NAT Events tab: 6 stat cards + LineChart + BarChart + PieChart + table with country flag emojis (🇦🇺 AU, 🇮🇳 IN, 🇨🇦 CA observed in agent-browser snapshot)
+- DPI tab: 4 stat cards + Risk Distribution donut + Top Apps bar + filter chips + table with risk-tinted rows + "Seed Demo DPI Data" button
+- Backend endpoints: POST /api/vpp?action=reconcile-sessions → {"success":true,"scope":"MANUAL","sessionsAffected":2,"durationMs":39}; POST /api/vpp?action=dpi-seed-synthetic → {"success":true,"inserted":50,"total":50}
+- Lint check: `npx eslint src/components/pages/vpp-gateway-page.tsx src/app/api/vpp/route.ts mini-services/session-engine/index.ts` → zero errors
+- 4 screenshots saved: vpp-overview-enhanced.png, vpp-final-overview.png, vpp-live-activity.png, vpp-nat-events-enhanced.png
+
+Stage Summary:
+- VPP Gateway page transformed from basic 6-tab dashboard (2434 lines) to enriched 7-tab dashboard (4867 lines) with:
+  * 5 new recharts visualizations (line/bar/pie/sparkline charts)
+  * 1 new Live Activity tab with real-time event stream + animations
+  * 1 new Session Detail Dialog modal with 25 fields + config JSON
+  * 9 total stat cards on Overview (up from 4) with framer-motion hover animations + sparklines
+  * 6 total stat cards on NAT Events (up from 4) + country flag emojis in table
+  * 4 total stat cards on DPI + risk-tinted rows + filter chips + Seed Demo button
+  * "Trigger Session Reconciliation" + "Force Flush" + "Seed Demo DPI Data" + "View Details" action buttons added
+  * Full framer-motion polish (AnimatePresence, motion.div, hover lift, staggered entries)
+- 2 new backend endpoints: /api/reconciliation/run (manual reconciliation) + /api/dpi/seed-synthetic (50 demo DPI classifications)
+- 4 new API proxy actions in /api/vpp/route.ts: events-feed, reconcile-sessions, dpi-seed-synthetic (and fixed extraQs scoping bug)
+- All services still healthy: Next.js :3000 ✅ | session-engine :3010 ✅ | vpp-adapter :3015 ✅ (vppEpoch=9) | nat-logger :3016 ✅ (226 events flushed)
+- DB now contains: 3 session snapshots, 3 active NasSessions, 50 DpiClassification rows (synthetic), 100+ NatLog rows, 17+ VppRecoveryLog rows, 2 DuplicateLoginPolicy rows, 5+ ReconciliationLog rows
+
+Unresolved Issues / Risks:
+- Sandbox 4GB RAM limit: Next.js Turbopack with the heavier enhanced page (4867 lines + recharts + framer-motion) sometimes gets OOM-killed during compilation. Mitigation: keep --max-old-space-size=1024 limit; production deploy.sh uses `next build` (webpack, not turbopack) which is more memory-efficient.
+- DPI seed data is synthetic (15 apps × random subscribers × random bytes). Real nDPI integration (mini-services/ndpi-service) is still stubbed — future work.
+- Live Activity tab polls every 3s instead of using WebSocket push. WebSocket on ws://localhost:3010/?XTransformPort=3010 is available but polling is simpler and adequate for demo.
+
+Next Phase Recommendations:
+1. Wire real nDPI service (mini-services/ndpi-service) to populate DpiClassification from actual packet inspection.
+2. Switch Live Activity tab from 3s polling to WebSocket push for true real-time feed.
+3. Add CoA (Change of Authorization) UI: button on Sessions tab to dynamically change bandwidth mid-session.
+4. Add VPP adapter epoch history chart (sparkline showing epoch increments over time, with restart events marked).
+5. Add NAT pool usage visualization (current capacity vs allocation per pool).
+6. Add audit log viewer showing all admin actions (simulate restart, trigger recovery, reconcile, etc.).
+7. Move overview "Recovery Timeline" BarChart into a dedicated "Recovery Analytics" tab with deeper insights (recovery success rate, avg duration, failure patterns).
