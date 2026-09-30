@@ -163,6 +163,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Knowledge Base': () => import('@/components/pages/knowledge-base-page'),
   'Module Manager': () => import('@/components/pages/module-manager-page'),
   'System Health': () => import('@/components/pages/system-health-page'),
+  'VPP Gateway': () => import('@/components/pages/vpp-gateway-page'),
 
   // ══════════════════════════════════════════════════════════════
   // AUTH

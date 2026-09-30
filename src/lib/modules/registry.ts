@@ -59,6 +59,8 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Promotions", section: "SETTINGS", required: true },
       { label: "Module Manager", section: "SETTINGS", required: true },
       { label: "Dashboard Widgets", section: "SETTINGS", required: true },
+      { label: "System Health", section: "SETTINGS", required: true },
+      { label: "VPP Gateway", section: "NETWORK", required: true },
     ],
     dependencies: [],
   },

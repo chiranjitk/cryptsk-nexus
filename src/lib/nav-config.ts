@@ -136,6 +136,7 @@ export const navGroups: NavGroup[] = [
       { label: "MultiWAN", href: "/multiwan", icon: Globe },
       { label: "Dynamic Routing", href: "/dynamic-routing", icon: Network },
       { label: "FTTH/GPON", href: "/ftth-gpon", icon: Network },
+      { label: "VPP Gateway", href: "/vpp-gateway", icon: Server },
       { label: "Network Health", href: "/network-health", icon: Heart },
       { label: "DHCPv6 Server", href: "/dhcpv6", icon: Globe },
     ],
