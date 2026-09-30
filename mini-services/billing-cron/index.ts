@@ -487,6 +487,7 @@ async function jobComplaintSlaSweep(): Promise<Record<string, unknown>> {
     select: {
       id: true, ticketNumber: true, status: true, priority: true,
       escalationLevel: true, slaDeadline: true, createdAt: true,
+      assignedToId: true,
     },
   });
 
@@ -540,6 +541,34 @@ async function jobComplaintSlaSweep(): Promise<Record<string, unknown>> {
           userName: "System",
         },
       });
+
+      // [NEW-FEATURE] Surface the escalation in the notification center —
+      // previously it only landed in the audit trail where nobody looks.
+      // One IN_APP row per active staff member (ADMIN/SUPER_ADMIN) + the
+      // assigned technician if any.
+      try {
+        const staff = await db.user.findMany({
+          where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, status: "ACTIVE" },
+          select: { id: true },
+        });
+        if (c.assignedToId) staff.push({ id: c.assignedToId });
+        const uniqueStaff = Array.from(new Set(staff.map((s) => s.id)));
+        if (uniqueStaff.length > 0) {
+          const escLabel = newLevel === 1 ? "L1 · Manager" : "L2 · Admin";
+          await db.notification.createMany({
+            data: uniqueStaff.map((uid) => ({
+              userId: uid,
+              type: "IN_APP" as const,
+              category: "OTHER" as const,
+              title: `SLA Escalation — ${c.ticketNumber}`,
+              message: `Complaint ${c.ticketNumber} auto-escalated to ${escLabel}${newPriority && newPriority !== c.priority ? ` and raised to ${newPriority.replace("P", "P")}` : ""}. SLA ${Math.round(elapsedPercent)}% elapsed.`,
+              status: "PENDING" as const,
+            })),
+          });
+        }
+      } catch (e) {
+        logger.error("Escalation notification write failed", { ticket: c.ticketNumber, error: String(e) });
+      }
 
       if (newLevel === 2 && c.escalationLevel < 2) escalatedL2++;
       else if (newLevel === 1 && c.escalationLevel < 1) escalatedL1++;
@@ -682,6 +711,49 @@ async function jobRetentionSweep(): Promise<Record<string, unknown>> {
     purgedStaleNotifications: purgedStaleNotifications.count,
     retention: { auditArchiveDays: archiveDays, auditPurgeDays: purgeDays, sessionDays, notificationDays },
   };
+
+  // ── Visibility: every sweep writes an auditable trail row so the Audit Log
+  // page's Retention card can show "last sweep" + counts (RETENTION_SWEEP). ──
+  try {
+    await db.auditLog.create({
+      data: {
+        action: "RETENTION_SWEEP",
+        entity: "System",
+        entityId: "job-009",
+        endpoint: "/api/retention-sweep",
+        method: "CRON",
+        ipAddress: "127.0.0.1",
+        userAgent: "billing-cron/job-009",
+        details: JSON.stringify(result),
+      },
+    });
+
+    // Notify staff (ADMIN + SUPER_ADMIN) whenever data was actually pruned —
+    // silent no-op sweeps stay silent.
+    const totalChanged =
+      archived.count + purgedAuditLogs.count + purgedSessions.count +
+      purgedDeliveredNotifications.count + purgedStaleNotifications.count;
+    if (totalChanged > 0) {
+      const admins = await db.user.findMany({
+        where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, status: "ACTIVE" },
+        select: { id: true },
+      });
+      if (admins.length > 0) {
+        await db.notification.createMany({
+          data: admins.map((u) => ({
+            userId: u.id,
+            type: "IN_APP" as const,
+            category: "MAINTENANCE" as const,
+            title: "Retention Sweep Completed",
+            message: `Automated retention sweep (job-009): ${archived.count} audit log(s) archived, ${purgedAuditLogs.count} purged, ${purgedSessions.count} session(s) and ${purgedDeliveredNotifications.count + purgedStaleNotifications.count} notification(s) removed.`,
+            status: "PENDING" as const,
+          })),
+        });
+      }
+    }
+  } catch (e) {
+    logger.error("Retention sweep audit-trail/notification write failed", { error: String(e) });
+  }
 
   logger.info("Retention sweep complete", result);
   return result;

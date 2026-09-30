@@ -37,6 +37,13 @@ function buildWhereClause(searchParams: URLSearchParams) {
   const userId = searchParams.get("userId");
   if (userId) where.userId = userId;
 
+  // Archived lifecycle filter [NEW-FEATURE]: job-009 marks rows isArchived at
+  // the retention window. UI chips: active → exclude, archived → only,
+  // all → include (default "all" keeps backward compatibility).
+  const archived = searchParams.get("archived");
+  if (archived === "exclude") where.isArchived = false;
+  else if (archived === "only") where.isArchived = true;
+
   const search = searchParams.get("search");
   if (search) {
     where.OR = [
@@ -402,8 +409,29 @@ async function GET_retention_info(request: NextRequest) {
     const todayCount = await db.auditLog.count({
       where: { timestamp: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
     });
+    const [archivedCount, activeCount] = await Promise.all([
+      db.auditLog.count({ where: { isArchived: true } }),
+      db.auditLog.count({ where: { isArchived: false } }),
+    ]);
     // Estimate: ~500 bytes per log entry average
     const estimatedStorageMB = Math.round((totalCount * 500) / (1024 * 1024) * 100) / 100;
+
+    // [NEW-FEATURE] Automation status — job-009 in billing-cron performs the
+    // two-stage archival automatically and writes a RETENTION_SWEEP trail row
+    // per run. Windows mirror the cron's env-configurable defaults.
+    const lastSweep = await db.auditLog.findFirst({
+      where: { action: "RETENTION_SWEEP" },
+      orderBy: { timestamp: "desc" },
+    });
+    let lastSweepResult: Record<string, unknown> | null = null;
+    if (lastSweep?.details) {
+      try { lastSweepResult = JSON.parse(lastSweep.details); } catch { /* ignore */ }
+    }
+
+    const envNum = (name: string, fb: number) => {
+      const v = parseInt(process.env[name] || "", 10);
+      return Number.isFinite(v) && v > 0 ? v : fb;
+    };
 
     return NextResponse.json({
       retentionDays,
@@ -411,8 +439,22 @@ async function GET_retention_info(request: NextRequest) {
       totalCount,
       oldCount,
       todayCount,
+      archivedCount,
+      activeCount,
       estimatedStorageMB,
       cutoffDate: cutoff.toISOString(),
+      automation: {
+        enabled: true,
+        jobId: "job-009",
+        jobName: "Retention & Archival Sweep",
+        schedule: "30 4 * * *",
+        archiveDays: envNum("RETENTION_AUDIT_ARCHIVE_DAYS", 90),
+        purgeDays: envNum("RETENTION_AUDIT_PURGE_DAYS", 180),
+        sessionDays: envNum("RETENTION_SESSION_DAYS", 30),
+        notificationDays: envNum("RETENTION_NOTIFICATION_DAYS", 60),
+        lastSweepAt: lastSweep?.timestamp?.toISOString() ?? null,
+        lastSweepResult,
+      },
     });
   } catch (error) {
     if (error instanceof AuthError) {

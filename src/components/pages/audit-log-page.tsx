@@ -124,6 +124,8 @@ interface AuditLogItem {
   ipAddress: string;
   userAgent: string;
   timestamp: string;
+  isArchived: boolean;
+  archivedAt: string | null;
   user: AuditLogUser | null;
 }
 
@@ -228,6 +230,8 @@ const ACTION_STYLES: Record<string, string> = {
   VERIFICATION: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950 dark:text-teal-300 dark:border-teal-800",
   REJECTION: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800",
   PLAN_CHANGE: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",
+  RETENTION_SWEEP: "bg-lime-100 text-lime-700 border-lime-200 dark:bg-lime-950 dark:text-lime-300 dark:border-lime-800",
+  AUTO_ESCALATION: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
 };
 
 const METHOD_COLORS: Record<string, string> = {
@@ -662,13 +666,30 @@ export default function AuditLogPage() {
     totalCount: number;
     oldCount: number;
     todayCount: number;
+    archivedCount: number;
+    activeCount: number;
     estimatedStorageMB: number;
     cutoffDate: string;
+    automation: {
+      enabled: boolean;
+      jobId: string;
+      jobName: string;
+      schedule: string;
+      archiveDays: number;
+      purgeDays: number;
+      sessionDays: number;
+      notificationDays: number;
+      lastSweepAt: string | null;
+      lastSweepResult: { archivedAuditLogs?: number; purgedAuditLogs?: number; purgedSessions?: number } | null;
+    } | null;
   }>({
     queryKey: ["audit-retention-info"],
     queryFn: async () => apiFetch("/api/audit-log?type=retention-info"),
     refetchInterval: 60_000,
   });
+
+  // ─── Archived lifecycle filter [NEW-FEATURE] ─────────
+  const [archivedFilter, setArchivedFilter] = useState<"active" | "archived" | "all">("active");
 
   // ─── Derived params ───────────────────────────────────
   const queryParamsObj = new URLSearchParams();
@@ -678,6 +699,8 @@ export default function AuditLogPage() {
   if (search) queryParamsObj.set("search", search);
   if (startDate) queryParamsObj.set("startDate", startDate);
   if (endDate) queryParamsObj.set("endDate", endDate);
+  if (archivedFilter === "active") queryParamsObj.set("archived", "exclude");
+  else if (archivedFilter === "archived") queryParamsObj.set("archived", "only");
   queryParamsObj.set("page", String(page));
   queryParamsObj.set("limit", String(pageSize));
   queryParamsObj.set("sort", sort === "newest" ? "desc" : "asc");
@@ -852,6 +875,7 @@ export default function AuditLogPage() {
     setStartDate("");
     setEndDate("");
     setSort("newest");
+    setArchivedFilter("active");
     setPage(1);
   }, []);
 
@@ -1260,11 +1284,33 @@ ${logs.map((l, i) => `<tr>
               </div>
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Auto-Delete</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${retentionInfo.autoDelete ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                  {retentionInfo.autoDelete ? "Enabled" : "Disabled"}
-                </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {retentionInfo.automation?.enabled ? (
+                  <>
+                    <span className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 font-semibold">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                      </span>
+                      Automated · {retentionInfo.automation.jobId}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      Archive {retentionInfo.automation.archiveDays}d · Purge {retentionInfo.automation.purgeDays}d · Sessions {retentionInfo.automation.sessionDays}d · Notifications {retentionInfo.automation.notificationDays}d
+                    </span>
+                    {retentionInfo.automation.lastSweepAt && (
+                      <span className="text-[10px] text-muted-foreground/70">
+                        Last sweep {formatShortTimestamp(retentionInfo.automation.lastSweepAt)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs text-muted-foreground">Auto-Delete</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${retentionInfo.autoDelete ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                      {retentionInfo.autoDelete ? "Enabled" : "Disabled"}
+                    </span>
+                  </>
+                )}
               </div>
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setRetentionOpen(true)}>
                 <Settings className="h-3 w-3" /> Configure
@@ -1417,6 +1463,41 @@ ${logs.map((l, i) => `<tr>
                     onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
                     className="pl-8 h-9 text-sm"
                   />
+                </div>
+
+                {/* Lifecycle filter [NEW-FEATURE]: active / archived / all */}
+                <div
+                  role="group"
+                  aria-label="Archived state filter"
+                  className="flex items-center h-9 rounded-lg border bg-muted/30 p-0.5 w-fit"
+                >
+                  {([
+                    { key: "active", label: "Active", count: retentionInfo?.activeCount },
+                    { key: "archived", label: "Archived", count: retentionInfo?.archivedCount },
+                    { key: "all", label: "All", count: undefined as number | undefined },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      aria-pressed={archivedFilter === opt.key}
+                      onClick={() => { setArchivedFilter(opt.key); setPage(1); }}
+                      className={`h-8 px-3 rounded-md text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        archivedFilter === opt.key
+                          ? opt.key === "archived"
+                            ? "bg-amber-100 text-amber-800 shadow-sm dark:bg-amber-950/50 dark:text-amber-300"
+                            : "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Archive className="h-3 w-3 opacity-70" />
+                      {opt.label}
+                      {opt.count !== undefined && (
+                        <span className={`text-[10px] tabular-nums font-bold ${archivedFilter === opt.key ? "opacity-80" : "opacity-50"}`}>
+                          {formatNumber(opt.count)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Action Filter */}
@@ -1698,15 +1779,29 @@ ${logs.map((l, i) => `<tr>
 
                     {/* Action */}
                     <TableCell className="py-2.5">
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] font-semibold px-1.5 py-0 ${
-                          ACTION_STYLES[log.action] ||
-                          "bg-gray-100 text-gray-600 border-gray-200"
-                        }`}
-                      >
-                        {log.action}
-                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] font-semibold px-1.5 py-0 ${
+                            ACTION_STYLES[log.action] ||
+                            "bg-gray-100 text-gray-600 border-gray-200"
+                          }`}
+                        >
+                          {log.action}
+                        </Badge>
+                        {log.isArchived && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900/50 whitespace-nowrap">
+                                Archived
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Past the {retentionInfo?.retentionDays ?? 90}-day retention window — managed by job-009
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
                     </TableCell>
 
                     {/* Entity */}

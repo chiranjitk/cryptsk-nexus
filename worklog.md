@@ -3463,3 +3463,34 @@ Stage Summary:
 - 3 new files: dashboard/lazy-widget.tsx, dashboard/inline-charts.tsx, (security section in system-alerts-widget.tsx); modified: dashboard-page.tsx, alerts-summary route, billing-cron index.ts, next.config.ts, .env
 - Risks: full Advanced-Insights traversal on THIS sandbox can still OOM in dev (documented; not a production issue); old browser sessions were invalidated once by the SESSION_SECRET change — re-login expected
 - Next round suggestions: audit-log page "Archived" filter (isArchived flag now meaningful), notifications center surfacing job-007/008 escalations, split Advanced Insights into two sub-sections if dev-mode tail OOM matters, VPP/NAS route warmup script
+
+---
+Task ID: RETENTION-UX-SPRINT-2026-10-01
+Agent: Z.ai Code (cron webDevReview round 6)
+Task: Status assessment + browser QA → wire job-009 retention automation into the Audit Log UI; surface SLA escalations in the notification center; System-source styling for automation events
+
+Work Log:
+- BASELINE QA: dev (2064MB) + postgres + cron alive; login/dashboard 0 console errors; overnight state healthy (round-5 mitigations held).
+- QA FINDING: Audit Log page's Retention Policy card said "Auto-Delete: Disabled" while job-009 (round 5) performs automated archival daily — UI and automation were disconnected; isArchived rows had no badge, no filter, retention-info had no automation data.
+- RETENTION INTEGRATION (API): GET /api/audit-log?type=retention-info now returns archivedCount, activeCount + `automation` block (enabled, jobId job-009, schedule, archive/purge/session/notification windows mirroring cron env defaults, lastSweepAt, lastSweepResult parsed from the RETENTION_SWEEP trail row). List GET + buildWhereClause gained `archived=exclude|only|all` filter (default "all" = backward-compatible; UI passes explicit values).
+- RETENTION INTEGRATION (cron): job-009 now writes an AuditLog row (action RETENTION_SWEEP, entity System, endpoint /api/retention-sweep, method CRON, details = full sweep counts JSON) every run → visible in the audit trail and feeds the "last sweep" UI; creates "Retention Sweep Completed" IN_APP notifications for ACTIVE ADMIN/SUPER_ADMIN users only when something was actually pruned (silent no-op sweeps stay silent).
+- RETENTION INTEGRATION (UI): Retention Policy card replaced the stale Auto-Delete label with an emerald pulsing "Automated · job-009" badge + window strip (Archive 90d · Purge 180d · Sessions 30d · Notifications 60d) + "Last sweep <relative>"; Activity Log filters gained an Active/Archived/All segmented chip group with live counts (Active N / Archived M) — amber-highlighted Archived state; rows with isArchived show an amber "ARCHIVED" badge (tooltip: past retention window, managed by job-009); ACTION_STYLES entries added for RETENTION_SWEEP (lime) and AUTO_ESCALATION (orange); Clear Filters resets the chip to Active.
+- ESCALATION NOTIFICATIONS (cron job-007): every auto-escalation now also creates "SLA Escalation — <ticket>" IN_APP notifications for active ADMIN/SUPER_ADMIN users + the assigned technician (deduped) — previously escalations only landed in the audit trail where nobody looks. select extended with assignedToId; message includes target level (L1 · Manager / L2 · Admin) and SLA elapsed %.
+- NOTIFICATION PANEL STYLING/UX: system-sourced notifications (userId set, no subscriber) render a violet "SYSTEM" chip; panel click-routing now sends "SLA Escalation*" → Complaints page and "Retention*" → Audit Log page (smart deep-links); /api/notifications GET response now includes userId to power the chip.
+- Live verification: job-009 trigger → RETENTION_SWEEP row appears as newest log; retention-info {archivedCount, activeCount, automation.lastSweepAt set}; archived=only/exclude verified with a synthetic 200-day-old row (1 archived row returned, badge rendered, chip count "Archived 1"); job-007 on a synthetic 99.9%-elapsed complaint → escalationLevel 0→1 + AUTO_ESCALATION audit row + "SLA Escalation — <ticket>" notification targeted to admin; notification panel shows violet SYSTEM chip on the retention demo; all synthetic rows cleaned up afterwards.
+- OPS: dev server OOM'd once more at 1.96GB — ceiling is SYSTEM-wide and varies with other processes (browser, scripts); fresh-.next restart performed. Login POST 404 during cold start (stale turbopack routing state after kill) → `rm -rf .next` restart is the reliable remedy.
+
+Regression tests (live):
+- retention-info: automation block + counts (0 archived / 64 active after cleanup)
+- archived=only → 1 row isArchived=true; archived=exclude → all false; UI chip counts live (63/1 during test)
+- job-007 → escalation + notification (usr_admi..., OTHER, PENDING) + audit row; complaint cleaned up
+- Notification panel: SYSTEM chip + wrench icon + deep-link routing; unread badge updates
+- lint: 0 errors (5 pre-existing warnings in untouched files)
+- Screenshots: qa7-01..05 (baseline audit page, retention automation strip, chips+rows, archived filter, notification System chip)
+
+Stage Summary:
+- job-009 retention automation is now fully visible and operable from the UI (status, windows, last sweep, archived lifecycle filtering) — closes the loop from round 5
+- SLA escalations + retention sweeps now reach staff via the notification center with smart deep-links and System-source styling
+- Artifacts: audit-log/route.ts, audit-log-page.tsx, notifications/route.ts, notification-panel.tsx, billing-cron/index.ts
+- Risks: system-wide OOM ceiling still varies (~1.9-2.4GB) on this sandbox — dev-only issue; escalation notifications fan out 1-per-admin per escalation (could batch if complaint storms occur)
+- Next round suggestions: batch/digest escalation notifications; archived-log restore action (unarchive single rows); "Run retention sweep now" button wired to /api/retention-sweep trigger from the Retention card; VPP/NAS route warmup script
