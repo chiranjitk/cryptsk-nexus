@@ -98,8 +98,13 @@ export async function PUT(
       }
     }
 
-    // Validate serviceUsername uniqueness if being changed
-    if (body.serviceUsername !== undefined && body.serviceUsername !== subscriber.serviceUsername) {
+    // Validate serviceUsername if being changed (format + uniqueness)
+    const usernameChanged = body.serviceUsername !== undefined && body.serviceUsername !== subscriber.serviceUsername;
+    if (usernameChanged) {
+      const usernameRegex = /^[a-zA-Z0-9._-]+$/;
+      if (!body.serviceUsername || !usernameRegex.test(body.serviceUsername.trim())) {
+        return NextResponse.json({ error: "Invalid service username. Only alphanumeric characters, dots, dashes, and underscores are allowed." }, { status: 400 });
+      }
       const existing = await db.subscriber.findUnique({ where: { serviceUsername: body.serviceUsername } });
       if (existing) {
         return NextResponse.json({ error: "Service username already exists" }, { status: 409 });
@@ -199,6 +204,40 @@ export async function PUT(
       }
     }
 
+    // Re-provision FreeRADIUS identity when serviceUsername changes.
+    // The old radcheck/radreply/radusergroup rows keep the previous username,
+    // so remove them and provision the new username with the effective
+    // password + group — otherwise PPPoE auth breaks after a rename.
+    if (usernameChanged && subscriber.radiusEnabled && subscriber.serviceUsername) {
+      try {
+        await removeUserFromFreeRADIUS(subscriber.serviceUsername);
+
+        const effectiveRadiusGroupId = body.radiusGroupId !== undefined ? (body.radiusGroupId || null) : subscriber.radiusGroupId;
+        const effectivePlanId = body.planId !== undefined ? (body.planId || null) : subscriber.planId;
+        let groupName: string | null = null;
+        let maxSessions = 1;
+        let fallbackRateLimit: string | null = null;
+        if (effectiveRadiusGroupId) {
+          const rg = await db.radiusGroup.findUnique({ where: { id: effectiveRadiusGroupId }, select: { name: true } });
+          groupName = rg?.name || null;
+        }
+        if (effectivePlanId) {
+          const p = await db.plan.findUnique({ where: { id: effectivePlanId }, select: { groupId: true, maxConcurrentSessions: true, downloadSpeed: true, uploadSpeed: true } });
+          if (p?.groupId && !groupName) {
+            const rg = await db.radiusGroup.findUnique({ where: { id: p.groupId }, select: { name: true } });
+            groupName = rg?.name || null;
+          }
+          if (p?.maxConcurrentSessions) maxSessions = p.maxConcurrentSessions;
+          if (p?.downloadSpeed && p?.uploadSpeed) fallbackRateLimit = `${p.downloadSpeed}M/${p.uploadSpeed}M`;
+        }
+        const effectivePassword = (body.servicePassword !== undefined && body.servicePassword) ? body.servicePassword : subscriber.servicePassword;
+        await syncUserToFreeRADIUS(body.serviceUsername.trim(), effectivePassword, groupName, maxSessions, fallbackRateLimit);
+        console.log(`[Subscriber PUT] RADIUS identity re-synced: ${subscriber.serviceUsername} → ${body.serviceUsername.trim()}`);
+      } catch (radiusErr) {
+        console.error("[Subscriber PUT] RADIUS identity re-sync on username change failed:", radiusErr);
+      }
+    }
+
     // Sync RADIUS group when planId changes (plan's RadiusGroup → radusergroup)
     if (body.planId !== undefined && body.planId !== subscriber.planId) {
       if (subscriber.serviceUsername && subscriber.radiusEnabled) {
@@ -238,8 +277,8 @@ export async function PUT(
       }
     }
 
-    // Sync RADIUS password when servicePassword changes
-    if (body.servicePassword !== undefined && body.servicePassword !== subscriber.servicePassword) {
+    // Sync RADIUS password when servicePassword changes (identity unchanged)
+    if (body.servicePassword !== undefined && body.servicePassword !== subscriber.servicePassword && !usernameChanged) {
       if (subscriber.serviceUsername && subscriber.radiusEnabled) {
         try {
           await updateUserPasswordInFreeRADIUS(subscriber.serviceUsername, body.servicePassword);
