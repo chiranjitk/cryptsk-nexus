@@ -793,33 +793,35 @@ async function handleRequest(req: Request, path: string, url: URL) {
   // ══════════════════════════════════════════════════════════
   // §7/§8 RADIUS MACHINE-TO-MACHINE ENDPOINT (no session cookie)
   // FreeRADIUS rlm_rest calls this endpoint on every Access-Request.
-  // Auth is via X-RADIUS-Secret header (shared secret), NOT admin cookie.
+  // Auth is via shared secret. Two supported mechanisms:
+  //   1. X-RADIUS-Secret header (preferred if rlm_rest supports it)
+  //   2. _radiusSecret field in the JSON body (fallback, since rlm_rest
+  //      cannot easily add custom HTTP headers via its config)
   // Body schema matches /api/auth: { username, password, nasIp, nasPort,
   //   callingStationId (MAC), calledStationId?, clientIp?, vlanId?,
   //   circuitId?, remoteId?, pppoeSessionId?, dhcpClientId?, framedIp? }
   // Returns RLM_MODULE_OK on success (HTTP 200 with Auth-Type: Accept header).
   // ══════════════════════════════════════════════════════════
   if (path === "/api/radius/auth" && req.method === "POST") {
-    const providedSecret = req.headers.get("x-radius-secret") || "";
+    // Read raw body to extract _radiusSecret before main handler parses it
+    const rawBody = await req.text().catch(() => "");
+    let providedSecret = req.headers.get("x-radius-secret") || "";
+    if (!providedSecret) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        providedSecret = parsed._radiusSecret || "";
+      } catch {}
+    }
     if (providedSecret !== RADIUS_API_SECRET) {
       logger.warn("RADIUS /api/radius/auth rejected — bad shared secret", {
         provided: providedSecret.slice(0, 8) + "...",
       });
       return json({ error: "Invalid shared secret", authResult: "REJECT" }, 403);
     }
-    // Defer to the same transactional login flow as /api/auth.
-    // Inline the call by re-dispatching with the auth context faked.
-    // To keep this code path simple, we synthesize an auth object that
-    // marks the call as machine-to-machine (m2m).
-    const fakeAuth = { userId: "radius-rlm-rest", role: "RADIUS" };
-    try {
-      // Inline the /api/auth handler body by calling a shared helper.
-      // The /api/auth handler below this block uses the same logic.
-      // To avoid duplication, we set auth = fakeAuth and fall through
-      // to the regular /api/auth handler.
-      (req as any)._radiusAuth = fakeAuth;
-    } catch {}
-    // Fall through — the /api/auth handler will pick up (req as any)._radiusAuth
+    // Synthesize auth context for machine-to-machine call.
+    // Re-inject the body so the /api/auth handler can re-parse it.
+    (req as any)._radiusAuth = { userId: "radius-rlm-rest", role: "RADIUS" };
+    (req as any)._bodyText = rawBody;
   }
 
   // ── All remaining endpoints require auth ──
@@ -851,7 +853,14 @@ async function handleRequest(req: Request, path: string, url: URL) {
   // VPP programming failure = full rollback (no ghost sessions, §8).
   // ══════════════════════════════════════════════════════════
   if ((path === "/api/auth" || path === "/api/radius/auth") && req.method === "POST") {
-    const body = await req.json().catch(() => ({}));
+    // For RADIUS m2m calls, the body was already read in the secret check above.
+    // Reuse the cached body text; otherwise, read from the request.
+    let body: any;
+    if ((req as any)._bodyText) {
+      try { body = JSON.parse((req as any)._bodyText); } catch { body = {}; }
+    } else {
+      body = await req.json().catch(() => ({}));
+    }
     // Accept both new + legacy field names
     const username = body.username || body.serviceUsername || "";
     const password = body.password || body.servicePassword || "";
