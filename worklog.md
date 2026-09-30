@@ -2771,3 +2771,24 @@ Next Phase Recommendations:
 5. Implement a smart TLD-based fallback for unknown domains (e.g. .dev → Developer, .gov → Reference, .edu → Education, .mil → Government).
 6. Add a Prisma migration to create the @@unique([subscriberIp, appName, detectedAt]) constraint on DpiClassification, then switch the manual upsert to prisma.upsert() for cleaner code.
 7. Add a web dashboard route to view topApps in the CRYPTSK admin UI (real per-subscriber DPI usage breakdown).
+
+---
+Task ID: FIX-SUBSCRIBERS-DETAIL-CRASH
+Agent: Z.ai Code (orchestrator)
+Task: User-reported runtime TypeError on Subscribers page — "Cannot read properties of undefined (reading 'length')" at detail.invoices.length (subscribers-page.tsx:2776) when opening the Subscriber Details dialog; push only the fix to GitHub (parallel agent active on the repo).
+
+Work Log:
+- Root cause: commit 9d22365 (phase-1 rewrite) changed GET /api/subscribers/[id] to return the raw Prisma object with PascalCase relation keys (Invoice/Payment/Complaint/Area/Plan/RadiusGroup) while the frontend SubscriberDetail contract expects camelCase (invoices/payments/complaints/area/plan/assignedDevice/radiusGroupName). detail.invoices was undefined → Quick Stats card crashed on render.
+- API fix (src/app/api/subscribers/[id]/route.ts): added NetworkDevice include; mapped PascalCase relations to the camelCase keys (area/plan/radiusGroup/radiusUser/assignedDevice/radiusGroupName/invoices/payments/complaints). Additive — original PascalCase keys preserved for any other consumer. Verified via curl: all keys present and typed correctly.
+- Frontend hardening (subscribers-page.tsx): SubscriberDetail invoices/payments/complaints made optional; every access in the detail dialog guarded with ?. / ?? [] (Quick Stats, Billing/Payments/Support tabs' reduce/filter/map/length). ~20 call sites.
+- scripts/watchdog.sh: REMOVED FreeRADIUS auto-restart (watchdog was restarting radiusd against the user's explicit "dont need freeradius work" instruction — radiusd had been silently resurrected by the watchdog). New behavior: watchdog KILLS stray radiusd. Do not revert without explicit user request.
+- Ops stabilization during verification (sandbox OOM loop): next-server (2.4-2.7GB RSS) + Chrome (~750MB) exceeded 4.1GB — kernel OOM-killed next-server mid-compile repeatedly (preview panel polling triggers API-route compile storms). Recovery: pre-warm all 25 polled API routes sequentially via curl right after restart so compiles happen at low baseline memory. Also repaired billing-cron (port 3004) which had been dead with a stale prisma client: rm -rf mini-services/billing-cron/node_modules/{@prisma,.prisma} → resolves to root's consistent client.
+- Browser-verified end-to-end (agent-browser): Subscribers table renders; row name-click opens Subscriber Quick View with all 4 Quick Actions (Edit → opens populated Edit Subscriber dialog — verified with live data Bikash Mondal/CRY00015); row dropdown → View Details opens the formerly-crashing Subscriber Details dialog; Overview shows Area=Howrah, Plan=Standard 50 Mbps ₹599/mo, service credentials, Quick Stats Total Invoices=0/Payments=0/Open Complaints=0; Billing (Total Outstanding ₹0, "No invoices yet"), Payments (₹0, "No payments yet"), Support (0/0/0 summary) all render; no console errors.
+- Git: remote had diverged (other agent pushed dcb4c0e) → stash → pull --rebase → stash pop (clean) → commit f9072a1 with ONLY the 3 fix files.
+
+Stage Summary:
+- Subscribers detail dialog crash FIXED and browser-verified; Quick View + Edit action re-verified working.
+- API contract for /api/subscribers/[id] now includes camelCase aliases — frontend consumers (subscribers-page, subscriber-quick-view) work unchanged.
+- Watchdog no longer restarts FreeRADIUS (user instruction); billing-cron (3004) repaired; all core services up (3000/3001/3002/3004/3005(ws)/3010).
+- SANDBOX MEMORY RUNBOOK: to browser-verify without OOM loops, close agent-browser first, restart next dev, sequentially curl-warm the polling endpoints (list in FRESH-SANDBOX-SETUP-STABILIZATION section), then do ONE short browser session. Keep sessions < 2 min.
+- Commit f9072a1 pushed to origin/main.
