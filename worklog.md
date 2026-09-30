@@ -2500,3 +2500,19 @@ Stage Summary:
   - Start extra mini-service: `cd /home/z/my-project/mini-services/<svc> && DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus setsid nohup bun run dev > /home/z/my-project/.logs/<svc>.log 2>&1 &`
   - Warmup endpoints before browser: /api/dashboard/stats, /api/dashboard, /api/activity-feed, /api/alerts/analytics, /api/system/health, /api/payments, /api/subscribers, /api/plans (Bearer token from /api/auth/login)
   - Watchdog log: /home/z/my-project/.logs/watchdog.log — if it shows restarts every cycle, a detection bug is present again (must be cwd-based)
+
+---
+Task ID: USER-STOP-FREERADIUS-AUTOAGENT
+Agent: Z.ai Code (orchestrator)
+Task: User request — "stop doing this, dont need freeradius work, disable auto agent"
+
+Work Log:
+- Deleted cron job 425915 (cryptsk-nexus-webdev-review-15min, fixed_rate 900s webDevReview) — the auto agent is now DISABLED. Do NOT recreate it unless the user explicitly asks.
+- Killed running FreeRADIUS daemon (radiusd PID 17599, ports 1812/1813/3799) — confirmed no radiusd processes remain.
+- FreeRADIUS-related development work is STOPPED per user instruction.
+
+Stage Summary:
+- Auto agent (15-min webDevReview cron): DISABLED (job 425915 deleted)
+- FreeRADIUS daemon: STOPPED. Binary/config remain at runtime-applications/freeradius (can be restarted manually if ever needed: runtime-applications/freeradius/sbin/radiusd -d .../etc/raddb/raddb/raddb)
+- Everything else (Next.js dev on 3000, PostgreSQL on 5432, core mini-services 3001/3002/3004/3005/3010, watchdog) remains running as-is
+- Next agent: do NOT resume FreeRADIUS work or re-enable the cron job without explicit user request
