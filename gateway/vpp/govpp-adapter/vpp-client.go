@@ -443,6 +443,10 @@ func (c *VPPLiveClient) ApplyACLToInterface(swIfIndex uint32, aclIndex uint32) e
 // CreatePolicer creates a VPP policer via policer_add_del.
 // cirBps/eirBps are in bits/sec; we convert to kbps (rate_type=KBPS).
 // Returns policerIndex.
+//
+// NOTE on 1R2C validation: VPP rejects 1R2C policers with Eb > 0
+// ("Policer parameter validation failed -- 1R2C / Unable to compute hw param").
+// For 1R2C: Eir=0, Eb=0 (no excess bucket). Use 1R3C_RFC_2697 if you need Eb > 0.
 func (c *VPPLiveClient) CreatePolicer(name string, cirBps, eirBps uint64) (uint32, error) {
         if !c.IsConnected() {
                 return 0, fmt.Errorf("VPP not connected")
@@ -450,29 +454,27 @@ func (c *VPPLiveClient) CreatePolicer(name string, cirBps, eirBps uint64) (uint3
 
         // Convert bits/sec → kbps (rate_type = SSE2_QOS_RATE_API_KBPS)
         cirKbps := uint32(cirBps / 1000)
-        eirKbps := uint32(eirBps / 1000)
         if cirKbps == 0 {
                 cirKbps = 1 // avoid zero rate
         }
 
-        // Set burst sizes (Cb/Eb): allow 1 second of burst = cir*1000 bytes
+        // For 1R2C: only committed bucket matters. Cb = 1 second of cir in bytes.
         // (Cb is in bytes for KBPS rate type per VPP convention)
-        cb := cirKbps * 1000 // 1s burst in bytes
-        eb := eirKbps * 1000
-        if eb == 0 {
-                eb = cb // default excess burst = committed burst
+        cb := uint64(cirKbps) * 1000 // 1s burst in bytes
+        if cb == 0 {
+                cb = 4000 // fallback: 4KB burst
         }
 
         req := &policer.PolicerAddDel{
                 IsAdd:      true,
                 Name:       name,
                 Cir:        cirKbps,
-                Eir:        eirKbps,
-                Cb:         uint64(cb),
-                Eb:         uint64(eb),
+                Eir:        0, // 1R2C: no excess rate
+                Cb:         cb,
+                Eb:         0, // 1R2C: no excess burst (VPP validation requires this)
                 RateType:   policer_types.SSE2_QOS_RATE_API_KBPS,
                 RoundType:  policer_types.SSE2_QOS_ROUND_API_TO_CLOSEST,
-                Type:       policer_types.SSE2_QOS_POLICER_TYPE_API_1R2C, // single-rate, 2-color (simplest)
+                Type:       policer_types.SSE2_QOS_POLICER_TYPE_API_1R2C,
                 ColorAware: false,
                 ConformAction: policer_types.Sse2QosAction{
                         Type: policer_types.SSE2_QOS_ACTION_API_TRANSMIT,
@@ -492,8 +494,8 @@ func (c *VPPLiveClient) CreatePolicer(name string, cirBps, eirBps uint64) (uint3
         if reply.PolicerIndex == 0xFFFFFFFF {
                 return 0, fmt.Errorf("policer_add_del returned invalid index 0xFFFFFFFF (likely failure)")
         }
-        log.Printf("[vpp] Created policer %s (index=%d, cir=%d kbps, eir=%d kbps) via binapi",
-                name, reply.PolicerIndex, cirKbps, eirKbps)
+        log.Printf("[vpp] Created policer %s (index=%d, cir=%d kbps) via binapi",
+                name, reply.PolicerIndex, cirKbps)
         return reply.PolicerIndex, nil
 }
 
