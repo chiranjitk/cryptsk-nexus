@@ -34,7 +34,7 @@ const PROD = {
   readyTimeout: 30000,
 };
 
-const PROD_PROJECT_DIR = '/opt/cryptsk-nexus';
+const PROD_PROJECT_DIR = '/opt/ispplatform';
 const SANDBOX_DIR = '/home/z/my-project';
 const APP_PORT = 3000;
 
