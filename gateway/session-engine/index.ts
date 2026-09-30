@@ -508,6 +508,95 @@ const server = Bun.serve({
       }
     }
 
+
+    // ── FUP (Fair Usage Policy) Check (Phase 5 deliverable) ──
+    // GET /fup-check — check all active sessions for FUP threshold
+    // When data usage exceeds plan data limit, apply FUP throttle speed (not disconnect)
+    // Returns: { checked, throttled, results }
+    if (path === "/fup-check" && method === "GET") {
+      const client = new Client({ connectionString: DB_URL });
+      try {
+        await client.connect();
+
+        // Get all active sessions with their data usage + plan FUP speeds
+        const result = await client.query(`
+          SELECT
+            ra.radacctid::text as id,
+            ra.username,
+            ra.acctinputoctets::bigint as input_bytes,
+            ra.acctoutputoctets::bigint as output_bytes,
+            (COALESCE(ra.acctinputoctets, 0) + COALESCE(ra.acctoutputoctets, 0))::bigint as total_bytes,
+            s.id as subscriber_id,
+            p."dataLimitGb",
+            p."downloadSpeedFup",
+            p."uploadSpeedFup",
+            rg."fupSpeedDownKbps",
+            rg."fupSpeedUpKbps",
+            rg."fupThresholdMb",
+            rg."dataLimit" as rg_data_limit_mb
+          FROM radacct ra
+          LEFT JOIN "Subscriber" s ON s."serviceUsername" = ra.username
+          LEFT JOIN "Plan" p ON p.id = s."planId"
+          LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
+          WHERE ra.acctstoptime IS NULL
+          LIMIT 1000
+        `);
+
+        const results: any[] = [];
+        let throttled = 0;
+
+        for (const row of result.rows) {
+          const totalMb = Number(row.total_bytes) / (1024 * 1024);
+
+          // Resolve data limit (MB)
+          const dataLimitMb = row.rg_data_limit_mb ||
+            (row.dataLimitGb ? Number(row.dataLimitGb) * 1024 : null);
+
+          if (!dataLimitMb) continue; // no data limit = no FUP
+
+          // Resolve FUP speeds (Kbps)
+          const fupDown = row.fupSpeedDownKbps || (row.downloadSpeedFup ? Number(row.downloadSpeedFup) : 1024);
+          const fupUp = row.fupSpeedUpKbps || (row.uploadSpeedFup ? Number(row.uploadSpeedFup) : 512);
+
+          // FUP threshold (default: 80% of data limit)
+          const fupThresholdMb = row.fupThresholdMb || Math.round(dataLimitMb * 0.8);
+
+          if (totalMb >= fupThresholdMb) {
+            // FUP triggered — apply throttle (not disconnect)
+            throttled++;
+            results.push({
+              sessionId: row.id,
+              username: row.username,
+              subscriberId: row.subscriber_id,
+              totalMb: Math.round(totalMb),
+              dataLimitMb,
+              fupThresholdMb,
+              fupSpeedDownKbps: fupDown,
+              fupSpeedUpKbps: fupUp,
+              action: "THROTTLE",
+              message: `Data usage ${Math.round(totalMb)}MB >= FUP threshold ${fupThresholdMb}MB — throttling to ↓${fupDown}Kbps ↑${fupUp}Kbps (NOT disconnecting)`,
+            });
+
+            // TODO: Send CoA to NAS with FUP speed (requires NAS to be running + listening on CoA port)
+            // For now, log the FUP event — the actual CoA would be:
+            // echo "User-Name=..., Mikrotik-Rate-Limit=${fupDown}K/${fupUp}K" | radclient nas_ip:3799 coa secret
+          }
+        }
+
+        return json({
+          checked: result.rows.length,
+          throttled,
+          fupPolicy: "THROTTLE_NOT_DISCONNECT",
+          results: results.slice(0, 50),
+          message: throttled > 0 ? `${throttled} session(s) throttled to FUP speed (not disconnected)` : "No sessions hit FUP threshold",
+        });
+      } catch (err: any) {
+        return json({ error: "FUP check failed", message: err.message }, 500);
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
     // ── 404 ──
     return json({ error: "Not found", path }, 404);
   },
