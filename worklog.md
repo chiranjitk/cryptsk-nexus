@@ -2445,3 +2445,58 @@ Next Phase Recommendations:
 5. Add NAT pool usage visualization (current capacity vs allocation per pool).
 6. Add audit log viewer showing all admin actions (simulate restart, trigger recovery, reconcile, etc.).
 7. Move overview "Recovery Timeline" BarChart into a dedicated "Recovery Analytics" tab with deeper insights (recovery success rate, avg duration, failure patterns).
+Task ID: FRESH-SANDBOX-SETUP
+Agent: Z.ai Code (orchestrator)
+Task: Clone cryptsk-nexus repo into fresh sandbox, read FRESH-SETUP-GUIDE.md and perform complete setup (PostgreSQL, schema, seed, Next.js, mini-services, FreeRADIUS)
+
+Work Log:
+- Cloned https://github.com/chiranjitk/cryptsk-nexus.git into /home/z/my-project (replaced boilerplate; preserved sandbox Caddyfile + skills folder to /home/z/_sandbox_backup and restored)
+- `bun install` OK (root project) — package.json dev/db scripts use DATABASE_URL postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus (nexus_pg_2026 is the CURRENT password convention, overriding older guide's CryptskNexus2026)
+- PostgreSQL: repo does NOT ship runtime-applications/ (gitignored binaries). No system PG, no passwordless sudo → downloaded portable PostgreSQL 16.4 binaries (theseus-rs/postgresql-binaries) to /home/z/runtime-apps/, symlinked bin/ to /home/z/my-project/runtime-applications/pgsql/bin
+- initdb at runtime-applications/pgsql/data (trust auth initially), started via pg_ctl on 5432, switched pg_hba.conf host rules to md5, reloaded
+- Created roles: postgres/postgres, cryptsknexus/nexus_pg_2026 (SUPERUSER, owner), z/CryptskNexus2026; created database cryptsknexus
+- Loaded pgsql-production/complete-database.sql — FIRST PASS: 2 errors (views referencing Prisma "Subscriber" table not yet existing)
+- `prisma db push` FAILED: "cannot alter type of a column used by a view or rule" (v_nas_status depends on nas.nasname) → dropped 5 views (v_active_sessions, v_radius_user_status, v_auth_summary_daily, v_subscriber_data_usage, v_nas_status), pushed successfully, re-ran complete-database.sql
+- FIXED type mismatch in complete-database.sql v_active_sessions view: `a.NASIPAddress = n.nasname::inet` → `a.NASIPAddress::text = host(n.nasname::inet)` (Prisma pushes nas.nasname + radacct.nasipaddress as text; text=inet operator doesn't exist). Re-ran SQL: 0 errors, all 5 views created
+- .env written: DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@localhost:5432/cryptsknexus + SESSION_SECRET
+- prisma generate OK; seed.ts OK: 1 admin user, 6 areas, 8 plans, 8 RADIUS groups, 15 subscribers, 12 radcheck + 12 radusergroup, 1 NAS (192.168.1.1, secret cryptsksecret), partner mgmt data
+- FreeRADIUS: built 3.2.7 from source (no sudo): libssl-dev + libpcre2-dev present; talloc missing → built talloc 2.4.2 locally to /home/z/runtime-apps/deps; configure --with-talloc-lib/include-dir; make -j2; make install to runtime-applications/freeradius/
+- FreeRADIUS config: enabled mods-enabled/sql (postgresql dialect, driver rlm_sql_postgresql, radius_db full conn-string), added clients (192.168.1.1 cryptsksecret + 0.0.0.0/0 sandbox fallback), commented out eap module + all eap refs in sites-enabled/{default,inner-tunnel} (EAP-TLS test certs incompatible with OpenSSL 3.5 "decode error/ee key too small" even after regenerating 2048-bit certs via Makefile; platform uses PAP only per prior worklog → eap removal is safe)
+- radiusd -X -C: "Configuration appears to be OK"; daemon running on 1812/1813/3799
+- RADIUS E2E VERIFIED: radtest amit.sharma Cryptsk@001 127.0.0.1 0 testing123 → Access-Accept with Mikrotik-Rate-Limit "50M/25M" (SQL group reply); wrong password → Access-Reject; both rows logged in radpostauth (PostgreSQL integration confirmed)
+- Mini-services: bun install in all 11; FIXED invalid `model _PrismaMigrate` (reserved name) in 9 mini-service prisma schemas (removed model block); prisma generate for services still failed (bun/npm resolution quirk) → copied main project's generated .prisma/client into each service node_modules (services share the main DB so main client has all models)
+- Started services with DATABASE_URL env; fixed several lifecycle issues (EADDRINUSE dupes, ndpi/multiwan HTTP servers not binding → fresh restart fixed; all 11 healthy: radius 3001, network-monitor 3002, whatsapp 3003, billing-cron 3004, gateway 3005, multiwan 3006, session-engine 3010, snmp 3020, ips-daemon 3030, ndpi 3031, syslog UDP 1514)
+- OOM CRISIS + FIX: sandbox has only 4.1GB RAM; next-server OOM-killed 3× (RSS ~2.25GB) when browser + compile burst overlap. Mitigations applied: (1) next.config.ts experimental.turbopackMemoryLimit=768 + turbopackFileSystemCacheForDev=true, (2) package.json NODE_OPTIONS max-old-space-size 1024→768, (3) trimmed running services to core 5 (radius-service, session-engine, billing-cron, network-monitor, gateway-service) — other 6 stay stopped, UI has graceful fallbacks, (4) sequential curl warmup of API routes before browser tests
+- agent-browser verification PASSED: login page renders (dark red Cryptsk theme) → admin@cryptsk.com/Admin@2026 login → dashboard with REAL data (15 subscribers, 11 active, ₹10,389 MRR, DB Online, API 45ms, Uptime 100%) → Subscribers page (15 total, stat cards, live search filter "amit" → 1 result) → Plans page (8 active plans with ₹399/₹599/₹999 pricing)
+- bun run lint: 0 errors, 4 warnings (unused eslint-disable directives)
+
+Stage Summary:
+- cryptsk-nexus FULLY OPERATIONAL in fresh sandbox: PostgreSQL 16.4 (portable) + production schema (RADIUS tables/views/functions) + Prisma + seed + Next.js 16 dev (port 3000) + FreeRADIUS 3.2.7 (PAP, SQL-backed, E2E verified) + 5 core mini-services
+- CRITICAL sandbox constraint discovered: 4.1GB RAM total — Next dev Turbopack holds ~2.2GB; OOM kills occur when Chrome + compile bursts overlap. Always warm up API routes via curl BEFORE browser sessions; keep non-core services stopped
+- Fixed complete-database.sql view (source-of-truth file updated: v_active_sessions inet cast)
+- Fixed 9 mini-service prisma schemas (_PrismaMigrate reserved model removed)
+- Login: admin@cryptsk.com / Admin@2026; RADIUS test: amit.sharma / Cryptsk@001 (client secret testing123 for localhost, cryptsksecret for NAS 192.168.1.1)
+- DB conn: postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus (user z also exists with CryptskNexus2026)
+- NOTE for next agents: non-core mini-services (ndpi, ips-daemon, multiwan, whatsapp, syslog, snmp) are stopped to conserve RAM — start selectively: `cd mini-services/<svc> && DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus setsid nohup bun run dev > /home/z/my-project/.logs/<svc>.log 2>&1 &`
+
+---
+Task ID: FRESH-SANDBOX-SETUP-STABILIZATION
+Agent: Z.ai Code (orchestrator)
+Task: Post-setup stabilization — OOM mitigation, watchdog, final verification
+
+Work Log:
+- Discovered sandbox process instability: all bun processes (Next.js + mini-services) died at ~10:45 (PG + radiusd survived). Not OOM (3GB free) — sandbox process reaping suspected for piped/nohup'd bun runs
+- Root-caused REPEATED OOMs (#13-#17): watchdog v1 bug — `pgrep -f "mini-services/$SVC"` NEVER matches because mini-service cmdlines are just `bun --hot index.ts` (no path!) → watchdog spawned 5 duplicate service instances EVERY 60s → memory climbed ~300MB/min → next-server OOM-killed repeatedly
+- FIXED watchdog (v3 at scripts/watchdog.sh): cwd-based process detection via /proc/PID/cwd, double-check before Next.js restart (collision-safe), runs every 90s via detached loop. Confirmed: no duplicate restarts, single instance per service
+- OOM mitigation layers applied: experimental.turbopackMemoryLimit=256 (Next 16 key: experimental.*, NOT top-level turbopack{} — verified in config-schema.js), turbopackFileSystemCacheForDev=true, NODE_OPTIONS --max-old-space-size=768
+- One EADDRINUSE collision (watchdog + manual restart raced) — resolved by v3's double-check
+- Final browser verification PASSED end-to-end: login form validation (empty submit shows "Email is required"/"Password is required") → admin@cryptsk.com/Admin@2026 login → dashboard fully rendered: 15 subscribers, 11 active, ₹10,389 MRR, status bar "DB Online | API 83ms | Uptime 100%"
+
+Stage Summary:
+- STABLE STATE: Next.js dev (port 3000) + PG 16.4 (5432) + FreeRADIUS (1812/1813/3799) + 5 core mini-services (3001/3002/3004/3005/3010), watchdog every 90s auto-heals all five
+- MEMORY PROFILE: sandbox 4.1GB; warm next-server ≈ 1.9-2.1GB RSS; keep Chrome sessions short; ALWAYS warm API routes via curl before browser work; non-core services stay stopped
+- OPERATIONAL RUNBOOK (for cron agents):
+  - Restart Next.js: `cd /home/z/my-project && (setsid nohup bun run dev > /dev/null 2>&1 < /dev/null &)` then wait ~60s (watchdog also does this automatically)
+  - Start extra mini-service: `cd /home/z/my-project/mini-services/<svc> && DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus setsid nohup bun run dev > /home/z/my-project/.logs/<svc>.log 2>&1 &`
+  - Warmup endpoints before browser: /api/dashboard/stats, /api/dashboard, /api/activity-feed, /api/alerts/analytics, /api/system/health, /api/payments, /api/subscribers, /api/plans (Bearer token from /api/auth/login)
+  - Watchdog log: /home/z/my-project/.logs/watchdog.log — if it shows restarts every cycle, a detection bug is present again (must be cwd-based)

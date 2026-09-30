@@ -298,7 +298,7 @@ FROM radacct a
 LEFT JOIN "Subscriber" s ON a.subscriber_id = s.id
 LEFT JOIN "Plan" p ON a.plan_id = p.id OR s."planId" = p.id
 LEFT JOIN "Area" ar ON a.area_id = ar.id OR s."areaId" = ar.id
-LEFT JOIN nas n ON a.NASIPAddress = n.nasname::inet
+LEFT JOIN nas n ON a.NASIPAddress::text = host(n.nasname::inet)
 WHERE a.AcctStopTime IS NULL;
 
 -- RADIUS user provisioning status

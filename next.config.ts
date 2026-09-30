@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
   },
   reactStrictMode: false,
   allowedDevOrigins: ["*.space-z.ai"],
+  // ─── Cap Turbopack memory (sandbox has 4GB RAM, OOM protection) ──
+  experimental: {
+    turbopackMemoryLimit: 256,
+    turbopackFileSystemCacheForDev: true,
+  },
   // ─── Treat native/binary Node modules as externals ───────────
   // ssh2 / net-snmp / ros-client / pg use binary assets that
   // bundlers cannot place in ESM chunks. Marking them as server

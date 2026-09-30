@@ -6,6 +6,6 @@
     "dev": "bun --hot index.ts"
   },
   "dependencies": {
-    "@prisma/client": "latest"
+    "@prisma/client": "^6.19.3"
   }
 }
