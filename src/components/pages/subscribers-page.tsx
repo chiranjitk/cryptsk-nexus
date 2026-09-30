@@ -88,9 +88,9 @@ interface SubscriberDetail extends Subscriber {
   lastAuthTimestamp?: string;
   lastAuthResult?: string;
   activeSessions?: number;
-  invoices: { id: string; invoiceNumber: string; grandTotal: number; status: string; paidAmount: number; createdAt: string }[];
-  payments: { id: string; receiptNumber: string; amount: number; status: string; paymentMode: string; createdAt: string }[];
-  complaints: { id: string; ticketNumber: string; type: string; priority?: string; status: string; createdAt: string }[];
+  invoices?: { id: string; invoiceNumber: string; grandTotal: number; status: string; paidAmount: number; createdAt: string }[];
+  payments?: { id: string; receiptNumber: string; amount: number; status: string; paymentMode: string; createdAt: string }[];
+  complaints?: { id: string; ticketNumber: string; type: string; priority?: string; status: string; createdAt: string }[];
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -2773,15 +2773,15 @@ export default function SubscribersPage() {
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Total Invoices</span>
-                          <span className="font-medium">{detail.invoices.length}</span>
+                          <span className="font-medium">{detail.invoices?.length ?? 0}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Total Payments</span>
-                          <span className="font-medium">{detail.payments.length}</span>
+                          <span className="font-medium">{detail.payments?.length ?? 0}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Open Complaints</span>
-                          <span className={`font-medium ${detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length > 0 ? "text-amber-600" : ""}`}>{detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length}</span>
+                          <span className={`font-medium ${(detail.complaints ?? []).filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length > 0 ? "text-amber-600" : ""}`}>{(detail.complaints ?? []).filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length}</span>
                         </div>
                       </CardContent>
                     </Card>
@@ -2797,17 +2797,17 @@ export default function SubscribersPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Total Outstanding</p>
                       <p className="text-xl font-bold">
-                        {formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal - inv.paidAmount, 0))}
+                        {formatINR((detail.invoices ?? []).reduce((sum, inv) => sum + inv.grandTotal - inv.paidAmount, 0))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{detail.invoices.length} Invoice{detail.invoices.length !== 1 ? "s" : ""}</p>
-                      <p className="text-sm font-medium">{formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal, 0))} total</p>
+                      <p className="text-xs text-muted-foreground">{detail.invoices?.length ?? 0} Invoice{(detail.invoices?.length ?? 0) !== 1 ? "s" : ""}</p>
+                      <p className="text-sm font-medium">{formatINR((detail.invoices ?? []).reduce((sum, inv) => sum + inv.grandTotal, 0))} total</p>
                     </div>
                   </div>
 
                   {/* Invoices Table */}
-                  {!detail.invoices.length ? (
+                  {!detail.invoices?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <FileText className="h-5 w-5 text-muted-foreground" />
@@ -2828,7 +2828,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.invoices.map((inv, idx) => (
+                          {(detail.invoices ?? []).map((inv, idx) => (
                             <TableRow key={inv.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{inv.invoiceNumber}</TableCell>
                               <TableCell className="text-xs text-right font-medium">{formatINR(inv.grandTotal)}</TableCell>
@@ -2856,17 +2856,17 @@ export default function SubscribersPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Total Collected</p>
                       <p className="text-xl font-bold text-green-600">
-                        {formatINR(detail.payments.reduce((sum, pay) => sum + pay.amount, 0))}
+                        {formatINR((detail.payments ?? []).reduce((sum, pay) => sum + pay.amount, 0))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{detail.payments.length} Payment{detail.payments.length !== 1 ? "s" : ""}</p>
-                      <p className="text-sm font-medium">{detail.payments.filter(p => p.status === "VERIFIED").length} verified</p>
+                      <p className="text-xs text-muted-foreground">{detail.payments?.length ?? 0} Payment{(detail.payments?.length ?? 0) !== 1 ? "s" : ""}</p>
+                      <p className="text-sm font-medium">{(detail.payments ?? []).filter(p => p.status === "VERIFIED").length} verified</p>
                     </div>
                   </div>
 
                   {/* Payments Table */}
-                  {!detail.payments.length ? (
+                  {!detail.payments?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <Receipt className="h-5 w-5 text-muted-foreground" />
@@ -2887,7 +2887,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.payments.map((pay, idx) => (
+                          {(detail.payments ?? []).map((pay, idx) => (
                             <TableRow key={pay.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{pay.receiptNumber || "—"}</TableCell>
                               <TableCell className="text-xs text-right font-medium">{formatINR(pay.amount)}</TableCell>
@@ -2917,21 +2917,21 @@ export default function SubscribersPage() {
                   {/* Complaints Summary */}
                   <div className="grid grid-cols-3 gap-3">
                     <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200 text-center">
-                      <p className="text-lg font-bold text-yellow-700">{detail.complaints.filter(c => c.status === "OPEN").length}</p>
+                      <p className="text-lg font-bold text-yellow-700">{(detail.complaints ?? []).filter(c => c.status === "OPEN").length}</p>
                       <p className="text-[11px] text-yellow-600 font-medium">Open</p>
                     </div>
                     <div className="p-3 rounded-lg bg-orange-50 border border-orange-200 text-center">
-                      <p className="text-lg font-bold text-orange-700">{detail.complaints.filter(c => c.status === "IN_PROGRESS").length}</p>
+                      <p className="text-lg font-bold text-orange-700">{(detail.complaints ?? []).filter(c => c.status === "IN_PROGRESS").length}</p>
                       <p className="text-[11px] text-orange-600 font-medium">In Progress</p>
                     </div>
                     <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-center">
-                      <p className="text-lg font-bold text-green-700">{detail.complaints.filter(c => c.status === "RESOLVED" || c.status === "CLOSED").length}</p>
+                      <p className="text-lg font-bold text-green-700">{(detail.complaints ?? []).filter(c => c.status === "RESOLVED" || c.status === "CLOSED").length}</p>
                       <p className="text-[11px] text-green-600 font-medium">Resolved</p>
                     </div>
                   </div>
 
                   {/* Complaints Table */}
-                  {!detail.complaints.length ? (
+                  {!detail.complaints?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <ClipboardList className="h-5 w-5 text-muted-foreground" />
@@ -2952,7 +2952,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.complaints.map((c, idx) => (
+                          {(detail.complaints ?? []).map((c, idx) => (
                             <TableRow key={c.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{c.ticketNumber}</TableCell>
                               <TableCell className="text-xs">{COMPLAINT_TYPE_LABELS[c.type] || c.type}</TableCell>

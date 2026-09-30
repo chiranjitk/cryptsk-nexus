@@ -24,6 +24,7 @@ export async function GET(
         },
         RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
         RadiusUser: { select: { id: true, createdAt: true } },
+        NetworkDevice: { select: { id: true, name: true, type: true, ipAddress: true, status: true } },
         Invoice: { orderBy: { createdAt: "desc" }, take: 10 },
         Payment: { orderBy: { createdAt: "desc" }, take: 10 },
         Complaint: { orderBy: { createdAt: "desc" }, take: 5 },
@@ -34,7 +35,22 @@ export async function GET(
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
-    return NextResponse.json(subscriber);
+    // Map Prisma PascalCase relations to the camelCase keys the frontend expects.
+    // Original PascalCase keys are kept (additive) so existing consumers are unaffected.
+    const detail = {
+      ...subscriber,
+      area: subscriber.Area ?? null,
+      plan: subscriber.Plan ?? null,
+      radiusGroup: subscriber.RadiusGroup ?? null,
+      radiusUser: subscriber.RadiusUser ?? null,
+      assignedDevice: subscriber.NetworkDevice ?? null,
+      radiusGroupName: subscriber.RadiusGroup?.name ?? null,
+      invoices: subscriber.Invoice ?? [],
+      payments: subscriber.Payment ?? [],
+      complaints: subscriber.Complaint ?? [],
+    };
+
+    return NextResponse.json(detail);
   } catch (error) {
     console.error("Subscriber GET error:", error);
     return NextResponse.json({ error: "Failed to fetch subscriber" }, { status: 500 });

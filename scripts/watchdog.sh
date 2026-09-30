@@ -44,9 +44,9 @@ for SVC in radius-service session-engine billing-cron network-monitor gateway-se
   fi
 done
 
-# 4. FreeRADIUS
-if ! pgrep -f "radiusd" > /dev/null 2>&1; then
-  echo "$(ts) FreeRADIUS down → restarting" >> $LOG
-  cd / && setsid nohup env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" $FR/sbin/radiusd -d $RDB >> /home/z/my-project/.logs/freeradius.log 2>&1 < /dev/null &
-  echo "$(ts) FreeRADIUS restart issued" >> $LOG
+# 4. FreeRADIUS — DISABLED per user instruction (2026-09-30): "dont need freeradius work".
+# The watchdog must NOT restart radiusd. Do not re-enable without explicit user request.
+if pgrep -f "radiusd" > /dev/null 2>&1; then
+  echo "$(ts) FreeRADIUS running but user requested it stopped → killing" >> $LOG
+  pkill -f "radiusd" 2>/dev/null
 fi
