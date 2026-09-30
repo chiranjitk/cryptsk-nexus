@@ -596,6 +596,152 @@ const server = Bun.serve({
       }
     }
 
+    // ── POST /auth/post-auth — Transactional Login (§7-8) ──────────
+    // Called by FreeRADIUS post-auth hook via exec+curl
+    // Flow: FreeRADIUS authenticates → calls this endpoint → Session Engine:
+    //   1. Resolves subscriber policy (speeds, data limit, session timeout)
+    //   2. Calls GoVPP adapter /apply to program VPP (policer for bandwidth)
+    //   3. Returns success/failure
+    // If success → FreeRADIUS sends Access-Accept (subscriber is ACTIVE in VPP)
+    // If failure → FreeRADIUS sends Access-Reject (no ghost session)
+    if (path === "/auth/post-auth" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const { username, nasIp, framedIp, nasPort, callingStationId } = body;
+
+      if (!username) {
+        return json({ success: false, error: "username is required" }, 400);
+      }
+
+      const client = new Client({ connectionString: DB_URL });
+      try {
+        await client.connect();
+
+        // ── Step 1: Resolve subscriber + policy ──────────────
+        const subResult = await client.query(`
+          SELECT s.id, s."serviceUsername", s."ipAddress",
+                 s."currentSpeedDown", s."currentSpeedUp",
+                 p.id as plan_id, p.name as plan_name,
+                 p."downloadSpeed", p."uploadSpeed",
+                 p."dataLimitGb", p."maxConcurrentSessions",
+                 p."downloadSpeedFup", p."uploadSpeedFup",
+                 rg.id as rg_id, rg.name as rg_name,
+                 rg."speedLimitDown", rg."speedLimitUp",
+                 rg."dataLimit" as rg_data_limit,
+                 rg."sessionTimeout" as rg_session_timeout
+          FROM "Subscriber" s
+          LEFT JOIN "Plan" p ON p.id = s."planId"
+          LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
+          WHERE s."serviceUsername" = $1
+        `, [username]);
+
+        if (subResult.rows.length === 0) {
+          return json({ success: false, error: "Subscriber not found", username }, 404);
+        }
+
+        const sub = subResult.rows[0];
+
+        // Check subscriber status — reject if not ACTIVE
+        const subStatus = await client.query(`SELECT status FROM "Subscriber" WHERE id = $1`, [sub.id]);
+        const status = subStatus.rows[0]?.status;
+        if (status !== "ACTIVE" && status !== "TRIAL") {
+          return json({ success: false, error: `Subscriber status is ${status}, not ACTIVE`, username }, 403);
+        }
+
+        // ── Step 2: Resolve effective policy (speeds, data limit, timeout) ──
+        const speedDownKbps = (sub.rg_speed_down || sub.downloadSpeed || 0) * 1000;
+        const speedUpKbps = (sub.rg_speed_up || sub.uploadSpeed || 0) * 1000;
+        const sessionTimeout = sub.rg_session_timeout || null;
+
+        // ── Step 3: Program VPP via GoVPP adapter (binary API) ──
+        // Create/apply policer for subscriber bandwidth + NAT
+        let vppProgrammed = false;
+        let vppError = "";
+
+        const subscriberIp = framedIp || sub.ipAddress || "";
+        if (subscriberIp) {
+          try {
+            // Call GoVPP adapter to apply subscriber dataplane objects
+            const govppResponse = await fetch("http://127.0.0.1:3016/apply", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "qos",
+                subscriber: username,
+                ip: subscriberIp,
+                config: {
+                  downloadKbps: speedDownKbps,
+                  uploadKbps: speedUpKbps,
+                },
+              }),
+              signal: AbortSignal.timeout(5000), // 5s timeout
+            });
+
+            if (govppResponse.ok) {
+              const govppData = await govppResponse.json();
+              vppProgrammed = govppData.success !== false;
+              if (!vppProgrammed) {
+                vppError = govppData.error || "VPP programming returned failure";
+              }
+            } else {
+              vppError = `GoVPP adapter returned HTTP ${govppResponse.status}`;
+            }
+          } catch (vppErr: any) {
+            // VPP programming failed — per §8, return controlled failure
+            vppError = vppErr.message || "VPP adapter unreachable";
+            logger.warn("vpp_programming_failed", {
+              username, subscriberIp, error: vppError,
+            });
+          }
+        }
+
+        // ── Step 4: Return result to FreeRADIUS ──────────────
+        // Per §8: If VPP programming fails, session is NOT ACTIVE
+        // Return failure → FreeRADIUS sends Access-Reject → no ghost session
+        if (!vppProgrammed && subscriberIp) {
+          return json({
+            success: false,
+            error: `VPP programming failed: ${vppError}`,
+            username,
+            subscriberIp,
+            vppProgrammed: false,
+            // FreeRADIUS should reject this login
+            rejectReason: "VPP_DATAPLANE_PROGRAMMING_FAILED",
+          }, 503); // Service Unavailable — VPP not ready
+        }
+
+        // ── Step 5: VPP programmed (or no IP to program) → return success ──
+        // FreeRADIUS will send Access-Accept with policy attributes
+        return json({
+          success: true,
+          username,
+          subscriberId: sub.id,
+          subscriberIp,
+          plan: sub.plan_name,
+          radiusGroup: sub.rg_name,
+          policy: {
+            speedDownKbps,
+            speedUpKbps,
+            sessionTimeoutSec: sessionTimeout,
+            dataLimitMb: sub.rg_data_limit || (sub.dataLimitGb ? Number(sub.dataLimitGb) * 1024 : null),
+            maxConcurrentSessions: sub.maxConcurrentSessions || 1,
+          },
+          vppProgrammed,
+          vppError: vppError || undefined,
+          // Compiled RADIUS attributes for FreeRADIUS to include in Access-Accept
+          radiusAttributes: [
+            ...(sessionTimeout ? [{ name: "Session-Timeout", value: String(sessionTimeout) }] : []),
+            ...(speedDownKbps > 0 ? [{ name: "Mikrotik-Rate-Limit", value: `${speedDownKbps}K/${speedUpKbps}K` }] : []),
+          ],
+          state: "AUTHENTICATED", // Ready for Access-Accept
+        });
+      } catch (err: any) {
+        logger.error("post_auth_failed", { error: err.message, username });
+        return json({ success: false, error: "Post-auth processing failed", message: err.message }, 500);
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
     // ── 404 ──
     return json({ error: "Not found", path }, 404);
   },
