@@ -101,6 +101,47 @@ async function readBody(req: Request): Promise<any> {
   }
 }
 
+// ─── GovPP Adapter (port 3016) bridge ────────────────────────────
+// The TS vpp-adapter keeps an in-memory Map + SessionSnapshot DB for
+// fast queries + restart recovery, but the REAL VPP binary API calls
+// (PolicerAddDel, Nat44AddDelStaticMappingV2, ACLAddReplace, etc.)
+// are delegated to the Go govpp-adapter at port 3016, which uses
+// GoVPP v0.5.0 binapi. This is the hard boundary (§28) — TS adapter
+// is the orchestrator, govpp-adapter is the dataplane client.
+const GOVPP_BASE = "http://127.0.0.1:3016";
+
+async function callGovpp<T = any>(
+  path: string,
+  body?: any,
+  method: string = "POST"
+): Promise<{ ok: boolean; data?: T; error?: string }> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const init: RequestInit =
+      body !== undefined
+        ? {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: ctrl.signal,
+          }
+        : { method, signal: ctrl.signal };
+    const res = await fetch(`${GOVPP_BASE}${path}`, init);
+    const data = (await res.json().catch(() => ({}) as T)) as T;
+    if (!res.ok)
+      return { ok: false, error: `govpp ${path} HTTP ${res.status}`, data };
+    return { ok: true, data };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `govpp ${path} unreachable: ${String(err?.message || err)}`,
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // ─── VPP Policy Object ensure-functions (lazy create / upsert by name) ──
 
 async function ensurePolicerObject(name: string, cir: number, bc: number) {
@@ -515,6 +556,8 @@ async function main() {
         }
 
         // ═══ 2. /vpp/state ═══
+        // Merges in-memory epoch + policyObjects + subscribers count with
+        // live VPP connection status + interface list from govpp-adapter.
         if (path === "/vpp/state" && method === "GET") {
           const grouped = await db.vppPolicyObject.groupBy({
             by: ["type"],
@@ -532,16 +575,34 @@ async function main() {
           for (const g of grouped) {
             policyObjects[g.type] = g._count._all;
           }
-          return json({
+          // ── Merge with real VPP status + interfaces from govpp-adapter ──
+          const govppStatus = await callGovpp<any>("/status", undefined, "GET");
+          const govppInterfaces = await callGovpp<any>("/interfaces", undefined, "GET");
+          const merged: any = {
             vppEpoch: inMemory.vppEpoch,
-            vppConnected: inMemory.vppConnected,
+            vppConnected:
+              govppStatus.ok && govppStatus.data?.connected
+                ? true
+                : inMemory.vppConnected,
             vppLastRestartAt: inMemory.vppLastRestartAt,
             uptime: Math.floor((Date.now() - startTime) / 1000),
             policyObjects,
             subscribersProgrammed: inMemory.subscriberPolicies.size,
-            interfaces: [],
+            interfaces:
+              govppInterfaces.ok && Array.isArray(govppInterfaces.data?.interfaces)
+                ? govppInterfaces.data.interfaces
+                : [],
             stats,
-          });
+          };
+          if (govppStatus.ok && govppStatus.data) {
+            merged.govppStatus = govppStatus.data;
+          } else {
+            merged.govppStatusError = govppStatus.error;
+          }
+          if (!govppInterfaces.ok) {
+            merged.govppInterfacesError = govppInterfaces.error;
+          }
+          return json(merged);
         }
 
         // ═══ 3. /vpp/epoch ═══
@@ -620,7 +681,15 @@ async function main() {
                 data: { vppRecoveryState: "RECOVERING" },
               });
 
-              const programmed = await programVpp({
+              // ── Delegate REAL VPP reprogramming to govpp-adapter ──
+              // This is the §41 VPP restart recovery path: when VPP
+              // restarts and loses all dataplane state, govpp-adapter
+              // reconnects, and we reprogram each session via govpp's
+              // real binapi calls (PolicerAddDel + Nat44StaticMapping +
+              // ACLAddReplace). The TS adapter's sessionMap may also be
+              // empty (if vpp-adapter itself restarted) — we rebuild
+              // from SessionSnapshot DB rows.
+              const govppBody = {
                 sessionId: snap.sessionId,
                 subscriberId: snap.subscriberId,
                 username: snap.username,
@@ -641,7 +710,32 @@ async function main() {
                 remoteId: snap.remoteId,
                 pppoeSessionId: snap.pppoeSessionId,
                 dhcpClientId: snap.dhcpClientId,
-              });
+              };
+              const govpp = await callGovpp<any>("/subscriber/program", govppBody, "POST");
+
+              // Always update in-memory Map too (cache consistency)
+              const programmed = await programVpp(govppBody);
+
+              if (!govpp.ok || !govpp.data?.success) {
+                // govpp failed — VPP state NOT actually programmed.
+                // Mark snapshot STALE so reconciliation can retry later.
+                await db.sessionSnapshot.update({
+                  where: { sessionId: snap.sessionId },
+                  data: {
+                    vppRecoveryState: "STALE",
+                    vppEpoch: inMemory.vppEpoch,
+                    vppProgrammedAt: new Date(),
+                  },
+                });
+                results.push({
+                  sessionId: snap.sessionId,
+                  status: "FAILED",
+                  error: govpp.error || "govpp subscriber/program failed",
+                  govpp: govpp.data || null,
+                });
+                failed++;
+                continue;
+              }
 
               // Mark VERIFIED
               await db.sessionSnapshot.update({
@@ -661,6 +755,7 @@ async function main() {
                   acl: programmed.acl?.name,
                   natMapping: programmed.natMapping,
                 },
+                govpp: govpp.data,
               });
               rebuilt++;
             } catch (err: any) {
@@ -940,6 +1035,13 @@ async function main() {
         }
 
         // ═══ 12. POST /subscriber/program ═══
+        // Delegates REAL VPP programming (policer + NAT + ACL via binapi)
+        // to govpp-adapter (port 3016). The in-memory Map + SessionSnapshot
+        // DB are the TS adapter's local cache + restart-recovery store.
+        //
+        // CRITICAL: if govpp is unreachable or returns failure, we MUST
+        // return HTTP 500 so session-engine's transactional login flow
+        // rolls back the session (no ghost sessions in VPP-vs-DB).
         if (path === "/subscriber/program" && method === "POST") {
           const body = await readBody(req);
           if (!body.sessionId || !body.subscriberId || !body.username) {
@@ -948,9 +1050,31 @@ async function main() {
               400
             );
           }
+
+          // ── Delegate REAL VPP programming to govpp-adapter ──
+          const govpp = await callGovpp<any>("/subscriber/program", body, "POST");
+          if (!govpp.ok || !govpp.data?.success) {
+            stats.errors++;
+            return json(
+              {
+                success: false,
+                error:
+                  govpp.error ||
+                  (govpp.data?.warnings?.length
+                    ? `govpp programming failed: ${govpp.data.warnings.join("; ")}`
+                    : "govpp subscriber/program failed"),
+                govpp: govpp.data || null,
+              },
+              500
+            );
+          }
+
+          // ── govpp succeeded: VPP state is now REALLY programmed ──
+          // Update in-memory Map (fast query cache) + persist snapshot.
           const programmed = await programVpp(body);
           await upsertSnapshot(body, "PROGRAMMED");
           stats.programmed++;
+
           return json({
             success: true,
             programmed: {
@@ -958,15 +1082,37 @@ async function main() {
               acl: programmed.acl,
               natMapping: programmed.natMapping,
             },
+            govpp: govpp.data,
             vppEpochApplied: inMemory.vppEpoch,
-            message: `subscriber ${body.username} (${body.sessionId}) programmed at epoch ${inMemory.vppEpoch}`,
+            message: `subscriber ${body.username} (${body.sessionId}) programmed at epoch ${inMemory.vppEpoch} via govpp-adapter (real binapi)`,
           });
         }
 
         // ═══ 13. POST /subscriber/verify ═══
+        // Delegates live VPP verification to govpp-adapter (which performs
+        // best-effort cross-checks via policer_dump + nat44_address_dump).
+        // Falls back to in-memory Map check if govpp is unreachable.
         if (path === "/subscriber/verify" && method === "POST") {
           const body = await readBody(req);
           const sessionId = body.sessionId;
+
+          const govpp = await callGovpp<any>("/subscriber/verify", { sessionId }, "POST");
+          if (govpp.ok && govpp.data) {
+            return json({
+              verified: govpp.data.verified ?? false,
+              vppEpoch: inMemory.vppEpoch,
+              sessionId,
+              checks: govpp.data.checks || {
+                policerExists: false,
+                aclExists: false,
+                natMappingExists: false,
+              },
+              govpp: govpp.data,
+              source: "govpp-adapter",
+            });
+          }
+
+          // ── Fallback: in-memory Map check (govpp unreachable) ──
           const entry = inMemory.subscriberPolicies.get(sessionId);
           if (!entry) {
             return json({
@@ -978,6 +1124,8 @@ async function main() {
                 aclExists: false,
                 natMappingExists: false,
               },
+              source: "in-memory-fallback",
+              govppError: govpp.error,
             });
           }
           return json({
@@ -989,37 +1137,48 @@ async function main() {
               aclExists: !!entry.acl,
               natMappingExists: !!entry.natMapping,
             },
+            source: "in-memory-fallback",
+            govppError: govpp.error,
           });
         }
 
         // ═══ 14. POST /subscriber/remove ═══
+        // Delegates REAL VPP cleanup to govpp-adapter (DisconnectSubscriber
+        // → DeletePolicer + DeleteStaticNat). Always updates in-memory Map
+        // + marks snapshot STALE regardless of govpp result (best-effort
+        // cleanup — if govpp is unreachable, VPP may retain stale state
+        // but our cache + DB are still cleaned so the next /vpp/rebuild
+        // won't double-program).
         if (path === "/subscriber/remove" && method === "POST") {
           const body = await readBody(req);
           const sessionId = body.sessionId;
+
+          // ── Delegate REAL VPP cleanup to govpp-adapter (best-effort) ──
+          const govpp = await callGovpp<any>("/subscriber/remove", { sessionId }, "POST");
+
           const entry = inMemory.subscriberPolicies.get(sessionId);
-          if (!entry) {
-            return json({
-              success: false,
-              error: "session not found in memory",
-              removed: { policer: null, acl: null, natMapping: null },
-            });
-          }
           inMemory.subscriberPolicies.delete(sessionId);
 
-          // Mark snapshot STALE (state removed but session may still exist in DB)
+          // Always mark snapshot STALE (state removed but session may still exist in DB)
           await db.sessionSnapshot.updateMany({
             where: { sessionId },
             data: { vppRecoveryState: "STALE" },
           });
 
           stats.removed++;
+
           return json({
             success: true,
             removed: {
-              policer: entry.policer,
-              acl: entry.acl,
-              natMapping: entry.natMapping,
+              policer: entry?.policer || null,
+              acl: entry?.acl || null,
+              natMapping: entry?.natMapping || null,
             },
+            govppOk: govpp.ok,
+            govpp: govpp.ok ? govpp.data : { error: govpp.error },
+            message: govpp.ok
+              ? `subscriber ${sessionId} removed from real VPP + in-memory cache cleared`
+              : `govpp unreachable: ${govpp.error} — in-memory cache cleared, VPP may retain stale state`,
           });
         }
 
@@ -1087,10 +1246,21 @@ async function main() {
         }
 
         // ═══ 19. POST /coa ═══
+        // Delegates REAL VPP policer update (ChangeSubscriberBandwidth →
+        // DeletePolicer + CreatePolicer with new rates) to govpp-adapter.
+        // Also updates in-memory Map (cache consistency).
         if (path === "/coa" && method === "POST") {
           const body = await readBody(req);
           const { sessionId, subscriberIP, downloadKbps, uploadKbps } = body;
-          // Update in-memory policer if session exists
+
+          // ── Delegate REAL VPP policer update to govpp-adapter ──
+          const govpp = await callGovpp<any>(
+            "/coa",
+            { sessionId, subscriberIP, downloadKbps, uploadKbps },
+            "POST"
+          );
+
+          // Always update in-memory Map (best-effort cache consistency)
           if (sessionId) {
             const entry = inMemory.subscriberPolicies.get(sessionId);
             if (entry) {
@@ -1101,12 +1271,26 @@ async function main() {
             }
           }
           console.log(
-            `[vpp-adapter] CoA for ${subscriberIP || sessionId}: ${downloadKbps}/${uploadKbps} kbps`
+            `[vpp-adapter] CoA for ${subscriberIP || sessionId}: ${downloadKbps}/${uploadKbps} kbps (govpp: ${govpp.ok ? "ok" : "unreachable"})`
           );
+
+          if (!govpp.ok) {
+            return json(
+              {
+                success: false,
+                error: govpp.error,
+                message: `CoA failed in govpp-adapter; in-memory cache updated best-effort`,
+                coa: { sessionId, subscriberIP, downloadKbps, uploadKbps },
+              },
+              502
+            );
+          }
+
           return json({
             success: true,
-            message: `CoA applied: ${subscriberIP || sessionId} → ${downloadKbps}/${uploadKbps} kbps (in-memory policer updated)`,
+            message: `CoA applied: ${subscriberIP || sessionId} → ${downloadKbps}/${uploadKbps} kbps (VPP policer updated via govpp)`,
             coa: { sessionId, subscriberIP, downloadKbps, uploadKbps },
+            govpp: govpp.data,
           });
         }
 
@@ -1150,28 +1334,60 @@ async function main() {
         }
 
         // ═══ 21. GET /interfaces ═══
+        // Delegates real VPP interface list (SwInterfaceDump via binapi)
+        // to govpp-adapter. Returns [] with error if govpp unreachable.
         if (path === "/interfaces" && method === "GET") {
+          const r = await callGovpp<any>("/interfaces", undefined, "GET");
+          if (r.ok) {
+            return json({
+              interfaces: r.data?.interfaces || [],
+              total: r.data?.total ?? (r.data?.interfaces?.length || 0),
+              source: "govpp-adapter",
+            });
+          }
           return json({
             interfaces: [],
+            error: r.error,
+            source: "govpp-adapter-unreachable",
             message:
-              "VPP not running — interface list unavailable. In-memory policy state is authoritative.",
+              "govpp-adapter unreachable — VPP interface list unavailable. In-memory policy state is authoritative.",
           });
         }
 
         // ═══ 22. GET /status ═══
+        // Merges in-memory adapter state with govpp-adapter live status.
         if (path === "/status" && method === "GET") {
+          const govpp = await callGovpp<any>("/status", undefined, "GET");
           return json({
-            connected: inMemory.vppConnected,
-            version: inMemory.vppConnected
-              ? "VPP via /run/vpp/api.sock"
-              : "VPP binary not running (sandbox mode)",
+            connected: govpp.ok && govpp.data?.connected ? true : inMemory.vppConnected,
+            version:
+              govpp.ok && govpp.data?.connected
+                ? govpp.data?.version || "VPP via govpp-adapter (real binary API)"
+                : "VPP binary not connected (govpp-adapter unreachable)",
             uptime: Math.floor((Date.now() - startTime) / 1000),
-            interfaces: 0,
+            interfaces: govpp.ok ? (govpp.data?.interfaces ?? 0) : 0,
             vppEpoch: inMemory.vppEpoch,
             vppLastRestartAt: inMemory.vppLastRestartAt,
+            govpp: govpp.ok ? govpp.data : { error: govpp.error },
             message:
-              "VPP Adapter (hard-boundary v2.0) running — in-memory policy state persisted to SessionSnapshot",
+              "VPP Adapter (hard-boundary v2.0) running — real VPP programming delegated to govpp-adapter (port 3016, GoVPP v0.5.0 binapi)",
           });
+        }
+
+        // ═══ 23. GET /govpp/health (proxy to govpp-adapter) ═══
+        // Lets the UI check both adapters' health in one round-trip.
+        if (path === "/govpp/health" && method === "GET") {
+          const r = await callGovpp<any>("/health", undefined, "GET");
+          return json(r.ok ? r.data : { error: r.error }, r.ok ? 200 : 503);
+        }
+
+        // ═══ 24. GET /govpp/interfaces (alias for UI convenience) ═══
+        if (path === "/govpp/interfaces" && method === "GET") {
+          const r = await callGovpp<any>("/interfaces", undefined, "GET");
+          return json(
+            r.ok ? r.data : { interfaces: [], error: r.error },
+            r.ok ? 200 : 503
+          );
         }
 
         return json({ error: "Not found", path }, 404);

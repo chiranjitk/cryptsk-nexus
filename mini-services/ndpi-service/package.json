@@ -7,6 +7,6 @@
     "start": "bun index.ts"
   },
   "dependencies": {
-    "@prisma/client": "^6.8.2"
+    "@prisma/client": "^6.19.3"
   }
 }
