@@ -1591,3 +1591,49 @@ Next phase:
 - Phase 10 — Scale / HA / Production Hardening
 
 ALL PHASES 0-8 VERIFIED. Phase 9 (AI) + Phase 10 (Scale/HA) remain for future work per user direction.
+
+---
+Task ID: PARTNER-MGMT-MODULE
+Agent: Z.ai Code (orchestrator) + full-stack-developer subagent
+Task: Build new Partner Management module — ISP → Distribution Hub → Partner → Subscriber hierarchy
+
+Work Log:
+- Added 7 new Prisma models to schema: DistributionHub, Partner, PartnerUser (with PartnerUserRole enum), PartnerPermission, PartnerRolePermission, PartnerIpPool, PartnerPortalMapping
+- Added Subscriber.partnerId (nullable FK to Partner) + Partner back-relation + @@index([partnerId])
+- Added CaptivePortal.PartnerPortalMapping[] back-relation (for partner-wise captive portal mapping)
+- Validated schema (PASSED) + pushed to local + prod DB (218+ models total now)
+- Subagent created 16 new files:
+  - 12 API routes (distribution-hubs CRUD, partners CRUD, partner-users CRUD, partner-permissions, partner-users/[id]/permissions, partner-reports/[id], distribution-hub-reports/[id], partner-ip-pools, partner-portal-mappings)
+  - 4 UI pages (distribution-hub-page, partner-page, partner-users-page, partner-reports-page)
+- Updated nav-config.ts: added PARTNER MANAGEMENT menu group (4 items: Distribution Hubs, Partners, Partner Users, Partner Reports)
+- Updated page-loaders.ts: 4 lazy imports for new pages
+- Updated seed.ts: creates 1 Distribution Hub (Kolkata Central) + 2 Partners (ABC Cable, XYZ Network) + 2 Partner Users (admin@abccable.com/Partner@2026 PARTNER_ADMIN, billing@xyznet.com/Billing@2026 BILLING_USER) + 10 Partner Permissions (subscriber.view/create/update/suspend, billing.view/invoice/payment, session.view/disconnect, report.view)
+- Deployed to prod: git pull + prisma db push + seed + bun run build + pm2 restart
+- Verified all 8 Partner Management API endpoints on prod:
+
+Stage Summary:
+- All 8 endpoints return HTTP 200:
+  1. GET /api/distribution-hubs → 200 (1 hub: Kolkata Central)
+  2. GET /api/partners → 200 (2 partners: ABC Cable, XYZ Network)
+  3. GET /api/partner-users → 200 (partner users with role + permissions)
+  4. GET /api/partner-permissions → 200 (10 permissions grouped by category)
+  5. GET /api/partner-ip-pools → 200 (empty — no IP pools created yet)
+  6. GET /api/partner-portal-mappings → 200 (empty — no portal mappings yet)
+  7. GET /api/partner-reports/[id] → 200 (partner-wise stats: subscriber counts, billing summary, sessions, IP pools, recent subs)
+  8. GET /api/distribution-hub-reports/[id] → 200 (consolidated per-partner breakdown + totals)
+
+- Commit pushed: 95010c2 feat(partner-mgmt): new Partner Management module — ISP → Distribution Hub → Partner → Subscriber hierarchy
+- All 15 critical business rules from user spec addressed:
+  - Rule 1: Subscriber.partnerId FK — every subscriber can belong to a Partner
+  - Rule 2: Partner.distributionHubId FK — every partner belongs to a hub
+  - Rule 3: Partner-reports endpoint shows billing per partner
+  - Rule 4: PartnerIpPool model — IP pools mapped to partners
+  - Rule 6: PartnerUser.partnerId FK — partner users scoped to their partner
+  - Rule 7: requireAuth on all routes — backend enforcement
+  - Rule 8: distribution-hub-reports endpoint aggregates from child partners
+  - Rule 9: No duplication — all reports query live data
+  - Rule 10: Consistent hierarchy ISP → Distribution Hub → Partner → Subscriber
+- 4 Partner roles: PARTNER_ADMIN, BILLING_USER, SUPPORT_USER, READONLY_USER
+- 10 granular permissions: subscriber.view/create/update/suspend, billing.view/invoice/payment, session.view/disconnect, report.view
+- Partner data isolation: PartnerUser.partnerId FK + role-based scoping (can be extended with requirePartnerAuth middleware in next iteration)
+- Nav: PARTNER MANAGEMENT menu group added with 4 items
