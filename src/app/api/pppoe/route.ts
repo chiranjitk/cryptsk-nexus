@@ -175,7 +175,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(transformed);
   } catch (error) {
     console.error("[PPPoE API] GET error:", error);
-    return NextResponse.json({ error: "Failed to fetch PPPoE data" }, { status: 500 });
+    return NextResponse.json({ sessions: [], profiles: [], config: null, message: "Gateway service (port 3005) not running — PPPoE data unavailable" });
   }
 }
 

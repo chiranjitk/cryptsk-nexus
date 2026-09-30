@@ -4797,7 +4797,7 @@ model radusergroup {
   @@index([username], map: "radusergroup_username")
 }
 
-model wifi_offload_events {
+model WifiOffloadEvent {
   id            String   @id @default(uuid())
   sessionId     String   @default("")
   eventType     String   @default("")
@@ -4814,7 +4814,7 @@ model wifi_offload_events {
   @@index([sessionId])
 }
 
-model wifi_offload_peers {
+model WifiOffloadPeer {
   id          String    @id @default(uuid())
   peerName    String
   peerType    String    @default("PCRF")
@@ -4837,7 +4837,7 @@ model wifi_offload_peers {
   @@index([status])
 }
 
-model wifi_offload_policies {
+model WifiOffloadPolicy {
   id                   String   @id @default(uuid())
   name                 String
   description          String   @default("")
@@ -4859,7 +4859,7 @@ model wifi_offload_policies {
   @@index([isActive])
 }
 
-model wifi_offload_sessions {
+model WifiOffloadSession {
   id               String   @id @default(uuid())
   sessionId        String   @unique
   imsi             String   @default("")
