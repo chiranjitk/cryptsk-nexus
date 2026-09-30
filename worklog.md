@@ -2516,3 +2516,24 @@ Stage Summary:
 - FreeRADIUS daemon: STOPPED. Binary/config remain at runtime-applications/freeradius (can be restarted manually if ever needed: runtime-applications/freeradius/sbin/radiusd -d .../etc/raddb/raddb/raddb)
 - Everything else (Next.js dev on 3000, PostgreSQL on 5432, core mini-services 3001/3002/3004/3005/3010, watchdog) remains running as-is
 - Next agent: do NOT resume FreeRADIUS work or re-enable the cron job without explicit user request
+
+---
+Task ID: FIX-SUBSCRIBERS-TABLE-QUICKVIEW
+Agent: Z.ai Code (orchestrator)
+Task: User request — fix Subscribers page display (header/row data slid right) + fix Quick View popup Quick Actions (Edit / View Invoices / Log Complaint / View Devices); push to GitHub carefully (another agent works on same repo).
+
+Work Log:
+- Root-caused table misalignment via in-browser measurement: every tbody row was shifted exactly one column right vs thead. Cause: `.table-row-hover::before { content: '' }` (public/globals-extended.css:14528) — generated content on a `<tr>` is laid out as an anonymous table-cell, creating a phantom first column for body rows only (header rows lack the class). Confirmed empirically by toggling `content: none` in-page → th0/td0 both at x=290.
+- FIX (globals-extended.css): replaced tr::before with inset background gradient on hover (`linear-gradient(to right, #DC2626 0 3px, transparent 3px)`) — identical 3px red hover bar, zero table-layout impact. Also fixes latent same bug on plans-page + plan-recommendation-page.
+- Root-caused page-wide horizontal overflow: `main.flex-1` + `SidebarInset` (flex items, min-width:auto) could not shrink below the table's ~1406px min-content → whole page blew out to 1536px (Export CSV / stat cards / filters cut off). FIX: `min-w-0` on SidebarInset + main (app-shell.tsx). Table now scrolls inside its own overflow-x-auto container (958px).
+- Footer overflow (scrollWidth 1351→1285→1280): optional footer stats used viewport breakpoints ignoring the 256px sidebar → demoted Online/Total/Secure/RADIUS items to 2xl (footer.tsx).
+- PageHeader mobile overflow (390px: 100px over): action buttons group had shrink-0 → now flex-wrap + min-w-0 (page-header.tsx).
+- Revenue stat card value clipped at mobile → text-xs at mobile (subscribers-page.tsx).
+- Quick View sheet Quick Actions: buttons set `window.location.hash` but the app has NO hash router (Zustand currentPage only) → actions did nothing. FIX: new `pendingSubscriberAction` handshake in app-store.ts; quick-view uses `setCurrentPage()` (+ stores pending id/action); subscribers-page consumes it in a useEffect to open edit dialog (fully populated) or detail view exactly once. Same broken pattern fixed in command-palette.tsx + global-search.tsx.
+- Browser-verified end-to-end: aligned=true, pageOverflow=false (1280 desktop + 390 mobile); Edit opens populated Edit Subscriber dialog; View Invoices → Invoices page; Log Complaint → Complaints & Support; View Devices → Network Devices.
+- Git: remote had diverged (other agent pushed 5 commits). Stash → pull --rebase (resolved package.json keep-remote + worklog.md union) → stash pop (clean) → commit 282c1f8 (9 files, code only) → pushed 367d37f..282c1f8.
+
+Stage Summary:
+- Subscribers table header/row alignment FIXED; page overflow FIXED (desktop+mobile); Quick View actions all FUNCTIONAL.
+- Commit 282c1f8 pushed to origin/main. NOTE for next agents: dev server OOM-killed repeatedly during this session (sandbox 4.1GB tight while agent-browser open); keep Chrome sessions short, warm APIs before browser work.
+- pendingSubscriberAction store API: { id, action: "edit" | "view" } | null — consumers MUST clear it after handling.
