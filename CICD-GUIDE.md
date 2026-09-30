@@ -24,13 +24,13 @@
 ┌──────────────────┐     git push      ┌──────────────────┐     git pull      ┌──────────────────┐
 │   Z.ai Sandbox   │ ──────────────► │    GitHub Repo   │ ──────────────► │  Prod Server     │
 │  (Code Editor)   │                  │  (Source of Truth)│                 │  (103.244.7.221) │
-│  /home/z/my-project│                │                  │                 │  /opt/cryptsk-gateway│
+│  /home/z/my-project│                │                  │                 │  /opt/cryptsk-nexus│
 └──────────────────┘                  └──────────────────┘                 └──────────────────┘
        │                                                                        │
        │  bun run dev (port 3000)                                              │  PM2 → Next.js (port 3000)
        │  Limited: 4GB RAM                                                     │  7.7GB RAM, PostgreSQL
        └────────────────────────────────────────────────────────────────────────┘
-                            Test via: http://103.244.7.221:3000
+                            Test via: https://nexus.cryptsk.com/   via cloudflaied tunnel
 ```
 
 ### Why This Architecture?
@@ -39,7 +39,7 @@
 |-----------|---------|------------|
 | **Z.ai Sandbox** | Write code, iterate fast | 4GB RAM limit, ephemeral filesystem |
 | **GitHub** | Version control, source of truth | — |
-| **Production Server** | Run the actual app, test with real DB | Remote access only via SSH |
+| **Production Server** | Running the actual app, test with real DB | Remote access only via SSH |
 
 ---
 
@@ -63,23 +63,23 @@
 | **SSH Port** | `22222` |
 | **SSH User** | `root` |
 | **SSH Password** | `CryptSK@123#$` |
-| **Project Path** | `/opt/cryptsk-gateway` |
+| **Project Path** | `/opt/cryptsk-nexus` |
 | **RAM** | 7.7 GB |
 | **OS** | Debian 13 (Trixie) |
 | **Node.js** | v22 |
 | **Bun** | v1.2.4 |
 | **PM2** | Process manager for all services |
 | **Database** | PostgreSQL 18.4 |
-| **DB Name** | `cryptskdb` |
-| **DB User** | `cryptsk` |
-| **DB Password** | `Cryptsk2026` |
+| **DB Name** | `cryptsknexus` |
+| **DB User** | `cryptsknexus` |
+| **DB Password** | `cryptsknexus2026` |
 | **DB URL** | `postgresql://cryptsk:Cryptsk2026@localhost:5432/cryptskdb` |
 
 ### GitHub Repository
 
 | Property | Value |
 |----------|-------|
-| **Repo** | `github.com/chiranjitk/CRYPTSKINTELLIGENT-ISP-PLATFORM` |
+| **Repo** | `https://github.com/chiranjitk/cryptsk-nexus.git` |
 | **Branch** | `main` |
 | **Visibility** | Private |
 
@@ -112,9 +112,9 @@ bun install
    b. SSH to prod → git fetch && git reset --hard origin/main
    c. SSH to prod → bun install
    d. SSH to prod → next build
-   e. SSH to prod → pm2 restart cryptsk-gateway
+   e. SSH to prod → pm2 restart cryptsk-nexus
    f. SSH to prod → curl http://localhost:3000 (verify)
-4. Test on production: http://103.244.7.221:3000
+4. Test on production: https://nexus.cryptsk.com/
 ```
 
 ### Recovery Flow (if sandbox is reset)
@@ -171,7 +171,7 @@ const PROD = {
   password: 'CryptSK@123#$',
   readyTimeout: 30000,
 };
-const PROD_PROJECT_DIR = '/opt/cryptsk-gateway';
+const PROD_PROJECT_DIR = '/opt/cryptsk-nexus';
 const SANDBOX_DIR = '/home/z/my-project';
 ```
 
@@ -198,7 +198,7 @@ git push origin main
 ssh -p 22222 root@103.244.7.221
 
 # 2. Pull latest code
-cd /opt/cryptsk-gateway
+cd /opt/cryptsk-nexus
 git fetch --all
 git reset --hard origin/main
 
@@ -209,7 +209,7 @@ bun install
 NODE_OPTIONS="--max-old-space-size=2048" npx next build
 
 # 5. Restart
-pm2 restart cryptsk-gateway
+pm2 restart cryptsk-nexus
 
 # 6. Verify
 sleep 5
@@ -233,14 +233,14 @@ The platform runs multiple services managed by PM2:
 pm2 status
 
 # Restart main app
-pm2 restart cryptsk-gateway
+pm2 restart cryptsk-nexus
 
 # Restart specific mini-service
 pm2 restart cryptsk-chat-service
 pm2 restart cryptsk-speedtest-service
 
 # View logs
-pm2 logs cryptsk-gateway --lines 50
+pm2 logs cryptsk-nexus --lines 50
 
 # Monitor
 pm2 monit
@@ -256,7 +256,7 @@ pm2 startup
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| **cryptsk-gateway** | 3000 | Main Next.js application |
+| **cryptsk-nexus** | 3000 | Main Next.js application |
 | **cryptsk-chat-service** | 3003 | Real-time chat (Socket.IO) |
 | **cryptsk-speedtest-service** | 3005 | Speed test WebSocket |
 | **cryptsk-network-monitor** | 3007 | Network monitoring |
@@ -333,10 +333,10 @@ NODE_OPTIONS="--max-old-space-size=2048" npx next build
 
 ```bash
 # Check error logs
-pm2 logs cryptsk-gateway --err --lines 30
+pm2 logs cryptsk-nexus --err --lines 30
 
 # Delete and restart
-pm2 delete cryptsk-gateway
+pm2 delete cryptsk-nexus
 pm2 start ecosystem.config.cjs
 pm2 save
 ```
@@ -351,7 +351,7 @@ systemctl status postgresql
 psql -U cryptsk -d cryptskdb -c "SELECT 1"
 
 # Check .env file
-cat /opt/cryptsk-gateway/.env
+cat /opt/cryptsk-nexus/.env
 ```
 
 ### Issue: Sandbox Codebase Out of Sync
@@ -428,7 +428,7 @@ git add -A && git commit -m "fix: description" && git push origin main
 
 ```bash
 # Via agent-browser
-agent-browser open http://103.244.7.221:3000
+agent-browser open https://nexus.cryptsk.com/
 
 # Via curl (from prod)
 curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
@@ -438,7 +438,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
 
 | File | Sandbox | Production |
 |------|---------|------------|
-| **Project Root** | `/home/z/my-project` | `/opt/cryptsk-gateway` |
+| **Project Root** | `/home/z/my-project` | `/opt/cryptsk-nexus` |
 | **Environment** | `.env` | `.env` |
 | **Deploy Script** | `scripts/deploy.mjs` | N/A (run from sandbox) |
 | **PM2 Config** | `ecosystem.config.cjs` | `ecosystem.config.cjs` |
@@ -451,7 +451,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
 ## 📝 Notes
 
 - **Sandbox is ephemeral** — always push code to GitHub before closing a session
-- **Test on production** using `http://103.244.7.221:3000` via agent-browser
+- **Test on production** using `https://nexus.cryptsk.com/` via agent-browser
 - **PM2** manages all services — use `pm2 status` to check health
 - **PostgreSQL** on prod has the full dataset; sandbox uses SQLite for local dev
 - **Deploy script** handles the full pipeline automatically — prefer it over manual steps
@@ -459,4 +459,4 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
 
 ---
 
-*Last updated: 2025-09-08 | CRYPTSK Intelligent ISP Platform*
+*Last updated: 2025-09-08 | CRYPTSK *
