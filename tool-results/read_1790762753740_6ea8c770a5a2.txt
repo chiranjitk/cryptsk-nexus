@@ -1,0 +1,1591 @@
+     1→// ═══════════════════════════════════════════════════════════════
+     2→// CRYPTSKINTELLIGENT Session Engine — Port 3010
+     3→// Built-in NAS Manager (24Online / Antlabs style)
+     4→// Manages subscriber sessions, policy enforcement, CoA, and stats
+     5→// ═══════════════════════════════════════════════════════════════
+     6→
+     7→import { PrismaClient } from "@prisma/client";
+     8→import { requireAuth, corsHeaders } from "../shared/auth.ts";
+     9→import { createLogger } from "../shared/logger.ts";
+    10→
+    11→const db = new PrismaClient();
+    12→const logger = createLogger("session-engine");
+    13→const SERVICE_START = Date.now();
+    14→
+    15→// ─── WebSocket State ─────────────────────────────────────────
+    16→const wsClients = new Set<{ send: (data: string) => void }>();
+    17→
+    18→function broadcastWs(event: string, data: unknown) {
+    19→  const msg = JSON.stringify({ event, data, ts: new Date().toISOString() });
+    20→  for (const client of wsClients) {
+    21→    try { client.send(msg); } catch { wsClients.delete(client); }
+    22→  }
+    23→}
+    24→
+    25→// ─── Helpers ─────────────────────────────────────────────────
+    26→
+    27→function json(data: unknown, status = 200) {
+    28→  return new Response(JSON.stringify(data), {
+    29→    status,
+    30→    headers: { "Content-Type": "application/json", ...corsHeaders },
+    31→  });
+    32→}
+    33→
+    34→function jsonErr(message: string, status = 400) {
+    35→  return json({ error: message }, status);
+    36→}
+    37→
+    38→/**
+    39→ * Generate session ID: CRYPTSK-{timestamp}-{random6}
+    40→ */
+    41→function generateSessionId(): string {
+    42→  const ts = Date.now().toString(36).toUpperCase();
+    43→  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+    44→  return `CRYPTSK-${ts}-${rand}`;
+    45→}
+    46→
+    47→/**
+    48→ * Resolve effective speed limits through the chain:
+    49→ *   subscriber.radiusGroup → plan.group → plan.downloadSpeed/uploadSpeed → subscriber.currentSpeed*
+    50→ * RadiusGroup values are in Mbps; Plan.downloadSpeed/uploadSpeed are in Kbps.
+    51→ * Returns { speedDown, speedUp } in Kbps (0 = not set).
+    52→ */
+    53→function resolveSpeedsKbps(subscriber: {
+    54→  radiusGroup?: { speedLimitDown: number; speedLimitUp: number } | null;
+    55→  plan?: {
+    56→    downloadSpeed: number;
+    57→    uploadSpeed: number;
+    58→    group?: { speedLimitDown: number; speedLimitUp: number } | null;
+    59→  } | null;
+    60→  currentSpeedDown: number;
+    61→  currentSpeedUp: number;
+    62→}): { speedDown: number; speedUp: number } {
+    63→  // Override group takes highest priority (values in Mbps → convert to Kbps)
+    64→  if (subscriber.radiusGroup?.speedLimitDown) {
+    65→    return {
+    66→      speedDown: subscriber.radiusGroup.speedLimitDown * 1000,
+    67→      speedUp: subscriber.radiusGroup.speedLimitUp * 1000,
+    68→    };
+    69→  }
+    70→  // Plan's linked group (values in Mbps → convert to Kbps)
+    71→  if (subscriber.plan?.group?.speedLimitDown) {
+    72→    return {
+    73→      speedDown: subscriber.plan.group.speedLimitDown * 1000,
+    74→      speedUp: subscriber.plan.group.speedLimitUp * 1000,
+    75→    };
+    76→  }
+    77→  // Plan's own speeds (already in Kbps)
+    78→  if (subscriber.plan?.downloadSpeed) {
+    79→    return {
+    80→      speedDown: subscriber.plan.downloadSpeed,
+    81→      speedUp: subscriber.plan.uploadSpeed,
+    82→    };
+    83→  }
+    84→  // Subscriber-level current speeds (assumed Mbps → convert to Kbps)
+    85→  if (subscriber.currentSpeedDown) {
+    86→    return {
+    87→      speedDown: subscriber.currentSpeedDown * 1000,
+    88→      speedUp: subscriber.currentSpeedUp * 1000,
+    89→    };
+    90→  }
+    91→  return { speedDown: 0, speedUp: 0 };
+    92→}
+    93→
+    94→/**
+    95→ * Resolve effective data limit for a subscriber.
+    96→ * RadiusGroup.dataLimit is in MB; Plan.dataLimitGb is in GB → convert to MB.
+    97→ */
+    98→function resolveDataLimitMb(subscriber: {
+    99→  radiusGroup?: { dataLimit: number | null } | null;
+   100→  plan?: {
+   101→    dataLimitGb: number | null;
+   102→    group?: { dataLimit: number | null } | null;
+   103→  } | null;
+   104→}): number | null {
+   105→  return (
+   106→    subscriber.radiusGroup?.dataLimit ??
+   107→    subscriber.plan?.group?.dataLimit ??
+   108→    (subscriber.plan?.dataLimitGb ? Math.round(subscriber.plan.dataLimitGb * 1024) : null)
+   109→  );
+   110→}
+   111→
+   112→/**
+   113→ * Resolve effective session timeout (seconds).
+   114→ */
+   115→function resolveSessionTimeout(subscriber: {
+   116→  radiusGroup?: { sessionTimeout: number | null } | null;
+   117→  plan?: { group?: { sessionTimeout: number | null } | null } | null;
+   118→  sessionTimeout: number | null;
+   119→}): number | null {
+   120→  return (
+   121→    subscriber.sessionTimeout ??
+   122→    subscriber.radiusGroup?.sessionTimeout ??
+   123→    subscriber.plan?.group?.sessionTimeout ??
+   124→    null
+   125→  );
+   126→}
+   127→
+   128→/**
+   129→ * Resolve effective idle timeout (seconds).
+   130→ */
+   131→function resolveIdleTimeout(subscriber: {
+   132→  idleTimeout: number | null;
+   133→}): number | null {
+   134→  return subscriber.idleTimeout ?? null;
+   135→}
+   136→
+   137→/**
+   138→ * Log a session event
+   139→ */
+   140→async function logEvent(params: {
+   141→  nasSessionId?: string;
+   142→  sessionId?: string;
+   143→  subscriberId?: string;
+   144→  username?: string;
+   145→  eventType: string;
+   146→  context?: Record<string, unknown>;
+   147→  authResult?: string;
+   148→  clientIp?: string;
+   149→  macAddress?: string;
+   150→  source?: string;
+   151→  triggeredBy?: string;
+   152→}) {
+   153→  try {
+   154→    await db.sessionEvent.create({ data: params });
+   155→  } catch (err) {
+   156→    logger.error("Failed to log session event", { error: String(err), params });
+   157→  }
+   158→}
+   159→
+   160→/**
+   161→ * Close a session by setting it to CLOSED
+   162→ */
+   163→async function closeSession(
+   164→  sessionId: string,
+   165→  cause: string,
+   166→  reason: string,
+   167→  terminatedBy: string
+   168→) {
+   169→  const session = await db.nasSession.findUnique({ where: { sessionId } });
+   170→  if (!session) return null;
+   171→  if (session.status === "CLOSED") return session;
+   172→
+   173→  const now = new Date();
+   174→  const sessionTimeSec = Math.floor((now.getTime() - session.startTime.getTime()) / 1000);
+   175→
+   176→  const closed = await db.nasSession.update({
+   177→    where: { id: session.id },
+   178→    data: {
+   179→      status: "CLOSED",
+   180→      stopTime: now,
+   181→      terminateCause: cause,
+   182→      disconnectReason: reason,
+   183→      terminatedBy,
+   184→      sessionTimeSec,
+   185→    },
+   186→  });
+   187→
+   188→  // Update subscriber last auth info
+   189→  await db.subscriber.update({
+   190→    where: { id: session.subscriberId },
+   191→    data: {
+   192→      lastAuthAt: now,
+   193→      lastAuthResult: cause,
+   194→    },
+   195→  });
+   196→
+   197→  return closed;
+   198→}
+   199→
+   200→// ─── HTTP Server ─────────────────────────────────────────────
+   201→
+   202→const server = Bun.serve({
+   203→  port: 3010,
+   204→  fetch(req, server) {
+   205→    const url = new URL(req.url);
+   206→    const path = url.pathname;
+   207→
+   208→    // Handle WebSocket upgrade on "/"
+   209→    if (path === "/" && req.headers.get("upgrade") === "websocket") {
+   210→      if (server.upgrade(req)) return;
+   211→      return new Response("WebSocket upgrade failed", { status: 500 });
+   212→    }
+   213→
+   214→    // CORS preflight
+   215→    if (req.method === "OPTIONS") {
+   216→      return new Response(null, { status: 204, headers: corsHeaders });
+   217→    }
+   218→
+   219→    return handleRequest(req, path, url);
+   220→  },
+   221→  websocket: {
+   222→    open(ws) {
+   223→      wsClients.add(ws);
+   224→      logger.info("WebSocket client connected", { totalClients: wsClients.size });
+   225→    },
+   226→    close(ws) {
+   227→      wsClients.delete(ws);
+   228→      logger.info("WebSocket client disconnected", { totalClients: wsClients.size });
+   229→    },
+   230→    message(ws, message) {
+   231→      // Echo for keepalive
+   232→      try {
+   233→        const data = JSON.parse(String(message));
+   234→        if (data.type === "ping") {
+   235→          ws.send(JSON.stringify({ type: "pong", ts: new Date().toISOString() }));
+   236→        }
+   237→      } catch { /* ignore malformed */ }
+   238→    },
+   239→  },
+   240→});
+   241→
+   242→logger.info("Session Engine started on port 3010", { version: "1.0.0" });
+   243→
+   244→// ─── Periodic Stats Broadcast (every 10s) ───────────────────
+   245→
+   246→setInterval(async () => {
+   247→  try {
+   248→    const activeSessions = await db.nasSession.count({ where: { status: "ACTIVE" } });
+   249→    broadcastWs("stats_tick", { activeSessions, uptime: process.uptime() });
+   250→  } catch { /* ignore */ }
+   251→}, 10_000);
+   252→
+   253→// ─── Auto-Enforcement Cron (every 30s) ─────────────────────
+   254→// Automatically enforces data/time/idle limits on active sessions
+   255→// like 24Online / Antlabs built-in enforcement
+   256→
+   257→setInterval(async () => {
+   258→  try {
+   259→    const nasConfig = await db.nasConfig.findUnique({ where: { id: "builtin" } });
+   260→    if (!nasConfig) return;
+   261→
+   262→    const enforceData = nasConfig.enforceDataLimit ?? true;
+   263→    const enforceTime = nasConfig.enforceTimeLimit ?? true;
+   264→    const enforceIdle = nasConfig.enforceIdleTimeout ?? true;
+   265→
+   266→    // Skip if all enforcement is disabled
+   267→    if (!enforceData && !enforceTime && !enforceIdle) return;
+   268→
+   269→    const activeSessions = await db.nasSession.findMany({
+   270→      where: { status: "ACTIVE" },
+   271→    });
+   272→
+   273→    if (activeSessions.length === 0) return;
+   274→
+   275→    const now = Date.now();
+   276→    let disconnectedCount = 0;
+   277→
+   278→    for (const session of activeSessions) {
+   279→      const sessionAgeSec = Math.floor((now - session.startTime.getTime()) / 1000);
+   280→      const totalBytes = Number(session.inputOctets) + Number(session.outputOctets);
+   281→      const totalMb = totalBytes / (1024 * 1024);
+   282→      const idleSec = Math.floor((now - session.lastActivity.getTime()) / 1000);
+   283→
+   284→      let shouldDisconnect = false;
+   285→      let reason = "";
+   286→      let eventType = "";
+   287→
+   288→      // Check data limit
+   289→      if (enforceData && session.dataLimitMb && totalMb >= session.dataLimitMb) {
+   290→        shouldDisconnect = true;
+   291→        reason = `Data limit reached: ${totalMb.toFixed(1)}MB / ${session.dataLimitMb}MB`;
+   292→        eventType = "DATA_LIMIT_REACHED";
+   293→      }
+   294→
+   295→      // Check session timeout
+   296→      if (!shouldDisconnect && enforceTime && session.sessionTimeoutSec && sessionAgeSec >= session.sessionTimeoutSec) {
+   297→        shouldDisconnect = true;
+   298→        reason = `Session timeout: ${formatDurationCron(sessionAgeSec)} / ${formatDurationCron(session.sessionTimeoutSec)}`;
+   299→        eventType = "TIME_LIMIT_REACHED";
+   300→      }
+   301→
+   302→      // Check idle timeout
+   303→      if (!shouldDisconnect && enforceIdle && session.idleTimeoutSec && idleSec >= session.idleTimeoutSec) {
+   304→        shouldDisconnect = true;
+   305→        reason = `Idle timeout: ${formatDurationCron(idleSec)} / ${formatDurationCron(session.idleTimeoutSec)}`;
+   306→        eventType = "IDLE_TIMEOUT";
+   307→      }
+   308→
+   309→      if (shouldDisconnect) {
+   310→        const cause = eventType === "DATA_LIMIT_REACHED" ? "Data-Limit"
+   311→          : eventType === "TIME_LIMIT_REACHED" ? "Session-Timeout"
+   312→          : "Idle-Timeout";
+   313→
+   314→        try {
+   315→          await closeSession(session.sessionId, cause, reason, "cron");
+   316→
+   317→          await logEvent({
+   318→            nasSessionId: session.id,
+   319→            sessionId: session.sessionId,
+   320→            subscriberId: session.subscriberId,
+   321→            username: session.username,
+   322→            eventType,
+   323→            context: { reason, sessionAgeSec, totalMb, idleSec },
+   324→            source: "cron",
+   325→          });
+   326→
+   327→          broadcastWs("session_stop", {
+   328→            sessionId: session.sessionId,
+   329→            username: session.username,
+   330→            cause,
+   331→          });
+   332→
+   333→          disconnectedCount++;
+   334→        } catch (err) {
+   335→          logger.error("Auto-enforce failed for session", { sessionId: session.sessionId, error: String(err) });
+   336→        }
+   337→      }
+   338→    }
+   339→
+   340→    if (disconnectedCount > 0) {
+   341→      logger.info("Auto-enforcement completed", { checked: activeSessions.length, disconnected: disconnectedCount });
+   342→    }
+   343→  } catch (err) {
+   344→    logger.error("Auto-enforcement error", { error: String(err) });
+   345→  }
+   346→}, 30_000);
+   347→
+   348→function formatDurationCron(seconds: number): string {
+   349→  if (seconds < 60) return `${seconds}s`;
+   350→  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+   351→  const h = Math.floor(seconds / 3600);
+   352→  const m = Math.floor((seconds % 3600) / 60);
+   353→  return `${h}h ${m}m`;
+   354→}
+   355→
+   356→logger.info("Auto-enforcement cron started (every 30s)", {});
+   357→
+   358→// ─── Request Router ──────────────────────────────────────────
+   359→
+   360→async function handleRequest(req: Request, path: string, url: URL) {
+   361→  // ── Health (no auth) ──
+   362→  if (path === "/api/health" && req.method === "GET") {
+   363→    const activeSessions = await db.nasSession.count({ where: { status: "ACTIVE" } });
+   364→    return json({
+   365→      status: "ok",
+   366→      service: "session-engine",
+   367→      version: "1.0.0",
+   368→      uptime: process.uptime(),
+   369→      activeSessions,
+   370→      wsClients: wsClients.size,
+   371→      timestamp: new Date().toISOString(),
+   372→    });
+   373→  }
+   374→
+   375→  // Root (no auth)
+   376→  if (path === "/" && req.method === "GET") {
+   377→    return json({ status: "ok", service: "session-engine", health: "/api/health" });
+   378→  }
+   379→
+   380→  // ── All remaining endpoints require auth ──
+   381→  let auth;
+   382→  try {
+   383→    auth = requireAuth(req);
+   384→  } catch {
+   385→    return json({ error: "Unauthorized" }, 401);
+   386→  }
+   387→
+   388→  // ══════════════════════════════════════════════════════════
+   389→  // AUTHENTICATION ENDPOINTS
+   390→  // ══════════════════════════════════════════════════════════
+   391→
+   392→  // POST /api/auth — Authenticate a subscriber
+   393→  if (path === "/api/auth" && req.method === "POST") {
+   394→    const body = await req.json().catch(() => ({}));
+   395→    const { serviceUsername, servicePassword, macAddress, clientIp } = body;
+   396→
+   397→    if (!serviceUsername || !servicePassword) {
+   398→      return jsonErr("serviceUsername and servicePassword are required");
+   399→    }
+   400→
+   401→    const clientIpStr = clientIp || req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "";
+   402→    const macStr = macAddress || "";
+   403→
+   404→    // Log auth request
+   405→    await logEvent({
+   406→      username: serviceUsername,
+   407→      eventType: "AUTH_REQUEST",
+   408→      context: { method: "LOCAL_DB" },
+   409→      clientIp: clientIpStr,
+   410→      macAddress: macStr,
+   411→      source: "api",
+   412→      triggeredBy: auth.userId,
+   413→    });
+   414→
+   415→    // Find subscriber by serviceUsername
+   416→    const subscriber = await db.subscriber.findUnique({
+   417→      where: { serviceUsername },
+   418→      include: {
+   419→        plan: {
+   420→          select: {
+   421→            id: true,
+   422→            name: true,
+   423→            downloadSpeed: true,
+   424→            uploadSpeed: true,
+   425→            dataLimitGb: true,
+   426→            maxConcurrentSessions: true,
+   427→            group: {
+   428→              select: {
+   429→                id: true,
+   430→                name: true,
+   431→                speedLimitDown: true,
+   432→                speedLimitUp: true,
+   433→                dataLimit: true,
+   434→                sessionTimeout: true,
+   435→              },
+   436→            },
+   437→          },
+   438→        },
+   439→        radiusGroup: {
+   440→          select: {
+   441→            id: true,
+   442→            name: true,
+   443→            speedLimitDown: true,
+   444→            speedLimitUp: true,
+   445→            dataLimit: true,
+   446→            sessionTimeout: true,
+   447→          },
+   448→        },
+   449→      },
+   450→    });
+   451→
+   452→    if (!subscriber) {
+   453→      await logEvent({
+   454→        username: serviceUsername,
+   455→        eventType: "AUTH_FAILURE",
+   456→        authResult: "Access-Reject",
+   457→        context: { reason: "Subscriber not found" },
+   458→        clientIp: clientIpStr,
+   459→        macAddress: macStr,
+   460→        source: "api",
+   461→        triggeredBy: auth.userId,
+   462→      });
+   463→      return json({ error: "Invalid credentials", authResult: "Access-Reject" }, 401);
+   464→    }
+   465→
+   466→    // Check subscriber status
+   467→    if (subscriber.status !== "ACTIVE") {
+   468→      await logEvent({
+   469→        subscriberId: subscriber.id,
+   470→        username: serviceUsername,
+   471→        eventType: "AUTH_FAILURE",
+   472→        authResult: "Access-Reject",
+   473→        context: { reason: "Subscriber not active", status: subscriber.status },
+   474→        clientIp: clientIpStr,
+   475→        macAddress: macStr,
+   476→        source: "api",
+   477→        triggeredBy: auth.userId,
+   478→      });
+   479→      return json({ error: "Subscriber not active", authResult: "Access-Reject", status: subscriber.status }, 403);
+   480→    }
+   481→
+   482→    // Check radiusEnabled flag
+   483→    if (!subscriber.radiusEnabled) {
+   484→      await logEvent({
+   485→        subscriberId: subscriber.id,
+   486→        username: serviceUsername,
+   487→        eventType: "AUTH_FAILURE",
+   488→        authResult: "Access-Reject",
+   489→        context: { reason: "RADIUS not enabled for subscriber" },
+   490→        clientIp: clientIpStr,
+   491→        macAddress: macStr,
+   492→        source: "api",
+   493→        triggeredBy: auth.userId,
+   494→      });
+   495→      return json({ error: "RADIUS not enabled for subscriber", authResult: "Access-Reject" }, 403);
+   496→    }
+   497→
+   498→    // Validate password
+   499→    if (subscriber.servicePassword !== servicePassword) {
+   500→      await logEvent({
+   501→        subscriberId: subscriber.id,
+   502→        username: serviceUsername,
+   503→        eventType: "AUTH_FAILURE",
+   504→        authResult: "Access-Reject",
+   505→        context: { reason: "Invalid password" },
+   506→        clientIp: clientIpStr,
+   507→        macAddress: macStr,
+   508→        source: "api",
+   509→        triggeredBy: auth.userId,
+   510→      });
+   511→      return json({ error: "Invalid credentials", authResult: "Access-Reject" }, 401);
+   512→    }
+   513→
+   514→    // Resolve policy
+   515→    const speeds = resolveSpeedsKbps(subscriber);
+   516→    const dataLimitMb = resolveDataLimitMb(subscriber);
+   517→    const sessionTimeoutSec = resolveSessionTimeout(subscriber);
+   518→    const idleTimeoutSec = resolveIdleTimeout(subscriber);
+   519→    const maxConcurrent = subscriber.plan?.maxConcurrentSessions ?? 1;
+   520→
+   521→    // Check concurrent sessions
+   522→    const activeCount = await db.nasSession.count({
+   523→      where: { subscriberId: subscriber.id, status: "ACTIVE" },
+   524→    });
+   525→    if (activeCount >= maxConcurrent) {
+   526→      // Close existing sessions if maxConcurrent is 1 (replace session)
+   527→      if (maxConcurrent === 1) {
+   528→        const existingSessions = await db.nasSession.findMany({
+   529→          where: { subscriberId: subscriber.id, status: "ACTIVE" },
+   530→        });
+   531→        for (const existing of existingSessions) {
+   532→          await closeSession(existing.sessionId, "Session-Timeout", "Replaced by new login", "system");
+   533→          await logEvent({
+   534→            nasSessionId: existing.id,
+   535→            sessionId: existing.sessionId,
+   536→            subscriberId: subscriber.id,
+   537→            username: serviceUsername,
+   538→            eventType: "SESSION_STOP",
+   539→            context: { reason: "Replaced by new login" },
+   540→            source: "api",
+   541→            triggeredBy: auth.userId,
+   542→          });
+   543→        }
+   544→      } else {
+   545→        await logEvent({
+   546→          subscriberId: subscriber.id,
+   547→          username: serviceUsername,
+   548→          eventType: "AUTH_FAILURE",
+   549→          authResult: "Access-Reject",
+   550→          context: { reason: "Max concurrent sessions reached", activeCount, maxConcurrent },
+   551→          source: "api",
+   552→          triggeredBy: auth.userId,
+   553→        });
+   554→        return json({
+   555→          error: "Max concurrent sessions reached",
+   556→          authResult: "Access-Reject",
+   557→          activeCount,
+   558→          maxConcurrent,
+   559→        }, 403);
+   560→      }
+   561→    }
+   562→
+   563→    // Create session
+   564→    const sessionId = generateSessionId();
+   565→    const nasConfig = await db.nasConfig.findUnique({ where: { id: "builtin" } });
+   566→
+   567→    const session = await db.nasSession.create({
+   568→      data: {
+   569→        sessionId,
+   570→        subscriberId: subscriber.id,
+   571→        username: serviceUsername,
+   572→        nasIp: nasConfig?.ipAddress || "127.0.0.1",
+   573→        authMethod: "LOCAL_DB",
+   574→        status: "ACTIVE",
+   575→        planId: subscriber.plan?.id || null,
+   576→        planName: subscriber.plan?.name || "",
+   577→        radiusGroupId: subscriber.radiusGroup?.id || subscriber.plan?.group?.id || null,
+   578→        radiusGroupName: subscriber.radiusGroup?.name || subscriber.plan?.group?.name || "",
+   579→        speedDownKbps: speeds.speedDown,
+   580→        speedUpKbps: speeds.speedUp,
+   581→        dataLimitMb,
+   582→        sessionTimeoutSec: sessionTimeoutSec ?? nasConfig?.defaultSessionTimeoutSec ?? 86400,
+   583→        idleTimeoutSec: idleTimeoutSec ?? nasConfig?.defaultIdleTimeoutSec ?? 3600,
+   584→        callingStationId: macStr,
+   585→        assignedIp: subscriber.ipAddress || "",
+   586→      },
+   587→    });
+   588→
+   589→    // Update subscriber last auth
+   590→    await db.subscriber.update({
+   591→      where: { id: subscriber.id },
+   592→      data: { lastAuthAt: new Date(), lastAuthResult: "Access-Accept" },
+   593→    });
+   594→
+   595→    // Log success
+   596→    await logEvent({
+   597→      nasSessionId: session.id,
+   598→      sessionId,
+   599→      subscriberId: subscriber.id,
+   600→      username: serviceUsername,
+   601→      eventType: "AUTH_SUCCESS",
+   602→      authResult: "Access-Accept",
+   603→      context: {
+   604→        planName: subscriber.plan?.name,
+   605→        speeds,
+   606→        dataLimitMb,
+   607→        sessionTimeoutSec,
+   608→        maxConcurrent,
+   609→      },
+   610→      clientIp: clientIpStr,
+   611→      macAddress: macStr,
+   612→      source: "api",
+   613→      triggeredBy: auth.userId,
+   614→    });
+   615→
+   616→    await logEvent({
+   617→      nasSessionId: session.id,
+   618→      sessionId,
+   619→      subscriberId: subscriber.id,
+   620→      username: serviceUsername,
+   621→      eventType: "SESSION_START",
+   622→      context: { planName: subscriber.plan?.name, speeds, dataLimitMb },
+   623→      source: "api",
+   624→      triggeredBy: auth.userId,
+   625→    });
+   626→
+   627→    // Broadcast via WebSocket
+   628→    broadcastWs("session_start", {
+   629→      sessionId,
+   630→      username: serviceUsername,
+   631→      subscriberName: subscriber.name,
+   632→      planName: subscriber.plan?.name,
+   633→      speeds,
+   634→    });
+   635→
+   636→    logger.info("Session authenticated", {
+   637→      sessionId,
+   638→      username: serviceUsername,
+   639→      subscriberId: subscriber.id,
+   640→      speeds,
+   641→    });
+   642→
+   643→    return json({
+   644→      success: true,
+   645→      authResult: "Access-Accept",
+   646→      session: {
+   647→        sessionId,
+   648→        subscriberId: subscriber.id,
+   649→        username: serviceUsername,
+   650→        subscriberName: subscriber.name,
+   651→        planName: subscriber.plan?.name,
+   652→        speeds,
+   653→        dataLimitMb,
+   654→        sessionTimeoutSec: session.sessionTimeoutSec,
+   655→        idleTimeoutSec: session.idleTimeoutSec,
+   656→        startTime: session.startTime,
+   657→      },
+   658→    }, 201);
+   659→  }
+   660→
+   661→  // POST /api/logout — End a session
+   662→  if (path === "/api/logout" && req.method === "POST") {
+   663→    const body = await req.json().catch(() => ({}));
+   664→    const { sessionId, username } = body;
+   665→
+   666→    if (!sessionId && !username) {
+   667→      return jsonErr("sessionId or username is required");
+   668→    }
+   669→
+   670→    let session;
+   671→    if (sessionId) {
+   672→      session = await db.nasSession.findUnique({ where: { sessionId } });
+   673→    } else {
+   674→      session = await db.nasSession.findFirst({
+   675→        where: { username, status: "ACTIVE" },
+   676→        orderBy: { startTime: "desc" },
+   677→      });
+   678→    }
+   679→
+   680→    if (!session) {
+   681→      return jsonErr("Session not found", 404);
+   682→    }
+   683→    if (session.status === "CLOSED") {
+   684→      return jsonErr("Session already closed");
+   685→    }
+   686→
+   687→    const closed = await closeSession(session.sessionId, "User-Request", "User logged out", auth.userId);
+   688→
+   689→    await logEvent({
+   690→      nasSessionId: session.id,
+   691→      sessionId: session.sessionId,
+   692→      subscriberId: session.subscriberId,
+   693→      username: session.username,
+   694→      eventType: "SESSION_STOP",
+   695→      context: { reason: "User logout" },
+   696→      source: "api",
+   697→      triggeredBy: auth.userId,
+   698→    });
+   699→
+   700→    broadcastWs("session_stop", {
+   701→      sessionId: session.sessionId,
+   702→      username: session.username,
+   703→      cause: "User-Request",
+   704→    });
+   705→
+   706→    const totalOctets = Number(closed.inputOctets) + Number(closed.outputOctets);
+   707→    return json({
+   708→      success: true,
+   709→      session: {
+   710→        sessionId: closed.sessionId,
+   711→        username: closed.username,
+   712→        status: closed.status,
+   713→        duration: closed.sessionTimeSec,
+   714→        downloadBytes: Number(closed.inputOctets),
+   715→        uploadBytes: Number(closed.outputOctets),
+   716→        totalBytes: totalOctets,
+   717→        startTime: closed.startTime,
+   718→        stopTime: closed.stopTime,
+   719→      },
+   720→    });
+   721→  }
+   722→
+   723→  // ══════════════════════════════════════════════════════════
+   724→  // SESSION MANAGEMENT
+   725→  // ══════════════════════════════════════════════════════════
+   726→
+   727→  // GET /api/sessions — List sessions
+   728→  if (path === "/api/sessions" && req.method === "GET") {
+   729→    const status = url.searchParams.get("status") || "ACTIVE";
+   730→    const search = url.searchParams.get("search") || "";
+   731→    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
+   732→    const page = Math.max(parseInt(url.searchParams.get("page") || "1"), 1);
+   733→    const skip = (page - 1) * limit;
+   734→
+   735→    const where: Record<string, unknown> = {};
+   736→    if (status !== "ALL") {
+   737→      where.status = status;
+   738→    }
+   739→    if (search) {
+   740→      where.OR = [
+   741→        { username: { contains: search, mode: "insensitive" } },
+   742→        { sessionId: { contains: search, mode: "insensitive" } },
+   743→        { subscriber: { name: { contains: search, mode: "insensitive" } } },
+   744→        { subscriber: { phone: { contains: search } } },
+   745→        { subscriber: { code: { contains: search, mode: "insensitive" } } },
+   746→      ];
+   747→    }
+   748→
+   749→    const [sessions, total] = await Promise.all([
+   750→      db.nasSession.findMany({
+   751→        where,
+   752→        include: {
+   753→          subscriber: {
+   754→            select: {
+   755→              id: true,
+   756→              name: true,
+   757→              phone: true,
+   758→              code: true,
+   759→              status: true,
+   760→              plan: { select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, dataLimitGb: true } },
+   761→            },
+   762→          },
+   763→        },
+   764→        orderBy: { startTime: "desc" },
+   765→        take: limit,
+   766→        skip,
+   767→      }),
+   768→      db.nasSession.count({ where }),
+   769→    ]);
+   770→
+   771→    return json({
+   772→      sessions: sessions.map((s) => {
+   773→        const totalOctets = Number(s.inputOctets) + Number(s.outputOctets);
+   774→        const duration = s.stopTime
+   775→          ? s.sessionTimeSec
+   776→          : Math.floor((Date.now() - s.startTime.getTime()) / 1000);
+   777→        return {
+   778→          id: s.id,
+   779→          sessionId: s.sessionId,
+   780→          username: s.username,
+   781→          status: s.status,
+   782→          subscriberId: s.subscriberId,
+   783→          subscriberName: s.subscriber.name,
+   784→          subscriberPhone: s.subscriber.phone,
+   785→          subscriberCode: s.subscriber.code,
+   786→          subscriberStatus: s.subscriber.status,
+   787→          planId: s.planId,
+   788→          planName: s.planName,
+   789→          speedDownKbps: s.speedDownKbps,
+   790→          speedUpKbps: s.speedUpKbps,
+   791→          dataLimitMb: s.dataLimitMb,
+   792→          dataUsedMb: Math.round(totalOctets / (1024 * 1024)),
+   793→          dataLimitPercent: s.dataLimitMb ? Math.round((totalOctets / (1024 * 1024) / s.dataLimitMb) * 100) : null,
+   794→          sessionTimeoutSec: s.sessionTimeoutSec,
+   795→          timeRemainingSec: s.sessionTimeoutSec ? Math.max(0, s.sessionTimeoutSec - duration) : null,
+   796→          duration,
+   797→          inputOctets: Number(s.inputOctets),
+   798→          outputOctets: Number(s.outputOctets),
+   799→          totalOctets,
+   800→          assignedIp: s.assignedIp,
+   801→          callingStationId: s.callingStationId,
+   802→          nasIp: s.nasIp,
+   803→          startTime: s.startTime,
+   804→          stopTime: s.stopTime,
+   805→          terminateCause: s.terminateCause,
+   806→          terminatedBy: s.terminatedBy,
+   807→          coaCount: s.coaCount,
+   808→        };
+   809→      }),
+   810→      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+   811→    });
+   812→  }
+   813→
+   814→  // GET /api/sessions/:id — Get session details
+   815→  const sessionDetailMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
+   816→  if (sessionDetailMatch && req.method === "GET") {
+   817→    const sid = sessionDetailMatch[1];
+   818→
+   819→    const session = await db.nasSession.findFirst({
+   820→      where: {
+   821→        OR: [
+   822→          { id: sid },
+   823→          { sessionId: sid },
+   824→        ],
+   825→      },
+   826→      include: {
+   827→        subscriber: {
+   828→          select: {
+   829→            id: true,
+   830→            name: true,
+   831→            phone: true,
+   832→            code: true,
+   833→            email: true,
+   834→            address: true,
+   835→            status: true,
+   836→            serviceUsername: true,
+   837→            connectionType: true,
+   838→            plan: {
+   839→              select: {
+   840→                id: true,
+   841→                name: true,
+   842→                category: true,
+   843→                downloadSpeed: true,
+   844→                uploadSpeed: true,
+   845→                dataLimitGb: true,
+   846→                priceMonthly: true,
+   847→                validityDays: true,
+   848→                maxConcurrentSessions: true,
+   849→                group: {
+   850→                  select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+   851→                },
+   852→              },
+   853→            },
+   854→            radiusGroup: {
+   855→              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+   856→            },
+   857→          },
+   858→        },
+   859→        events: {
+   860→          orderBy: { createdAt: "desc" },
+   861→          take: 20,
+   862→        },
+   863→      },
+   864→    });
+   865→
+   866→    if (!session) return jsonErr("Session not found", 404);
+   867→
+   868→    const totalOctets = Number(session.inputOctets) + Number(session.outputOctets);
+   869→    const duration = session.stopTime
+   870→      ? session.sessionTimeSec
+   871→      : Math.floor((Date.now() - session.startTime.getTime()) / 1000);
+   872→
+   873→    return json({
+   874→      session: {
+   875→        ...session,
+   876→        totalOctets,
+   877→        duration,
+   878→        dataUsedMb: Math.round(totalOctets / (1024 * 1024)),
+   879→        dataLimitPercent: session.dataLimitMb ? Math.round((totalOctets / (1024 * 1024) / session.dataLimitMb) * 100) : null,
+   880→        timeRemainingSec: session.sessionTimeoutSec ? Math.max(0, session.sessionTimeoutSec - duration) : null,
+   881→      },
+   882→    });
+   883→  }
+   884→
+   885→  // POST /api/sessions/:id/disconnect — Admin disconnect
+   886→  const disconnectMatch = path.match(/^\/api\/sessions\/([^/]+)\/disconnect$/);
+   887→  if (disconnectMatch && req.method === "POST") {
+   888→    const sid = disconnectMatch[1];
+   889→
+   890→    const session = await db.nasSession.findFirst({
+   891→      where: { OR: [{ id: sid }, { sessionId: sid }], status: "ACTIVE" },
+   892→    });
+   893→
+   894→    if (!session) return jsonErr("Active session not found", 404);
+   895→
+   896→    const closed = await closeSession(
+   897→      session.sessionId,
+   898→      "Admin-Disconnect",
+   899→      "Disconnected by admin: " + auth.userId,
+   900→      "admin"
+   901→    );
+   902→
+   903→    await logEvent({
+   904→      nasSessionId: session.id,
+   905→      sessionId: session.sessionId,
+   906→      subscriberId: session.subscriberId,
+   907→      username: session.username,
+   908→      eventType: "ADMIN_DISCONNECT",
+   909→      context: { reason: "Admin disconnect" },
+   910→      source: "admin",
+   911→      triggeredBy: auth.userId,
+   912→    });
+   913→
+   914→    broadcastWs("session_stop", {
+   915→      sessionId: session.sessionId,
+   916→      username: session.username,
+   917→      cause: "Admin-Disconnect",
+   918→      triggeredBy: auth.userId,
+   919→    });
+   920→
+   921→    return json({ success: true, sessionId: session.sessionId, status: closed.status });
+   922→  }
+   923→
+   924→  // POST /api/sessions/bulk-disconnect — Bulk disconnect
+   925→  if (path === "/api/sessions/bulk-disconnect" && req.method === "POST") {
+   926→    const body = await req.json().catch(() => ({}));
+   927→    const { sessionIds, reason } = body;
+   928→
+   929→    if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
+   930→      return jsonErr("sessionIds array is required");
+   931→    }
+   932→
+   933→    const limitedIds = sessionIds.slice(0, 100); // max 100 at a time
+   934→    const results: Array<{ sessionId: string; success: boolean; error?: string }> = [];
+   935→
+   936→    for (const sid of limitedIds) {
+   937→      try {
+   938→        const session = await db.nasSession.findFirst({
+   939→          where: { OR: [{ id: sid }, { sessionId: sid }], status: "ACTIVE" },
+   940→        });
+   941→        if (!session) {
+   942→          results.push({ sessionId: sid, success: false, error: "Not found or not active" });
+   943→          continue;
+   944→        }
+   945→
+   946→        await closeSession(session.sessionId, "Admin-Disconnect", reason || "Bulk disconnect", "admin");
+   947→
+   948→        await logEvent({
+   949→          nasSessionId: session.id,
+   950→          sessionId: session.sessionId,
+   951→          subscriberId: session.subscriberId,
+   952→          username: session.username,
+   953→          eventType: "BULK_DISCONNECT",
+   954→          context: { reason: reason || "Bulk disconnect" },
+   955→          source: "admin",
+   956→          triggeredBy: auth.userId,
+   957→        });
+   958→
+   959→        broadcastWs("session_stop", {
+   960→          sessionId: session.sessionId,
+   961→          username: session.username,
+   962→          cause: "Admin-Disconnect",
+   963→          triggeredBy: auth.userId,
+   964→        });
+   965→
+   966→        results.push({ sessionId: sid, success: true });
+   967→      } catch (err) {
+   968→        results.push({ sessionId: sid, success: false, error: String(err) });
+   969→      }
+   970→    }
+   971→
+   972→    return json({
+   973→      success: true,
+   974→      requested: limitedIds.length,
+   975→      results,
+   976→    });
+   977→  }
+   978→
+   979→  // POST /api/sessions/:id/coa — Change of Authorization
+   980→  const coaMatch = path.match(/^\/api\/sessions\/([^/]+)\/coa$/);
+   981→  if (coaMatch && req.method === "POST") {
+   982→    const sid = coaMatch[1];
+   983→    const body = await req.json().catch(() => ({}));
+   984→    const { newPlanId, speedDownKbps, speedUpKbps, disconnect } = body;
+   985→
+   986→    const session = await db.nasSession.findFirst({
+   987→      where: { OR: [{ id: sid }, { sessionId: sid }], status: "ACTIVE" },
+   988→    });
+   989→
+   990→    if (!session) return jsonErr("Active session not found", 404);
+   991→
+   992→    // Handle disconnect via CoA
+   993→    if (disconnect) {
+   994→      await closeSession(session.sessionId, "Session-Disconnect", "CoA disconnect", "admin");
+   995→
+   996→      await db.coaEvent.create({
+   997→        data: {
+   998→          subscriberId: session.subscriberId,
+   999→          radiusSessionId: session.id,
+  1000→          coaType: "SESSION_DISCONNECT",
+  1001→          coaStatus: "SUCCESS",
+  1002→          triggeredBy: auth.userId,
+  1003→          completedAt: new Date(),
+  1004→        },
+  1005→      });
+  1006→
+  1007→      await logEvent({
+  1008→        nasSessionId: session.id,
+  1009→        sessionId: session.sessionId,
+  1010→        subscriberId: session.subscriberId,
+  1011→        username: session.username,
+  1012→        eventType: "COA_SUCCESS",
+  1013→        context: { action: "disconnect" },
+  1014→        source: "admin",
+  1015→        triggeredBy: auth.userId,
+  1016→      });
+  1017→
+  1018→      broadcastWs("session_stop", {
+  1019→        sessionId: session.sessionId,
+  1020→        username: session.username,
+  1021→        cause: "CoA-Disconnect",
+  1022→      });
+  1023→
+  1024→      return json({ success: true, action: "disconnect", sessionId: session.sessionId });
+  1025→    }
+  1026→
+  1027→    // Speed change or plan change
+  1028→    const oldSpeedDown = session.speedDownKbps;
+  1029→    const oldSpeedUp = session.speedUpKbps;
+  1030→    const oldPlanId = session.planId;
+  1031→
+  1032→    let newDown = speedDownKbps ?? session.speedDownKbps;
+  1033→    let newUp = speedUpKbps ?? session.speedUpKbps;
+  1034→    let newPlanName = session.planName;
+  1035→
+  1036→    // If newPlanId specified, resolve from plan
+  1037→    if (newPlanId && newPlanId !== session.planId) {
+  1038→      const newPlan = await db.plan.findUnique({
+  1039→        where: { id: newPlanId },
+  1040→        include: {
+  1041→          group: { select: { speedLimitDown: true, speedLimitUp: true } },
+  1042→        },
+  1043→      });
+  1044→      if (!newPlan) return jsonErr("Plan not found", 404);
+  1045→
+  1046→      newDown = newPlan.downloadSpeed;
+  1047→      newUp = newPlan.uploadSpeed;
+  1048→      newPlanName = newPlan.name;
+  1049→    }
+  1050→
+  1051→    const coaType = newPlanId && newPlanId !== oldPlanId ? "PLAN_CHANGE" : "BANDWIDTH_CHANGE";
+  1052→
+  1053→    // Update session
+  1054→    const updated = await db.nasSession.update({
+  1055→      where: { id: session.id },
+  1056→      data: {
+  1057→        speedDownKbps: newDown,
+  1058→        speedUpKbps: newUp,
+  1059→        planId: newPlanId ?? session.planId,
+  1060→        planName: newPlanName,
+  1061→        coaCount: { increment: 1 },
+  1062→        lastCoaAt: new Date(),
+  1063→      },
+  1064→    });
+  1065→
+  1066→    // Create CoA event
+  1067→    await db.coaEvent.create({
+  1068→      data: {
+  1069→        subscriberId: session.subscriberId,
+  1070→        radiusSessionId: session.id,
+  1071→        coaType,
+  1072→        coaStatus: "SUCCESS",
+  1073→        oldPlanId,
+  1074→        newPlanId: newPlanId ?? session.planId,
+  1075→        triggeredBy: auth.userId,
+  1076→        completedAt: new Date(),
+  1077→      },
+  1078→    });
+  1079→
+  1080→    await logEvent({
+  1081→      nasSessionId: session.id,
+  1082→      sessionId: session.sessionId,
+  1083→      subscriberId: session.subscriberId,
+  1084→      username: session.username,
+  1085→      eventType: "COA_SUCCESS",
+  1086→      context: {
+  1087→        coaType,
+  1088→        oldSpeed: { down: oldSpeedDown, up: oldSpeedUp },
+  1089→        newSpeed: { down: newDown, up: newUp },
+  1090→        oldPlanId,
+  1091→        newPlanId,
+  1092→      },
+  1093→      source: "admin",
+  1094→      triggeredBy: auth.userId,
+  1095→    });
+  1096→
+  1097→    broadcastWs("coa_event", {
+  1098→      sessionId: session.sessionId,
+  1099→      username: session.username,
+  1100→      coaType,
+  1101→      oldSpeed: { down: oldSpeedDown, up: oldSpeedUp },
+  1102→      newSpeed: { down: newDown, up: newUp },
+  1103→    });
+  1104→
+  1105→    return json({
+  1106→      success: true,
+  1107→      action: coaType,
+  1108→      sessionId: session.sessionId,
+  1109→      oldSpeed: { down: oldSpeedDown, up: oldSpeedUp },
+  1110→      newSpeed: { down: newDown, up: newUp },
+  1111→      coaCount: updated.coaCount,
+  1112→    });
+  1113→  }
+  1114→
+  1115→  // ══════════════════════════════════════════════════════════
+  1116→  // POLICY ENGINE
+  1117→  // ══════════════════════════════════════════════════════════
+  1118→
+  1119→  // GET /api/policy/evaluate/:subscriberId
+  1120→  const policyEvalMatch = path.match(/^\/api\/policy\/evaluate\/([^/]+)$/);
+  1121→  if (policyEvalMatch && req.method === "GET") {
+  1122→    const subscriberId = policyEvalMatch[1];
+  1123→
+  1124→    const subscriber = await db.subscriber.findUnique({
+  1125→      where: { id: subscriberId },
+  1126→      include: {
+  1127→        plan: {
+  1128→          select: {
+  1129→            id: true,
+  1130→            name: true,
+  1131→            downloadSpeed: true,
+  1132→            uploadSpeed: true,
+  1133→            dataLimitGb: true,
+  1134→            maxConcurrentSessions: true,
+  1135→            group: {
+  1136→              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+  1137→            },
+  1138→          },
+  1139→        },
+  1140→        radiusGroup: {
+  1141→          select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+  1142→        },
+  1143→      },
+  1144→    });
+  1145→
+  1146→    if (!subscriber) return jsonErr("Subscriber not found", 404);
+  1147→
+  1148→    const speeds = resolveSpeedsKbps(subscriber);
+  1149→    const dataLimitMb = resolveDataLimitMb(subscriber);
+  1150→    const sessionTimeout = resolveSessionTimeout(subscriber);
+  1151→    const idleTimeout = resolveIdleTimeout(subscriber);
+  1152→    const maxConcurrent = subscriber.plan?.maxConcurrentSessions ?? 1;
+  1153→
+  1154→    // Build resolution chain for transparency
+  1155→    const chain: Array<{ source: string; speedDown: number; speedUp: number; dataLimitMb: number | null }> = [];
+  1156→
+  1157→    if (subscriber.radiusGroup?.speedLimitDown) {
+  1158→      chain.push({
+  1159→        source: `subscriber.radiusGroup (${subscriber.radiusGroup.name})`,
+  1160→        speedDown: subscriber.radiusGroup.speedLimitDown * 1000,
+  1161→        speedUp: subscriber.radiusGroup.speedLimitUp * 1000,
+  1162→        dataLimitMb: subscriber.radiusGroup.dataLimit,
+  1163→      });
+  1164→    }
+  1165→    if (subscriber.plan?.group?.speedLimitDown) {
+  1166→      chain.push({
+  1167→        source: `plan.group (${subscriber.plan.group.name})`,
+  1168→        speedDown: subscriber.plan.group.speedLimitDown * 1000,
+  1169→        speedUp: subscriber.plan.group.speedLimitUp * 1000,
+  1170→        dataLimitMb: subscriber.plan.group.dataLimit,
+  1171→      });
+  1172→    }
+  1173→    if (subscriber.plan?.downloadSpeed) {
+  1174→      chain.push({
+  1175→        source: `plan (${subscriber.plan.name})`,
+  1176→        speedDown: subscriber.plan.downloadSpeed,
+  1177→        speedUp: subscriber.plan.uploadSpeed,
+  1178→        dataLimitMb: subscriber.plan.dataLimitGb ? Math.round(subscriber.plan.dataLimitGb * 1024) : null,
+  1179→      });
+  1180→    }
+  1181→    if (subscriber.currentSpeedDown) {
+  1182→      chain.push({
+  1183→        source: "subscriber.currentSpeed*",
+  1184→        speedDown: subscriber.currentSpeedDown * 1000,
+  1185→        speedUp: subscriber.currentSpeedUp * 1000,
+  1186→        dataLimitMb: null,
+  1187→      });
+  1188→    }
+  1189→
+  1190→    return json({
+  1191→      subscriberId: subscriber.id,
+  1192→      username: subscriber.serviceUsername,
+  1193→      subscriberName: subscriber.name,
+  1194→      effectivePolicy: {
+  1195→        speedDownKbps: speeds.speedDown,
+  1196→        speedUpKbps: speeds.speedUp,
+  1197→        speedDownMbps: Math.round(speeds.speedDown / 1000),
+  1198→        speedUpMbps: Math.round(speeds.speedUp / 1000),
+  1199→        dataLimitMb,
+  1200→        sessionTimeoutSec: sessionTimeout,
+  1201→        idleTimeoutSec: idleTimeout,
+  1202→        maxConcurrentSessions: maxConcurrent,
+  1203→      },
+  1204→      resolutionChain: chain,
+  1205→      appliedFrom: chain.length > 0 ? chain[0].source : "default",
+  1206→    });
+  1207→  }
+  1208→
+  1209→  // GET /api/policy/enforce — Run policy enforcement on all active sessions
+  1210→  if (path === "/api/policy/enforce" && req.method === "POST") {
+  1211→    const nasConfig = await db.nasConfig.findUnique({ where: { id: "builtin" } });
+  1212→    const enforceData = nasConfig?.enforceDataLimit ?? true;
+  1213→    const enforceTime = nasConfig?.enforceTimeLimit ?? true;
+  1214→    const enforceIdle = nasConfig?.enforceIdleTimeout ?? true;
+  1215→
+  1216→    const activeSessions = await db.nasSession.findMany({
+  1217→      where: { status: "ACTIVE" },
+  1218→      include: {
+  1219→        subscriber: {
+  1220→          select: {
+  1221→            id: true,
+  1222→            name: true,
+  1223→            plan: { select: { name: true, dataLimitGb: true } },
+  1224→          },
+  1225→        },
+  1226→      },
+  1227→    });
+  1228→
+  1229→    const results: Array<{
+  1230→      sessionId: string;
+  1231→      username: string;
+  1232→      action: string;
+  1233→      reason: string;
+  1234→    }> = [];
+  1235→    const now = Date.now();
+  1236→
+  1237→    for (const session of activeSessions) {
+  1238→      const sessionAgeSec = Math.floor((now - session.startTime.getTime()) / 1000);
+  1239→      const totalBytes = Number(session.inputOctets) + Number(session.outputOctets);
+  1240→      const totalMb = totalBytes / (1024 * 1024);
+  1241→      const idleSec = Math.floor((now - session.lastActivity.getTime()) / 1000);
+  1242→
+  1243→      let shouldDisconnect = false;
+  1244→      let reason = "";
+  1245→
+  1246→      // Check data limit
+  1247→      if (enforceData && session.dataLimitMb && totalMb >= session.dataLimitMb) {
+  1248→        shouldDisconnect = true;
+  1249→        reason = `Data limit reached: ${totalMb.toFixed(1)}MB / ${session.dataLimitMb}MB`;
+  1250→      }
+  1251→
+  1252→      // Check session timeout
+  1253→      if (!shouldDisconnect && enforceTime && session.sessionTimeoutSec && sessionAgeSec >= session.sessionTimeoutSec) {
+  1254→        shouldDisconnect = true;
+  1255→        reason = `Session timeout: ${sessionAgeSec}s / ${session.sessionTimeoutSec}s`;
+  1256→      }
+  1257→
+  1258→      // Check idle timeout
+  1259→      if (!shouldDisconnect && enforceIdle && session.idleTimeoutSec && idleSec >= session.idleTimeoutSec) {
+  1260→        shouldDisconnect = true;
+  1261→        reason = `Idle timeout: ${idleSec}s / ${session.idleTimeoutSec}s`;
+  1262→      }
+  1263→
+  1264→      if (shouldDisconnect) {
+  1265→        const eventType = reason.includes("Data") ? "DATA_LIMIT_REACHED"
+  1266→          : reason.includes("Session timeout") ? "TIME_LIMIT_REACHED"
+  1267→          : "IDLE_TIMEOUT";
+  1268→
+  1269→        await closeSession(
+  1270→          session.sessionId,
+  1271→          eventType === "DATA_LIMIT_REACHED" ? "Data-Limit"
+  1272→            : eventType === "TIME_LIMIT_REACHED" ? "Session-Timeout"
+  1273→            : "Idle-Timeout",
+  1274→          reason,
+  1275→          "system"
+  1276→        );
+  1277→
+  1278→        await logEvent({
+  1279→          nasSessionId: session.id,
+  1280→          sessionId: session.sessionId,
+  1281→          subscriberId: session.subscriberId,
+  1282→          username: session.username,
+  1283→          eventType: eventType as string,
+  1284→          context: { reason, sessionAgeSec, totalMb, idleSec },
+  1285→          source: "cron",
+  1286→        });
+  1287→
+  1288→        await logEvent({
+  1289→          nasSessionId: session.id,
+  1290→          sessionId: session.sessionId,
+  1291→          subscriberId: session.subscriberId,
+  1292→          username: session.username,
+  1293→          eventType: "POLICY_ENFORCE",
+  1294→          context: { reason },
+  1295→          source: "cron",
+  1296→        });
+  1297→
+  1298→        broadcastWs("session_stop", {
+  1299→          sessionId: session.sessionId,
+  1300→          username: session.username,
+  1301→          cause: reason,
+  1302→        });
+  1303→
+  1304→        results.push({
+  1305→          sessionId: session.sessionId,
+  1306→          username: session.username,
+  1307→          action: "disconnected",
+  1308→          reason,
+  1309→        });
+  1310→      }
+  1311→    }
+  1312→
+  1313→    return json({
+  1314→      success: true,
+  1315→      checkedSessions: activeSessions.length,
+  1316→      disconnectedSessions: results.length,
+  1317→      results,
+  1318→    });
+  1319→  }
+  1320→
+  1321→  // ══════════════════════════════════════════════════════════
+  1322→  // STATISTICS / DASHBOARD
+  1323→  // ══════════════════════════════════════════════════════════
+  1324→
+  1325→  // GET /api/stats/overview
+  1326→  if (path === "/api/stats/overview" && req.method === "GET") {
+  1327→    const now = new Date();
+  1328→    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  1329→
+  1330→    const [
+  1331→      activeSessions,
+  1332→      todaySessions,
+  1333→      todayAuthSuccess,
+  1334→      todayAuthFailure,
+  1335→      totalBandwidth,
+  1336→      avgSessionDuration,
+  1337→    ] = await Promise.all([
+  1338→      // Active sessions count
+  1339→      db.nasSession.count({ where: { status: "ACTIVE" } }),
+  1340→
+  1341→      // Today total sessions
+  1342→      db.nasSession.count({ where: { createdAt: { gte: todayStart } } }),
+  1343→
+  1344→      // Today auth successes
+  1345→      db.sessionEvent.count({
+  1346→        where: { eventType: "AUTH_SUCCESS", createdAt: { gte: todayStart } },
+  1347→      }),
+  1348→
+  1349→      // Today auth failures
+  1350→      db.sessionEvent.count({
+  1351→        where: { eventType: "AUTH_FAILURE", createdAt: { gte: todayStart } },
+  1352→      }),
+  1353→
+  1354→      // Total bandwidth for active sessions
+  1355→      db.nasSession.aggregate({
+  1356→        where: { status: "ACTIVE" },
+  1357→        _sum: { inputOctets: true, outputOctets: true },
+  1358→      }),
+  1359→
+  1360→      // Average session duration (closed sessions from today)
+  1361→      db.nasSession.aggregate({
+  1362→        where: { status: "CLOSED", stopTime: { gte: todayStart } },
+  1363→        _avg: { sessionTimeSec: true },
+  1364→      }),
+  1365→
+  1366→    ]);
+  1367→
+  1368→    // Top plans by active sessions
+  1369→    const topPlans = await db.nasSession.groupBy({
+  1370→      by: ["planId", "planName"],
+  1371→      where: { status: "ACTIVE", planId: { not: null } },
+  1372→      _count: { id: true },
+  1373→      orderBy: { _count: { id: "desc" } },
+  1374→      take: 10,
+  1375→    });
+  1376→
+  1377→    const totalAuth = todayAuthSuccess + todayAuthFailure;
+  1378→    const totalInputBytes = Number(totalBandwidth._sum.inputOctets || 0n);
+  1379→    const totalOutputBytes = Number(totalBandwidth._sum.outputOctets || 0n);
+  1380→
+  1381→    return json({
+  1382→      activeSessions,
+  1383→      todaySessions,
+  1384→      authSuccessToday: todayAuthSuccess,
+  1385→      authFailureToday: todayAuthFailure,
+  1386→      authSuccessRate: totalAuth > 0 ? Math.round((todayAuthSuccess / totalAuth) * 100) : 0,
+  1387→      totalDownloadBytes: totalInputBytes,
+  1388→      totalUploadBytes: totalOutputBytes,
+  1389→      totalBandwidthBytes: totalInputBytes + totalOutputBytes,
+  1390→      totalDownloadMb: Math.round(totalInputBytes / (1024 * 1024)),
+  1391→      totalUploadMb: Math.round(totalOutputBytes / (1024 * 1024)),
+  1392→      avgSessionDurationSec: Math.round(avgSessionDuration._avg.sessionTimeSec || 0),
+  1393→      topPlansByActiveSessions: topPlans.map((p) => ({
+  1394→        planId: p.planId,
+  1395→        planName: p.planName,
+  1396→        activeSessions: p._count.id,
+  1397→      })),
+  1398→      uptime: process.uptime(),
+  1399→    });
+  1400→  }
+  1401→
+  1402→  // GET /api/stats/bandwidth
+  1403→  if (path === "/api/stats/bandwidth" && req.method === "GET") {
+  1404→    const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 100);
+  1405→
+  1406→    // Per-subscriber bandwidth for active sessions
+  1407→    const topConsumers = await db.nasSession.findMany({
+  1408→      where: { status: "ACTIVE" },
+  1409→      select: {
+  1410→        subscriberId: true,
+  1411→        username: true,
+  1412→        subscriber: { select: { name: true, plan: { select: { name: true } } } },
+  1413→        inputOctets: true,
+  1414→        outputOctets: true,
+  1415→      },
+  1416→      orderBy: { updatedAt: "desc" },
+  1417→      take: limit,
+  1418→    });
+  1419→
+  1420→    const totalAgg = await db.nasSession.aggregate({
+  1421→      where: { status: "ACTIVE" },
+  1422→      _sum: { inputOctets: true, outputOctets: true },
+  1423→    });
+  1424→
+  1425→    const mapped = topConsumers.map((s) => {
+  1426→      const dl = Number(s.inputOctets);
+  1427→      const ul = Number(s.outputOctets);
+  1428→      return {
+  1429→        subscriberId: s.subscriberId,
+  1430→        username: s.username,
+  1431→        subscriberName: s.subscriber.name,
+  1432→        planName: s.subscriber.plan?.name,
+  1433→        downloadBytes: dl,
+  1434→        uploadBytes: ul,
+  1435→        totalBytes: dl + ul,
+  1436→        downloadMb: Math.round(dl / (1024 * 1024)),
+  1437→        uploadMb: Math.round(ul / (1024 * 1024)),
+  1438→        totalMb: Math.round((dl + ul) / (1024 * 1024)),
+  1439→      };
+  1440→    });
+  1441→
+  1442→    // Sort by totalBytes descending
+  1443→    mapped.sort((a, b) => b.totalBytes - a.totalBytes);
+  1444→
+  1445→    return json({
+  1446→      totalDownloadBytes: Number(totalAgg._sum.inputOctets || 0n),
+  1447→      totalUploadBytes: Number(totalAgg._sum.outputOctets || 0n),
+  1448→      totalDownloadMb: Math.round(Number(totalAgg._sum.inputOctets || 0n) / (1024 * 1024)),
+  1449→      totalUploadMb: Math.round(Number(totalAgg._sum.outputOctets || 0n) / (1024 * 1024)),
+  1450→      topConsumers: mapped,
+  1451→    });
+  1452→  }
+  1453→
+  1454→  // ══════════════════════════════════════════════════════════
+  1455→  // EVENT LOG
+  1456→  // ══════════════════════════════════════════════════════════
+  1457→
+  1458→  // GET /api/events
+  1459→  if (path === "/api/events" && req.method === "GET") {
+  1460→    const eventType = url.searchParams.get("eventType") || "";
+  1461→    const subscriberId = url.searchParams.get("subscriberId") || "";
+  1462→    const sessionId = url.searchParams.get("sessionId") || "";
+  1463→    const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
+  1464→    const page = Math.max(parseInt(url.searchParams.get("page") || "1"), 1);
+  1465→    const skip = (page - 1) * limit;
+  1466→
+  1467→    const where: Record<string, unknown> = {};
+  1468→    if (eventType) where.eventType = eventType;
+  1469→    if (subscriberId) where.subscriberId = subscriberId;
+  1470→    if (sessionId) where.sessionId = sessionId;
+  1471→
+  1472→    const [events, total] = await Promise.all([
+  1473→      db.sessionEvent.findMany({
+  1474→        where,
+  1475→        orderBy: { createdAt: "desc" },
+  1476→        take: limit,
+  1477→        skip,
+  1478→      }),
+  1479→      db.sessionEvent.count({ where }),
+  1480→    ]);
+  1481→
+  1482→    return json({
+  1483→      events,
+  1484→      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+  1485→    });
+  1486→  }
+  1487→
+  1488→  // ══════════════════════════════════════════════════════════
+  1489→  // NAS CONFIG
+  1490→  // ══════════════════════════════════════════════════════════
+  1491→
+  1492→  // GET /api/nas/config
+  1493→  if (path === "/api/nas/config" && req.method === "GET") {
+  1494→    const config = await db.nasConfig.findUnique({ where: { id: "builtin" } });
+  1495→    if (!config) {
+  1496→      // Create default config if it doesn't exist
+  1497→      const created = await db.nasConfig.create({ data: {} });
+  1498→      return json({ config: created });
+  1499→    }
+  1500→    return json({ config });
+  1501→  }
+  1502→
+  1503→  // PUT /api/nas/config
+  1504→  if (path === "/api/nas/config" && req.method === "PUT") {
+  1505→    const body = await req.json().catch(() => ({}));
+  1506→
+  1507→    // Only allow specific fields to be updated
+  1508→    const allowedFields = [
+  1509→      "name", "ipAddress", "identifier", "secret", "coaPort", "enabled",
+  1510→      "maxSessions", "defaultSessionTimeoutSec", "defaultIdleTimeoutSec",
+  1511→      "defaultDataLimitMb", "enforceDataLimit", "enforceTimeLimit",
+  1512→      "enforceIdleTimeout", "enforceConcurrent", "autoReauthOnPlanChange",
+  1513→      "accountingIntervalSec",
+  1514→    ];
+  1515→
+  1516→    const updateData: Record<string, unknown> = {};
+  1517→    for (const key of allowedFields) {
+  1518→      if (body[key] !== undefined) {
+  1519→        updateData[key] = body[key];
+  1520→      }
+  1521→    }
+  1522→
+  1523→    const config = await db.nasConfig.upsert({
+  1524→      where: { id: "builtin" },
+  1525→      update: updateData,
+  1526→      create: updateData,
+  1527→    });
+  1528→
+  1529→    logger.info("NAS config updated", { updatedBy: auth.userId, fields: Object.keys(updateData) });
+  1530→
+  1531→    return json({ success: true, config });
+  1532→  }
+  1533→
+  1534→  // ══════════════════════════════════════════════════════════
+  1535→  // SESSION ACCOUNTING UPDATE (interim)
+  1536→  // ══════════════════════════════════════════════════════════
+  1537→
+  1538→  // POST /api/sessions/:id/accounting — Update bandwidth/timing
+  1539→  const accountingMatch = path.match(/^\/api\/sessions\/([^/]+)\/accounting$/);
+  1540→  if (accountingMatch && req.method === "POST") {
+  1541→    const sid = accountingMatch[1];
+  1542→    const body = await req.json().catch(() => ({}));
+  1543→    const { inputOctets, outputOctets, sessionTimeSec } = body;
+  1544→
+  1545→    const session = await db.nasSession.findFirst({
+  1546→      where: { OR: [{ id: sid }, { sessionId: sid }], status: "ACTIVE" },
+  1547→    });
+  1548→
+  1549→    if (!session) return jsonErr("Active session not found", 404);
+  1550→
+  1551→    const inOct = inputOctets !== undefined ? BigInt(inputOctets) : session.inputOctets;
+  1552→    const outOct = outputOctets !== undefined ? BigInt(outputOctets) : session.outputOctets;
+  1553→    const timeSec = sessionTimeSec !== undefined ? sessionTimeSec : session.sessionTimeSec;
+  1554→
+  1555→    const updated = await db.nasSession.update({
+  1556→      where: { id: session.id },
+  1557→      data: {
+  1558→        inputOctets: inOct,
+  1559→        outputOctets: outOct,
+  1560→        totalOctets: inOct + outOct,
+  1561→        sessionTimeSec: timeSec,
+  1562→        lastActivity: new Date(),
+  1563→        lastAccounting: new Date(),
+  1564→      },
+  1565→    });
+  1566→
+  1567→    await logEvent({
+  1568→      nasSessionId: session.id,
+  1569→      sessionId: session.sessionId,
+  1570→      subscriberId: session.subscriberId,
+  1571→      username: session.username,
+  1572→      eventType: "SESSION_UPDATE",
+  1573→      context: {
+  1574→        inputOctets: Number(inOct),
+  1575→        outputOctets: Number(outOct),
+  1576→        totalOctets: Number(inOct + outOct),
+  1577→        sessionTimeSec: timeSec,
+  1578→      },
+  1579→      source: "api",
+  1580→    });
+  1581→
+  1582→    return json({ success: true, sessionId: session.sessionId });
+  1583→  }
+  1584→
+  1585→  // ══════════════════════════════════════════════════════════
+  1586→  // FALLBACK
+  1587→  // ══════════════════════════════════════════════════════════
+  1588→
+  1589→  return json({ error: "Not Found", path }, 404);
+  1590→}
+  1591→

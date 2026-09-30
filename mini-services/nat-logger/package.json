@@ -1,0 +1,16 @@
+{
+  "name": "cryptsk-nat-logger",
+  "version": "1.0.0",
+  "description": "CRYPTSK NAT Logger — buffered NAT event pipeline (architecture §34)",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0"
+  }
+}
