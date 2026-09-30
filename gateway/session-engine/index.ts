@@ -530,12 +530,12 @@ const server = Bun.serve({
             p."dataLimitGb",
             p."downloadSpeedFup",
             p."uploadSpeedFup",
-            rg."fupSpeedDownKbps",
-            rg."fupSpeedUpKbps",
-            rg."fupThresholdMb",
+            p."downloadSpeedFup",
+            p."uploadSpeedFup",
             rg."dataLimit" as rg_data_limit_mb
           FROM radacct ra
           LEFT JOIN "Subscriber" s ON s."serviceUsername" = ra.username
+          LEFT JOIN "Plan" p ON p.id = s."planId"
           LEFT JOIN "Plan" p ON p.id = s."planId"
           LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
           WHERE ra.acctstoptime IS NULL
@@ -548,18 +548,18 @@ const server = Bun.serve({
         for (const row of result.rows) {
           const totalMb = Number(row.total_bytes) / (1024 * 1024);
 
-          // Resolve data limit (MB)
+          // Resolve data limit (MB) — from RadiusGroup.dataLimit (MB) or Plan.dataLimitGb (GB→MB)
           const dataLimitMb = row.rg_data_limit_mb ||
             (row.dataLimitGb ? Number(row.dataLimitGb) * 1024 : null);
 
           if (!dataLimitMb) continue; // no data limit = no FUP
 
-          // Resolve FUP speeds (Kbps)
-          const fupDown = row.fupSpeedDownKbps || (row.downloadSpeedFup ? Number(row.downloadSpeedFup) : 1024);
-          const fupUp = row.fupSpeedUpKbps || (row.uploadSpeedFup ? Number(row.uploadSpeedFup) : 512);
+          // Resolve FUP speeds (Kbps) — from Plan.downloadSpeedFup/uploadSpeedFup, default 1024/512
+          const fupDown = (row.downloadSpeedFup ? Number(row.downloadSpeedFup) : 1024);
+          const fupUp = (row.uploadSpeedFup ? Number(row.uploadSpeedFup) : 512);
 
           // FUP threshold (default: 80% of data limit)
-          const fupThresholdMb = row.fupThresholdMb || Math.round(dataLimitMb * 0.8);
+          const fupThresholdMb = Math.round(dataLimitMb * 0.8);
 
           if (totalMb >= fupThresholdMb) {
             // FUP triggered — apply throttle (not disconnect)
