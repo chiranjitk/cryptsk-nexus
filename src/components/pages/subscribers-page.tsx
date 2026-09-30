@@ -12,8 +12,9 @@ import {
   Copy, EyeOff, RefreshCw, KeyRound, Shield, CreditCard, Lock,
   User, Router, Globe, Network, ServerCrash,
   FileText, Calendar, Receipt, ClipboardList,
-  UserSearch, UserCog, Power, UserMinus, WifiOff,
+  UserSearch, UserCog, Power, UserMinus, WifiOff, Repeat, Info,
 } from "lucide-react";
+import { buildCsvString, generateExportFilename } from "@/lib/export-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +46,7 @@ import { useAppStore } from "@/store/app-store";
 import SubscriberQuickView from "@/components/subscriber-quick-view";
 
 // ─── Types ──────────────────────────────────────────────
-interface PlanOption { id: string; name: string; priceMonthly: number; priceQuarterly?: number; priceHalfYearly?: number; priceYearly?: number; ipv6Enabled?: boolean; ipv6AssignmentMode?: string }
+interface PlanOption { id: string; name: string; priceMonthly: number; priceQuarterly?: number; priceHalfYearly?: number; priceYearly?: number; downloadSpeed?: number; uploadSpeed?: number; validityDays?: number; ipv6Enabled?: boolean; ipv6AssignmentMode?: string }
 interface AreaOption { id: string; name: string }
 interface SubnetOption { id: string; name: string; cidr: string; gateway: string; description: string; totalIps: number; freeIps: number; usedIps: number }
 interface IpOption { id: string; address: string; hostname: string }
@@ -272,6 +273,55 @@ function useBulkStatusMutation() {
   });
 }
 
+// ─── Bulk renew mutation ────────────────────────────────
+function useBulkRenewMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { ids: string[]; months: number; paymentMode: string; recordPayment: boolean }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "renew", subscriberIds: vars.ids, months: vars.months, paymentMode: vars.paymentMode, recordPayment: vars.recordPayment }) }),
+    onSuccess: (d: any) => {
+      if (d.error) { toast.error(d.error); return; }
+      const skipped = d.skipped > 0 ? ` · ${d.skipped} skipped (no plan)` : "";
+      const reactivated = d.reactivated > 0 ? ` · ${d.reactivated} reactivated` : "";
+      if (d.renewed === 0) {
+        toast.error("No subscribers renewed — selected subscribers have no plan assigned");
+      } else if (d.totalCollected > 0) {
+        toast.success(`Renewed ${d.renewed} subscriber(s) · ${formatINR(d.totalCollected)} collected${reactivated}${skipped}`);
+      } else {
+        toast.success(`Renewed ${d.renewed} subscriber(s) — draft invoice(s) created${skipped}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["subscribers"] });
+      queryClient.invalidateQueries({ queryKey: ["subscriber-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["expiring"] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["payments"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Bulk renewal failed"),
+  });
+}
+
+// ─── Bulk change-plan mutation ──────────────────────────
+function useBulkPlanMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { ids: string[]; planId: string }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "change-plan", subscriberIds: vars.ids, planId: vars.planId }) }),
+    onSuccess: (d: any) => {
+      if (d.error) { toast.error(d.error); return; }
+      if (d.updated === 0) {
+        toast.info("All selected subscribers are already on this plan");
+      } else {
+        toast.success(`Plan changed for ${d.updated} subscriber(s)${d.radiusSynced > 0 ? ` · RADIUS group synced: ${d.radiusSynced}` : ""}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["subscribers"] });
+      queryClient.invalidateQueries({ queryKey: ["subscriber-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Bulk plan change failed"),
+  });
+}
+
 const emptyForm = {
   name: "", phone: "", email: "", altPhone: "",
   areaId: "", planId: "", connectionType: "FTTH",
@@ -334,6 +384,15 @@ export default function SubscribersPage() {
   // Row selection state
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
+  // Bulk renew / change-plan dialog state
+  const [renewTargets, setRenewTargets] = useState<string[] | null>(null);
+  const [planTargets, setPlanTargets] = useState<string[] | null>(null);
+  const [renewMonths, setRenewMonths] = useState("1");
+  const [renewPaymentMode, setRenewPaymentMode] = useState("CASH");
+  const [renewRecordPayment, setRenewRecordPayment] = useState(true);
+  const [bulkPlanId, setBulkPlanId] = useState("");
+  const [exportingSelected, setExportingSelected] = useState(false);
+
   // Form state
   const [form, setForm] = useState({ ...emptyForm });
   const [editForm, setEditForm] = useState({ ...emptyForm });
@@ -341,6 +400,8 @@ export default function SubscribersPage() {
 
   // Bulk status mutation
   const bulkStatusMutation = useBulkStatusMutation();
+  const bulkRenewMutation = useBulkRenewMutation();
+  const bulkPlanMutation = useBulkPlanMutation();
 
   // Row selection handlers
   const toggleRow = (id: string) => {
@@ -368,6 +429,57 @@ export default function SubscribersPage() {
     bulkStatusMutation.mutate({ ids: Array.from(selectedRows), status: "SUSPENDED" });
     clearSelection();
   };
+
+  // ─── Bulk renew / change-plan / export handlers ────────
+  const handleBulkRenew = () => {
+    if (selectedRows.size === 0) return;
+    setRenewMonths("1");
+    setRenewTargets(Array.from(selectedRows));
+  };
+  const handleBulkPlanChange = () => {
+    if (selectedRows.size === 0) return;
+    setBulkPlanId("");
+    setPlanTargets(Array.from(selectedRows));
+  };
+  const handleExportSelected = async () => {
+    if (selectedRows.size === 0 || exportingSelected) return;
+    setExportingSelected(true);
+    try {
+      const d = await apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "export", subscriberIds: Array.from(selectedRows) }) });
+      const rows = d?.data || [];
+      if (!rows.length) { toast.error("Nothing to export"); return; }
+      const headers = Object.keys(rows[0]);
+      const csv = buildCsvString(headers, rows.map((r: Record<string, unknown>) => headers.map((h) => r[h])));
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = generateExportFilename("subscribers-selected");
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} subscriber(s) to CSV`);
+    } catch {
+      toast.error("Export failed");
+    } finally {
+      setExportingSelected(false);
+    }
+  };
+
+  const confirmRenew = () => {
+    if (!renewTargets?.length) return;
+    bulkRenewMutation.mutate({ ids: renewTargets, months: parseInt(renewMonths, 10) || 1, paymentMode: renewPaymentMode, recordPayment: renewRecordPayment });
+  };
+  const confirmBulkPlanChange = () => {
+    if (!planTargets?.length || !bulkPlanId) return;
+    bulkPlanMutation.mutate({ ids: planTargets, planId: bulkPlanId });
+  };
+  // Close bulk dialogs on success (kept open while pending so buttons show progress)
+  useEffect(() => {
+    if (bulkRenewMutation.isSuccess) { setRenewTargets(null); clearSelection(); bulkRenewMutation.reset(); }
+  }, [bulkRenewMutation.isSuccess, bulkRenewMutation]);
+  useEffect(() => {
+    if (bulkPlanMutation.isSuccess) { setPlanTargets(null); setBulkPlanId(""); clearSelection(); bulkPlanMutation.reset(); }
+  }, [bulkPlanMutation.isSuccess, bulkPlanMutation]);
 
   // Open add dialog with auto-generated service credentials
   const openAddDialog = () => {
@@ -440,7 +552,7 @@ export default function SubscribersPage() {
   // Fetch plans for filters/form
   const { data: plans } = useQuery<PlanOption[]>({
     queryKey: ["plans-list"],
-    queryFn: () => apiFetch("/api/plans?limit=100").then((d: any) => (Array.isArray(d) ? d : d.items || []).map((p: PlanOption & { priceMonthly: number }) => ({ id: p.id, name: p.name, priceMonthly: p.priceMonthly, ipv6Enabled: p.ipv6Enabled, ipv6AssignmentMode: p.ipv6AssignmentMode }))),
+    queryFn: () => apiFetch("/api/plans?limit=100").then((d: any) => (Array.isArray(d) ? d : d.items || []).map((p: PlanOption & { priceMonthly: number }) => ({ id: p.id, name: p.name, priceMonthly: p.priceMonthly, priceQuarterly: p.priceQuarterly, priceHalfYearly: p.priceHalfYearly, priceYearly: p.priceYearly, downloadSpeed: p.downloadSpeed, uploadSpeed: p.uploadSpeed, validityDays: p.validityDays, ipv6Enabled: p.ipv6Enabled, ipv6AssignmentMode: p.ipv6AssignmentMode }))),
   });
   // Fetch subnets for IP pool & login restriction
   const { data: subnets } = useQuery<SubnetOption[]>({
@@ -751,6 +863,26 @@ export default function SubscribersPage() {
 
   const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType;
   const selectedPlan = plans?.find((p) => p.id === form.planId);
+
+  // ─── Bulk renew / change-plan derived values (need subscribers + plans) ───
+  const renewEstimate = (() => {
+    const m = parseInt(renewMonths, 10) || 1;
+    let base = 0, withPlan = 0, withoutPlan = 0;
+    (renewTargets || []).forEach((id) => {
+      const sub = subscribers.find((s) => s.id === id);
+      if (!sub?.plan) { withoutPlan++; return; }
+      const p = sub.plan;
+      let price = (p.priceMonthly || 0) * m;
+      if (m === 3 && p.priceQuarterly) price = p.priceQuarterly;
+      else if (m === 6 && p.priceHalfYearly) price = p.priceHalfYearly;
+      else if (m === 12 && p.priceYearly) price = p.priceYearly;
+      base += price;
+      withPlan++;
+    });
+    return { base, withPlan, withoutPlan };
+  })();
+  const selectedPlanForBulk = plans?.find((p) => p.id === bulkPlanId);
+  const renewTargetSingle = renewTargets?.length === 1 ? subscribers.find((s) => s.id === renewTargets![0]) : null;
 
   return (
     <div className="space-y-6">
@@ -1074,9 +1206,9 @@ export default function SubscribersPage() {
 
       {/* Quick Actions Bar */}
       {subscribers.length > 0 && (
-        <div className="flex items-center gap-3 animate-slide-up" style={{ animationDelay: "90ms" }}>
+        <div className="flex flex-wrap items-center gap-3 animate-slide-up" style={{ animationDelay: "90ms" }}>
           {selectedRows.size > 0 && (
-            <div className="flex items-center gap-2 animate-card-enter">
+            <div className="flex flex-wrap items-center gap-2 animate-card-enter">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <span className="text-xs font-semibold text-primary tabular-nums">{selectedRows.size}</span>
                 <span className="text-xs text-muted-foreground">selected</span>
@@ -1100,6 +1232,34 @@ export default function SubscribersPage() {
               >
                 <UserMinus className="h-3.5 w-3.5" />
                 Suspend Selected
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/5"
+                onClick={handleBulkRenew}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Renew
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-purple-200 text-purple-700 hover:bg-purple-50 dark:border-purple-800 dark:text-purple-400"
+                onClick={handleBulkPlanChange}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+                Change Plan
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+                onClick={handleExportSelected}
+                disabled={exportingSelected}
+              >
+                <Download className={cn("h-3.5 w-3.5", exportingSelected && "animate-pulse")} />
+                {exportingSelected ? "Exporting..." : "Export"}
               </Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearSelection}>
                 <X className="h-3 w-3 mr-1" />Clear
@@ -1323,6 +1483,9 @@ export default function SubscribersPage() {
                           <DropdownMenuContent align="end" className="w-48">
                             <DropdownMenuItem onClick={() => openDetail(sub.id)}><Eye className="h-4 w-4 mr-2" />View Details</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openEdit(sub)}><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => { setRenewMonths("1"); setRenewTargets([sub.id]); }}><RefreshCw className="h-4 w-4 mr-2" />Renew Plan</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => { setBulkPlanId(""); setPlanTargets([sub.id]); }}><Repeat className="h-4 w-4 mr-2" />Change Plan</DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {sub.status === "ACTIVE" && (
                               <DropdownMenuItem onClick={() => statusMutation.mutate({ id: sub.id, status: "SUSPENDED" })}><Ban className="h-4 w-4 mr-2" />Suspend</DropdownMenuItem>
@@ -3105,6 +3268,144 @@ export default function SubscribersPage() {
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => selectedId && deleteMutation.mutate(selectedId)} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Bulk / Single Renew Dialog ─── */}
+      <Dialog open={!!renewTargets} onOpenChange={(open) => { if (!open) setRenewTargets(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center"><RefreshCw className="h-4 w-4 text-primary" /></span>
+              Renew Subscription
+            </DialogTitle>
+            <DialogDescription>
+              {renewTargetSingle
+                ? <>Renew <span className="font-medium text-foreground">{renewTargetSingle.name}</span> (<span>{renewTargetSingle.plan?.name || "no plan"}</span>) — extends from the current cycle end.</>
+                : <>Renew <span className="font-medium text-foreground">{renewTargets?.length || 0}</span> selected subscribers — each extends from its own current cycle end.</>}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Billing Cycle</Label>
+                <Select value={renewMonths} onValueChange={setRenewMonths}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Monthly · 1 month</SelectItem>
+                    <SelectItem value="3">Quarterly · 3 months</SelectItem>
+                    <SelectItem value="6">Half-Yearly · 6 months</SelectItem>
+                    <SelectItem value="12">Yearly · 12 months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Payment Mode</Label>
+                <Select value={renewPaymentMode} onValueChange={setRenewPaymentMode} disabled={!renewRecordPayment}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="UPI">UPI</SelectItem>
+                    <SelectItem value="ONLINE">Online</SelectItem>
+                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    <SelectItem value="WALLET">Wallet</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 rounded-lg border bg-muted/30 p-3">
+              <Checkbox id="renew-record-payment" checked={renewRecordPayment} onCheckedChange={(v) => setRenewRecordPayment(v === true)} />
+              <Label htmlFor="renew-record-payment" className="cursor-pointer text-xs leading-snug">
+                Record payment now &amp; mark invoice <span className="font-medium">PAID</span>
+                <span className="block text-muted-foreground font-normal">Uncheck to create a draft invoice without collecting payment</span>
+              </Label>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Base amount ({renewMonths} month{parseInt(renewMonths, 10) > 1 ? "s" : ""})</span>
+                <span className="font-semibold tabular-nums">{formatINR(renewEstimate.base)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>GST</span>
+                <span>As per plan ({renewEstimate.withPlan} with plan{renewEstimate.withoutPlan > 0 ? `, ${renewEstimate.withoutPlan} skipped` : ""})</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground border-t pt-1.5">
+                <Info className="h-3 w-3 inline mr-1 -mt-0.5" />
+                Invoices + receipts are generated per subscriber. Suspended / disconnected subscribers are reactivated automatically.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenewTargets(null)} disabled={bulkRenewMutation.isPending}>Cancel</Button>
+            <Button onClick={confirmRenew} disabled={bulkRenewMutation.isPending || renewEstimate.withPlan === 0}>
+              {bulkRenewMutation.isPending ? (
+                <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Renewing...</>
+              ) : (
+                <><Receipt className="h-4 w-4 mr-2" />Renew {renewTargets?.length || 0}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Bulk / Single Change Plan Dialog ─── */}
+      <Dialog open={!!planTargets} onOpenChange={(open) => { if (!open) setPlanTargets(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="h-8 w-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center"><Repeat className="h-4 w-4 text-purple-600 dark:text-purple-400" /></span>
+              Change Plan
+            </DialogTitle>
+            <DialogDescription>
+              Move <span className="font-medium text-foreground">{planTargets?.length || 0}</span> subscriber{(planTargets?.length || 0) > 1 ? "s" : ""} to a new plan. Speeds are updated and RADIUS rate-limit groups are re-synced automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">New Plan</Label>
+              <Select value={bulkPlanId} onValueChange={setBulkPlanId}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select a plan…" /></SelectTrigger>
+                <SelectContent className="max-h-64">
+                  {(plans || []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} · {formatINR(p.priceMonthly)}/mo · {p.downloadSpeed || "?"}/{p.uploadSpeed || "?"} Mbps
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedPlanForBulk && (
+              <div className="rounded-lg border bg-muted/40 p-3 grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Price</p>
+                  <p className="text-xs font-semibold mt-0.5">{formatINR(selectedPlanForBulk.priceMonthly)}<span className="text-muted-foreground font-normal">/mo</span></p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Speed</p>
+                  <p className="text-xs font-semibold mt-0.5">{selectedPlanForBulk.downloadSpeed || "?"}/{selectedPlanForBulk.uploadSpeed || "?"} Mbps</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Validity</p>
+                  <p className="text-xs font-semibold mt-0.5">{selectedPlanForBulk.validityDays || 30} days</p>
+                </div>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" />
+              Subscribers already on this plan are skipped. Pending invoices are not affected — renew separately if needed.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPlanTargets(null)} disabled={bulkPlanMutation.isPending}>Cancel</Button>
+            <Button onClick={confirmBulkPlanChange} disabled={!bulkPlanId || bulkPlanMutation.isPending}>
+              {bulkPlanMutation.isPending ? (
+                <><Repeat className="h-4 w-4 mr-2 animate-spin" />Updating...</>
+              ) : (
+                <>Change Plan</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

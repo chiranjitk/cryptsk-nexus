@@ -8,6 +8,27 @@
 import { db } from './db';
 
 /**
+ * Upsert a single-valued radcheck/radreply row (UPDATE first, INSERT if absent).
+ * NOTE: radcheck/radreply only have NON-unique indexes on (username, attribute),
+ * so `ON CONFLICT (username, attribute)` fails with PG 42P10 — an UPDATE-first
+ * upsert is the safe pattern here. This previously caused silent stale
+ * Mikrotik-Rate-Limit replies after plan changes.
+ */
+async function upsertUserRow(table: "radcheck" | "radreply", username: string, attribute: string, op: string, value: string) {
+  const uname = username.replace(/'/g, "''");
+  const attr = attribute.replace(/'/g, "''");
+  const val = value.replace(/'/g, "''");
+  const updated = await db.$executeRawUnsafe(
+    `UPDATE ${table} SET value = '${val}', op = '${op}' WHERE username = '${uname}' AND attribute = '${attr}'`
+  );
+  if (updated === 0) {
+    await db.$executeRawUnsafe(
+      `INSERT INTO ${table} (username, attribute, op, value) VALUES ('${uname}', '${attr}', '${op}', '${val}')`
+    );
+  }
+}
+
+/**
  * Sync a user to FreeRADIUS tables (radcheck, radreply, radusergroup)
  * Uses parameterized queries where possible, escapes single quotes for identifiers
  */
@@ -36,24 +57,14 @@ export async function syncUserToFreeRADIUS(
   }
 
   // Upsert radcheck: Cleartext-Password
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Cleartext-Password', ':=', '${pwd}')
-    ON CONFLICT DO NOTHING
-  `);
+  await upsertUserRow("radcheck", uname, "Cleartext-Password", ":=", pwd);
 
   // Upsert radcheck: Simultaneous-Use (login limit)
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Simultaneous-Use', ':=', '${maxSessions}')
-    ON CONFLICT DO NOTHING
-  `);
+  await upsertUserRow("radcheck", uname, "Simultaneous-Use", ":=", String(maxSessions));
 
   // Upsert radreply: Mikrotik-Rate-Limit from group
   if (rateLimit) {
-    const escapedRate = rateLimit.replace(/'/g, "''");
-    await db.$executeRawUnsafe(`
-      INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${escapedRate}')
-      ON CONFLICT DO NOTHING
-    `);
+    await upsertUserRow("radreply", uname, "Mikrotik-Rate-Limit", ":=", rateLimit);
   }
 
   // Upsert radreply: Framed-IP-Address (if subscriber has static IP — caller can add after)
@@ -105,11 +116,7 @@ export async function updateUserFreeRADIUSGroup(
     const rateLimit = rows[0]?.value;
 
     if (rateLimit) {
-      const escapedRate = rateLimit.replace(/'/g, "''");
-      await db.$executeRawUnsafe(`
-        INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${escapedRate}')
-        ON CONFLICT (username, attribute) DO UPDATE SET value = '${escapedRate}'
-      `);
+      await upsertUserRow("radreply", uname, "Mikrotik-Rate-Limit", ":=", rateLimit);
     }
   }
 }
@@ -194,10 +201,7 @@ export async function unblockUserInFreeRADIUS(username: string) {
  */
 export async function updateUserSimultaneousUse(username: string, maxSessions: number) {
   const uname = username.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Simultaneous-Use', ':=', '${maxSessions}')
-    ON CONFLICT (username, attribute) DO UPDATE SET value = '${maxSessions}'
-  `);
+  await upsertUserRow("radcheck", uname, "Simultaneous-Use", ":=", String(maxSessions));
 }
 
 /**
