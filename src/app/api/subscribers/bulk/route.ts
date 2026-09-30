@@ -3,26 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auditBulk } from "@/lib/services/audit-service";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { unblockUserInFreeRADIUS, blockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
+import { nextInvoiceNumber } from "@/lib/invoice-number";
 
 const VALID_PAYMENT_MODES = ["CASH", "UPI", "ONLINE", "BANK_TRANSFER", "CHEQUE", "WALLET"];
 
-/**
- * Generate the next sequential invoice number (INV-00001, INV-00002, ...).
- * Uses MAX of the numeric part across invoices so numbering stays dense
- * even after deletions. Caller is responsible for retrying on P2002.
- */
-async function nextInvoiceNumber(): Promise<string> {
-  const maxInv = await db.invoice.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { invoiceNumber: true },
-  });
-  let nextNum = 1;
-  if (maxInv?.invoiceNumber) {
-    const match = maxInv.invoiceNumber.match(/INV-(\d+)/);
-    if (match) nextNum = parseInt(match[1], 10) + 1;
-  }
-  return `INV-${String(nextNum).padStart(5, "0")}`;
-}
+// [AUDIT-FIX F-12] Invoice numbering moved to src/lib/invoice-number.ts (shared allocator).
 
 export async function POST(request: NextRequest) {
   try {
@@ -184,7 +169,7 @@ export async function POST(request: NextRequest) {
         }
         const subs = await db.subscriber.findMany({
           where: { id: { in: subscriberIds } },
-          select: { id: true, planId: true, serviceUsername: true, radiusEnabled: true },
+          include: { Plan: true },
         });
         const changed = subs.filter((s) => s.planId !== planId);
         if (changed.length > 0) {
@@ -209,7 +194,114 @@ export async function POST(request: NextRequest) {
             }
           }
         }
-        result = { count: changed.length, radiusSynced, alreadyOnPlan: subs.length - changed.length };
+
+        // ── [AUDIT-FIX F-15] Mid-cycle proration ──
+        // Previously a plan swap never touched money: upgrade = free upgrade until the next
+        // renewal, downgrade = customer keeps paying the old (higher) price for the rest of
+        // the cycle. Now the unused portion of the current cycle is settled:
+        //   delta = (days remaining × new plan daily rate) − (days remaining × old plan daily rate)
+        // delta > 0 → adjustment invoice (SENT, due in grace days)
+        // delta < 0 → credit note against the latest invoice of the cycle
+        const prorate = payload.prorate !== false; // opt-out available for end-of-cycle switches
+        let prorationInvoices = 0;
+        let creditNotes = 0;
+        let prorationDelta = 0;
+        const prorationDetails: Array<{ code: string; delta: number; kind: string; number: string }> = [];
+        if (prorate) {
+          const now = new Date();
+          const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
+          const graceDays = settings?.gracePeriodDays || 5;
+          for (const sub of changed) {
+            const oldPlan = sub.Plan;
+            if (!oldPlan || !sub.billingStartDate || sub.status === "DISCONNECTED") continue;
+
+            const cycleDays = oldPlan.validityDays || 30;
+            const diffDays = Math.floor((now.getTime() - sub.billingStartDate.getTime()) / 86400000);
+            const cyclesCompleted = Math.max(0, Math.floor(diffDays / cycleDays));
+            const cycleEnd = new Date(sub.billingStartDate.getTime() + (cyclesCompleted + 1) * cycleDays * 86400000);
+            const daysRemaining = Math.ceil((cycleEnd.getTime() - now.getTime()) / 86400000);
+            if (daysRemaining <= 0) continue; // cycle already over — next renewal bills the new plan
+
+            const oldDaily = (oldPlan.priceMonthly || 0) / (oldPlan.validityDays || 30);
+            const newDaily = (plan.priceMonthly || 0) / (plan.validityDays || 30);
+            const creditForUnused = Math.round(oldDaily * daysRemaining * 100) / 100;
+            const chargeForNew = Math.round(newDaily * daysRemaining * 100) / 100;
+            const delta = Math.round((chargeForNew - creditForUnused) * 100) / 100;
+            prorationDelta += delta;
+
+            if (Math.abs(delta) < 0.01) continue; // no material difference
+
+            if (delta > 0) {
+              // Customer owes the difference for the rest of the cycle
+              let createdInvoice = false;
+              for (let attempt = 0; attempt < 5 && !createdInvoice; attempt++) {
+                const invoiceNumber = await nextInvoiceNumber();
+                try {
+                  await db.invoice.create({
+                    data: {
+                      invoiceNumber,
+                      subscriberId: sub.id,
+                      planId: plan.id,
+                      issueDate: now,
+                      dueDate: new Date(now.getTime() + graceDays * 86400000),
+                      periodStart: now,
+                      periodEnd: cycleEnd,
+                      description: `Plan change proration: ${oldPlan.name} → ${plan.name} (${daysRemaining} day(s) remaining in cycle)`,
+                      subtotal: chargeForNew,
+                      cgstAmount: Math.round(chargeForNew * (plan.cgstPercent ?? 9)) / 100,
+                      sgstAmount: Math.round(chargeForNew * (plan.sgstPercent ?? 9)) / 100,
+                      igstAmount: 0,
+                      totalTax: Math.round(chargeForNew * ((plan.cgstPercent ?? 9) + (plan.sgstPercent ?? 9))) / 100,
+                      totalAmount: delta,
+                      grandTotal: delta,
+                      balanceAmount: delta,
+                      status: "SENT",
+                      isProRata: true,
+                      proRataDays: daysRemaining,
+                    },
+                  });
+                  createdInvoice = true;
+                  prorationInvoices++;
+                  prorationDetails.push({ code: sub.code, delta, kind: "INVOICE", number: invoiceNumber });
+                } catch (e: unknown) {
+                  if ((e as { code?: string })?.code !== "P2002") throw e;
+                }
+              }
+            } else {
+              // Customer overpaid — issue a credit note for the difference against their latest invoice
+              const latestInvoice = await db.invoice.findFirst({
+                where: { subscriberId: sub.id, status: { in: ["PAID", "PARTIALLY_PAID", "SENT", "OVERDUE"] } },
+                orderBy: { createdAt: "desc" },
+                select: { id: true, invoiceNumber: true },
+              });
+              if (latestInvoice) {
+                await db.creditNote.create({
+                  data: {
+                    invoiceId: latestInvoice.id,
+                    amount: Math.abs(delta),
+                    reason: `Plan downgrade proration: ${oldPlan.name} → ${plan.name} (${daysRemaining} day(s) remaining)`,
+                    status: "ISSUED",
+                  },
+                });
+                creditNotes++;
+                prorationDetails.push({ code: sub.code, delta, kind: "CREDIT_NOTE", number: latestInvoice.invoiceNumber });
+              }
+            }
+          }
+        }
+
+        result = {
+          count: changed.length,
+          radiusSynced,
+          alreadyOnPlan: subs.length - changed.length,
+          proration: {
+            enabled: prorate,
+            invoices: prorationInvoices,
+            creditNotes,
+            netDelta: prorationDelta,
+            details: prorationDetails,
+          },
+        };
         break;
       }
 
@@ -219,6 +311,11 @@ export async function POST(request: NextRequest) {
         const months = Math.max(1, Math.min(36, parseInt(String(payload.months), 10) || 1));
         const paymentMode = VALID_PAYMENT_MODES.includes(payload.paymentMode) ? payload.paymentMode : "CASH";
         const recordPayment = payload.recordPayment !== false;
+        // [AUDIT-FIX F-13] Prepaid wallet renewal — the wallet was previously decorative
+        // (only ever credited by refunds/credit notes, never debited). With useWallet=true,
+        // renewal collects from the subscriber's prepaid balance instead of an external mode:
+        // sufficient balance → debit + WALLET payment; insufficient → subscriber skipped.
+        const useWallet = payload.useWallet === true;
 
         const subs = await db.subscriber.findMany({
           where: { id: { in: subscriberIds } },
@@ -230,6 +327,7 @@ export async function POST(request: NextRequest) {
           skipped: 0,
           reactivated: 0,
           totalCollected: 0,
+          walletDebited: 0,
           invoiceNumbers: [] as string[],
           skippedNames: [] as string[],
         };
@@ -257,6 +355,15 @@ export async function POST(request: NextRequest) {
           const sgst = Math.round(basePrice * sgstPct) / 100;
           const igst = Math.round(basePrice * igstPct) / 100;
           const totalAmount = Math.round((basePrice + cgst + sgst + igst) * 100) / 100;
+
+          // Wallet eligibility check (prepaid semantics) — must pass before any writes
+          const walletEligible = useWallet && recordPayment && (sub.balance || 0) >= totalAmount;
+          if (useWallet && recordPayment && !walletEligible) {
+            summary.skipped++;
+            summary.skippedNames.push(`${sub.name} — wallet ₹${(sub.balance || 0).toFixed(2)} < renewal ₹${totalAmount.toFixed(2)}`);
+            continue;
+          }
+          const effectiveMode = walletEligible ? "WALLET" : paymentMode;
 
           // Reactivation classification (used by the transaction below)
           const restoring = sub.status === "SUSPENDED" || sub.status === "DISCONNECTED";
@@ -309,7 +416,7 @@ export async function POST(request: NextRequest) {
                     status: recordPayment ? "PAID" : "DRAFT",
                     paidAmount: recordPayment ? totalAmount : 0,
                     balanceAmount: recordPayment ? 0 : totalAmount,
-                    paymentMode: recordPayment ? paymentMode : null,
+                    paymentMode: recordPayment ? effectiveMode : null,
                     paidAt: recordPayment ? now : null,
                     cgstRate: cgstPct,
                     sgstRate: sgstPct,
@@ -324,12 +431,22 @@ export async function POST(request: NextRequest) {
                       subscriberId: sub.id,
                       invoiceId: inv.id,
                       amount: totalAmount,
-                      paymentMode,
+                      paymentMode: effectiveMode,
                       status: "VERIFIED",
                       receiptNumber: `RCPT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-                      notes: `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
+                      notes: walletEligible
+                        ? `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber}) [paid from prepaid wallet]`
+                        : `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
                     },
                   });
+                  if (walletEligible) {
+                    // [AUDIT-FIX F-13] Debit the prepaid wallet atomically inside the same
+                    // transaction as the invoice + payment writes.
+                    await tx.subscriber.update({
+                      where: { id: sub.id },
+                      data: { balance: { decrement: totalAmount } },
+                    });
+                  }
                 }
                 await tx.subscriber.update({
                   where: { id: sub.id },
@@ -352,6 +469,7 @@ export async function POST(request: NextRequest) {
           }
           if (recordPayment) {
             summary.totalCollected += totalAmount;
+            if (walletEligible) summary.walletDebited++;
           }
           if ((restoring || activating) && sub.radiusEnabled && sub.serviceUsername) {
             try {
@@ -383,6 +501,7 @@ export async function POST(request: NextRequest) {
         skipped: result.skipped,
         reactivated: result.reactivated,
         totalCollected: result.totalCollected,
+        walletDebited: result.walletDebited,
         invoiceNumbers: result.invoiceNumbers,
         skippedNames: result.skippedNames,
       });
@@ -393,6 +512,7 @@ export async function POST(request: NextRequest) {
         updated: result.count,
         radiusSynced: result.radiusSynced,
         alreadyOnPlan: result.alreadyOnPlan,
+        proration: result.proration,
       });
     }
     return NextResponse.json({ success: true, updated: result.count });

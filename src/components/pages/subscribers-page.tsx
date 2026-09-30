@@ -12,7 +12,7 @@ import {
   Copy, EyeOff, RefreshCw, KeyRound, Shield, CreditCard, Lock,
   User, Router, Globe, Network, ServerCrash,
   FileText, Calendar, Receipt, ClipboardList,
-  UserSearch, UserCog, Power, UserMinus, WifiOff, Repeat, Info,
+  UserSearch, UserCog, Power, UserMinus, WifiOff, Repeat, Info, Wallet,
 } from "lucide-react";
 import { buildCsvString, generateExportFilename } from "@/lib/export-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -277,16 +277,17 @@ function useBulkStatusMutation() {
 function useBulkRenewMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { ids: string[]; months: number; paymentMode: string; recordPayment: boolean }) =>
-      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "renew", subscriberIds: vars.ids, months: vars.months, paymentMode: vars.paymentMode, recordPayment: vars.recordPayment }) }),
+    mutationFn: (vars: { ids: string[]; months: number; paymentMode: string; recordPayment: boolean; useWallet: boolean }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "renew", subscriberIds: vars.ids, months: vars.months, paymentMode: vars.paymentMode, recordPayment: vars.recordPayment, useWallet: vars.useWallet }) }),
     onSuccess: (d: any) => {
       if (d.error) { toast.error(d.error); return; }
-      const skipped = d.skipped > 0 ? ` · ${d.skipped} skipped (no plan)` : "";
+      const skipped = d.skipped > 0 ? ` · ${d.skipped} skipped (no plan or low wallet)` : "";
       const reactivated = d.reactivated > 0 ? ` · ${d.reactivated} reactivated` : "";
+      const wallet = d.walletDebited > 0 ? ` · ${d.walletDebited} from wallet` : "";
       if (d.renewed === 0) {
-        toast.error("No subscribers renewed — selected subscribers have no plan assigned");
+        toast.error("No subscribers renewed — no plan assigned or wallet balance insufficient");
       } else if (d.totalCollected > 0) {
-        toast.success(`Renewed ${d.renewed} subscriber(s) · ${formatINR(d.totalCollected)} collected${reactivated}${skipped}`);
+        toast.success(`Renewed ${d.renewed} subscriber(s) · ${formatINR(d.totalCollected)} collected${wallet}${reactivated}${skipped}`);
       } else {
         toast.success(`Renewed ${d.renewed} subscriber(s) — draft invoice(s) created${skipped}`);
       }
@@ -305,17 +306,22 @@ function useBulkRenewMutation() {
 function useBulkPlanMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { ids: string[]; planId: string }) =>
-      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "change-plan", subscriberIds: vars.ids, planId: vars.planId }) }),
+    mutationFn: (vars: { ids: string[]; planId: string; prorate: boolean }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "change-plan", subscriberIds: vars.ids, planId: vars.planId, prorate: vars.prorate }) }),
     onSuccess: (d: any) => {
       if (d.error) { toast.error(d.error); return; }
       if (d.updated === 0) {
         toast.info("All selected subscribers are already on this plan");
       } else {
-        toast.success(`Plan changed for ${d.updated} subscriber(s)${d.radiusSynced > 0 ? ` · RADIUS group synced: ${d.radiusSynced}` : ""}`);
+        const p = d.proration;
+        const prorateMsg = p?.enabled
+          ? ` · proration: ${p.invoices > 0 ? `${p.invoices} invoice(s)` : ""}${p.invoices > 0 && p.creditNotes > 0 ? " + " : ""}${p.creditNotes > 0 ? `${p.creditNotes} credit note(s)` : ""}${p.invoices === 0 && p.creditNotes === 0 ? "no adjustments needed" : ""}`
+          : "";
+        toast.success(`Plan changed for ${d.updated} subscriber(s)${d.radiusSynced > 0 ? ` · RADIUS group synced: ${d.radiusSynced}` : ""}${prorateMsg}`);
       }
       queryClient.invalidateQueries({ queryKey: ["subscribers"] });
       queryClient.invalidateQueries({ queryKey: ["subscriber-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: () => toast.error("Bulk plan change failed"),
@@ -391,7 +397,9 @@ export default function SubscribersPage() {
   const [renewMonths, setRenewMonths] = useState("1");
   const [renewPaymentMode, setRenewPaymentMode] = useState("CASH");
   const [renewRecordPayment, setRenewRecordPayment] = useState(true);
+  const [renewUseWallet, setRenewUseWallet] = useState(false);
   const [bulkPlanId, setBulkPlanId] = useState("");
+  const [bulkProrate, setBulkProrate] = useState(true);
   const [exportingSelected, setExportingSelected] = useState(false);
 
   // Form state
@@ -468,11 +476,11 @@ export default function SubscribersPage() {
 
   const confirmRenew = () => {
     if (!renewTargets?.length) return;
-    bulkRenewMutation.mutate({ ids: renewTargets, months: parseInt(renewMonths, 10) || 1, paymentMode: renewPaymentMode, recordPayment: renewRecordPayment });
+    bulkRenewMutation.mutate({ ids: renewTargets, months: parseInt(renewMonths, 10) || 1, paymentMode: renewPaymentMode, recordPayment: renewRecordPayment, useWallet: renewUseWallet });
   };
   const confirmBulkPlanChange = () => {
     if (!planTargets?.length || !bulkPlanId) return;
-    bulkPlanMutation.mutate({ ids: planTargets, planId: bulkPlanId });
+    bulkPlanMutation.mutate({ ids: planTargets, planId: bulkPlanId, prorate: bulkProrate });
   };
   // Close bulk dialogs on success (kept open while pending so buttons show progress)
   useEffect(() => {
@@ -899,6 +907,25 @@ export default function SubscribersPage() {
       withPlan++;
     });
     return { base, withPlan, withoutPlan };
+  })();
+  // [F-13 UI] Wallet eligibility preview — how many selected targets can fully pay from their prepaid balance
+  const walletPreview = (() => {
+    const m = parseInt(renewMonths, 10) || 1;
+    let eligible = 0, totalBalance = 0;
+    (renewTargets || []).forEach((id) => {
+      const sub = subscribers.find((s) => s.id === id);
+      if (!sub?.plan) return;
+      const p = sub.plan;
+      let price = (p.priceMonthly || 0) * m;
+      if (m === 3 && p.priceQuarterly) price = p.priceQuarterly;
+      else if (m === 6 && p.priceHalfYearly) price = p.priceHalfYearly;
+      else if (m === 12 && p.priceYearly) price = p.priceYearly;
+      const gst = 1 + ((p as any).cgstPercent ?? 9) / 100 + ((p as any).sgstPercent ?? 9) / 100;
+      const total = Math.round(price * gst * 100) / 100;
+      totalBalance += sub.balance || 0;
+      if ((sub.balance || 0) >= total) eligible++;
+    });
+    return { eligible, totalBalance };
   })();
   const selectedPlanForBulk = plans?.find((p) => p.id === bulkPlanId);
   const renewTargetSingle = renewTargets?.length === 1 ? subscribers.find((s) => s.id === renewTargets![0]) : null;
@@ -3372,6 +3399,19 @@ export default function SubscribersPage() {
                 <span className="block text-muted-foreground font-normal">Uncheck to create a draft invoice without collecting payment</span>
               </Label>
             </div>
+            {renewRecordPayment && (
+              <div className={`flex items-center space-x-2 rounded-lg border p-3 transition-colors ${renewUseWallet ? "border-teal-500/50 bg-teal-50/50 dark:bg-teal-950/20" : "bg-muted/30"}`}>
+                <Checkbox id="renew-use-wallet" checked={renewUseWallet} onCheckedChange={(v) => setRenewUseWallet(v === true)} disabled={renewTargetSingle !== null && (renewTargetSingle.balance || 0) <= 0} />
+                <Label htmlFor="renew-use-wallet" className="cursor-pointer text-xs leading-snug">
+                  <span className="inline-flex items-center gap-1 font-medium"><Wallet className="h-3 w-3 text-teal-600" />Pay from prepaid wallet</span>
+                  <span className="block text-muted-foreground font-normal">
+                    {walletPreview.eligible > 0
+                      ? <>Debits the customer&apos;s balance instead of external collection — <span className="font-medium text-teal-700 dark:text-teal-400">{walletPreview.eligible} of {renewTargets?.length || 0} eligible</span> (combined balance {formatINR(walletPreview.totalBalance)})</>
+                      : <>No selected subscriber has sufficient wallet balance — they will be skipped</>}
+                  </span>
+                </Label>
+              </div>
+            )}
             <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Base amount ({renewMonths} month{parseInt(renewMonths, 10) > 1 ? "s" : ""})</span>
@@ -3442,6 +3482,15 @@ export default function SubscribersPage() {
                 </div>
               </div>
             )}
+            <div className={`flex items-center space-x-2 rounded-lg border p-3 transition-colors ${bulkProrate ? "border-purple-500/50 bg-purple-50/50 dark:bg-purple-950/20" : "bg-muted/30"}`}>
+              <Checkbox id="bulk-prorate" checked={bulkProrate} onCheckedChange={(v) => setBulkProrate(v === true)} />
+              <Label htmlFor="bulk-prorate" className="cursor-pointer text-xs leading-snug">
+                <span className="font-medium">Prorate the current cycle</span>
+                <span className="block text-muted-foreground font-normal">
+                  Settles the unused days: upgrade → adjustment invoice for the difference; downgrade → credit note. Uncheck for an end-of-cycle switch (free change).
+                </span>
+              </Label>
+            </div>
             <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
               <Info className="h-3 w-3 mt-0.5 shrink-0" />
               Subscribers already on this plan are skipped. Pending invoices are not affected — renew separately if needed.

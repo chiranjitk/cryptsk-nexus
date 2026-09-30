@@ -198,8 +198,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const payCount = await db.payment.count();
-    const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
+    // [AUDIT-FIX F-21] Receipt number was `RCT<count+1>` — two concurrent payments got the
+    // same receipt (column isn't unique, so no backstop). Time+entropy form is collision-proof.
+    const receiptNumber = `RCT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     const payment = await db.payment.create({
       data: {

@@ -82,7 +82,7 @@ async function jobGenerateInvoices(): Promise<Record<string, unknown>> {
       status: "ACTIVE",
       planId: { not: null },
     },
-    include: { plan: true },
+    include: { Plan: true },
   });
 
   let generated = 0;
@@ -90,8 +90,8 @@ async function jobGenerateInvoices(): Promise<Record<string, unknown>> {
   let totalTax = 0;
 
   for (const sub of subscribers) {
-    if (!sub.plan) continue;
-    const plan = sub.plan;
+    if (!sub.Plan) continue;
+    const plan = sub.Plan;
 
     // Check if invoice already exists for this subscriber this month
     const existing = await db.invoice.findFirst({
@@ -105,11 +105,7 @@ async function jobGenerateInvoices(): Promise<Record<string, unknown>> {
 
     // Get ISP settings for prefix
     const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
-    const prefix = settings?.invoicePrefix || "INV";
-    const separator = settings?.invoiceSeparator || "-";
-    const padding = settings?.invoiceNumberPadding || 4;
-    const invoiceCount = await db.invoice.count();
-    const invoiceNumber = `${prefix}${separator}${String(invoiceCount + 1).padStart(padding, "0")}`;
+    const graceDays = settings?.gracePeriodDays || 5;
 
     const subtotal = plan.priceMonthly;
     const cgstAmount = subtotal * (plan.cgstPercent / 100);
@@ -117,26 +113,48 @@ async function jobGenerateInvoices(): Promise<Record<string, unknown>> {
     const totalTaxVal = cgstAmount + sgstAmount;
     const grandTotal = subtotal + totalTaxVal;
 
-    await db.invoice.create({
-      data: {
-        invoiceNumber,
-        subscriberId: sub.id,
-        planId: plan.id,
-        issueDate: now,
-        dueDate: new Date(now.getTime() + (settings?.gracePeriodDays || 5) * 86400000),
-        periodStart: monthStart,
-        periodEnd: monthEnd,
-        description: `${plan.name} - Monthly Subscription`,
-        subtotal,
-        cgstAmount,
-        sgstAmount,
-        totalTax: totalTaxVal,
-        totalAmount: subtotal,
-        grandTotal,
-        balanceAmount: grandTotal,
-        status: "DRAFT",
-      },
-    });
+    // [AUDIT-FIX F-12] Same canonical allocator as the app (max over INV-<digits>) with
+    // P2002 retry — previously count()-based, so a concurrent manual invoice caused 500s.
+    let invoiceNumber = "";
+    let created = false;
+    for (let attempt = 0; attempt < 5 && !created; attempt++) {
+      const maxRow = await db.$queryRaw<Array<{ max_num: string | null }>>`
+        SELECT MAX(NULLIF(regexp_replace("invoiceNumber", '^INV-', ''), '')::bigint)::text AS max_num
+        FROM "Invoice"
+        WHERE "invoiceNumber" ~ '^INV-[0-9]+$'
+      `;
+      const next = maxRow?.[0]?.max_num ? parseInt(maxRow[0].max_num, 10) + 1 : 1;
+      invoiceNumber = `INV-${String(next).padStart(5, "0")}`;
+      try {
+        await db.invoice.create({
+          data: {
+            invoiceNumber,
+            subscriberId: sub.id,
+            planId: plan.id,
+            issueDate: now,
+            dueDate: new Date(now.getTime() + graceDays * 86400000),
+            periodStart: monthStart,
+            periodEnd: monthEnd,
+            description: `${plan.name} - Monthly Subscription`,
+            subtotal,
+            cgstAmount,
+            sgstAmount,
+            totalTax: totalTaxVal,
+            // [AUDIT-FIX F-14] totalAmount previously excluded tax (stored `subtotal` while
+            // grandTotal = subtotal + tax) — every report reading totalAmount understated
+            // monthly billed revenue by the GST amount.
+            totalAmount: grandTotal,
+            grandTotal,
+            balanceAmount: grandTotal,
+            status: "DRAFT",
+          },
+        });
+        created = true;
+      } catch (e: unknown) {
+        if ((e as { code?: string })?.code !== "P2002") throw e;
+      }
+    }
+    if (!created) continue;
 
     generated++;
     totalAmount += grandTotal;
@@ -157,7 +175,7 @@ async function jobCheckOverdue(): Promise<Record<string, unknown>> {
       dueDate: { lt: now },
       balanceAmount: { gt: 0 },
     },
-    include: { subscriber: true },
+    include: { Subscriber: true },
   });
 
   let marked = 0;
@@ -214,7 +232,7 @@ async function jobSendReminders(): Promise<Record<string, unknown>> {
       dueDate: { gte: now, lte: threeDaysFromNow },
       balanceAmount: { gt: 0 },
     },
-    include: { subscriber: true },
+    include: { Subscriber: true },
   });
 
   // Find invoices overdue for 1-3 days
@@ -224,17 +242,17 @@ async function jobSendReminders(): Promise<Record<string, unknown>> {
       dueDate: { gte: reminderThreshold },
       balanceAmount: { gt: 0 },
     },
-    include: { subscriber: true },
+    include: { Subscriber: true },
   });
 
   let queued = 0;
 
   // Queue notifications for upcoming due
   for (const inv of upcoming) {
-    if (!inv.subscriber) continue;
+    if (!inv.Subscriber) continue;
     await db.notification.create({
       data: {
-        subscriberId: inv.subscriber.id,
+        subscriberId: inv.Subscriber.id,
         type: "IN_APP",
         category: "BILL_DUE",
         title: "Payment Reminder",
@@ -247,10 +265,10 @@ async function jobSendReminders(): Promise<Record<string, unknown>> {
 
   // Queue notifications for recent overdue
   for (const inv of overdueRecent) {
-    if (!inv.subscriber) continue;
+    if (!inv.Subscriber) continue;
     await db.notification.create({
       data: {
-        subscriberId: inv.subscriber.id,
+        subscriberId: inv.Subscriber.id,
         type: "IN_APP",
         category: "BILL_DUE",
         title: "Overdue Payment Reminder",
@@ -275,35 +293,35 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
       dueDate: { lt: thirtyDaysAgo },
       balanceAmount: { gt: 0 },
     },
-    include: { subscriber: true },
+    include: { Subscriber: true },
     distinct: ["subscriberId"],
   });
 
   let suspended = 0;
   let radiusBlocked = 0;
   for (const inv of overdueInvoices) {
-    if (!inv.subscriber || inv.subscriber.status !== "ACTIVE") continue;
+    if (!inv.Subscriber || inv.Subscriber.status !== "ACTIVE") continue;
 
     await db.subscriber.update({
-      where: { id: inv.subscriber.id },
+      where: { id: inv.Subscriber.id },
       data: { status: "SUSPENDED" },
     });
 
     // [AUDIT-FIX F-04] Enforce the suspension in FreeRADIUS — non-payers must not
     // be able to authenticate. Failures are logged but do not abort the sweep.
-    if (inv.subscriber.radiusEnabled && inv.subscriber.serviceUsername) {
+    if (inv.Subscriber.radiusEnabled && inv.Subscriber.serviceUsername) {
       try {
-        await blockRadiusUser(inv.subscriber.serviceUsername);
+        await blockRadiusUser(inv.Subscriber.serviceUsername);
         radiusBlocked++;
       } catch (e) {
-        logger.error("RADIUS block failed", { username: inv.subscriber.serviceUsername, error: String(e) });
+        logger.error("RADIUS block failed", { username: inv.Subscriber.serviceUsername, error: String(e) });
       }
     }
 
     // Create notification
     await db.notification.create({
       data: {
-        subscriberId: inv.subscriber.id,
+        subscriberId: inv.Subscriber.id,
         type: "IN_APP",
         category: "BILL_DUE",
         title: "Service Suspended",

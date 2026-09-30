@@ -3355,3 +3355,24 @@ Stage Summary:
 - Ops note: dev server OOM-killed twice during route compiles (2.6GB spike); portable postgres on :5432 (~/pg) + billing-cron on :3004 running; background processes get reaped between shell sessions — start cron+test in the SAME command
 - Next round: F-12/F-14/F-15 (billing correctness) are the highest-value remaining items
 >>>>>>> Stashed changes
+
+---
+Task ID: P1-FIX-SPRINT-2026-10-01
+Agent: Z.ai Code (cron webDevReview round 2)
+Task: P1 billing-correctness fixes from AUDIT-REPORT.md (F-12/F-13/F-14/F-15/F-21) + UI wiring
+
+Work Log:
+- F-14 fixed: cron job-001 now writes totalAmount = grandTotal (tax included); previously stored subtotal → all tax-reading reports understated monthly billed revenue
+- F-12 fixed: created src/lib/invoice-number.ts — single allocator (MAX over all INV-<digits> via $queryRaw + P2002 retry); wired into invoices/route.ts, billing/route.ts, subscribers/bulk/route.ts (local copy deleted); billing-cron uses the identical algorithm inline — the 4 competing numbering schemes now converge on dense INV-0000N
+- F-21 fixed: payments POST receipt now RCT-<ts36>-<rand4> (was RCT<count+1> race)
+- F-15 fixed (proration): bulk change-plan now settles the unused cycle — delta = daysRemaining × (new daily rate − old daily rate); upgrade → SENT adjustment invoice (isProRata, proRataDays); downgrade → CreditNote against latest invoice; opt-out via prorate:false for end-of-cycle switches; response includes full proration summary
+- F-13 fixed (prepaid wallet): bulk renew accepts useWallet:true — sufficient balance → atomically debits balance + WALLET payment inside the renewal $transaction; insufficient → subscriber skipped with reason; response adds walletDebited
+- LATENT BUG FOUND + FIXED: mini-services/billing-cron used lowercase relations (include: { plan: true } / { subscriber: true }) but Prisma schema has PascalCase (Plan / Subscriber) → jobs 001/002/003/004 were silently crashing on every run — auto-invoicing, overdue marking, reminders and invoice-overdue suspension have NEVER actually executed. All fixed to Plan/Subscriber. (job-006 expiry enforcement was already correct.)
+- Verified T-A..T-E live: T-A downgrade proration → credit note ₹200 on INV-00003; T-B wallet renewal → balance 1000→529.18, WALLET payment ₹470.82, walletDebited:1; T-C manual invoice INV-00005 (dense cross-path numbering); T-D receipt RCT-MUOE4196-1K3H; T-E cron job-001 FIRST SUCCESSFUL RUN EVER → 12 invoices, totalAmount=grandTotal (tax included), dense INV-00014..16
+- UI: Renew dialog gained "Pay from prepaid wallet" toggle with live eligibility preview ("N of M eligible (combined balance ₹X)"); Change Plan dialog gained "Prorate the current cycle" toggle (checked by default); success toasts surface walletDebited/proration counts; screenshots prorate-dialog-demo.png + expiring-filter-demo.png committed
+
+Stage Summary:
+- 17 of 23 audit findings now fixed (P0 complete + F-12/F-13/F-14/F-15-proration/F-21)
+- Remaining: F-16 (grace/SLA automation), F-17 (soft-delete retention), F-18 (parameterize radius-sync SQL), F-19 (session revocation), F-20 (RBAC on money routes), F-23 (complaint state machine)
+- Ops: sandbox jobs invoices INV-00005..16 are DRAFT artifacts of T-E; billing-cron must be started with DATABASE_URL+SESSION_SECRET env (kill by PID, pkill -f "billing-cron/index.ts" does NOT match its cmdline)
+- Next round suggestion: F-20 RBAC + F-19 session revocation (security), or F-16 SLA automation
