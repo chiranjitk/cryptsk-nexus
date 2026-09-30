@@ -3108,6 +3108,7 @@ Stage Summary:
   * GoVPP v0.5.0 connected via binary API (govppsock client)
 
 ---
+<<<<<<< Updated upstream
 Task ID: FIX-GOVPP-NAT44-EI
 Agent: Subagent FIX-GOVPP-NAT44-EI
 Task: Switch GoVPP from nat44_ed to nat44_ei (VPP v26.06 build has EI plugin, not ED)
@@ -3151,3 +3152,22 @@ Stage Summary:
     [vpp] Added static NAT EI 10.0.131.200 -> 203.0.113.100 via binary API
     [vpp] Enabled NAT44 EI inside on interface 2 via binary API
 - Sandbox limitation: no Go toolchain in sandbox — could not run `go build` / `go vet` locally. The code follows GoVPP v0.5.0's verified nat44_ei struct/constant layout from the task spec. Any struct-name or field-name mismatch will surface as a Go compile error on the first `go build` on prod; the error messages will be self-explanatory and trivial to fix in a follow-up.
+=======
+Task ID: AUDIT-BIZLOGIC-2026-09-30
+Agent: Z.ai Code (main agent)
+Task: Full product audit for business logic gaps vs real-world ISP cases; generate evidence report; push to GitHub
+
+Work Log:
+- Mapped 10 revenue-critical areas via Explore agent (subscriber lifecycle, renew, change-plan, billing, payments, RADIUS sync, API auth, concurrency, complaints/SLA, grace-period/due-recovery) with file:line citations
+- Rebuilt sandbox runtime: platform's PostgreSQL sidecar was DOWN (P1001 since container start) → installed portable PostgreSQL 16.4 (Zonky binaries, ~/pg), created cryptsknexus role/db, ran prisma db push (228 tables) + seed (15 subscribers, 8 plans)
+- Executed 8 LIVE exploitation tests, all confirmed: double-verify inflates invoice paidAmount (100→200); duplicate UTR accepted 2x; refund bypass via REFUNDED→VERIFIED flip (₹1,000 refunded on ₹599 payment); bulk suspend leaves radcheck without Auth-Type=Reject; official suspend-overdue job leaves 60-days-expired ACTIVE subscriber untouched; renew of expired subscriber starts period 5 days in FUTURE + payment.invoiceId=null; due-recovery overpay → balanceAmount=-99492.18; unauthenticated GETs leak subscriber PII + invoice financials (HTTP 200 no cookie)
+- SQL-injection claim in subscriber DELETE DOWNGRADED after live probe: findUnique guard blocks URL-param injection today (still flagged as dangerous raw-SQL pattern)
+- Wrote AUDIT-REPORT.md: 23 findings (7 CRITICAL reproduced live), real-world scenario walkthroughs, P0/P1/P2 remediation roadmap, verbatim test log
+- Pushed report + worklog to GitHub
+
+Stage Summary:
+- Deliverable: AUDIT-REPORT.md at repo root (evidence-based, 23 findings, remediation roadmap)
+- Environment restored in sandbox: postgres 16.4 on :5432 (~/pg, pg_ctl -D data), billing-cron restarted on :3004 with SESSION_SECRET, dev server :3000
+- CRITICAL for next agents: every suspend path except manual PUT misses blockUserInFreeRADIUS; only 1 $transaction in whole money pipeline; payments have no idempotency — P0 list in AUDIT-REPORT §4 should drive next fix sprint
+- Test data pollution in sandbox DB is intentional (payments INV-00001/00002, DUP-UTR-999888, refunds) — safe to wipe
+>>>>>>> Stashed changes
