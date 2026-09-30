@@ -170,6 +170,11 @@ func main() {
         http.HandleFunc("/coa", coaHandler)
         http.HandleFunc("/nat44/add-address", natAddAddressHandler)
         http.HandleFunc("/nat44/enable", natEnableHandler)
+        // /nat44/enable-interface is the new canonical endpoint name (the TS
+        // adapter's /subscriber/program flow calls this to mark the
+        // subscriber-side interface as NAT-inside). /nat44/enable is kept as a
+        // backward-compatible alias pointing at the same handler.
+        http.HandleFunc("/nat44/enable-interface", natEnableHandler)
         http.HandleFunc("/nat44/addresses", natAddressesHandler)
         http.HandleFunc("/policers", policersHandler)
         http.HandleFunc("/vpp/restart-recovery", restartRecoveryHandler)
@@ -554,6 +559,15 @@ func subscriberProgramHandler(w http.ResponseWriter, r *http.Request) {
                         policy.NatMappingExists = false
                 } else {
                         policy.NatMappingExists = true
+                }
+
+                // Step 2b: enable NAT44 EI on the subscriber-facing interface
+                // (inside). Without this, the static mapping is installed but
+                // never traversed because the nat44_ei plugin doesn't know the
+                // interface role. Non-fatal — the mapping is still there.
+                if err := vppClient.EnableNatOnInterface(req.SwIfIndex, true); err != nil {
+                        log.Printf("[govpp] /subscriber/program: EnableNatOnInterface(inside) WARNING swIfIndex=%d: %v (static mapping installed but interface not flagged inside — NAT may not traverse)",
+                                req.SwIfIndex, err)
                 }
         }
 

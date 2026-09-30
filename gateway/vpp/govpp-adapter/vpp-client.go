@@ -27,7 +27,7 @@ import (
         interface_types "git.fd.io/govpp.git/binapi/interface_types"
         ip_binapi "git.fd.io/govpp.git/binapi/ip"
         ip_types "git.fd.io/govpp.git/binapi/ip_types"
-        "git.fd.io/govpp.git/binapi/nat44_ed"
+        nat44_ei "git.fd.io/govpp.git/binapi/nat44_ei"
         nat_types "git.fd.io/govpp.git/binapi/nat_types"
         "git.fd.io/govpp.git/binapi/policer"
         policer_types "git.fd.io/govpp.git/binapi/policer_types"
@@ -618,30 +618,33 @@ func (c *VPPLiveClient) AddNatAddress(startIP, endIP string) error {
                 return fmt.Errorf("invalid end IP '%s': %w", endIP, err)
         }
 
-        req := &nat44_ed.Nat44AddDelAddressRange{
+        req := &nat44_ei.Nat44EiAddDelAddressRange{
                 FirstIPAddress: firstIP,
                 LastIPAddress:  lastIP,
                 VrfID:          0, // default VRF
                 IsAdd:          true,
-                Flags:          0,
         }
-        reply := &nat44_ed.Nat44AddDelAddressRangeReply{}
+        reply := &nat44_ei.Nat44EiAddDelAddressRangeReply{}
 
         if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
-                return fmt.Errorf("nat44_add_del_address_range failed: %w", err)
+                return fmt.Errorf("nat44_ei_add_del_address_range failed: %w", err)
         }
         if reply.Retval != 0 {
-                return fmt.Errorf("nat44_add_del_address_range retval=%d", reply.Retval)
+                return fmt.Errorf("nat44_ei_add_del_address_range retval=%d", reply.Retval)
         }
-        log.Printf("[vpp] Added NAT pool address range %s..%s via binary API", startIP, endIP)
+        log.Printf("[vpp] Added NAT44 EI pool address range %s..%s via binary API", startIP, endIP)
         return nil
 }
 
-// AddStaticNat creates a 1:1 static NAT mapping (internalIP → externalIP).
-// Tries nat44_add_del_static_mapping_v2 first; if that message is unsupported
-// on the VPP build (error contains "Unsupported" or "-126"), falls back to
-// the V1 nat44_add_del_static_mapping message (same fields minus V2-only
-// MatchPool/PoolIPAddress).
+// AddStaticNat creates a 1:1 static NAT mapping (internalIP → externalIP) using
+// the nat44_ei (endpoint-INDEPENDENT) plugin loaded on VPP v26.06 production
+// builds. The previous nat44_ed implementation triggered
+// `VPPApiError: Unsupported (-126)` because the ED plugin is not present in
+// the prod build — only `nat44_ei_plugin.so` is loaded.
+//
+// The EI plugin's Nat44EiAddDelStaticMapping struct mirrors the ED V2 message
+// (same field names, except Flags uses the NAT44_EI_* constant namespace and
+// NAT44_EI_STATIC_MAPPING = 64 replaces NAT_IS_STATIC = 1).
 func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
@@ -654,14 +657,9 @@ func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
         if err != nil {
                 return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
         }
-        tag := fmt.Sprintf("static-%s->%s", internalIP, externalIP)
-
-        // --- Step 1: try V2 message (nat44_add_del_static_mapping_v2) ---
-        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
+        req := &nat44_ei.Nat44EiAddDelStaticMapping{
                 IsAdd:             true,
-                MatchPool:         false,
-                Flags:             nat_types.NAT_IS_STATIC, // 1:1 static mapping
-                PoolIPAddress:     ip_types.IP4Address{0, 0, 0, 0}, // unused for static
+                Flags:             nat44_ei.NAT44_EI_STATIC_MAPPING, // 64 — 1:1 static mapping
                 LocalIPAddress:    localIP,
                 ExternalIPAddress: extIP,
                 Protocol:          0, // 0 = all protocols (identity mapping)
@@ -669,101 +667,92 @@ func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
                 ExternalPort:      0,
                 ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF), // ~0 = use specific external IP
                 VrfID:             0,
-                Tag:               tag,
+                Tag:               fmt.Sprintf("static-%s->%s", internalIP, externalIP),
         }
-        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
-        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
-                if replyV2.Retval == 0 {
-                        log.Printf("[vpp] Added static NAT V2 %s -> %s via binary API", internalIP, externalIP)
-                        return nil
-                }
-                // V2 message accepted but retval != 0 — fall through to V1
-                log.Printf("[vpp] AddStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
-        } else {
-                // V2 message error — fall back to V1 only if it's the "Unsupported (-126)" case
-                errMsg := errV2.Error()
-                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
-                        log.Printf("[vpp] AddStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
-                } else {
-                        return fmt.Errorf("nat44_add_del_static_mapping_v2 failed: %w", errV2)
-                }
+        reply := &nat44_ei.Nat44EiAddDelStaticMappingReply{}
+        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+                return fmt.Errorf("nat44_ei_add_del_static_mapping failed: %w", err)
         }
-
-        // --- Step 2: fall back to V1 message (nat44_add_del_static_mapping) ---
-        // V1 struct has the same LocalIPAddress/ExternalIPAddress/Flags/Protocol/
-        // LocalPort/ExternalPort/ExternalSwIfIndex/VrfID/Tag fields as V2 — it just
-        // lacks V2's MatchPool/PoolIPAddress pair (no pool-assigned static mapping
-        // support, which we don't use anyway).
-        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
-                IsAdd:             true,
-                Flags:             nat_types.NAT_IS_STATIC,
-                LocalIPAddress:    localIP,
-                ExternalIPAddress: extIP,
-                Protocol:          0, // identity mapping (all protocols)
-                LocalPort:         0,
-                ExternalPort:      0,
-                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
-                VrfID:             0,
-                Tag:               tag,
+        if reply.Retval != 0 {
+                return fmt.Errorf("nat44_ei_add_del_static_mapping retval=%d", reply.Retval)
         }
-        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
-        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
-                return fmt.Errorf("nat44_add_del_static_mapping V1 also failed: %w", errV1)
-        }
-        if replyV1.Retval != 0 {
-                return fmt.Errorf("nat44_add_del_static_mapping V1 retval=%d", replyV1.Retval)
-        }
-        log.Printf("[vpp] Added static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
+        log.Printf("[vpp] Added static NAT EI %s -> %s via binary API", internalIP, externalIP)
         return nil
 }
 
-// EnableNatOnInterface enables NAT44 on an interface (inside or outside).
-// Uses nat44_interface_add_del_feature with NAT_IS_INSIDE or NAT_IS_OUTSIDE.
+// EnableNatOnInterface enables NAT44 EI on an interface (inside or outside).
+// nat44_ei uses TWO separate calls to express the inside/outside role:
+//   1. Nat44EiAddDelInterfaceAddr — sets the inside/outside flag bit on the
+//      interface (NAT44_EI_IF_INSIDE=16, NAT44_EI_IF_OUTSIDE=32).
+//   2. Nat44EiAddDelOutputInterface — for outside interfaces only, registers
+//      the interface as the egress for NAT'd traffic.
+//
+// NOTE: nat44_ei's IF_INSIDE/IF_OUTSIDE bit values are REVERSED from the
+// legacy nat plugin's nat_types.NAT_IS_INSIDE/NAT_IS_OUTSIDE — be careful.
 func (c *VPPLiveClient) EnableNatOnInterface(swIfIndex uint32, inside bool) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
         }
-        var flags nat_types.NatConfigFlags
-        if inside {
-                flags = nat_types.NAT_IS_INSIDE
-        } else {
-                flags = nat_types.NAT_IS_OUTSIDE
-        }
-        req := &nat44_ed.Nat44InterfaceAddDelFeature{
-                IsAdd:     true,
-                Flags:     flags,
-                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
-        }
-        reply := &nat44_ed.Nat44InterfaceAddDelFeatureReply{}
 
-        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
-                return fmt.Errorf("nat44_interface_add_del_feature failed: %w", err)
+        // Step 1: set the interface as inside or outside via the interface-addr
+        // message. IF_INSIDE=16, IF_OUTSIDE=32 (reversed from nat_types).
+        flags := nat44_ei.NAT44_EI_IF_OUTSIDE // 32 — outside by default
+        if inside {
+                flags = nat44_ei.NAT44_EI_IF_INSIDE // 16 — inside
         }
-        if reply.Retval != 0 {
-                return fmt.Errorf("nat44_interface_add_del_feature retval=%d", reply.Retval)
+        addrReq := &nat44_ei.Nat44EiAddDelInterfaceAddr{
+                IsAdd:     true,
+                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+                Flags:     flags,
         }
+        addrReply := &nat44_ei.Nat44EiAddDelInterfaceAddrReply{}
+        if err := c.ch.SendRequest(addrReq).ReceiveReply(addrReply); err != nil {
+                return fmt.Errorf("nat44_ei_add_del_interface_addr failed: %w", err)
+        }
+        if addrReply.Retval != 0 {
+                return fmt.Errorf("nat44_ei_add_del_interface_addr retval=%d", addrReply.Retval)
+        }
+
+        // Step 2: for outside interfaces, also register as a NAT44 EI output
+        // interface so translated traffic egresses through it.
+        if !inside {
+                outReq := &nat44_ei.Nat44EiAddDelOutputInterface{
+                        IsAdd:     true,
+                        SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+                }
+                outReply := &nat44_ei.Nat44EiAddDelOutputInterfaceReply{}
+                if err := c.ch.SendRequest(outReq).ReceiveReply(outReply); err != nil {
+                        return fmt.Errorf("nat44_ei_add_del_output_interface failed: %w", err)
+                }
+                if outReply.Retval != 0 {
+                        return fmt.Errorf("nat44_ei_add_del_output_interface retval=%d", outReply.Retval)
+                }
+        }
+
         sideStr := "outside"
         if inside {
                 sideStr = "inside"
         }
-        log.Printf("[vpp] Enabled NAT44 %s on interface %d via binary API", sideStr, swIfIndex)
+        log.Printf("[vpp] Enabled NAT44 EI %s on interface %d via binary API", sideStr, swIfIndex)
         return nil
 }
 
-// ListNatAddresses returns the list of NAT44 pool addresses via nat44_address_dump.
-func (c *VPPLiveClient) ListNatAddresses() ([]nat44_ed.Nat44AddressDetails, error) {
+// ListNatAddresses returns the list of NAT44 EI pool addresses via
+// nat44_ei_address_dump. Field layout (IPAddress / VrfID / Flags) is identical
+// to the legacy nat44_ed message so the JSON handler in main.go needs no change.
+func (c *VPPLiveClient) ListNatAddresses() ([]nat44_ei.Nat44EiAddressDetails, error) {
         if !c.IsConnected() {
                 return nil, fmt.Errorf("VPP not connected")
         }
-        req := &nat44_ed.Nat44AddressDump{}
+        req := &nat44_ei.Nat44EiAddressDump{}
         multiCtx := c.ch.SendMultiRequest(req)
 
-        var out []nat44_ed.Nat44AddressDetails
+        var out []nat44_ei.Nat44EiAddressDetails
         for {
-                details := &nat44_ed.Nat44AddressDetails{}
+                details := &nat44_ei.Nat44EiAddressDetails{}
                 last, err := multiCtx.ReceiveReply(details)
                 if err != nil {
-                        return out, fmt.Errorf("nat44_address_dump failed: %w", err)
+                        return out, fmt.Errorf("nat44_ei_address_dump failed: %w", err)
                 }
                 if last {
                         break
@@ -815,8 +804,8 @@ func (c *VPPLiveClient) DeletePolicer(name string) error {
         return nil
 }
 
-// DeleteStaticNat removes a 1:1 static NAT mapping. Mirrors AddStaticNat:
-// tries V2 first, falls back to V1 if V2 is unsupported on this VPP build.
+// DeleteStaticNat removes a 1:1 static NAT mapping via the nat44_ei plugin.
+// Mirrors AddStaticNat with IsAdd=false.
 func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
         if !c.IsConnected() {
                 return fmt.Errorf("VPP not connected")
@@ -829,49 +818,26 @@ func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
         if err != nil {
                 return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
         }
-
-        // --- Step 1: try V2 delete ---
-        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
+        req := &nat44_ei.Nat44EiAddDelStaticMapping{
                 IsAdd:             false,
-                Flags:             nat_types.NAT_IS_STATIC,
-                LocalIPAddress:   localIP,
+                Flags:             nat44_ei.NAT44_EI_STATIC_MAPPING, // 64 — 1:1 static mapping
+                LocalIPAddress:    localIP,
                 ExternalIPAddress: extIP,
+                Protocol:          0,
+                LocalPort:         0,
+                ExternalPort:      0,
                 ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
                 VrfID:             0,
+                Tag:               fmt.Sprintf("static-%s->%s", internalIP, externalIP),
         }
-        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
-        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
-                if replyV2.Retval == 0 {
-                        log.Printf("[vpp] Deleted static NAT V2 %s -> %s via binary API", internalIP, externalIP)
-                        return nil
-                }
-                log.Printf("[vpp] DeleteStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
-        } else {
-                errMsg := errV2.Error()
-                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
-                        log.Printf("[vpp] DeleteStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
-                } else {
-                        return fmt.Errorf("nat44_add_del_static_mapping_v2 (delete) failed: %w", errV2)
-                }
+        reply := &nat44_ei.Nat44EiAddDelStaticMappingReply{}
+        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+                return fmt.Errorf("nat44_ei_add_del_static_mapping (delete) failed: %w", err)
         }
-
-        // --- Step 2: fall back to V1 delete ---
-        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
-                IsAdd:             false,
-                Flags:             nat_types.NAT_IS_STATIC,
-                LocalIPAddress:   localIP,
-                ExternalIPAddress: extIP,
-                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
-                VrfID:             0,
+        if reply.Retval != 0 {
+                return fmt.Errorf("nat44_ei_add_del_static_mapping (delete) retval=%d", reply.Retval)
         }
-        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
-        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
-                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) failed: %w", errV1)
-        }
-        if replyV1.Retval != 0 {
-                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) retval=%d", replyV1.Retval)
-        }
-        log.Printf("[vpp] Deleted static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
+        log.Printf("[vpp] Deleted static NAT EI %s -> %s via binary API", internalIP, externalIP)
         return nil
 }
 
@@ -1042,3 +1008,10 @@ func (c *VPPLiveClient) GetInterfaceStats(swIfIndex uint32) (rxPackets, txPacket
 
 // ─── Ensure uuid import is used (placeholder if unused) ──────
 var _ = uuid.New
+
+// ─── Ensure nat_types import is retained for shared type aliases ──
+// nat44_ei defines its own Nat44EiConfigFlags + NAT44_EI_* constants locally,
+// but we keep the nat_types import registered so future shared types
+// (e.g. nat_types.NatConfigFlags when talking to the legacy nat plugin)
+// resolve without re-adding the import.
+var _ = nat_types.NatConfigFlags(0)

@@ -3106,3 +3106,48 @@ Stage Summary:
   * 0 NAT44 mappings (plugin not supporting static mapping in this build)
   * VPP v26.06 binary running with DPDK (1024 hugepages = 2GB)
   * GoVPP v0.5.0 connected via binary API (govppsock client)
+
+---
+Task ID: FIX-GOVPP-NAT44-EI
+Agent: Subagent FIX-GOVPP-NAT44-EI
+Task: Switch GoVPP from nat44_ed to nat44_ei (VPP v26.06 build has EI plugin, not ED)
+
+Work Log:
+- Read vpp-client.go (1044 lines) and main.go (1011 lines) fully + tail of worklog for context.
+- Confirmed root cause from worklog Task FULL-PRODUCTION-TEST: VPP v26.06 prod build only loads `nat44_ei_plugin.so` — no `nat44_ed_plugin.so`. Hence every nat44_ed binapi message (V1, V2) returns `VPPApiError: Unsupported (-126)`. The previous V1/V2 fallback in AddStaticNat was ineffective because BOTH messages are unsupported on this build.
+- vpp-client.go — imports block: replaced `"git.fd.io/govpp.git/binapi/nat44_ed"` with `nat44_ei "git.fd.io/govpp.git/binapi/nat44_ei"`; kept `nat_types` import (per task spec) and added `var _ = nat_types.NatConfigFlags(0)` placeholder at file end to prevent "unused import" Go compile error.
+- vpp-client.go — AddNatAddress: rewrote to use `nat44_ei.Nat44EiAddDelAddressRange` + `Nat44EiAddDelAddressRangeReply`. Dropped the `Flags: 0` field (nat44_ei's address-range struct has no Flags field per verified struct layout). Error messages renamed to nat44_ei_*.
+- vpp-client.go — AddStaticNat: REMOVED the entire V2→V1 fallback ladder. Single `nat44_ei.Nat44EiAddDelStaticMapping` call with IsAdd=true, Flags=NAT44_EI_STATIC_MAPPING (64), Protocol=0 (identity), ExternalSwIfIndex=~0 (use specific external IP), Tag="static-<in>-><ext>". Single reply struct `Nat44EiAddDelStaticMappingReply` with Retval check.
+- vpp-client.go — DeleteStaticNat: identical rewrite but IsAdd=false (mirrors AddStaticNat).
+- vpp-client.go — EnableNatOnInterface: rewrote from single `nat44_ed.Nat44InterfaceAddDelFeature` call into TWO-call sequence per nat44_ei API:
+    1. `Nat44EiAddDelInterfaceAddr` with Flags=NAT44_EI_IF_INSIDE(16) or NAT44_EI_IF_OUTSIDE(32). NOTE: EI bit values are REVERSED from legacy nat_types (INSIDE=16, OUTSIDE=32 — documented in comment).
+    2. `Nat44EiAddDelOutputInterface` (outside interfaces only) to register the egress for NAT'd traffic.
+  Both calls check SendRequest error + Retval != 0.
+- vpp-client.go — ListNatAddresses: switched return type from `[]nat44_ed.Nat44AddressDetails` → `[]nat44_ei.Nat44EiAddressDetails`. Dump message `Nat44EiAddressDump`, details `Nat44EiAddressDetails`. Field names (IPAddress/VrfID/Flags) match the ED layout, so main.go's natAddressesHandler needed zero code changes.
+- main.go — registered new endpoint `POST /nat44/enable-interface` mapped to the existing `natEnableHandler` (alongside the legacy `/nat44/enable` route, kept as a backward-compatible alias).
+- main.go — /subscriber/program handler: inserted "Step 2b" between Step 2 (AddStaticNat) and Step 3 (CreateACL). When ExternalIP is provided, calls `vppClient.EnableNatOnInterface(req.SwIfIndex, true)` to mark the subscriber-facing interface as NAT-inside. Non-fatal: failures are logged as warnings (the static mapping is still installed, but NAT may not traverse without the inside flag).
+- main.go — natAddressesHandler + subscriberVerifyHandler: NO code changes needed. Both access `a.IPAddress`, `a.VrfID`, `a.Flags` — these field names exist identically on `Nat44EiAddressDetails`. The `uint8(a.Flags)` cast still works because `Nat44EiConfigFlags` is a named `uint8` type.
+- Verified: no remaining live-code references to `nat44_ed`, `Nat44AddDelStaticMapping*`, `Nat44Address*`, `Nat44InterfaceAddDelFeature*`, or `nat_types.NAT_IS_*` constants. Only remaining `nat44_ed` / `NAT_IS_*` strings are in descriptive comments documenting the migration.
+- Verified imports: nat44_ei (new, used), nat_types (kept w/ placeholder), all other imports (acl/classify/interfaces/interface_types/ip/ip_binapi/policer/policer_types/pppoe/uuid) still used.
+- Did NOT touch go.mod (no new dependency — nat44_ei package is part of the existing `git.fd.io/govpp.git v0.5.0` module already pinned in go.mod).
+
+Stage Summary:
+- Files modified (ONLY these 2, per constraint):
+  1. /home/z/my-project/gateway/vpp/govpp-adapter/vpp-client.go
+  2. /home/z/my-project/gateway/vpp/govpp-adapter/main.go
+- Behavior change: every NAT44 binapi call now uses the `nat44_ei` plugin messages (which is the only NAT44 plugin loaded on prod VPP v26.06). The `-126 Unsupported` error from the previous nat44_ed attempts is eliminated at the message-name level — VPP will actually receive and execute the EI equivalents.
+- Key constants in play (nat44_ei package, NOT nat_types): NAT44_EI_STATIC_MAPPING=64 (replaces NAT_IS_STATIC=1), NAT44_EI_IF_INSIDE=16, NAT44_EI_IF_OUTSIDE=32 (bit values REVERSED from nat_types).
+- Build + deploy commands (on prod 103.244.7.221):
+    cd /opt/ispplatform/gateway/vpp/govpp-adapter
+    go build -o cryptsk-govpp-adapter && pm2 restart cryptsk-govpp-adapter
+- Test command:
+    curl -X POST http://localhost:3016/subscriber/program -H 'Content-Type: application/json' \
+      -d '{"sessionId":"test-nat","subscriberId":"sub-1","username":"test","framedIp":"10.0.131.200","mac":"00:11:22:33:44:55","nasIp":"127.0.0.1","speedDownKbps":30000,"speedUpKbps":15000,"externalIp":"203.0.113.100","swIfIndex":2}'
+- Verification commands (expect NON-empty results, no more "Unsupported"):
+    vppctl show nat44 ei static mappings
+    vppctl show nat44 ei addresses
+    vppctl show nat44 ei interfaces
+- Expected log lines on success:
+    [vpp] Added static NAT EI 10.0.131.200 -> 203.0.113.100 via binary API
+    [vpp] Enabled NAT44 EI inside on interface 2 via binary API
+- Sandbox limitation: no Go toolchain in sandbox — could not run `go build` / `go vet` locally. The code follows GoVPP v0.5.0's verified nat44_ei struct/constant layout from the task spec. Any struct-name or field-name mismatch will surface as a Go compile error on the first `go build` on prod; the error messages will be self-explanatory and trivial to fix in a follow-up.
