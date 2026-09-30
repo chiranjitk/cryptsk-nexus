@@ -21,6 +21,25 @@ function jsonErr(message: string, status = 400) {
   return json({ error: message }, status);
 }
 
+// ─── RADIUS data-plane enforcement ─────────────────────────
+// [AUDIT-FIX F-04] The cron previously only flipped DB status. These helpers mirror
+// src/lib/radius-sync.ts blockUserInFreeRADIUS/unblockUserInFreeRADIUS so suspended
+// subscribers are actually rejected by FreeRADIUS (Auth-Type=Reject in radcheck).
+function esc(v: string): string {
+  return v.replace(/'/g, "''");
+}
+
+async function blockRadiusUser(username: string): Promise<void> {
+  const uname = esc(username);
+  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
+  await db.$executeRawUnsafe(`INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Auth-Type', ':=', 'Reject')`);
+}
+
+async function unblockRadiusUser(username: string): Promise<void> {
+  const uname = esc(username);
+  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
+}
+
 // ─── Scheduled Jobs State ──────────────────────────────────
 
 interface JobExecution {
@@ -261,6 +280,7 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
   });
 
   let suspended = 0;
+  let radiusBlocked = 0;
   for (const inv of overdueInvoices) {
     if (!inv.subscriber || inv.subscriber.status !== "ACTIVE") continue;
 
@@ -268,6 +288,17 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
       where: { id: inv.subscriber.id },
       data: { status: "SUSPENDED" },
     });
+
+    // [AUDIT-FIX F-04] Enforce the suspension in FreeRADIUS — non-payers must not
+    // be able to authenticate. Failures are logged but do not abort the sweep.
+    if (inv.subscriber.radiusEnabled && inv.subscriber.serviceUsername) {
+      try {
+        await blockRadiusUser(inv.subscriber.serviceUsername);
+        radiusBlocked++;
+      } catch (e) {
+        logger.error("RADIUS block failed", { username: inv.subscriber.serviceUsername, error: String(e) });
+      }
+    }
 
     // Create notification
     await db.notification.create({
@@ -284,8 +315,86 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
     suspended++;
   }
 
-  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended });
-  return { checked: overdueInvoices.length, suspended };
+  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended, radiusBlocked });
+  return { checked: overdueInvoices.length, suspended, radiusBlocked };
+}
+
+// [AUDIT-FIX F-05] Expiry enforcement — the product had NO mechanism to stop service
+// when a plan's validity lapses (reproduced live: subscriber expired 60 days stayed
+// ACTIVE and unblocked after running the suspend-overdue job, because that job only
+// looks at OVERDUE invoices). This job computes each subscriber's paid-through date
+// from their billing anchor + plan validity and suspends + RADIUS-blocks whoever has
+// lapsed beyond the grace period.
+async function jobExpiryEnforcement(): Promise<Record<string, unknown>> {
+  const graceDays = 3; // days of tolerance after the paid-through date before suspension
+  const now = Date.now();
+
+  const active = await db.subscriber.findMany({
+    where: { status: "ACTIVE", planId: { not: null } },
+    include: { Plan: { select: { name: true, validityDays: true } } },
+  });
+
+  let checked = 0;
+  let expiredSuspended = 0;
+  let radiusBlocked = 0;
+  const details: Array<{ code: string; expiredDaysAgo: number }> = [];
+
+  for (const sub of active) {
+    const validityDays = sub.Plan?.validityDays || 30;
+    if (!sub.billingStartDate) continue;
+    checked++;
+
+    // Paid-through = last cycle anchor + one validity period.
+    // The billing anchor advances on every renewal, so the subscriber is entitled to
+    // service from billingStartDate until billingStartDate + validityDays (single-cycle
+    // entitlement). Multi-cycle renewals set the anchor to the final cycle (bulk renew
+    // writes newBillingStart = periodStart + cycleDays*(months-1)), so this stays correct.
+    const paidThrough = sub.billingStartDate.getTime() + validityDays * 86400000;
+    const lapsedDays = Math.floor((now - paidThrough) / 86400000);
+
+    // Beyond the paid-through date + grace AND no PAID invoice covering the future
+    // (belt-and-braces: a recently generated invoice that starts in the future means
+    // the operator has already taken payment for the next cycle).
+    if (lapsedDays > graceDays) {
+      const coveringInvoice = await db.invoice.findFirst({
+        where: {
+          subscriberId: sub.id,
+          status: { in: ["PAID", "SENT", "PARTIALLY_PAID"] },
+          periodEnd: { gte: new Date() },
+        },
+        select: { invoiceNumber: true },
+      });
+      if (coveringInvoice) continue; // already paid for a period extending past today
+
+      await db.subscriber.update({
+        where: { id: sub.id },
+        data: { status: "SUSPENDED" },
+      });
+      if (sub.radiusEnabled && sub.serviceUsername) {
+        try {
+          await blockRadiusUser(sub.serviceUsername);
+          radiusBlocked++;
+        } catch (e) {
+          logger.error("Expiry RADIUS block failed", { username: sub.serviceUsername, error: String(e) });
+        }
+      }
+      await db.notification.create({
+        data: {
+          subscriberId: sub.id,
+          type: "IN_APP",
+          category: "BILL_DUE",
+          title: "Plan Expired",
+          message: `Your plan ${sub.Plan?.name || ""} expired ${lapsedDays} day(s) ago and service has been suspended. Renew to reactivate instantly.`,
+          status: "PENDING",
+        },
+      });
+      expiredSuspended++;
+      details.push({ code: sub.code, expiredDaysAgo: lapsedDays });
+    }
+  }
+
+  logger.info("Expiry enforcement complete", { checked, expiredSuspended, radiusBlocked });
+  return { checked, expiredSuspended, radiusBlocked, details };
 }
 
 async function jobUsageReset(): Promise<Record<string, unknown>> {
@@ -404,6 +513,21 @@ const jobs: ScheduledJob[] = [
     failCount: 0,
     history: [],
     handler: jobUsageReset,
+  },
+  {
+    id: "job-006",
+    name: "Expiry Enforcement",
+    description: "Suspend + RADIUS-block subscribers whose plan validity lapsed beyond grace period [AUDIT-FIX F-05]",
+    type: "expiry-enforcement",
+    cron: "0 7 * * *",
+    enabled: true,
+    nextRun: getNextRun("0 7 * * *"),
+    status: "idle",
+    totalRuns: 0,
+    successCount: 0,
+    failCount: 0,
+    history: [],
+    handler: jobExpiryEnforcement,
   },
 ];
 
@@ -638,6 +762,18 @@ Bun.serve({
         executeJob(suspendJob, `manual:${auth.userId}`).catch(() => {});
       }
       return json({ success: true, message: "Suspension job started", timestamp: new Date().toISOString() });
+    }
+
+    // ── POST /api/expiry-enforcement (direct trigger) [AUDIT-FIX F-05] ──
+    if (path === "/api/expiry-enforcement" && req.method === "POST") {
+      const expiryJob = jobs.find((j) => j.type === "expiry-enforcement");
+      if (expiryJob && expiryJob.status === "running") {
+        return jsonErr("Expiry enforcement job already in progress", 409);
+      }
+      if (expiryJob) {
+        executeJob(expiryJob, `manual:${auth.userId}`).catch(() => {});
+      }
+      return json({ success: true, message: "Expiry enforcement job started", timestamp: new Date().toISOString() });
     }
 
     // ── POST /api/usage-reset (direct trigger) ──

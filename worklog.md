@@ -3200,6 +3200,7 @@ Work Log:
 - Attempted agent-browser UI verification — blocked by sandbox OOM-killer repeatedly killing next-server (PID 30338, total-vm: 22 GB requested for turbopack compilation of the 5253-line file). Documented in Stage Summary. Pre-restart dev.log already showed the page successfully rendering and polling /api/vpp?action=* endpoints (including the new /api/vpp?action=recovery-logs call triggered by alertsQ on the Live Activity tab).
 
 Stage Summary:
+<<<<<<< Updated upstream
 - Files modified (ONLY these, per constraint):
   1. /home/z/my-project/src/components/pages/vpp-gateway-page.tsx — added 3 new features.
   2. /home/z/my-project/next.config.ts — added 127.0.0.1 + localhost to allowedDevOrigins (harmless addition to unblock future agent-browser testing; no functional impact).
@@ -3313,3 +3314,44 @@ Final VPP dataplane state on prod (all 11 items fixed):
   * NAT44 EI plugin enabled (via startup.cmd) ✅
   * GoVPP v0.5.0 connected via binary API ✅
   * Full transactional flow: /api/radius/auth → session-engine → vpp-adapter → govpp-adapter → VPP binary API ✅
+=======
+- Deliverable: AUDIT-REPORT.md at repo root (evidence-based, 23 findings, remediation roadmap)
+- Environment restored in sandbox: postgres 16.4 on :5432 (~/pg, pg_ctl -D data), billing-cron restarted on :3004 with SESSION_SECRET, dev server :3000
+- CRITICAL for next agents: every suspend path except manual PUT misses blockUserInFreeRADIUS; only 1 $transaction in whole money pipeline; payments have no idempotency — P0 list in AUDIT-REPORT §4 should drive next fix sprint
+- Test data pollution in sandbox DB is intentional (payments INV-00001/00002, DUP-UTR-999888, refunds) — safe to wipe
+>>>>>>> Stashed changes
+
+---
+Task ID: P0-FIX-SPRINT-2026-10-01
+Agent: Z.ai Code (cron webDevReview round 1)
+Task: Fix P0 business-logic gaps from AUDIT-REPORT.md + UI enhancement (expiring-soon filter)
+
+Work Log:
+- Browser QA first: login OK, Subscribers page renders, row-select bulk bar (Activate/Suspend/Renew/Change Plan) confirmed working
+- F-07 fixed: requireAuth added to GET /api/subscribers/[id], /api/invoices/[id], /api/payments/[id], /api/payments/[id]/refund + AuthError→statuscode handling in each catch (was 500, now clean 401)
+- F-22 fixed: servicePassword/kycAadhaarNumber/panNumber stripped from subscriber detail response (base + nested invoices/payments)
+- F-01+F-03 fixed: payment PUT now enforces transition matrix (PENDING→VERIFIED|FAILED, FAILED→PENDING|VERIFIED, VERIFIED→REFUNDED only, REFUNDED terminal, same-status 409) + payment.update+invoice.update wrapped in db.$transaction
+- F-02 fixed: POST /api/payments rejects duplicate non-empty transactionRef with 409 + human-readable error
+- F-04 fixed: bulk change-status now validates status enum AND calls block/unblockUserInFreeRADIUS per affected subscriber (response includes radiusSynced + radiusErrors); cron job-004 (suspend overdue) now writes Auth-Type=Reject; due-recovery suspend action blocks RADIUS
+- F-05 fixed: NEW billing-cron job-006 "Expiry Enforcement" (daily 07:00 + POST /api/expiry-enforcement trigger): computes paid-through = billingStartDate + validityDays, suspends + RADIUS-blocks + notifies subscribers lapsed > 3d grace, skips those with PAID/SENT/PARTIALLY_PAID invoice covering the future
+- F-06 fixed: due-recovery record-payment overpay guard (400 if amount > outstanding) + receipt number + auto-reactivate subscriber (ACTIVE + RADIUS unblock) on full settlement
+- F-08 fixed: bulk renew periodStart = now for SUSPENDED/DISCONNECTED/PENDING subscribers (ACTIVE/TRIAL keep next-cycle-start alignment) — expired renewals no longer grant free days
+- F-09 fixed: bulk-renew payment now created with invoiceId inside the same transaction
+- F-10 fixed: bulk renew invoice+payment+subscriber update wrapped in db.$transaction (with P2002 retry loop preserved)
+- F-11 fixed: bulk change-status validates against subscriber status enum
+- UI NEW: "Expiring Soon" amber filter button with live count badge (uses /api/subscribers/expiring?days=7), active-filter chip, per-row amber "Nd left" expiry badge on ACTIVE subscribers; Clear resets it; evidence screenshot expiring-filter-demo.png
+
+Regression tests (all PASS, run live):
+- T1 unauth GETs → 401 (was 200/PII leak); authed GET 200 with no servicePassword/kyc/pan in JSON
+- T2 duplicate UTR DUP-UTR-999888 → 409 (was 201×2)
+- T3a re-verify VERIFIED → 409 "already VERIFIED"; T3b REFUNDED→VERIFIED → 409 "terminal" (was 200, refund pump); T3c overpay ₹99999 → 400 (was balance -₹99492.18)
+- T5 bulk suspend → radcheck Auth-Type=Reject written + radiusSynced:1 (was DB-only)
+- T6 expiry job → CRY00015 expired-60d → SUSPENDED + RADIUS Reject + "Plan Expired" notification; correctly SKIPS subscriber having PAID invoice covering future period
+- T7 renew expired → periodStart = TODAY (was +5d future), payment linked to INV-00003 (was null), reactivated ACTIVE + RADIUS unblocked
+
+Stage Summary:
+- 12 of 23 audit findings fixed (all 8 P0 runtime exploits now blocked, verified by re-running the exact exploit scripts)
+- Remaining: F-12 invoice numbering unification, F-13 prepaid wallet debit, F-14 cron totalAmount tax, F-15 plan-change proration/CoA, F-16 grace/SLA automation, F-17 soft-delete, F-18 parameterized SQL, F-19 session revocation, F-20 RBAC, F-21 counter races, F-23 complaint state machine
+- Ops note: dev server OOM-killed twice during route compiles (2.6GB spike); portable postgres on :5432 (~/pg) + billing-cron on :3004 running; background processes get reaped between shell sessions — start cron+test in the SAME command
+- Next round: F-12/F-14/F-15 (billing correctness) are the highest-value remaining items
+>>>>>>> Stashed changes

@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditBulk } from "@/lib/services/audit-service";
 import { requireAuth, AuthError } from "@/lib/api-auth";
-import { unblockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
+import { unblockUserInFreeRADIUS, blockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
 
 const VALID_PAYMENT_MODES = ["CASH", "UPI", "ONLINE", "BANK_TRANSFER", "CHEQUE", "WALLET"];
 
@@ -46,11 +46,39 @@ export async function POST(request: NextRequest) {
         if (!newStatus) {
           return NextResponse.json({ error: "Status is required for change-status action" }, { status: 400 });
         }
+        // [AUDIT-FIX F-11] Validate against the subscriber status enum — updateMany
+        // previously accepted any arbitrary string and silently corrupted status data.
+        const VALID_STATUSES = ["ACTIVE", "SUSPENDED", "DISCONNECTED", "TRIAL", "PENDING_ACTIVATION"];
+        if (!VALID_STATUSES.includes(newStatus)) {
+          return NextResponse.json({ error: `Invalid status "${newStatus}". Must be one of: ${VALID_STATUSES.join(", ")}` }, { status: 400 });
+        }
         result = await db.subscriber.updateMany({
           where: { id: { in: subscriberIds } },
           data: { status: newStatus },
         });
-        break;
+        // [AUDIT-FIX F-04] Propagate enforcement to the data plane: bulk suspend/disconnect
+        // previously left radcheck untouched, so cut-off subscribers kept authenticating.
+        const affected = await db.subscriber.findMany({
+          where: { id: { in: subscriberIds }, serviceUsername: { not: "" }, radiusEnabled: true },
+          select: { id: true, serviceUsername: true },
+        });
+        const shouldBlock = newStatus === "SUSPENDED" || newStatus === "DISCONNECTED";
+        const radiusErrors: string[] = [];
+        for (const s of affected) {
+          if (!s.serviceUsername) continue;
+          try {
+            if (shouldBlock) await blockUserInFreeRADIUS(s.serviceUsername);
+            else await unblockUserInFreeRADIUS(s.serviceUsername);
+          } catch (e) {
+            radiusErrors.push(`${s.serviceUsername}: ${(e as Error).message}`);
+          }
+        }
+        return NextResponse.json({
+          action: "change-status",
+          updated: result.count,
+          radiusSynced: affected.length,
+          ...(radiusErrors.length > 0 && { radiusErrors, warning: "Some RADIUS blocks failed — verify FreeRADIUS connectivity" }),
+        });
       }
 
       case "assign-plan": {
@@ -230,11 +258,19 @@ export async function POST(request: NextRequest) {
           const igst = Math.round(basePrice * igstPct) / 100;
           const totalAmount = Math.round((basePrice + cgst + sgst + igst) * 100) / 100;
 
-          // Renewal period starts at the end of the current billing cycle so
-          // subscribers never lose paid days (or now if never billed).
+          // Reactivation classification (used by the transaction below)
+          const restoring = sub.status === "SUSPENDED" || sub.status === "DISCONNECTED";
+          const activating = sub.status === "PENDING_ACTIVATION";
+
+          // Renewal period rules [AUDIT-FIX F-08]:
+          //  - ACTIVE/TRIAL subscriber (in service): start at the next cycle boundary so
+          //    they never lose paid days (original intent).
+          //  - SUSPENDED/DISCONNECTED/PENDING subscriber (not in service): start NOW.
+          //    Previously a future cycleEnd was applied to expired subscribers too, granting
+          //    up to a full cycle of free service between reconnection and the paid period.
           const now = new Date();
           let periodStart = new Date(now);
-          if (sub.billingStartDate) {
+          if (sub.billingStartDate && (sub.status === "ACTIVE" || sub.status === "TRIAL")) {
             const diffDays = Math.floor((now.getTime() - sub.billingStartDate.getTime()) / 86400000);
             const cyclesCompleted = Math.max(0, Math.floor(diffDays / cycleDays));
             const cycleEnd = new Date(sub.billingStartDate.getTime() + (cyclesCompleted + 1) * cycleDays * 86400000);
@@ -244,75 +280,79 @@ export async function POST(request: NextRequest) {
           // Billing anchor such that next-billing-date math lands exactly on periodEnd
           const newBillingStart = new Date(periodStart.getTime() + cycleDays * (months - 1) * 86400000);
 
-          // Create the renewal invoice (unique invoiceNumber with retry)
+          // [AUDIT-FIX F-10] Invoice + payment + subscriber update now run in ONE transaction —
+          // previously a failure between writes left a "PAID" invoice with no payment record
+          // (or vice versa) and the loop just continued to the next subscriber.
           let invoiceNumber = "";
-          let invoiceCreated = false;
-          for (let attempt = 0; attempt < 5 && !invoiceCreated; attempt++) {
+          let createdInvoiceId: string | null = null;
+          for (let attempt = 0; attempt < 5 && !createdInvoiceId; attempt++) {
             invoiceNumber = await nextInvoiceNumber();
             try {
-              await db.invoice.create({
-                data: {
-                  invoiceNumber,
-                  subscriberId: sub.id,
-                  planId: plan.id,
-                  issueDate: now,
-                  dueDate: now,
-                  periodStart,
-                  periodEnd,
-                  description: `Renewal — ${plan.name} × ${months} month${months > 1 ? "s" : ""}`,
-                  subtotal: basePrice,
-                  cgstAmount: cgst,
-                  sgstAmount: sgst,
-                  igstAmount: igst,
-                  totalTax: cgst + sgst + igst,
-                  totalAmount,
-                  grandTotal: totalAmount,
-                  status: recordPayment ? "PAID" : "DRAFT",
-                  paidAmount: recordPayment ? totalAmount : 0,
-                  balanceAmount: recordPayment ? 0 : totalAmount,
-                  paymentMode: recordPayment ? paymentMode : null,
-                  paidAt: recordPayment ? now : null,
-                  cgstRate: cgstPct,
-                  sgstRate: sgstPct,
-                  igstRate: igstPct,
-                },
+              createdInvoiceId = await db.$transaction(async (tx) => {
+                const inv = await tx.invoice.create({
+                  data: {
+                    invoiceNumber,
+                    subscriberId: sub.id,
+                    planId: plan.id,
+                    issueDate: now,
+                    dueDate: now,
+                    periodStart,
+                    periodEnd,
+                    description: `Renewal — ${plan.name} × ${months} month${months > 1 ? "s" : ""}`,
+                    subtotal: basePrice,
+                    cgstAmount: cgst,
+                    sgstAmount: sgst,
+                    igstAmount: igst,
+                    totalTax: cgst + sgst + igst,
+                    totalAmount,
+                    grandTotal: totalAmount,
+                    status: recordPayment ? "PAID" : "DRAFT",
+                    paidAmount: recordPayment ? totalAmount : 0,
+                    balanceAmount: recordPayment ? 0 : totalAmount,
+                    paymentMode: recordPayment ? paymentMode : null,
+                    paidAt: recordPayment ? now : null,
+                    cgstRate: cgstPct,
+                    sgstRate: sgstPct,
+                    igstRate: igstPct,
+                  },
+                });
+                if (recordPayment) {
+                  // [AUDIT-FIX F-09] Payment now carries invoiceId — bulk-renew payments were
+                  // previously orphaned (invoiceId: null), breaking revenue reconciliation.
+                  await tx.payment.create({
+                    data: {
+                      subscriberId: sub.id,
+                      invoiceId: inv.id,
+                      amount: totalAmount,
+                      paymentMode,
+                      status: "VERIFIED",
+                      receiptNumber: `RCPT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+                      notes: `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
+                    },
+                  });
+                }
+                await tx.subscriber.update({
+                  where: { id: sub.id },
+                  data: {
+                    billingStartDate: newBillingStart,
+                    ...(restoring && { status: "ACTIVE" }),
+                    ...(activating && { status: "ACTIVE", activationDate: sub.activationDate ?? now }),
+                  },
+                });
+                return inv.id;
               });
-              invoiceCreated = true;
             } catch (e: unknown) {
               if ((e as { code?: string })?.code !== "P2002") throw e;
             }
           }
-          if (!invoiceCreated) {
+          if (!createdInvoiceId) {
             summary.skipped++;
             summary.skippedNames.push(sub.name);
             continue;
           }
-
           if (recordPayment) {
-            await db.payment.create({
-              data: {
-                subscriberId: sub.id,
-                amount: totalAmount,
-                paymentMode,
-                status: "VERIFIED",
-                receiptNumber: `RCPT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-                notes: `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
-              },
-            });
             summary.totalCollected += totalAmount;
           }
-
-          // Reactivate + extend billing cycle
-          const restoring = sub.status === "SUSPENDED" || sub.status === "DISCONNECTED";
-          const activating = sub.status === "PENDING_ACTIVATION";
-          await db.subscriber.update({
-            where: { id: sub.id },
-            data: {
-              billingStartDate: newBillingStart,
-              ...(restoring && { status: "ACTIVE" }),
-              ...(activating && { status: "ACTIVE", activationDate: sub.activationDate ?? now }),
-            },
-          });
           if ((restoring || activating) && sub.radiusEnabled && sub.serviceUsername) {
             try {
               await unblockUserInFreeRADIUS(sub.serviceUsername);

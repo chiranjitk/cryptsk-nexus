@@ -362,6 +362,7 @@ export default function SubscribersPage() {
   const [areaFilter, setAreaFilter] = useState("");
   const [planFilter, setPlanFilter] = useState("");
   const [connectionType, setConnectionType] = useState("");
+  const [expiringOnly, setExpiringOnly] = useState(false);
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
@@ -535,6 +536,22 @@ export default function SubscribersPage() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+
+  // [NEW] Expiring-soon watchlist — subscribers whose billing cycle ends within 7 days.
+  // Powers the "Expiring Soon" quick filter and the amber dot on the status pill.
+  const { data: expiringData } = useQuery<{ expiring: Array<{ id: string; code: string; name: string; planName: string; daysLeft: number; expiresAt: string }> }>({
+    queryKey: ["subscribers-expiring"],
+    queryFn: () => apiFetch("/api/subscribers/expiring?days=7"),
+    staleTime: 120_000,
+    refetchInterval: 300_000,
+  });
+  const expiringList = expiringData?.expiring ?? [];
+  const expiringSet = useMemo(() => new Set(expiringList.map((s) => s.id)), [expiringList]);
+  const expiringDaysById = useMemo(() => {
+    const m = new Map<string, number>();
+    expiringList.forEach((s) => m.set(s.id, s.daysLeft));
+    return m;
+  }, [expiringList]);
 
   // Build a Set of online subscriber IDs (mock: first onlineCount subscriber IDs from the list)
   const onlineSet = useMemo(() => {
@@ -859,9 +876,11 @@ export default function SubscribersPage() {
 
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const subscribers = data?.subscribers ?? [];
+  const subscribers = expiringOnly
+    ? (data?.subscribers ?? []).filter((s) => expiringSet.has(s.id))
+    : (data?.subscribers ?? []);
 
-  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType;
+  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType || expiringOnly;
   const selectedPlan = plans?.find((p) => p.id === form.planId);
 
   // ─── Bulk renew / change-plan derived values (need subscribers + plans) ───
@@ -1140,7 +1159,22 @@ export default function SubscribersPage() {
                 <SelectItem value="ETHERNET">Ethernet</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
+            <Button
+              variant={expiringOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => { setExpiringOnly(!expiringOnly); setPage(1); }}
+              className={expiringOnly ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600" : "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"}
+              title="Subscribers whose billing cycle ends within 7 days"
+            >
+              <Clock className="h-3 w-3 mr-1" />
+              Expiring Soon
+              {expiringSet.size > 0 && (
+                <span className={`ml-1 inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[10px] font-semibold ${expiringOnly ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"}`}>
+                  {expiringSet.size}
+                </span>
+              )}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setExpiringOnly(false); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
               <X className="h-3 w-3 mr-1" />Clear
             </Button>
           </div>
@@ -1148,6 +1182,15 @@ export default function SubscribersPage() {
           {hasActiveFilters && (
             <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
               <span className="text-xs text-muted-foreground font-medium">Active filters:</span>
+              {expiringOnly && (
+                <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  <Clock className="h-3 w-3" />
+                  Expiring within 7 days
+                  <button onClick={() => { setExpiringOnly(false); setPage(1); }} className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 p-0.5 transition-colors" aria-label="Remove expiring filter">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
+              )}
               {search && (
                 <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default">
                   <Search className="h-3 w-3" />
@@ -1418,6 +1461,12 @@ export default function SubscribersPage() {
                             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_MAP[sub.status]?.dot || "bg-gray-400"}`} />
                             {STATUS_MAP[sub.status]?.label || sub.status}
                           </Badge>
+                          {expiringDaysById.has(sub.id) && sub.status === "ACTIVE" && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 rounded-full gap-1 inline-flex items-center border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400" title={`Plan expires in ${expiringDaysById.get(sub.id)} day(s)`}>
+                              <Clock className="h-2.5 w-2.5" />
+                              {expiringDaysById.get(sub.id) === 0 ? "expires today" : `${expiringDaysById.get(sub.id)}d left`}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs">

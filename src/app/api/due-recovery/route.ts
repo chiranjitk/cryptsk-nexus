@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { auditLog } from "@/lib/services/audit-service";
+import { blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
 
 export async function GET(request: NextRequest) {
   try {
@@ -367,28 +368,62 @@ export async function POST(request: NextRequest) {
       const invoice = await db.invoice.findUnique({ where: { id: invoiceIds?.[0] } });
       if (!invoice) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
 
+      // [AUDIT-FIX F-06] Overpay guard — this path previously accepted any amount and wrote
+      // a negative balanceAmount (reproduced live: ₹99,999 on a ₹706.82 invoice → -₹99,492.18).
+      const outstanding = Math.max(0, (invoice.grandTotal || 0) - (invoice.paidAmount || 0));
+      const payAmount = amount || invoice.balanceAmount;
+      if (payAmount > outstanding) {
+        return NextResponse.json(
+          { error: `Payment amount (₹${payAmount}) exceeds outstanding balance (₹${outstanding}). For overpayments, issue a credit note or an advance-adjustment invoice instead.` },
+          { status: 400 }
+        );
+      }
+
       const payment = await db.payment.create({
         data: {
           subscriberId: invoice.subscriberId,
           invoiceId: invoice.id,
-          amount: amount || invoice.balanceAmount,
+          amount: payAmount,
           paymentMode: body.paymentMode || "CASH",
           status: "VERIFIED",
+          receiptNumber: `DR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
           notes: note || "Recorded from Due Recovery",
         },
       });
 
-      const newPaid = invoice.paidAmount + (amount || invoice.balanceAmount);
+      const newPaid = invoice.paidAmount + payAmount;
       const newBalance = invoice.grandTotal - newPaid;
       await db.invoice.update({
         where: { id: invoice.id },
         data: {
           paidAmount: newPaid,
-          balanceAmount: newBalance,
+          balanceAmount: Math.max(0, newBalance),
           status: newBalance <= 0 ? "PAID" : "PARTIALLY_PAID",
           paidAt: newBalance <= 0 ? new Date() : invoice.paidAt,
         },
       });
+
+      // [AUDIT-FIX F-05 companion] Reactivating on full settlement: a subscriber cut off
+      // for non-payment who clears the invoice is restored to ACTIVE and unblocked in
+      // RADIUS — previously they stayed SUSPENDED (and offline) until manual intervention.
+      let reactivated = false;
+      if (newBalance <= 0) {
+        const sub = await db.subscriber.findUnique({
+          where: { id: invoice.subscriberId },
+          select: { id: true, status: true, serviceUsername: true, radiusEnabled: true },
+        });
+        if (sub && (sub.status === "SUSPENDED" || sub.status === "DISCONNECTED")) {
+          await db.subscriber.update({ where: { id: sub.id }, data: { status: "ACTIVE" } });
+          if (sub.radiusEnabled && sub.serviceUsername) {
+            try {
+              await unblockUserInFreeRADIUS(sub.serviceUsername);
+            } catch (e) {
+              console.error("[DueRecovery] RADIUS unblock failed for", sub.serviceUsername, e);
+            }
+          }
+          reactivated = true;
+        }
+      }
 
       // Update SLA if resolved
       if (newBalance <= 0) {
@@ -399,7 +434,7 @@ export async function POST(request: NextRequest) {
       }
 
       await auditLog(request, "CREATE", "DueRecovery", payment.id, { invoiceId: invoice.id, amount });
-      return NextResponse.json({ success: true, payment });
+      return NextResponse.json({ success: true, payment, invoiceSettled: newBalance <= 0, subscriberReactivated: reactivated });
     }
 
     if (action === "suspend") {
@@ -410,10 +445,23 @@ export async function POST(request: NextRequest) {
             where: { id: invoice.subscriberId },
             data: { status: "SUSPENDED" },
           });
+          // [AUDIT-FIX F-04] Cut the subscriber off at the data plane — the DB-only suspend
+          // left the customer fully online (confirmed by audit exploit test).
+          const sub = await db.subscriber.findUnique({
+            where: { id: invoice.subscriberId },
+            select: { serviceUsername: true, radiusEnabled: true },
+          });
+          if (sub?.radiusEnabled && sub.serviceUsername) {
+            try {
+              await blockUserInFreeRADIUS(sub.serviceUsername);
+            } catch (e) {
+              console.error("[DueRecovery] RADIUS block failed for", sub.serviceUsername, e);
+            }
+          }
         }
       }
       await auditLog(request, "UPDATE", "DueRecovery", "bulk", { count: invoiceIds?.length || 0 });
-      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended` });
+      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended (RADIUS blocked)` });
     }
 
     if (action === "assign-agent") {

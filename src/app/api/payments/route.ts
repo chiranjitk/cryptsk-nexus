@@ -177,6 +177,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // [AUDIT-FIX F-02] Duplicate bank/UPI reference guard — the same UTR must never
+    // be recorded twice (double-revenue exploit reproduced during the 2026-09-30 audit).
+    if (transactionRef && String(transactionRef).trim() !== "") {
+      const duplicate = await db.payment.findFirst({
+        where: {
+          transactionRef: String(transactionRef).trim(),
+          status: { not: "FAILED" },
+        },
+        select: { id: true, amount: true, receiptNumber: true },
+      });
+      if (duplicate) {
+        return NextResponse.json(
+          {
+            error: `Duplicate transaction reference "${transactionRef}" — already recorded as payment ${duplicate.receiptNumber || duplicate.id} (₹${duplicate.amount}). If this is genuinely a second transaction, use the bank's distinct reference number.`,
+            duplicateOf: duplicate.id,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const payCount = await db.payment.count();
     const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
 

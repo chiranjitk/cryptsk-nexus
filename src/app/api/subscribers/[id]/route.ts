@@ -7,10 +7,11 @@ import { removeUserFromFreeRADIUS, updateUserFreeRADIUSGroup, updateUserPassword
 
 // GET /api/subscribers/[id] — single subscriber with relations
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireAuth(req); // [AUDIT-FIX F-07] detail view leaked PII + invoices + payments unauthenticated
     const { id } = await params;
     const subscriber = await db.subscriber.findUnique({
       where: { id },
@@ -35,23 +36,37 @@ export async function GET(
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
+    // [AUDIT-FIX F-22] Strip credential/KYC fields from every layer of the response.
+    // The service password is required by RADIUS internally but must never leave the server;
+    // KYC identifiers ride along on the base model and were previously serialized wholesale.
+    const { servicePassword: _sp, kycAadhaarNumber: _ky, panNumber: _pan, ...safeBase } = subscriber;
+    const strip = <T extends Record<string, unknown>>(row: T | undefined | null): Record<string, unknown> | null => {
+      if (!row) return null;
+      const { servicePassword: _a, kycAadhaarNumber: _b, panNumber: _c, ...rest } = row;
+      return rest as Record<string, unknown>;
+    };
+
     // Map Prisma PascalCase relations to the camelCase keys the frontend expects.
     // Original PascalCase keys are kept (additive) so existing consumers are unaffected.
     const detail = {
-      ...subscriber,
+      ...safeBase,
       area: subscriber.Area ?? null,
       plan: subscriber.Plan ?? null,
       radiusGroup: subscriber.RadiusGroup ?? null,
       radiusUser: subscriber.RadiusUser ?? null,
       assignedDevice: subscriber.NetworkDevice ?? null,
       radiusGroupName: subscriber.RadiusGroup?.name ?? null,
-      invoices: subscriber.Invoice ?? [],
-      payments: subscriber.Payment ?? [],
+      invoices: (subscriber.Invoice ?? []).map(strip),
+      payments: (subscriber.Payment ?? []).map(strip),
       complaints: subscriber.Complaint ?? [],
     };
 
     return NextResponse.json(detail);
   } catch (error) {
+    if (error && typeof error === "object" && "statusCode" in error) {
+      const authErr = error as { statusCode: number; message: string };
+      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
+    }
     console.error("Subscriber GET error:", error);
     return NextResponse.json({ error: "Failed to fetch subscriber" }, { status: 500 });
   }

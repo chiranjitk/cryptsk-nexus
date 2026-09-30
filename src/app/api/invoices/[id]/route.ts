@@ -8,6 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireAuth(req); // [AUDIT-FIX F-07] invoice financials (GSTIN/PAN) were readable unauthenticated
     const { id } = await params;
 
     const invoice = await db.invoice.findUnique({
@@ -43,6 +44,10 @@ export async function GET(
 
     return NextResponse.json({ invoice });
   } catch (error) {
+    if (error && typeof error === "object" && "statusCode" in error) {
+      const authErr = error as { statusCode: number; message: string };
+      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
+    }
     console.error("Invoice GET [id] error:", error);
     return NextResponse.json({ error: "Failed to fetch invoice" }, { status: 500 });
   }
