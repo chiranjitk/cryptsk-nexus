@@ -1836,3 +1836,143 @@ Stage Summary:
 - Phase 8: 3 previously-broken endpoints (pppoe, nat-logs, wifi-offload) now return HTTP 200 ✅
 - Phase 7: Payment lifecycle PENDING → VERIFIED → REFUNDED verified end-to-end with real data ✅
 - Phase 5: FUP state machine implemented — THROTTLE_NOT_DISCONNECT policy, /fup-check endpoint working ✅
+
+---
+Task ID: VPP-ARCHITECTURE-GAP-ANALYSIS
+Agent: Z.ai Code (orchestrator)
+Task: Read docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md VPP/DPDK sections + report gap vs current implementation
+
+=== VPP/DPDK ARCHITECTURE GAP ANALYSIS ===
+
+The doc (02_ENTERPRISE_GATEWAY_ARCHITECTURE.md, 3583 lines) defines the complete VPP/DPDK architecture. Here's what the doc REQUIRES vs what's IMPLEMENTED:
+
+§2 ARCHITECTURE DIAGRAM (required flow):
+  AAA Service → Session Engine → VPP Adapter → VPP / DPDK → Physical NIC → Subscriber traffic
+  Status: ⚠️ PARTIAL — AAA + Session Engine + VPP Adapter exist, but VPP Adapter→VPP link is config-generation only (not binary API)
+
+§3.1 FreeRADIUS (must NOT):
+  - manipulate VPP for every packet ❌ (currently doesn't — good)
+  - execute shell scripts for every subscriber login ❌ (currently doesn't — good)
+  - execute nftables/tc commands ❌ (currently doesn't — good)
+  - maintain subscriber policy state inside unlang ❌ (currently doesn't — good)
+  Status: ✅ PASS — FreeRADIUS is properly isolated from VPP
+
+§4 Session Engine (must own):
+  Authoritative live subscriber/session state with: Session ID, Username, Subscriber ID, NAS ID, Access protocol, IPv4, IPv6, MAC, VLAN, Interface, VRF, Auth time, Last accounting update, Session state, Policy ID, Bandwidth profile, QoS profile, ACL profile, NAT profile, IP pool, Accounting state, Data counters, Packet counters, Idle timeout, Session timeout, Device info
+  Status: ⚠️ PARTIAL — v2 session-engine has: radacctid, acctsessionid, acctuniqueid, username, groupname, nasipaddress, nasportid, framedipaddress, callingstationid, acctstarttime, acctsessiontime, acctinputoctets, acctoutputoctets, status, lastSeen. MISSING: VLAN, VRF, Policy ID, Bandwidth profile, QoS profile, ACL profile, NAT profile, IP pool, Idle timeout, Session timeout.
+
+§7 SUBSCRIBER PROVISIONING FLOW (required sequence):
+  1. Authenticate → 2. Authorize → 3. Allocate IP → 4. Create session → 5. Generate dataplane policy → 6. VPP Adapter → 7. VPP → 8. Subscriber ACTIVE
+  Status: ❌ NOT IMPLEMENTED — currently: Authenticate → Authorize → Access-Accept → subscriber ACTIVE. Steps 5-7 (generate dataplane policy → VPP Adapter → VPP) are NOT in the login flow. The VPP adapter generates configs offline, not during login.
+
+§8 LOGIN MUST BE TRANSACTIONAL (critical requirement):
+  Do NOT mark ACTIVE before VPP programming succeeds.
+  Required: 1. Authenticate → 2. Authorize → 3. Allocate IP → 4. Create session → 5. PROGRAM VPP → 6. VERIFY VPP → 7. Mark ACTIVE → 8. Start accounting
+  If VPP fails: session NOT ACTIVE, return controlled failure. No "ghost sessions".
+  Status: ❌ NOT IMPLEMENTED — subscriber is marked ACTIVE immediately after Access-Accept without any VPP programming. No transactional guarantee. No "ghost session" prevention.
+
+§9 LOGOUT FLOW (required):
+  Logout → Session Engine → Locate session → Mark DISCONNECTING → Remove VPP policy/state → Release IP → Close accounting → Persist final session record
+  Status: ⚠️ PARTIAL — fn_disconnect_subscriber works (disconnects in DB), but "Remove VPP policy/state" is NOT implemented (no VPP policy to remove).
+
+§28 VPP ADAPTER (hard boundary — CRITICAL):
+  Do NOT allow Session Engine to call vppctl shell commands.
+  BAD: Session Engine → exec() → vppctl
+  GOOD: Session Engine → VPP Adapter → VPP Binary API → VPP
+  Implementation: Go → GoVPP → VPP API
+  Status: ❌ VIOLATION — vpp-adapter (TypeScript) generates VPP CLI configs (vppctl syntax). GoVPP adapter (Go) has 16 function stubs but NOT implemented with real binary API. The hard boundary is violated.
+
+§29 VPP POLICY OBJECTS (required):
+  VPP Policy: ACL, Policer, QoS, NAT, VRF, Classification — as reusable objects
+  Example: Policy ID 10023 → ACL: INTERNET_ONLY, Bandwidth: 100Mbps, QoS: GOLD, NAT: PUBLIC_POOL_01
+  Status: ❌ NOT IMPLEMENTED — no VPP policy objects created in VPP. The vpp-adapter generates CLI configs but doesn't create policy objects in VPP.
+
+§30 SUBSCRIBER → VPP MAPPING (required):
+  Session Engine maintains: subscriber → ACL → Policer → NAT pool mapping
+  VPP maintains: packet-path state
+  Status: ❌ NOT IMPLEMENTED — no subscriber-to-VPP policy mapping exists. No ACL, Policer, or NAT pool created in VPP for any subscriber.
+
+§31 BANDWIDTH CONTROL (required):
+  Use VPP QoS/policer mechanisms (NOT Linux tc qdisc). Profiles should be reusable.
+  Status: ❌ NOT IMPLEMENTED — vpp-adapter generates "policer add" CLI configs but they're NOT applied to VPP. No actual bandwidth enforcement via VPP.
+
+§32 ACL ARCHITECTURE (required):
+  Reusable ACL profiles (ACL-GUEST, ACL-HOTEL, ACL-ISP-BASIC, etc.)
+  Status: ❌ NOT IMPLEMENTED — no ACL profiles created in VPP.
+
+§33 NAT ARCHITECTURE (required):
+  VPP handles NAT. VPP owns: translation state, flow state, port allocation, NAT processing.
+  Session Engine owns: subscriber → NAT profile mapping.
+  Status: ❌ NOT IMPLEMENTED — vpp-adapter generates "nat44 add static address" configs but NOT applied to VPP. No NAT pools, no translation state, no port allocation in VPP.
+
+§34 NAT LOGGING (required):
+  VPP NAT events → NAT Event Collector → Buffered pipeline → Compressed/partitioned storage
+  Do NOT do synchronous PostgreSQL writes for every translated packet.
+  Status: ❌ NOT IMPLEMENTED — no NAT event collector, no NAT logging pipeline.
+
+§35 DPI / APPLICATION FILTERING (required):
+  VPP → flow/classification → DPI Engine (nDPI) → Application classification → Policy Engine → VPP policy
+  Status: ❌ NOT IMPLEMENTED — nDPI API routes exist (/api/ndpi/*) but no integration with VPP. nDPI is not running.
+
+§37 SESSION IDENTITY (required):
+  Session ID, Username, MAC, IPv4, IPv6, NAS-Port, VLAN, Circuit-ID, Remote-ID, PPPoE session, DHCP client identifier, Calling-Station-ID
+  Status: ⚠️ PARTIAL — has: acctsessionid, username, framedipaddress, callingstationid, nasipaddress, nasportid. MISSING: VLAN, Circuit-ID, Remote-ID, PPPoE session, DHCP client identifier.
+
+§38 DUPLICATE LOGIN DETECTION (required):
+  Configurable: ALLOW_MULTIPLE, DENY_NEW, DISCONNECT_OLD, LIMIT_N
+  Status: ❌ NOT IMPLEMENTED — no duplicate login detection policy. FreeRADIUS Simultaneous-Use could handle this but is not configured.
+
+§39 STALE SESSION RECOVERY (required):
+  Accounting-Stop + Interim-Update + Session timeout + NAS health + stale-session detector
+  Status: ⚠️ PARTIAL — session-engine polls radacct every 5s + removes sessions not seen in 60s. MISSING: NAS health check, explicit stale-session detector with configurable policies.
+
+§40 SESSION RECONCILIATION (required):
+  After gateway restart: VPP state + Session database + RADIUS accounting + NAS state must be reconciled.
+  Recovery states: RECOVERING → Reconcile → ACTIVE, or STALE → Cleanup
+  Status: ⚠️ PARTIAL — session-engine has startup reconciliation (rebuilds in-memory from radacct). MISSING: VPP state reconciliation (VPP has no subscriber state to reconcile), NAS state reconciliation.
+
+§41 VPP RESTART RECOVERY (CRITICAL — "one of the most important architectural requirements"):
+  VPP restart → Session Engine detects VPP reconnect → Load active session snapshot → Rebuild VPP policies → Rebuild NAT/policy state → Verify → Resume
+  Session Engine must maintain enough information to reconstruct dataplane state.
+  Status: ❌ NOT IMPLEMENTED — if VPP restarts, all VPP state is lost. Session Engine doesn't detect VPP reconnect, doesn't rebuild VPP policies, doesn't rebuild NAT state. No session snapshot maintained for VPP rebuild.
+
+§42 SESSION SNAPSHOT (required):
+  Maintain recoverable snapshot: session_id, subscriber_id, username, ip, mac, vlan, vrf, policy_id, acl_id, qos_id, nat_id, start_time, timeout
+  Do not depend on VPP as the permanent source of subscriber configuration.
+  Status: ❌ NOT IMPLEMENTED — no persistent session snapshot with VPP-rebuild fields (vlan, vrf, policy_id, acl_id, qos_id, nat_id).
+
+=== SUMMARY: VPP/DPDK IMPLEMENTATION GAPS ===
+
+IMPLEMENTED (infrastructure exists):
+  ✅ VPP v26.06 running (with TAP interfaces — DPDK needs vSwitch Promiscuous Mode)
+  ✅ VPP Adapter (TypeScript, port 3015) — generates configs, /health, /config/generate, /config/subscriber/[id], /apply, /coa, /reconcile
+  ✅ GoVPP adapter (Go, 16 function stubs) — Connect, CreateInterface, SetInterfaceState, SetInterfaceIP, GetInterfaceList, AddNatAddress, AddStaticNat, EnableNatOnInterface, CreateACL, ApplyACLToInterface, CreatePolicer, ApplyPolicerToInterface, CreatePPPoESession, CreateVRF, GetInterfaceStats, ChangeSubscriberBandwidth, DisconnectSubscriber
+  ✅ Session Engine (port 3010) — in-memory state, 5s poller, startup reconciliation, epoch, /reconcile, /policy/evaluate, /fup-check
+  ✅ FreeRADIUS — properly isolated from VPP (doesn't manipulate VPP)
+  ✅ Policy Engine — resolves + compiles to RADIUS attributes (Mikrotik-Rate-Limit, Session-Timeout, etc.)
+  ✅ TAP interfaces (tap0, tap1, loop0) — VPP dataplane functional with UP interfaces + routing
+
+NOT IMPLEMENTED (14 critical gaps):
+  1. ❌ §8 Transactional login — subscriber marked ACTIVE without VPP programming (ghost sessions possible)
+  2. ❌ §28 Hard boundary — vpp-adapter uses vppctl CLI configs, not VPP Binary API (GoVPP stubs not implemented)
+  3. ❌ §29 VPP Policy Objects — no ACL/Policer/QoS/NAT/VRF/Classification objects in VPP
+  4. ❌ §30 Subscriber→VPP Mapping — no subscriber-to-policy mapping in VPP
+  5. ❌ §31 Bandwidth Control — no VPP QoS/policer enforcement (configs generated but not applied)
+  6. ❌ §32 ACL Architecture — no reusable ACL profiles in VPP
+  7. ❌ §33 NAT Architecture — no VPP NAT (no pools, no translation state, no port allocation)
+  8. ❌ §34 NAT Logging — no NAT event collector pipeline
+  9. ❌ §35 DPI — no nDPI integration with VPP
+  10. ❌ §38 Duplicate Login Detection — no simultaneous session policy
+  11. ❌ §41 VPP Restart Recovery — no VPP state rebuild on restart (CRITICAL)
+  12. ❌ §42 Session Snapshot — no persistent snapshot with VPP-rebuild fields
+  13. ❌ §7 Subscriber Provisioning Flow — VPP programming NOT in the login flow
+  14. ❌ §9 Logout Flow — VPP policy/state removal NOT in the logout flow
+
+PARTIALLY IMPLEMENTED (5 items):
+  1. ⚠️ §4 Session Engine — has basic fields, missing VLAN/VRF/Policy/ACL/QoS/NAT fields
+  2. ⚠️ §9 Logout — DB disconnect works, VPP state removal doesn't
+  3. ⚠️ §37 Session Identity — has basic fields, missing VLAN/Circuit-ID/Remote-ID/PPPoE/DHCP
+  4. ⚠️ §39 Stale Session Recovery — has 5s poller + 60s timeout, missing NAS health check
+  5. ⚠️ §40 Session Reconciliation — has startup reconciliation from radacct, missing VPP+NAS reconciliation
+
+These 14 critical gaps represent the core VPP dataplane functionality that needs to be implemented for Phase 6 to truly pass its Gate E2E (AAA → Session → Policy → VPP Adapter → VPP dataplane → Traffic).
