@@ -536,7 +536,6 @@ const server = Bun.serve({
           FROM radacct ra
           LEFT JOIN "Subscriber" s ON s."serviceUsername" = ra.username
           LEFT JOIN "Plan" p ON p.id = s."planId"
-          LEFT JOIN "Plan" p ON p.id = s."planId"
           LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
           WHERE ra.acctstoptime IS NULL
           LIMIT 1000
