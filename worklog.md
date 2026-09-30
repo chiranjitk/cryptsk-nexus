@@ -2860,3 +2860,21 @@ Next Phase Recommendations:
 2. Inject ClassifyAddDelSession with correct HitNextIndex to actually attach policers to traffic flows.
 3. Configure FreeRADIUS to try rlm_rest before sql module (so /api/radius/auth is the primary authorizer).
 4. Test with a real PPPoE client (e.g., Mikrotik router as PPPoE client → FreeRADIUS → session-engine → VPP).
+
+---
+Task ID: SUBSCRIBER-BUSINESS-LOGIC-FLOW-TEST
+Agent: Z.ai Code (orchestrator)
+Task: User request — FreeRADIUS stays stopped (confirmed + enforced), focus on subscriber management business logic / functionality / flow testing.
+
+Work Log:
+- Confirmed radiusd NOT running; watchdog (patched) kills any stray radiusd.
+- Radius-sync analysis: src/lib/radius-sync.ts writes to Postgres radcheck/radreply/radusergroup via Prisma — subscriber flows do NOT depend on the FreeRADIUS daemon. Daemon stopped = only PPPoE auth (1812/1813) offline; admin flows unaffected. Verified live.
+- API flow tests (curl, ALL PASS): create w/ plan+radius → 201 ACTIVE CRY00016 + auto secure password (stripped from response) + radcheck/radusergroup/radreply populated; validations → dup username 409, bad phone 400, bad email 400, dup phone 409 (names existing code), bad MAC 400; detail contract camelCase + auto-invoice INV-*-001 DRAFT via generateInvoice; update 200; SUSPEND → radcheck Auth-Type=Reject; REACTIVATE → Reject removed; plan change → radusergroup moves basic-30-mbps→standard-50-mbps; DELETE → 200 + all radcheck/radreply/radusergroup rows + invoices purged + re-fetch 404; create WITHOUT plan → PENDING_ACTIVATION + null activationDate; search by username + status filter OK.
+- UI wiring code-verified: createMutation POSTs whole form (shape = API contract, button gated on name+phone), update/delete/status mutations hit the same PUT/DELETE endpoints flow-tested. Browser golden paths (table, Quick View 4 actions, Edit populated, Details dialog 5 tabs) verified earlier in FIX-SUBSCRIBERS-DETAIL-CRASH. NOTE: further browser sessions keep OOMing the dev server (68 OOM kills total; preview panel polls ~15+ API routes and any unwarmed route compile spikes memory) — see memory runbook below.
+- BUG FOUND + FIXED (commit 0ac9218): Edit dialog allows changing serviceUsername, but PUT never re-synced FreeRADIUS tables → radcheck kept the OLD username (PPPoE auth broken after rename); password-only sync also wrote new passwords under the OLD username when both changed. Fix: on username change (radiusEnabled) remove old identity + provision new one with effective password/group/maxSessions/fallback rate limit; added create-route username format validation to PUT (400 on invalid); password sync skipped when username also changes. Verified: rename001→renamed002 moves identity & keeps group; rename+password combo writes new password under new name; "bad username!" → 400; delete cleans rows.
+
+Stage Summary:
+- Subscriber management business logic is SOLID: 13 test groups pass (lifecycle, validations, auto-invoice, RADIUS block/unblock/group-sync/delete-cleanup, PENDING_ACTIVATION rule, search/filter).
+- New fix pushed: 0ac9218 (FreeRADIUS identity re-sync on username rename + PUT format validation).
+- FreeRADIUS: daemon stays OFF per user; RADIUS table sync unaffected (DB-level). PPPoE auth offline until user re-enables.
+- MEMORY: dev-server next-server is ~2.4GB of the 4.1GB sandbox — dev mode is the biggest consumer (Turbopack module graph + HMR). For browser work: close Chrome first, restart next, sequentially warm the FULL polled-endpoint list (incl. dashboard/subscriber-growth, payments/recent, modules — the preview polls more than the old runbook list), then ONE short session. 68 kernel OOM kills to date are all next-server during preview-triggered compile storms.
