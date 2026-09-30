@@ -4,5 +4,5 @@ go 1.22
 
 require (
 	github.com/google/uuid v1.6.0
-	git.fd.io/govpp.git v0.3.0
+	git.fd.io/govpp.git v0.5.0
 )
