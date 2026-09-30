@@ -92,6 +92,7 @@ import { RevenueForecastWidget } from "@/components/dashboard/revenue-forecast-w
 import { CollectionTargetWidget } from "@/components/dashboard/collection-target-widget";
 import { RadiusSyncStatusWidget } from "@/components/dashboard/radius-sync-status-widget";
 import { SystemOverviewWidget } from "@/components/dashboard/system-overview-widget";
+import { SecurityPostureWidget } from "@/components/dashboard/security-posture-widget";
 import { PlanRecommendationWidget } from "@/components/dashboard/plan-recommendation-widget";
 import { RecentSignupsWidget } from "@/components/dashboard/recent-signups-widget";
 import { SubscriberAnalyticsWidget } from "@/components/dashboard/subscriber-analytics-widget";
@@ -1448,14 +1449,19 @@ export default function DashboardPage() {
         <SystemPerformanceWidget />
       </div>
 
+      {/* ── Security Posture (sessions + auth events) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <SecurityPostureWidget />
+        <RadiusSyncStatusWidget />
+      </div>
+
       {/* ── Smart Plan Recommendations ── */}
       <PlanRecommendationWidget />
 
-      {/* ── Response Time, Collection Target, RADIUS Sync & Recent Signups Row ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ── Response Time, Collection Target & Recent Signups Row ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <ResponseTimeWidget />
         <CollectionTargetWidget />
-        <RadiusSyncStatusWidget />
         <RecentSignupsWidget />
       </div>
 

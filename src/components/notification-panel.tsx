@@ -317,6 +317,24 @@ export function NotificationPanel() {
     if (open) refetchBadgeCounts();
   }, [open]);
 
+  // Rendering an in-app notification IS its delivery: flip PENDING → DELIVERED
+  // once per panel open so the Notifications history page reflects reality.
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/notifications/mark-delivered", {
+      method: "POST",
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res?.updated > 0) {
+          queryClient.invalidateQueries({ queryKey: ["notifications-center"] });
+          queryClient.invalidateQueries({ queryKey: ["notifications-header"] });
+        }
+      })
+      .catch(() => {});
+  }, [open, queryClient]);
+
   // Mark single notification as read
   const markAsRead = useCallback(
     async (id: string) => {
