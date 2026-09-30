@@ -392,6 +392,26 @@ export const MODULES: ModuleDefinition[] = [
     ],
     dependencies: ["core"],
   },
+
+  // ══════════════════════════════════════════════════════════════
+  // PARTNER MANAGEMENT — ISP → Distribution Hub → Partner → Subscriber
+  // ══════════════════════════════════════════════════════════════
+  {
+    id: "partner-management",
+    name: "Partner Management",
+    description: "Multi-tier partner hierarchy — Distribution Hubs, Partners, Partner Users with scoped RBAC, partner-wise billing/reports/IP pools/captive portal mapping",
+    icon: "Handshake",
+    category: "core",
+    version: "1.0.0",
+    defaultEnabled: true,
+    pages: [
+      { label: "Distribution Hubs", section: "PARTNER MANAGEMENT", required: true },
+      { label: "Partners", section: "PARTNER MANAGEMENT", required: true },
+      { label: "Partner Users", section: "PARTNER MANAGEMENT" },
+      { label: "Partner Reports", section: "PARTNER MANAGEMENT" },
+    ],
+    dependencies: ["core"],
+  },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────
