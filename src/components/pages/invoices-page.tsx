@@ -6,8 +6,8 @@ import {
   FileText, Search, Plus, Send, Printer, Eye, Trash2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CheckCircle2, Edit2, Ban,
   CreditCard, Download, FileSpreadsheet, X, Users, CalendarClock, RefreshCw,
-  Minus, Copy, FileMinus, Receipt, Hash,
-  AlertTriangle, Inbox, Clock,
+  Minus, Copy, FileMinus, Receipt, Hash, Link2, ExternalLink,
+  AlertTriangle, Inbox, Clock, ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, formatINR } from "@/lib/utils";
@@ -235,6 +235,270 @@ function CreditNotesList({ invoiceId }: { invoiceId: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ─── Payment Link Dialog (one-click hosted checkout — no-leak) ──────────
+// Creates a Razorpay Payment Link / Stripe Checkout Session for the invoice
+// balance, shows the hosted URL for copy/share, sends it over channels and
+// pull-verifies settlement. Server: /api/payments/payment-link.
+
+interface PaymentLinkRow {
+  txnId: string; paymentId: string; receiptNumber: string; amount: number;
+  status: string; createdAt?: string; provider: string; linkId: string; url: string;
+}
+
+function plErr(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  const idx = m.indexOf(": ", m.indexOf("API "));
+  if (m.startsWith("API ") && idx !== -1) {
+    try { return JSON.parse(m.slice(idx + 2)).error || m.slice(idx + 2); } catch { return m.slice(idx + 2); }
+  }
+  return m;
+}
+
+function PaymentLinkDialog({ invoice, onClose }: { invoice: InvoiceItem | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const open = !!invoice;
+  const [expiryDays, setExpiryDays] = useState("7");
+  const [channels, setChannels] = useState<string[]>(["SMS", "WHATSAPP"]);
+  const [sendForId, setSendForId] = useState<string | null>(null);
+  const [overrideEmail, setOverrideEmail] = useState("");
+  const [overridePhone, setOverridePhone] = useState("");
+  const [results, setResults] = useState<Array<{ channel: string; success: boolean; detail: string }>>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const linksQuery = useQuery({
+    queryKey: ["payment-links", invoice?.id],
+    queryFn: () => apiFetch<{ links: PaymentLinkRow[] }>(`/api/payments/payment-link?invoiceId=${invoice!.id}`),
+    enabled: open,
+  });
+
+  const invalidateAll = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["payment-links", invoice?.id] });
+    queryClient.invalidateQueries({ queryKey: ["invoices"] });
+    queryClient.invalidateQueries({ queryKey: ["payments"] });
+    if (invoice) queryClient.invalidateQueries({ queryKey: ["invoice-detail", invoice.id] });
+  }, [queryClient, invoice]);
+
+  const createMutation = useMutation({
+    mutationFn: () => apiFetch<{ message: string }>("/api/payments/payment-link", {
+      method: "POST", body: JSON.stringify({ invoiceId: invoice!.id, expiryDays: Number(expiryDays) }),
+    }),
+    onSuccess: (res) => { toast.success(res.message || "Payment link created"); setResults([]); invalidateAll(); },
+    onError: (e) => toast.error(plErr(e)),
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: (paymentId: string) => apiFetch<{ settled?: boolean; message?: string }>("/api/payments/payment-link", {
+      method: "PUT", body: JSON.stringify({ paymentId }),
+    }),
+    onSuccess: (res) => {
+      if (res.settled) { toast.success(res.message || "Payment settled"); invalidateAll(); }
+      else toast.info(res.message || "Not paid yet", { description: "The customer hasn't completed checkout — the link stays active until it expires." });
+    },
+    onError: (e) => toast.error(plErr(e)),
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: (paymentId: string) => apiFetch<{ message: string; results: Array<{ channel: string; success: boolean; detail: string }> }>("/api/payments/payment-link", {
+      method: "POST", body: JSON.stringify({ action: "send", paymentId, channels, email: overrideEmail || undefined, phone: overridePhone || undefined }),
+    }),
+    onSuccess: (res) => {
+      setResults(res.results || []);
+      const ok = (res.results || []).some((r) => r.success);
+      if (ok) toast.success(res.message); else toast.error(res.message || "Could not send on any channel");
+    },
+    onError: (e) => toast.error(plErr(e)),
+  });
+
+  const copyLink = (row: PaymentLinkRow) => {
+    navigator.clipboard.writeText(row.url).then(() => {
+      setCopiedId(row.txnId);
+      toast.success("Payment link copied");
+      setTimeout(() => setCopiedId(null), 2000);
+    }).catch(() => toast.error("Could not copy — select the link text manually"));
+  };
+
+  const toggleChannel = (ch: string) => {
+    setChannels((prev) => prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]);
+  };
+
+  const links = linksQuery.data?.links || [];
+  const pendingLink = links.find((l) => l.status === "PENDING");
+
+  const handleClose = () => {
+    setResults([]); setSendForId(null); setOverrideEmail(""); setOverridePhone(""); setChannels(["SMS", "WHATSAPP"]);
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Link2 className="h-5 w-5 text-teal-600" />Send Payment Link
+          </DialogTitle>
+          <DialogDescription>
+            Hosted checkout for invoice {invoice?.invoiceNumber} — the customer pays on the gateway&apos;s secure page and this platform settles the ledger automatically. No cash handling, no leak.
+          </DialogDescription>
+        </DialogHeader>
+
+        {invoice && (
+          <div className="space-y-4">
+            {/* Invoice summary strip */}
+            <div className="rounded-lg border bg-muted/30 p-3 grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <p className="text-muted-foreground text-[10px] uppercase tracking-wide">Invoice</p>
+                <p className="font-mono font-semibold">{invoice.invoiceNumber}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-[10px] uppercase tracking-wide">Subscriber</p>
+                <p className="font-medium truncate">{invoice.subscriber.name}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-[10px] uppercase tracking-wide">Balance due</p>
+                <p className="font-semibold text-red-600 tabular-nums">{formatINR(invoice.balanceAmount)}</p>
+              </div>
+            </div>
+
+            {/* Create new link */}
+            {links.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <ShieldCheck className="h-4 w-4 text-teal-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    The link is created on your configured gateway (Razorpay Payment Link or Stripe Checkout). The customer&apos;s payment lands on the gateway, and &quot;Check status&quot; pulls the result into the ledger — a PENDING payment with a receipt number is opened the moment the link is created, so nothing is ever invisible.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Label className="text-xs shrink-0">Expiry</Label>
+                  <Select value={expiryDays} onValueChange={setExpiryDays}>
+                    <SelectTrigger className="w-44 h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 day</SelectItem>
+                      <SelectItem value="3">3 days</SelectItem>
+                      <SelectItem value="7">7 days</SelectItem>
+                      <SelectItem value="15">15 days</SelectItem>
+                      <SelectItem value="30">30 days</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-[10px] text-muted-foreground">Stripe sessions always expire in 24h</span>
+                </div>
+                <Button
+                  size="sm" className="bg-teal-600 hover:bg-teal-700 text-white w-full"
+                  disabled={createMutation.isPending}
+                  onClick={() => createMutation.mutate()}
+                >
+                  {createMutation.isPending ? (<><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Creating link…</>) : (<><ExternalLink className="h-4 w-4 mr-2" />Create Payment Link for {formatINR(invoice.balanceAmount)}</>)}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold">Payment links for this invoice</p>
+                  {!pendingLink && (
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={createMutation.isPending}
+                      onClick={() => createMutation.mutate()}>
+                      {createMutation.isPending ? <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> : <Plus className="h-3 w-3 mr-1" />}
+                      New link
+                    </Button>
+                  )}
+                </div>
+                {linksQuery.isLoading && <Skeleton className="skeleton-wave h-16 w-full" />}
+                {links.map((row) => {
+                  const settled = row.status === "VERIFIED";
+                  return (
+                    <div key={row.txnId} className={`rounded-lg border p-3 space-y-2.5 ${settled ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className={`text-[10px] ${settled ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>
+                            {settled ? "Paid & verified" : row.status === "PENDING" ? "Awaiting payment" : row.status}
+                          </Badge>
+                          <span className="font-mono text-[11px] font-semibold">{row.receiptNumber}</span>
+                          <span className="text-xs tabular-nums font-medium">{formatINR(row.amount)}</span>
+                          <Badge variant="secondary" className="text-[10px] capitalize">{row.provider}</Badge>
+                        </div>
+                        {row.createdAt && <span className="text-[10px] text-muted-foreground">{formatDateTime(row.createdAt)}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 text-[10px] bg-muted/60 rounded px-2 py-1.5 truncate font-mono" title={row.url}>{row.url || "link unavailable"}</code>
+                        {row.url && (
+                          <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => copyLink(row)} aria-label="Copy payment link">
+                            {copiedId === row.txnId ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                          </Button>
+                        )}
+                      </div>
+                      {!settled && (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                            disabled={verifyMutation.isPending}
+                            onClick={() => verifyMutation.mutate(row.paymentId)}>
+                            {verifyMutation.isPending ? (<><RefreshCw className="h-3 w-3 mr-1 animate-spin" />Checking…</>) : (<><CheckCircle2 className="h-3 w-3 mr-1" />Check status &amp; settle</>)}
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                            onClick={() => { setSendForId(sendForId === row.paymentId ? null : row.paymentId); setResults([]); }}>
+                            <Send className="h-3 w-3 mr-1" />Share
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Share panel */}
+                      {sendForId === row.paymentId && !settled && (
+                        <div className="rounded-md border bg-background p-3 space-y-2.5">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            {["SMS", "WHATSAPP", "EMAIL"].map((ch) => (
+                              <label key={ch} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                                <Checkbox checked={channels.includes(ch)} onCheckedChange={() => toggleChannel(ch)} />
+                                {ch === "SMS" ? "SMS" : ch === "WHATSAPP" ? "WhatsApp" : "Email"}
+                              </label>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input placeholder="Override phone (optional)" value={overridePhone} onChange={(e) => setOverridePhone(e.target.value)} className="h-8 text-xs" />
+                            <Input placeholder="Override email (optional)" value={overrideEmail} onChange={(e) => setOverrideEmail(e.target.value)} className="h-8 text-xs" />
+                          </div>
+                          <Button size="sm" className="h-7 text-xs bg-teal-600 hover:bg-teal-700 text-white"
+                            disabled={sendMutation.isPending || channels.length === 0}
+                            onClick={() => sendMutation.mutate(row.paymentId)}>
+                            {sendMutation.isPending ? (<><RefreshCw className="h-3 w-3 mr-1 animate-spin" />Sending…</>) : (<><Send className="h-3 w-3 mr-1" />Send link to customer</>)}
+                          </Button>
+                          <p className="text-[10px] text-muted-foreground">Razorpay also notifies the customer directly (SMS/email) when the link is created. Every send attempt here is logged as a Notification for the audit trail.</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Per-channel send results */}
+            {results.length > 0 && (
+              <div className="rounded-lg border p-3 space-y-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Delivery results</p>
+                {results.map((r) => (
+                  <div key={r.channel} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex items-center gap-1.5">
+                      {r.success ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <X className="h-3.5 w-3.5 text-red-500" />}
+                      <span className="font-medium">{r.channel}</span>
+                    </span>
+                    <span className={`text-[11px] truncate max-w-[60%] ${r.success ? "text-emerald-700 dark:text-emerald-400" : "text-red-600"}`}>{r.detail}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground">
+              Settled links appear instantly in PAYMENTS (Overview + Reconciliation) with an auto-settled note — the audit trail records who created the link, who checked it, and the gateway&apos;s own payment reference.
+            </p>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={handleClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1024,6 +1288,7 @@ export default function InvoicesPage() {
   const [showCreditNote, setShowCreditNote] = useState(false);
   const [showTaxSettings, setShowTaxSettings] = useState(false);
   const [showInvoiceFormat, setShowInvoiceFormat] = useState(false);
+  const [plInvoice, setPlInvoice] = useState<InvoiceItem | null>(null);
 
   // Credit note form states
   const [creditNoteAmount, setCreditNoteAmount] = useState("");
@@ -1631,6 +1896,11 @@ export default function InvoicesPage() {
                                 <CreditCard className="h-4 w-4 mr-2" />Record Payment
                               </DropdownMenuItem>
                             )}
+                            {inv.balanceAmount > 0 && inv.status !== "CANCELLED" && inv.status !== "PAID" && inv.status !== "DRAFT" && (
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setPlInvoice(inv); }}>
+                                <Link2 className="h-4 w-4 mr-2 text-teal-600" />Send Payment Link
+                              </DropdownMenuItem>
+                            )}
                             {(inv.status === "PAID" || inv.status === "OVERDUE" || inv.status === "PARTIALLY_PAID") && (
                               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openCreditNote(inv); }}>
                                 <FileMinus className="h-4 w-4 mr-2 text-purple-600" />Credit Note
@@ -1673,6 +1943,7 @@ export default function InvoicesPage() {
       <RecurringTemplatesDialog open={showRecurring} onClose={() => setShowRecurring(false)} subscribers={subscribersData?.subscribers || []} areas={areas} plans={plans} />
       <TaxSettingsDialog open={showTaxSettings} onClose={() => setShowTaxSettings(false)} />
       <InvoiceFormatDialog open={showInvoiceFormat} onClose={() => setShowInvoiceFormat(false)} />
+      <PaymentLinkDialog invoice={plInvoice} onClose={() => setPlInvoice(null)} />
 
       {/* ─── Credit Note Dialog ─── */}
       <Dialog open={showCreditNote} onOpenChange={setShowCreditNote}>
