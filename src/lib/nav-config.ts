@@ -117,6 +117,7 @@ export const navGroups: NavGroup[] = [
     label: "SUBSCRIBERS",
     defaultOpen: true,
     items: [
+      { label: "Active Sessions", href: "/active-sessions", icon: MonitorDot },
       { label: "Subscribers", href: "/subscribers", icon: Users },
       { label: "Plans", href: "/plans", icon: CreditCard },
       { label: "360° Customer View", href: "/subscriber-360", icon: Eye },
@@ -178,7 +179,6 @@ export const navGroups: NavGroup[] = [
     label: "MONITORING",
     defaultOpen: false,
     items: [
-      { label: "Active Sessions", href: "/sessions", icon: MonitorDot },
       { label: "Session History", href: "/session-history", icon: History },
       { label: "Authentication Log", href: "/auth-log", icon: Shield },
       { label: "Bandwidth", href: "/bandwidth", icon: Activity },

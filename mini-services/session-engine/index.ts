@@ -60,28 +60,25 @@ function resolveSpeedsKbps(subscriber: {
   currentSpeedDown: number;
   currentSpeedUp: number;
 }): { speedDown: number; speedUp: number } {
-  const rg = (subscriber as any).radiusGroup || (subscriber as any).RadiusGroup;
-  const plan = (subscriber as any).plan || (subscriber as any).Plan;
   // Override group takes highest priority (values in Mbps → convert to Kbps)
-  if (rg?.speedLimitDown) {
+  if (subscriber.radiusGroup?.speedLimitDown) {
     return {
-      speedDown: rg.speedLimitDown * 1000,
-      speedUp: rg.speedLimitUp * 1000,
+      speedDown: subscriber.radiusGroup.speedLimitDown * 1000,
+      speedUp: subscriber.radiusGroup.speedLimitUp * 1000,
     };
   }
   // Plan's linked group (values in Mbps → convert to Kbps)
-  const planGroup = plan?.group || plan?.RadiusGroup;
-  if (planGroup?.speedLimitDown) {
+  if (subscriber.plan?.group?.speedLimitDown) {
     return {
-      speedDown: planGroup.speedLimitDown * 1000,
-      speedUp: planGroup.speedLimitUp * 1000,
+      speedDown: subscriber.plan.group.speedLimitDown * 1000,
+      speedUp: subscriber.plan.group.speedLimitUp * 1000,
     };
   }
   // Plan's own speeds (already in Kbps)
-  if (plan?.downloadSpeed) {
+  if (subscriber.plan?.downloadSpeed) {
     return {
-      speedDown: plan.downloadSpeed,
-      speedUp: plan.uploadSpeed,
+      speedDown: subscriber.plan.downloadSpeed,
+      speedUp: subscriber.plan.uploadSpeed,
     };
   }
   // Subscriber-level current speeds (assumed Mbps → convert to Kbps)
@@ -100,25 +97,15 @@ function resolveSpeedsKbps(subscriber: {
  */
 function resolveDataLimitMb(subscriber: {
   radiusGroup?: { dataLimit: number | null } | null;
-  RadiusGroup?: { dataLimit: number | null } | null;
   plan?: {
     dataLimitGb: number | null;
     group?: { dataLimit: number | null } | null;
-    RadiusGroup?: { dataLimit: number | null } | null;
-  } | null;
-  Plan?: {
-    dataLimitGb: number | null;
-    group?: { dataLimit: number | null } | null;
-    RadiusGroup?: { dataLimit: number | null } | null;
   } | null;
 }): number | null {
-  const rg = (subscriber as any).radiusGroup || (subscriber as any).RadiusGroup;
-  const plan = (subscriber as any).plan || (subscriber as any).Plan;
-  const planGroup = plan?.group || plan?.RadiusGroup;
   return (
-    rg?.dataLimit ??
-    planGroup?.dataLimit ??
-    (plan?.dataLimitGb ? Math.round(plan.dataLimitGb * 1024) : null)
+    subscriber.radiusGroup?.dataLimit ??
+    subscriber.plan?.group?.dataLimit ??
+    (subscriber.plan?.dataLimitGb ? Math.round(subscriber.plan.dataLimitGb * 1024) : null)
   );
 }
 
@@ -127,18 +114,13 @@ function resolveDataLimitMb(subscriber: {
  */
 function resolveSessionTimeout(subscriber: {
   radiusGroup?: { sessionTimeout: number | null } | null;
-  RadiusGroup?: { sessionTimeout: number | null } | null;
-  plan?: { group?: { sessionTimeout: number | null } | null; RadiusGroup?: { sessionTimeout: number | null } | null } | null;
-  Plan?: { group?: { sessionTimeout: number | null } | null; RadiusGroup?: { sessionTimeout: number | null } | null } | null;
+  plan?: { group?: { sessionTimeout: number | null } | null } | null;
   sessionTimeout: number | null;
 }): number | null {
-  const rg = (subscriber as any).radiusGroup || (subscriber as any).RadiusGroup;
-  const plan = (subscriber as any).plan || (subscriber as any).Plan;
-  const planGroup = plan?.group || plan?.RadiusGroup;
   return (
     subscriber.sessionTimeout ??
-    rg?.sessionTimeout ??
-    planGroup?.sessionTimeout ??
+    subscriber.radiusGroup?.sessionTimeout ??
+    subscriber.plan?.group?.sessionTimeout ??
     null
   );
 }
@@ -169,12 +151,7 @@ async function logEvent(params: {
   triggeredBy?: string;
 }) {
   try {
-    // SessionEvent.context is a String? column — serialize objects to JSON
-    const data: any = { ...params };
-    if (data.context && typeof data.context === "object") {
-      data.context = JSON.stringify(data.context);
-    }
-    await db.sessionEvent.create({ data });
+    await db.sessionEvent.create({ data: params });
   } catch (err) {
     logger.error("Failed to log session event", { error: String(err), params });
   }
@@ -218,307 +195,6 @@ async function closeSession(
   });
 
   return closed;
-}
-
-// ════════════════════════════════════════════════════════════
-// VPP ADAPTER HELPERS (§28 hard boundary — never call vppctl directly)
-// All dataplane programming goes through the vpp-adapter HTTP API.
-// ════════════════════════════════════════════════════════════
-
-const VPP_ADAPTER_BASE = "http://127.0.0.1:3015";
-const VPP_TIMEOUT_MS = 5000;
-
-// In-memory VPP restart detection state (§41)
-let lastKnownVppEpoch = 0;
-let startupReconciliationDone = false;
-let lastVppEpochPollAt = 0;
-
-/**
- * HTTP fetch with timeout + abort. Wraps vpp-adapter calls.
- * GET if no body, POST with JSON if body provided.
- */
-async function callVpp<T = any>(path: string, body?: any): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), VPP_TIMEOUT_MS);
-  try {
-    const url = `${VPP_ADAPTER_BASE}${path}`;
-    const init: RequestInit = body !== undefined
-      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal }
-      : { method: "GET", signal: ctrl.signal };
-    const res = await fetch(url, init);
-    const data = await res.json().catch(() => ({}) as T) as T;
-    if (!res.ok) return { ok: false, status: res.status, error: `vpp-adapter ${path} HTTP ${res.status}`, data };
-    return { ok: true, status: res.status, data };
-  } catch (err: any) {
-    return { ok: false, error: `vpp-adapter ${path} unreachable: ${String(err?.message || err)}` };
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-/**
- * §42 Persist (upsert) a SessionSnapshot row for VPP restart recovery.
- */
-async function persistSnapshot(sessionId: string, fields: Record<string, any>) {
-  try {
-    await db.sessionSnapshot.upsert({
-      where: { sessionId },
-      create: { sessionId, ...fields },
-      update: { ...fields, updatedAt: new Date() },
-    });
-  } catch (err) {
-    logger.error("persistSnapshot failed", { sessionId, error: String(err) });
-  }
-}
-
-/**
- * §38 Duplicate login detection.
- * Reads DuplicateLoginPolicy (first enabled, fallback DENY_NEW/1/USERNAME).
- * Returns { allowed, reason?, oldSessionIds? }.
- * If mode=DISCONNECT_OLD, disconnects the old sessions (VPP remove + close).
- */
-async function detectDuplicateLogin(username: string, mac: string): Promise<{
-  allowed: boolean;
-  reason?: string;
-  oldSessionIds?: string[];
-}> {
-  const policy = await db.duplicateLoginPolicy.findFirst({
-    where: { isEnabled: true },
-    orderBy: { updatedAt: "desc" },
-  });
-  const mode = (policy?.mode || "DENY_NEW") as "ALLOW_MULTIPLE" | "DENY_NEW" | "DISCONNECT_OLD" | "LIMIT_N";
-  const maxSessions = policy?.maxSessions ?? 1;
-  const scope = (policy?.scope || "USERNAME") as "USERNAME" | "MAC" | "BOTH";
-
-  if (mode === "ALLOW_MULTIPLE") return { allowed: true };
-
-  const orClauses: any[] = [];
-  if (scope === "USERNAME" || scope === "BOTH") orClauses.push({ username });
-  if (scope === "MAC" || scope === "BOTH") orClauses.push({ callingStationId: mac });
-  if (orClauses.length === 0) orClauses.push({ username });
-
-  const existing = await db.nasSession.findMany({
-    where: { OR: orClauses, status: "ACTIVE" },
-    orderBy: { startTime: "asc" },
-  });
-
-  if (existing.length < maxSessions) {
-    return { allowed: true, oldSessionIds: existing.map((s) => s.sessionId) };
-  }
-
-  if (mode === "DISCONNECT_OLD") {
-    for (const old of existing) {
-      try {
-        try { await db.sessionSnapshot.update({ where: { sessionId: old.sessionId }, data: { vppRecoveryState: "STALE" } }); } catch {}
-        const rm = await callVpp("/subscriber/remove", { sessionId: old.sessionId });
-        if (!rm.ok) logger.warn("VPP remove failed during DISCONNECT_OLD (continuing)", { sessionId: old.sessionId, error: rm.error });
-        await closeSession(old.sessionId, "Duplicate-Login", "Disconnected by new login (DISCONNECT_OLD)", "system");
-        await logEvent({
-          nasSessionId: old.id,
-          sessionId: old.sessionId,
-          subscriberId: old.subscriberId,
-          username: old.username,
-          eventType: "SESSION_STOP",
-          context: { reason: "Duplicate-Login-Old-Disconnected" },
-          source: "system",
-        });
-        broadcastWs("session_stop", { sessionId: old.sessionId, username: old.username, cause: "Duplicate-Login-Old-Disconnected" });
-      } catch (err) {
-        logger.error("Failed to disconnect old session in DISCONNECT_OLD", { sessionId: old.sessionId, error: String(err) });
-      }
-    }
-    return { allowed: true, oldSessionIds: existing.map((s) => s.sessionId) };
-  }
-
-  // DENY_NEW (default) + LIMIT_N — both deny if max reached
-  const reason = mode === "LIMIT_N"
-    ? `Max sessions (${maxSessions}) reached (LIMIT_N)`
-    : `Duplicate session denied (DENY_NEW, scope=${scope})`;
-  return { allowed: false, reason, oldSessionIds: existing.map((s) => s.sessionId) };
-}
-
-/**
- * §41 Trigger VPP rebuild for a single session. Updates snapshot recovery state.
- */
-async function triggerVppRebuildForSession(sessionId: string): Promise<{ rebuilt: boolean; error?: string; vppEpoch?: number }> {
-  const r = await callVpp<{ rebuilt?: number; failed?: number; results?: any[]; vppEpoch?: number; success?: boolean }>("/vpp/rebuild", { sessionId });
-  if (!r.ok || r.data?.success === false) {
-    try { await db.sessionSnapshot.update({ where: { sessionId }, data: { vppRecoveryState: "STALE" } }); } catch {}
-    try { await db.nasSession.updateMany({ where: { sessionId, status: "ACTIVE" }, data: { vppRecoveryState: "STALE" } }); } catch {}
-    return { rebuilt: false, error: r.error || "vpp-adapter /vpp/rebuild failed" };
-  }
-  const newEpoch = r.data?.vppEpoch || 0;
-  try {
-    const updateData: any = { vppRecoveryState: "VERIFIED", updatedAt: new Date() };
-    if (newEpoch) updateData.vppEpoch = newEpoch;
-    await db.sessionSnapshot.update({ where: { sessionId }, data: updateData });
-  } catch {}
-  try {
-    const sessUpdate: any = { vppRecoveryState: "VERIFIED", vppProgrammedAt: new Date() };
-    if (newEpoch) sessUpdate.vppEpoch = newEpoch;
-    await db.nasSession.updateMany({ where: { sessionId, status: "ACTIVE" }, data: sessUpdate });
-  } catch {}
-  return { rebuilt: true, vppEpoch: newEpoch };
-}
-
-/**
- * Allocate a subscriber IP from a simple deterministic pool.
- * Pattern: 10.0.{N}.X where N = subscriber hash % 200, X = session hash % 250 + 1
- */
-function allocateFramedIp(subscriberId: string, sessionId: string): string {
-  let subHash = 0;
-  for (let i = 0; i < subscriberId.length; i++) subHash = (subHash * 31 + subscriberId.charCodeAt(i)) >>> 0;
-  let sessHash = 0;
-  for (let i = 0; i < sessionId.length; i++) sessHash = (sessHash * 31 + sessionId.charCodeAt(i)) >>> 0;
-  const n = subHash % 200;
-  const x = (sessHash % 250) + 1;
-  return `10.0.${n}.${x}`;
-}
-
-/**
- * §41 VPP Restart Recovery: rebuild all ACTIVE sessions' VPP policies after a restart.
- * Logs to VppRecoveryLog + broadcasts progress over WS.
- */
-async function runVppRestartRecovery(prevEpoch: number, newEpoch: number, triggeredBy: string = "restart-detector") {
-  const start = Date.now();
-  const activeSessions = await db.nasSession.findMany({ where: { status: "ACTIVE" } });
-  let recovered = 0;
-  let failed = 0;
-  const failures: any[] = [];
-  for (const s of activeSessions) {
-    const r = await triggerVppRebuildForSession(s.sessionId);
-    if (r.rebuilt) recovered++;
-    else { failed++; failures.push({ sessionId: s.sessionId, error: r.error }); }
-  }
-  const durationMs = Date.now() - start;
-  try {
-    await db.vppRecoveryLog.create({
-      data: {
-        event: "REBUILT_POLICIES",
-        prevEpoch,
-        newEpoch,
-        sessionsAffected: activeSessions.length,
-        sessionsRecovered: recovered,
-        sessionsFailed: failed,
-        durationMs,
-        detailsJson: JSON.stringify({ triggeredBy, failures: failures.slice(0, 20) }),
-      },
-    });
-  } catch (err) {
-    logger.error("VppRecoveryLog create failed", { error: String(err) });
-  }
-  logger.info("VPP restart recovery completed", { prevEpoch, newEpoch, sessionsAffected: activeSessions.length, recovered, failed, durationMs });
-  broadcastWs("vpp_recovery", { prevEpoch, newEpoch, sessionsAffected: activeSessions.length, recovered, failed, durationMs, triggeredBy });
-  return { sessionsAffected: activeSessions.length, recovered, failed, durationMs };
-}
-
-/**
- * §40 Session Reconciliation (startup + scheduled).
- * Ensures every ACTIVE NasSession has a SessionSnapshot, then calls /vpp/rebuild.
- * Logs outcome to ReconciliationLog.
- */
-async function runReconciliation(scope: "STARTUP" | "SCHEDULED" = "STARTUP") {
-  const start = Date.now();
-  const active = await db.nasSession.findMany({ where: { status: "ACTIVE" } });
-  let recovered = 0;
-  let stale = 0;
-  for (const s of active) {
-    try {
-      const existing = await db.sessionSnapshot.findUnique({ where: { sessionId: s.sessionId } });
-      if (!existing) {
-        await persistSnapshot(s.sessionId, {
-          subscriberId: s.subscriberId,
-          username: s.username,
-          nasIp: s.nasIp,
-          nasPort: s.nasPort,
-          framedIp: s.framedIp || s.assignedIp,
-          mac: s.callingStationId,
-          vlan: s.vlanId,
-          vrf: s.vrf,
-          policyId: s.vppPolicyId,
-          aclProfileId: s.vppAclProfileId,
-          qosProfileId: s.vppQosProfileId,
-          natProfileId: s.vppNatProfileId,
-          ipPool: s.vppIpPool,
-          circuitId: s.circuitId,
-          remoteId: s.remoteId,
-          pppoeSessionId: s.pppoeSessionId,
-          dhcpClientId: s.dhcpClientId,
-          speedDownKbps: s.speedDownKbps,
-          speedUpKbps: s.speedUpKbps,
-          startTime: s.startTime,
-          timeoutSec: s.sessionTimeoutSec ?? 0,
-          vppEpoch: s.vppEpoch,
-          vppProgrammedAt: s.vppProgrammedAt,
-          vppRecoveryState: "RECOVERING",
-        });
-      }
-      const r = await triggerVppRebuildForSession(s.sessionId);
-      if (r.rebuilt) recovered++;
-      else stale++;
-    } catch (err) {
-      logger.error("Reconciliation failed for session", { sessionId: s.sessionId, error: String(err) });
-      stale++;
-    }
-  }
-  const durationMs = Date.now() - start;
-  try {
-    await db.reconciliationLog.create({
-      data: {
-        scope,
-        totalDb: active.length,
-        totalVpp: active.length,
-        totalActive: active.length,
-        totalStale: stale,
-        totalRecovered: recovered,
-        totalRemoved: 0,
-        durationMs,
-        detailsJson: JSON.stringify({ scope }),
-      },
-    });
-  } catch (err) {
-    logger.error("ReconciliationLog create failed", { error: String(err) });
-  }
-  logger.info("Reconciliation completed", { scope, active: active.length, recovered, stale, durationMs });
-  return { scope, active: active.length, recovered, stale, durationMs };
-}
-
-/**
- * §39 Stale Session Recovery — NAS health check.
- * For each unique NAS IP from active sessions, do a HEAD request to port 80 (2s timeout).
- * If unreachable, mark all sessions on that NAS as vppRecoveryState=STALE + broadcast.
- */
-async function runNasHealthCheck() {
-  try {
-    const sessions = await db.nasSession.findMany({ where: { status: "ACTIVE" }, select: { nasIp: true, sessionId: true } });
-    const uniqueNasIps = [...new Set(sessions.map((s) => s.nasIp))].filter((ip) => ip && ip !== "127.0.0.1" && ip !== "0.0.0.0");
-    for (const nasIp of uniqueNasIps) {
-      let reachable = false;
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 2000);
-        const res = await fetch(`http://${nasIp}/`, { method: "HEAD", signal: ctrl.signal });
-        clearTimeout(t);
-        reachable = res.ok || res.status < 500;
-      } catch {
-        reachable = false;
-      }
-      if (!reachable) {
-        const staleSessions = await db.nasSession.findMany({ where: { nasIp, status: "ACTIVE" }, select: { sessionId: true, username: true } });
-        if (staleSessions.length === 0) continue;
-        try {
-          await db.nasSession.updateMany({ where: { nasIp, status: "ACTIVE" }, data: { vppRecoveryState: "STALE" } });
-        } catch {}
-        for (const s of staleSessions) {
-          try { await db.sessionSnapshot.update({ where: { sessionId: s.sessionId }, data: { vppRecoveryState: "STALE" } }); } catch {}
-        }
-        broadcastWs("nas_unreachable", { nasIp, staleSessions: staleSessions.length });
-        logger.warn("NAS unreachable — sessions marked STALE", { nasIp, staleSessions: staleSessions.length });
-      }
-    }
-  } catch (err) {
-    logger.error("NAS health check error", { error: String(err) });
-  }
 }
 
 // ─── HTTP Server ─────────────────────────────────────────────
@@ -679,96 +355,7 @@ function formatDurationCron(seconds: number): string {
 
 logger.info("Auto-enforcement cron started (every 30s)", {});
 
-// ─── §41 VPP Restart Detection (every 5s) ────────────────────
-// GET /vpp/epoch from vpp-adapter. If epoch > lastKnownVppEpoch,
-// trigger runVppRestartRecovery to rebuild all ACTIVE session policies.
-
-setInterval(async () => {
-  try {
-    const r = await callVpp<{ epoch: number; lastRestartAt?: string; vppConnected?: boolean }>("/vpp/epoch");
-    lastVppEpochPollAt = Date.now();
-    if (!r.ok || !r.data) return;
-    const epoch = r.data.epoch || 0;
-    // NOTE: We intentionally do NOT bail when vppConnected===false here, because
-    // in dev/cert the vpp-adapter reports vppConnected=false (no real VPP binary
-    // running), but epoch increments on every simulated restart — and we still
-    // need to test the §41 VPP Restart Recovery flow against those increments.
-    if (lastKnownVppEpoch === 0) {
-      // First successful poll — baseline, don't trigger recovery
-      lastKnownVppEpoch = epoch;
-      logger.info("VPP epoch baseline set", { epoch });
-      return;
-    }
-    if (epoch > lastKnownVppEpoch) {
-      const prev = lastKnownVppEpoch;
-      logger.warn("VPP restart detected — triggering recovery", { prevEpoch: prev, newEpoch: epoch });
-      try {
-        await db.vppRecoveryLog.create({
-          data: {
-            event: "RESTART_DETECTED",
-            prevEpoch: prev,
-            newEpoch: epoch,
-            sessionsAffected: 0,
-            sessionsRecovered: 0,
-            sessionsFailed: 0,
-            durationMs: 0,
-            detailsJson: JSON.stringify({ lastRestartAt: r.data.lastRestartAt }),
-          },
-        });
-      } catch {}
-      await runVppRestartRecovery(prev, epoch, "restart-detector");
-      lastKnownVppEpoch = epoch;
-    }
-  } catch (err) {
-    logger.error("VPP epoch poll error", { error: String(err) });
-  }
-}, 5_000);
-
-// ─── §40 Startup Reconciliation (once at startup + every 5 min) ─
-// Ensures every ACTIVE NasSession has a snapshot + calls /vpp/rebuild.
-// First run logs scope=STARTUP, recurring runs log scope=SCHEDULED.
-
-setInterval(async () => {
-  try {
-    const scope = startupReconciliationDone ? "SCHEDULED" : "STARTUP";
-    startupReconciliationDone = true;
-    await runReconciliation(scope);
-  } catch (err) {
-    logger.error("Scheduled reconciliation error", { error: String(err) });
-  }
-}, 5 * 60 * 1000);
-
-// ─── §39 NAS Health Check (every 30s) ────────────────────────
-// Pings each unique nasIp from active sessions via HEAD on port 80
-// (2s timeout). Unreachable NAS → mark sessions STALE + broadcast.
-
-setInterval(async () => {
-  try {
-    await runNasHealthCheck();
-  } catch (err) {
-    logger.error("NAS health check loop error", { error: String(err) });
-  }
-}, 30_000);
-
-// Run startup reconciliation shortly after process boot (let vpp-adapter settle)
-setTimeout(async () => {
-  try {
-    if (!startupReconciliationDone) {
-      startupReconciliationDone = true;
-      await runReconciliation("STARTUP");
-    }
-  } catch (err) {
-    logger.error("Startup reconciliation (deferred) error", { error: String(err) });
-  }
-}, 8_000);
-
-logger.info("VPP restart detector (5s) + reconciliation (5min) + NAS health check (30s) loops registered", {});
-
 // ─── Request Router ──────────────────────────────────────────
-
-// Shared secret for machine-to-machine RADIUS calls (rlm_rest → /api/radius/auth).
-// Set via env var RADIUS_API_SECRET; fallback to a default for dev.
-const RADIUS_API_SECRET = process.env.RADIUS_API_SECRET || "cryptsk-radius-shared-secret-2026";
 
 async function handleRequest(req: Request, path: string, url: URL) {
   // ── Health (no auth) ──
@@ -793,222 +380,427 @@ async function handleRequest(req: Request, path: string, url: URL) {
   // ══════════════════════════════════════════════════════════
   // §7/§8 RADIUS MACHINE-TO-MACHINE ENDPOINT (no session cookie)
   // FreeRADIUS rlm_rest calls this endpoint on every Access-Request.
-  // Auth is via shared secret. Two supported mechanisms:
-  //   1. X-RADIUS-Secret header (preferred if rlm_rest supports it)
-  //   2. _radiusSecret field in the JSON body (fallback, since rlm_rest
-  //      cannot easily add custom HTTP headers via its config)
-  // Body schema matches /api/auth: { username, password, nasIp, nasPort,
-  //   callingStationId (MAC), calledStationId?, clientIp?, vlanId?,
-  //   circuitId?, remoteId?, pppoeSessionId?, dhcpClientId?, framedIp? }
-  // Returns RLM_MODULE_OK on success (HTTP 200 with Auth-Type: Accept header).
+  // Auth is via shared secret. Accepted via:
+  //   1. X-RADIUS-Secret header
+  //   2. _radiusSecret URL query param
+  //   3. _radiusSecret field in JSON body
+  // Body accepts both camelCase AND RADIUS attribute names:
+  //   User-Name, User-Password, NAS-IP-Address, NAS-Port,
+  //   Calling-Station-Id, Called-Station-Id, Packet-Src-IP-Address
+  // Response includes Cryptsk VSA attributes (vendor 64179) in radius.reply.
   // ══════════════════════════════════════════════════════════
+  const RADIUS_API_SECRET = process.env.RADIUS_API_SECRET || "cryptsk-radius-shared-secret-2026";
+
   if (path === "/api/radius/auth" && req.method === "POST") {
-    // Read raw body to extract _radiusSecret before main handler parses it
     const rawBody = await req.text().catch(() => "");
-    // _radiusSecret can be provided via:
-    //   1. X-RADIUS-Secret HTTP header (preferred when supported by client)
-    //   2. _radiusSecret URL query parameter (used by rlm_rest — it cannot
-    //      easily add custom HTTP headers via its config; we pass it in the
-    //      `uri = "/api/radius/auth?_radiusSecret=..."` config directive)
-    //   3. _radiusSecret JSON body field (legacy fallback for clients that
-    //      send the secret in the body — works with the older `data` xlat
-    //      template approach in rlm_rest)
-    let providedSecret = req.headers.get("x-radius-secret")
-      || url.searchParams.get("_radiusSecret")
-      || "";
+    let providedSecret = req.headers.get("x-radius-secret") || url.searchParams.get("_radiusSecret") || "";
     if (!providedSecret) {
-      try {
-        const parsed = JSON.parse(rawBody);
-        providedSecret = parsed._radiusSecret || "";
-      } catch {}
+      try { const parsed = JSON.parse(rawBody); providedSecret = parsed._radiusSecret || ""; } catch {}
     }
     if (providedSecret !== RADIUS_API_SECRET) {
-      logger.warn("RADIUS /api/radius/auth rejected — bad shared secret", {
-        provided: providedSecret.slice(0, 8) + "...",
-      });
+      logger.warn("RADIUS /api/radius/auth — bad shared secret", { provided: providedSecret.slice(0, 8) + "..." });
       return json({ error: "Invalid shared secret", authResult: "REJECT" }, 403);
     }
-    // Synthesize auth context for machine-to-machine call.
-    // Re-inject the body so the /api/auth handler can re-parse it.
-    (req as any)._radiusAuth = { userId: "radius-rlm-rest", role: "RADIUS" };
-    (req as any)._bodyText = rawBody;
+
+    let body: any = {};
+    try { body = JSON.parse(rawBody); } catch {}
+    const username = body.username || body["User-Name"] || body.serviceUsername || "";
+    const password = body.password || body["User-Password"] || body.servicePassword || "";
+    const nasIp = body.nasIp || body["NAS-IP-Address"] || "127.0.0.1";
+    const nasPort = body.nasPort || body["NAS-Port"] || "0";
+    const mac = body.callingStationId || body["Calling-Station-Id"] || body.macAddress || "";
+    const calledStationId = body.calledStationId || body["Called-Station-Id"] || "";
+    const vlanId = body.vlanId || "";
+    const circuitId = body.circuitId || "";
+    const remoteId = body.remoteId || "";
+    const pppoeSessionId = body.pppoeSessionId || "";
+    const dhcpClientId = body.dhcpClientId || "";
+
+    if (!username || !password) {
+      return json({ error: "username and password are required", authResult: "REJECT" }, 400);
+    }
+
+    // ═══ 1. AUTHENTICATE ═══
+    const subscriberRaw = await db.subscriber.findUnique({
+      where: { serviceUsername: username },
+      include: {
+        Plan: { select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, dataLimitGb: true, maxConcurrentSessions: true, RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } } } },
+        RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
+      },
+    }) as any;
+
+    if (!subscriberRaw || subscriberRaw.status !== "ACTIVE") {
+      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
+    }
+
+    // Verify password — support bcrypt hash AND plaintext
+    const storedPass = subscriberRaw.password || subscriberRaw.servicePassword || "";
+    let passwordValid = false;
+    if (storedPass.startsWith("$2a$") || storedPass.startsWith("$2b$") || storedPass.startsWith("$2y$")) {
+      try { const bcrypt = await import("bcryptjs").then(m => m.default || m); passwordValid = await bcrypt.compare(password, storedPass); } catch { passwordValid = false; }
+    } else {
+      passwordValid = (storedPass === password);
+    }
+    if (!passwordValid) {
+      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
+    }
+
+    // ═══ 2. AUTHORIZE — resolve speeds / data / timeouts from Plan + RadiusGroup ═══
+    const subscriber: any = { ...subscriberRaw, plan: subscriberRaw.Plan ? { ...subscriberRaw.Plan, group: subscriberRaw.Plan.RadiusGroup } : null, radiusGroup: subscriberRaw.RadiusGroup };
+    const speeds = resolveSpeedsKbps(subscriber);
+    const dataLimitMb = resolveDataLimitMb(subscriber);
+    const sessionTimeoutSec = resolveSessionTimeout(subscriber) || 2592000;
+    const idleTimeoutSec = subscriber.idleTimeout || 3600;
+    const planName = subscriberRaw.Plan?.name || "";
+    const radiusGroupName = subscriberRaw.RadiusGroup?.name || subscriberRaw.Plan?.RadiusGroup?.name || "";
+
+    // ═══ 3. ALLOCATE IP ═══
+    const framedIp = body.framedIp || `10.0.${Math.abs(username.charCodeAt(0) * 31 + username.length) % 200}.${(Math.abs(username.charCodeAt(username.length - 1) * 7) % 250) + 1}`;
+
+    // ═══ 4. CREATE SESSION (status=ACTIVE, vppRecoveryState=FRESH) ═══
+    const sessionId = `CRYPTSK-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const session = await db.nasSession.create({
+      data: {
+        sessionId, subscriberId: subscriberRaw.id, username,
+        nasIp, nasPort: String(nasPort), framedIp, callingStationId: mac, calledStationId,
+        status: "ACTIVE" as any,
+        planId: subscriberRaw.planId, planName,
+        radiusGroupId: subscriberRaw.RadiusGroup?.id || subscriberRaw.Plan?.RadiusGroup?.id || null,
+        radiusGroupName,
+        speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
+        dataLimitMb, sessionTimeoutSec, idleTimeoutSec,
+        vlanId, circuitId, remoteId, pppoeSessionId, dhcpClientId,
+        vppRecoveryState: "FRESH",
+      },
+    });
+
+    // ═══ 5. §8 PROGRAM VPP — call vpp-adapter (port 3015) ═══
+    const VPP_ADAPTER = "http://127.0.0.1:3015";
+    let vppProgrammed = false;
+    let vppEpoch = 0;
+    let vppError = "";
+
+    try {
+      const programResp = await fetch(`${VPP_ADAPTER}/subscriber/program`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId, subscriberId: subscriberRaw.id, username,
+          framedIp, mac, nasIp, vlanId, vrf: "",
+          speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
+          timeoutSec: sessionTimeoutSec, circuitId, remoteId, pppoeSessionId, dhcpClientId,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const programData = await programResp.json().catch(() => ({} as any));
+
+      if (!programResp.ok || !programData.success) {
+        vppError = programData.error || `VPP adapter HTTP ${programResp.status}`;
+        logger.error("VPP programming failed", { sessionId, username, vppError });
+      } else {
+        // ═══ 6. §8 VERIFY VPP ═══
+        const verifyResp = await fetch(`${VPP_ADAPTER}/subscriber/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const verifyData = await verifyResp.json().catch(() => ({} as any));
+
+        if (!verifyResp.ok || !verifyData.verified) {
+          vppError = verifyData.error || "VPP verification returned false";
+          logger.error("VPP verification failed", { sessionId, username, vppError });
+        } else {
+          vppProgrammed = true;
+          vppEpoch = programData.vppEpoch || verifyData.vppEpoch || 1;
+          logger.info("VPP programmed + verified", { sessionId, username, framedIp, vppEpoch });
+
+          await db.nasSession.update({
+            where: { id: session.id },
+            data: { vppEpoch, vppProgrammedAt: new Date(), vppVerifiedAt: new Date(), vppRecoveryState: "VERIFIED" },
+          });
+
+          // ═══ 7. §42 PERSIST SESSION SNAPSHOT ═══
+          try {
+            await db.sessionSnapshot.upsert({
+              where: { sessionId },
+              create: {
+                sessionId, subscriberId: subscriberRaw.id, username,
+                nasIp, nasPort: String(nasPort), framedIp, mac,
+                vlan: vlanId, vrf: "",
+                speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
+                timeoutSec: sessionTimeoutSec,
+                vppEpoch, vppProgrammedAt: new Date(), vppRecoveryState: "VERIFIED",
+                configJson: JSON.stringify(programData),
+              },
+              update: {
+                vppEpoch, vppProgrammedAt: new Date(), vppRecoveryState: "VERIFIED",
+                configJson: JSON.stringify(programData),
+              },
+            });
+          } catch (e) { logger.warn("SessionSnapshot persist failed", { error: String(e) }); }
+        }
+      }
+    } catch (err: any) {
+      vppError = `VPP adapter unreachable: ${String(err?.message || err)}`;
+      logger.error("VPP adapter unreachable", { sessionId, username, vppError });
+    }
+
+    // ═══ ROLLBACK if VPP programming failed (no ghost sessions) ═══
+    if (!vppProgrammed) {
+      try {
+        await fetch(`${VPP_ADAPTER}/subscriber/remove`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+          signal: AbortSignal.timeout(3000),
+        });
+      } catch {}
+      await db.nasSession.delete({ where: { id: session.id } }).catch(() => {});
+      return json({ error: "VPP programming failed — session not established", authResult: "REJECT", vppError }, 500);
+    }
+
+    // ═══ 8. UPDATE SUBSCRIBER LAST AUTH ═══
+    await db.subscriber.update({ where: { id: subscriberRaw.id }, data: { lastAuthAt: new Date(), lastAuthResult: "Access-Accept" } });
+
+    // ═══ 9. LOG + BROADCAST ═══
+    await logEvent({ nasSessionId: session.id, sessionId, subscriberId: subscriberRaw.id, username, eventType: "SESSION_START", authResult: "Access-Accept", context: { speeds, dataLimitMb, vppEpoch, framedIp, planName, radiusGroupName }, source: "radius", triggeredBy: "radius-rlm-rest" });
+    broadcastWs("session_start", { sessionId, username, framedIp, speeds, planName, vppEpoch });
+
+    // ═══ 10. BUILD CRYPTSK VSA REPLY ═══
+    const downMbps = Math.round(speeds.speedDown / 1000);
+    const upMbps = Math.round(speeds.speedUp / 1000);
+    const rateLimitStr = `${downMbps}M/${upMbps}M`;
+    const bwDownBps = speeds.speedDown * 1000;
+    const bwUpBps = speeds.speedUp * 1000;
+    const maxInputBytes = dataLimitMb ? Math.round(dataLimitMb * 1024 * 1024 / 2) : 0;
+    const maxOutputBytes = dataLimitMb ? Math.round(dataLimitMb * 1024 * 1024 / 2) : 0;
+
+    logger.info("Session authenticated (RADIUS -> VPP transactional)", { sessionId, username, speeds, framedIp, vppEpoch, planName });
+
+    return json({
+      success: true,
+      authResult: "Access-Accept",
+      sessionId, framedIp,
+      subscriberId: subscriberRaw.id, username,
+      speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
+      vppEpoch, vppProgrammedAt: new Date().toISOString(), vppVerifiedAt: new Date().toISOString(),
+      radius: {
+        control: { "Auth-Type": "Accept" },
+        reply: {
+          "Framed-IP-Address": framedIp,
+          "Session-Timeout": sessionTimeoutSec,
+          "Idle-Timeout": idleTimeoutSec,
+          "Cryptsk-Rate-Limit": rateLimitStr,
+          "Cryptsk-Bandwidth-Max-Down": bwDownBps,
+          "Cryptsk-Bandwidth-Max-Up": bwUpBps,
+          "Cryptsk-Session-Timeout": sessionTimeoutSec,
+          "Cryptsk-Idle-Timeout": idleTimeoutSec,
+          "Cryptsk-Max-Sessions": 1,
+          "Cryptsk-Plan-Name": planName,
+          "Cryptsk-User-Profile": radiusGroupName,
+          ...(radiusGroupName ? { "Cryptsk-Filter-Id": radiusGroupName } : {}),
+          ...(dataLimitMb ? {
+            "Cryptsk-Total-Limit": Math.round(dataLimitMb * 1024 * 1024),
+            "Cryptsk-Max-Input-Octets": maxInputBytes,
+            "Cryptsk-Max-Output-Octets": maxOutputBytes,
+          } : {}),
+        },
+      },
+    }, 200);
   }
 
   // ── All remaining endpoints require auth ──
-  // EXCEPT if this is a RADIUS m2m call (already validated above).
-  let auth: any;
-  if ((req as any)._radiusAuth) {
-    auth = (req as any)._radiusAuth;
-  } else {
-    try {
-      auth = requireAuth(req);
-    } catch {
-      return json({ error: "Unauthorized" }, 401);
-    }
+  let auth;
+  try {
+    auth = requireAuth(req);
+  } catch {
+    return json({ error: "Unauthorized" }, 401);
   }
 
   // ══════════════════════════════════════════════════════════
   // AUTHENTICATION ENDPOINTS
   // ══════════════════════════════════════════════════════════
 
-  // ══════════════════════════════════════════════════════════
-  // §7/§8 TRANSACTIONAL LOGIN FLOW
-  // Body: { username, password, nasIp?, nasPort?, callingStationId (MAC),
-  //         calledStationId?, clientIp?, vlanId?, circuitId?, remoteId?,
-  //         pppoeSessionId?, dhcpClientId?, framedIp? (pre-allocated) }
-  // Legacy fields also accepted: serviceUsername, servicePassword, macAddress
-  // Flow: Authenticate → Duplicate check → Authorize → Allocate IP →
-  //       Create session(AUTHENTICATING) → Program VPP → Verify VPP →
-  //       Mark ACTIVE → Persist snapshot → Log + broadcast
-  // VPP programming failure = full rollback (no ghost sessions, §8).
-  // ══════════════════════════════════════════════════════════
-  if ((path === "/api/auth" || path === "/api/radius/auth") && req.method === "POST") {
-    // For RADIUS m2m calls, the body was already read in the secret check above.
-    // Reuse the cached body text; otherwise, read from the request.
-    let body: any;
-    if ((req as any)._bodyText) {
-      try { body = JSON.parse((req as any)._bodyText); } catch { body = {}; }
-    } else {
-      body = await req.json().catch(() => ({}));
-    }
-    // Accept both new + legacy field names, AND RADIUS attribute names
-    // (User-Name, User-Password, NAS-IP-Address, NAS-Port,
-    // Calling-Station-Id, Called-Station-Id, Packet-Src-IP-Address)
-    // sent by rlm_rest when configured with `body = "json"` (auto-
-    // serialization). camelCase keys take precedence (admin UI flow
-    // /api/auth); RADIUS attribute names act as fallbacks (rlm_rest
-    // machine-to-machine flow /api/radius/auth).
-    const username = body.username || body["User-Name"] || body.serviceUsername || "";
-    const password = body.password || body["User-Password"] || body.servicePassword || "";
-    const mac = body.callingStationId || body["Calling-Station-Id"] || body.macAddress || "";
-    const {
-      vlanId, circuitId, remoteId, pppoeSessionId, dhcpClientId,
-      framedIp,
-    } = body;
-    const nasIp = body.nasIp || body["NAS-IP-Address"] || "";
-    const nasPort = body.nasPort || body["NAS-Port"] || "0";
-    const calledStationId = body.calledStationId || body["Called-Station-Id"] || "";
-    const clientIp = body.clientIp || body["Packet-Src-IP-Address"] || "";
+  // POST /api/auth — Authenticate a subscriber
+  if (path === "/api/auth" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const { serviceUsername, servicePassword, macAddress, clientIp } = body;
 
-    if (!username || password === undefined || password === null) {
-      return jsonErr("username and password are required");
+    if (!serviceUsername || !servicePassword) {
+      return jsonErr("serviceUsername and servicePassword are required");
     }
 
     const clientIpStr = clientIp || req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "";
+    const macStr = macAddress || "";
 
-    // (a1) Log auth request
+    // Log auth request
     await logEvent({
-      username,
+      username: serviceUsername,
       eventType: "AUTH_REQUEST",
-      context: { method: "LOCAL_DB", nasIp, nasPort, vlanId, circuitId, remoteId, pppoeSessionId, dhcpClientId },
+      context: { method: "LOCAL_DB" },
       clientIp: clientIpStr,
-      macAddress: mac,
+      macAddress: macStr,
       source: "api",
       triggeredBy: auth.userId,
     });
 
-    // (a2) Find subscriber by serviceUsername === username
-    // NOTE: Prisma relation field names are capitalized (Plan, RadiusGroup) on the
-    // Subscriber model. After fetching we normalize to lowercase `plan`/`radiusGroup`
-    // so the existing helper functions (resolveSpeedsKbps etc.) keep working.
-    const subscriberRaw = await db.subscriber.findUnique({
-      where: { serviceUsername: username },
+    // Find subscriber by serviceUsername
+    const subscriber = await db.subscriber.findUnique({
+      where: { serviceUsername },
       include: {
-        Plan: {
-          select: {
-            id: true, name: true, downloadSpeed: true, uploadSpeed: true,
-            dataLimitGb: true, maxConcurrentSessions: true,
-            RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
+        Plan: { select: {
+            id: true,
+            name: true,
+            downloadSpeed: true,
+            uploadSpeed: true,
+            dataLimitGb: true,
+            maxConcurrentSessions: true,
+            RadiusGroup: { select: {
+                id: true,
+                name: true,
+                speedLimitDown: true,
+                speedLimitUp: true,
+                dataLimit: true,
+                sessionTimeout: true,
+              },
+            },
           },
         },
-        RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
+        RadiusGroup: { select: {
+            id: true,
+            name: true,
+            speedLimitDown: true,
+            speedLimitUp: true,
+            dataLimit: true,
+            sessionTimeout: true,
+          },
+        },
       },
-    }) as any;
-    const subscriber = subscriberRaw ? {
-      ...subscriberRaw,
-      plan: subscriberRaw.Plan ? { ...subscriberRaw.Plan, group: subscriberRaw.Plan.RadiusGroup } : null,
-      radiusGroup: subscriberRaw.RadiusGroup,
-    } : null;
+    });
 
     if (!subscriber) {
       await logEvent({
-        username,
+        username: serviceUsername,
         eventType: "AUTH_FAILURE",
         authResult: "Access-Reject",
         context: { reason: "Subscriber not found" },
-        clientIp: clientIpStr, macAddress: mac,
-        source: "api", triggeredBy: auth.userId,
+        clientIp: clientIpStr,
+        macAddress: macStr,
+        source: "api",
+        triggeredBy: auth.userId,
       });
-      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
+      return json({ error: "Invalid credentials", authResult: "Access-Reject" }, 401);
     }
 
-    // (a3) Verify status ACTIVE
+    // Check subscriber status
     if (subscriber.status !== "ACTIVE") {
       await logEvent({
-        subscriberId: subscriber.id, username,
-        eventType: "AUTH_FAILURE", authResult: "Access-Reject",
+        subscriberId: subscriber.id,
+        username: serviceUsername,
+        eventType: "AUTH_FAILURE",
+        authResult: "Access-Reject",
         context: { reason: "Subscriber not active", status: subscriber.status },
-        clientIp: clientIpStr, macAddress: mac,
-        source: "api", triggeredBy: auth.userId,
+        clientIp: clientIpStr,
+        macAddress: macStr,
+        source: "api",
+        triggeredBy: auth.userId,
       });
-      return json({ error: "Subscriber not active", authResult: "REJECT", status: subscriber.status }, 403);
+      return json({ error: "Subscriber not active", authResult: "Access-Reject", status: subscriber.status }, 403);
     }
 
-    // (a4) Verify password (Subscribers have a servicePassword field)
-    if (subscriber.servicePassword !== password) {
+    // Check radiusEnabled flag
+    if (!subscriber.radiusEnabled) {
       await logEvent({
-        subscriberId: subscriber.id, username,
-        eventType: "AUTH_FAILURE", authResult: "Access-Reject",
+        subscriberId: subscriber.id,
+        username: serviceUsername,
+        eventType: "AUTH_FAILURE",
+        authResult: "Access-Reject",
+        context: { reason: "RADIUS not enabled for subscriber" },
+        clientIp: clientIpStr,
+        macAddress: macStr,
+        source: "api",
+        triggeredBy: auth.userId,
+      });
+      return json({ error: "RADIUS not enabled for subscriber", authResult: "Access-Reject" }, 403);
+    }
+
+    // Validate password
+    if (subscriber.servicePassword !== servicePassword) {
+      await logEvent({
+        subscriberId: subscriber.id,
+        username: serviceUsername,
+        eventType: "AUTH_FAILURE",
+        authResult: "Access-Reject",
         context: { reason: "Invalid password" },
-        clientIp: clientIpStr, macAddress: mac,
-        source: "api", triggeredBy: auth.userId,
+        clientIp: clientIpStr,
+        macAddress: macStr,
+        source: "api",
+        triggeredBy: auth.userId,
       });
-      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
+      return json({ error: "Invalid credentials", authResult: "Access-Reject" }, 401);
     }
 
-    // (c) §38 Duplicate Login Detection
-    const dup = await detectDuplicateLogin(username, mac);
-    if (!dup.allowed) {
-      await logEvent({
-        subscriberId: subscriber.id, username,
-        eventType: "AUTH_FAILURE", authResult: "Access-Reject",
-        context: { reason: dup.reason, mode: "duplicate-login", oldSessionIds: dup.oldSessionIds },
-        clientIp: clientIpStr, macAddress: mac,
-        source: "api", triggeredBy: auth.userId,
-      });
-      return json({ error: dup.reason, authResult: "REJECT", oldSessionIds: dup.oldSessionIds }, 409);
-    }
-
-    // (d) Authorize — resolve speeds / data / timeouts via existing helpers
+    // Resolve policy
     const speeds = resolveSpeedsKbps(subscriber);
     const dataLimitMb = resolveDataLimitMb(subscriber);
     const sessionTimeoutSec = resolveSessionTimeout(subscriber);
     const idleTimeoutSec = resolveIdleTimeout(subscriber);
-    const nasConfig = await db.nasConfig.findUnique({ where: { id: "builtin" } });
-    const effectiveTimeout = sessionTimeoutSec ?? nasConfig?.defaultSessionTimeoutSec ?? 86400;
-    const effectiveIdle = idleTimeoutSec ?? nasConfig?.defaultIdleTimeoutSec ?? 3600;
+    const maxConcurrent = subscriber.plan?.maxConcurrentSessions ?? 1;
 
-    // (e) Allocate IP if not provided
+    // Check concurrent sessions
+    const activeCount = await db.nasSession.count({
+      where: { subscriberId: subscriber.id, status: "ACTIVE" },
+    });
+    if (activeCount >= maxConcurrent) {
+      // Close existing sessions if maxConcurrent is 1 (replace session)
+      if (maxConcurrent === 1) {
+        const existingSessions = await db.nasSession.findMany({
+          where: { subscriberId: subscriber.id, status: "ACTIVE" },
+        });
+        for (const existing of existingSessions) {
+          await closeSession(existing.sessionId, "Session-Timeout", "Replaced by new login", "system");
+          await logEvent({
+            nasSessionId: existing.id,
+            sessionId: existing.sessionId,
+            subscriberId: subscriber.id,
+            username: serviceUsername,
+            eventType: "SESSION_STOP",
+            context: { reason: "Replaced by new login" },
+            source: "api",
+            triggeredBy: auth.userId,
+          });
+        }
+      } else {
+        await logEvent({
+          subscriberId: subscriber.id,
+          username: serviceUsername,
+          eventType: "AUTH_FAILURE",
+          authResult: "Access-Reject",
+          context: { reason: "Max concurrent sessions reached", activeCount, maxConcurrent },
+          source: "api",
+          triggeredBy: auth.userId,
+        });
+        return json({
+          error: "Max concurrent sessions reached",
+          authResult: "Access-Reject",
+          activeCount,
+          maxConcurrent,
+        }, 403);
+      }
+    }
+
+    // Create session
     const sessionId = generateSessionId();
-    const allocatedIp = framedIp || subscriber.ipAddress || allocateFramedIp(subscriber.id, sessionId);
-    const effectiveNasIp = nasIp || nasConfig?.ipAddress || "127.0.0.1";
-    const effectiveNasPort = nasPort || "";
+    const nasConfig = await db.nasConfig.findUnique({ where: { id: "builtin" } });
 
-    // (f) Create NasSession (status=AUTHENTICATING = §8 "not ACTIVE yet")
-    //     §37 identity fields + §4 VPP fields (filled post-program)
     const session = await db.nasSession.create({
       data: {
         sessionId,
         subscriberId: subscriber.id,
-        username,
-        nasIp: effectiveNasIp,
-        nasPort: effectiveNasPort,
-        framedIp: allocatedIp,
-        assignedIp: allocatedIp,
-        callingStationId: mac,
-        calledStationId: calledStationId || "",
+        username: serviceUsername,
+        nasIp: nasConfig?.ipAddress || "127.0.0.1",
         authMethod: "LOCAL_DB",
-        status: "AUTHENTICATING", // §8: NOT ACTIVE until VPP verified
+        status: "ACTIVE",
         planId: subscriber.plan?.id || null,
         planName: subscriber.plan?.name || "",
         radiusGroupId: subscriber.radiusGroup?.id || subscriber.plan?.group?.id || null,
@@ -1016,304 +808,144 @@ async function handleRequest(req: Request, path: string, url: URL) {
         speedDownKbps: speeds.speedDown,
         speedUpKbps: speeds.speedUp,
         dataLimitMb,
-        sessionTimeoutSec: effectiveTimeout,
-        idleTimeoutSec: effectiveIdle,
-        // §37 identity enrichment
-        vlanId: vlanId || "",
-        circuitId: circuitId || "",
-        remoteId: remoteId || "",
-        pppoeSessionId: pppoeSessionId || "",
-        dhcpClientId: dhcpClientId || "",
-        // §4/§29 VPP fields — populated after (g)/(h) succeed
-        vrf: "",
-        vppPolicyId: "",
-        vppAclProfileId: "",
-        vppQosProfileId: "",
-        vppNatProfileId: "",
-        vppIpPool: "",
-        vppEpoch: 0,
-        vppProgrammedAt: null,
-        vppVerifiedAt: null,
-        vppRecoveryState: "FRESH",
+        sessionTimeoutSec: sessionTimeoutSec ?? nasConfig?.defaultSessionTimeoutSec ?? 86400,
+        idleTimeoutSec: idleTimeoutSec ?? nasConfig?.defaultIdleTimeoutSec ?? 3600,
+        callingStationId: macStr,
+        assignedIp: subscriber.ipAddress || "",
       },
     });
 
-    // (g) §8 Program VPP — POST /subscriber/program
-    const programBody = {
-      sessionId,
-      subscriberId: subscriber.id,
-      username,
-      framedIp: allocatedIp,
-      mac,
-      nasIp: effectiveNasIp,
-      nasPort: effectiveNasPort,
-      vlanId: vlanId || "",
-      vrf: "",
-      policyId: "",
-      aclProfileId: "",
-      qosProfileId: "",
-      natProfileId: "",
-      ipPool: "",
-      speedDownKbps: speeds.speedDown,
-      speedUpKbps: speeds.speedUp,
-      timeoutSec: effectiveTimeout,
-      circuitId: circuitId || "",
-      remoteId: remoteId || "",
-      pppoeSessionId: pppoeSessionId || "",
-      dhcpClientId: dhcpClientId || "",
-    };
-    const programRes = await callVpp<{ success?: boolean; programmed?: any; vppEpochApplied?: number; message?: string }>(
-      "/subscriber/program",
-      programBody,
-    );
-
-    if (!programRes.ok || programRes.data?.success === false) {
-      // §8 Rollback: mark CLOSED (preserves audit trail; no ghost ACTIVE session)
-      try {
-        await db.nasSession.update({
-          where: { id: session.id },
-          data: {
-            status: "CLOSED",
-            stopTime: new Date(),
-            terminateCause: "VPP-PROGRAM-FAILED",
-            disconnectReason: programRes.error || programRes.data?.message || "VPP programming failed",
-            terminatedBy: "system",
-          },
-        });
-      } catch (e) {
-        logger.error("Failed to mark session CLOSED after VPP program failure", { sessionId, error: String(e) });
-      }
-      await logEvent({
-        nasSessionId: session.id, sessionId, subscriberId: subscriber.id, username,
-        eventType: "AUTH_FAILURE", authResult: "Access-Reject",
-        context: { reason: "VPP programming failed", error: programRes.error, vppData: programRes.data },
-        clientIp: clientIpStr, macAddress: mac, source: "api", triggeredBy: auth.userId,
-      });
-      return json({ error: "VPP programming failed — session not established", authResult: "REJECT", vppError: programRes.error, vppData: programRes.data }, 500);
-    }
-
-    const programmedEpoch = programRes.data?.vppEpochApplied || 0;
-
-    // (h) §8 Verify VPP — POST /subscriber/verify
-    const verifyRes = await callVpp<{ verified?: boolean; vppEpoch?: number; programmedAt?: string; checks?: any }>(
-      "/subscriber/verify",
-      { sessionId },
-    );
-    if (!verifyRes.ok || verifyRes.data?.verified !== true) {
-      // §8 Rollback
-      try {
-        await db.nasSession.update({
-          where: { id: session.id },
-          data: {
-            status: "CLOSED",
-            stopTime: new Date(),
-            terminateCause: "VPP-VERIFY-FAILED",
-            disconnectReason: verifyRes.error || "VPP verification failed",
-            terminatedBy: "system",
-          },
-        });
-      } catch (e) {
-        logger.error("Failed to mark session CLOSED after VPP verify failure", { sessionId, error: String(e) });
-      }
-      // Best-effort remove the (programmed but unverified) state from VPP
-      await callVpp("/subscriber/remove", { sessionId });
-      await logEvent({
-        nasSessionId: session.id, sessionId, subscriberId: subscriber.id, username,
-        eventType: "AUTH_FAILURE", authResult: "Access-Reject",
-        context: { reason: "VPP verification failed", error: verifyRes.error, vppData: verifyRes.data },
-        clientIp: clientIpStr, macAddress: mac, source: "api", triggeredBy: auth.userId,
-      });
-      return json({ error: "VPP verification failed — session not established", authResult: "REJECT", vppError: verifyRes.error, vppData: verifyRes.data }, 500);
-    }
-
-    const finalEpoch = verifyRes.data?.vppEpoch || programmedEpoch || 0;
-
-    // (i) Mark ACTIVE + VPP metadata (§8 commit point)
-    const now = new Date();
-    await db.nasSession.update({
-      where: { id: session.id },
-      data: {
-        status: "ACTIVE",
-        vppEpoch: finalEpoch,
-        vppProgrammedAt: now,
-        vppVerifiedAt: now,
-        vppRecoveryState: "VERIFIED",
-      },
-    });
-
-    // Update subscriber lastAuth
+    // Update subscriber last auth
     await db.subscriber.update({
       where: { id: subscriber.id },
-      data: { lastAuthAt: now, lastAuthResult: "Access-Accept" },
+      data: { lastAuthAt: new Date(), lastAuthResult: "Access-Accept" },
     });
 
-    // (j) §42 Persist SessionSnapshot (recoverable dataplane state)
-    await persistSnapshot(sessionId, {
+    // Log success
+    await logEvent({
+      nasSessionId: session.id,
+      sessionId,
       subscriberId: subscriber.id,
-      username,
-      nasIp: effectiveNasIp,
-      nasPort: effectiveNasPort,
-      framedIp: allocatedIp,
-      mac,
-      vlan: vlanId || "",
-      vrf: "",
-      policyId: "",
-      aclProfileId: "",
-      qosProfileId: "",
-      natProfileId: "",
-      ipPool: "",
-      circuitId: circuitId || "",
-      remoteId: remoteId || "",
-      pppoeSessionId: pppoeSessionId || "",
-      dhcpClientId: dhcpClientId || "",
-      speedDownKbps: speeds.speedDown,
-      speedUpKbps: speeds.speedUp,
-      startTime: session.startTime,
-      timeoutSec: effectiveTimeout,
-      vppEpoch: finalEpoch,
-      vppProgrammedAt: now,
-      vppRecoveryState: "VERIFIED",
-      configJson: JSON.stringify({ programmed: programRes.data, verified: verifyRes.data }),
+      username: serviceUsername,
+      eventType: "AUTH_SUCCESS",
+      authResult: "Access-Accept",
+      context: {
+        planName: subscriber.plan?.name,
+        speeds,
+        dataLimitMb,
+        sessionTimeoutSec,
+        maxConcurrent,
+      },
+      clientIp: clientIpStr,
+      macAddress: macStr,
+      source: "api",
+      triggeredBy: auth.userId,
     });
 
-    // (k) Log success events
     await logEvent({
-      nasSessionId: session.id, sessionId, subscriberId: subscriber.id, username,
-      eventType: "AUTH_SUCCESS", authResult: "Access-Accept",
-      context: { planName: subscriber.plan?.name, speeds, dataLimitMb, sessionTimeoutSec, vppEpoch: finalEpoch, vppProgrammedAt: now },
-      clientIp: clientIpStr, macAddress: mac, source: "api", triggeredBy: auth.userId,
-    });
-    await logEvent({
-      nasSessionId: session.id, sessionId, subscriberId: subscriber.id, username,
+      nasSessionId: session.id,
+      sessionId,
+      subscriberId: subscriber.id,
+      username: serviceUsername,
       eventType: "SESSION_START",
-      context: { planName: subscriber.plan?.name, speeds, dataLimitMb, vppEpoch: finalEpoch },
-      source: "api", triggeredBy: auth.userId,
+      context: { planName: subscriber.plan?.name, speeds, dataLimitMb },
+      source: "api",
+      triggeredBy: auth.userId,
     });
 
-    // (l) Broadcast WS
+    // Broadcast via WebSocket
     broadcastWs("session_start", {
-      sessionId, username, subscriberName: subscriber.name, planName: subscriber.plan?.name, speeds,
-      framedIp: allocatedIp, vppEpoch: finalEpoch, vppProgrammedAt: now,
+      sessionId,
+      username: serviceUsername,
+      subscriberName: subscriber.name,
+      planName: subscriber.plan?.name,
+      speeds,
     });
 
-    logger.info("Session authenticated (transactional)", {
-      sessionId, username, subscriberId: subscriber.id, speeds, vppEpoch: finalEpoch,
+    logger.info("Session authenticated", {
+      sessionId,
+      username: serviceUsername,
+      subscriberId: subscriber.id,
+      speeds,
     });
 
-    // (m) Return 200 with §8 contract + RADIUS control/reply attributes.
-    // The `radius` object is consumed by rlm_rest on the /api/radius/auth
-    // machine-to-machine path: rlm_rest maps these back to RADIUS reply
-    // items (sent to the NAS in Access-Accept) and control items
-    // (Auth-Type=Accept → bypasses the authenticate{} section in
-    // sites-available/default). This object is harmless on the admin
-    // UI /api/auth flow (admin UI consumers ignore it).
     return json({
       success: true,
       authResult: "Access-Accept",
-      sessionId,
-      framedIp: allocatedIp,
-      subscriberId: subscriber.id,
-      username,
-      speedDownKbps: speeds.speedDown,
-      speedUpKbps: speeds.speedUp,
-      vppEpoch: finalEpoch,
-      vppProgrammedAt: now,
-      vppVerifiedAt: now,
-      // RADIUS control + reply attributes — consumed by rlm_rest on the
-      // machine-to-machine path. rlm_rest maps these back to RADIUS items
-      // when the response is JSON (Content-Type: application/json).
-      radius: {
-        control: {
-          "Auth-Type": "Accept",
-        },
-        reply: {
-          "Framed-IP-Address": allocatedIp,
-          "Session-Timeout": effectiveTimeout,
-          // Mikrotik-Rate-Limit format: "downk/upk" (kbps). Used as a NAS-
-          // side fallback if the VPP policer fails (e.g., NAT44 plugin
-          // disabled — see FIX-VPP-PRODUCTION-READY stage summary).
-          "Mikrotik-Rate-Limit": `${speeds.speedDown}k/${speeds.speedUp}k`,
-          "Idle-Timeout": effectiveIdle,
-        },
+      session: {
+        sessionId,
+        subscriberId: subscriber.id,
+        username: serviceUsername,
+        subscriberName: subscriber.name,
+        planName: subscriber.plan?.name,
+        speeds,
+        dataLimitMb,
+        sessionTimeoutSec: session.sessionTimeoutSec,
+        idleTimeoutSec: session.idleTimeoutSec,
+        startTime: session.startTime,
       },
     }, 201);
   }
 
-  // ══════════════════════════════════════════════════════════
-  // §9 TRANSACTIONAL LOGOUT FLOW (with VPP cleanup)
-  // Body: { sessionId } OR { subscriberId, username }
-  // Flow: Locate → Mark DISCONNECTING → Remove VPP state →
-  //       Update snapshot STALE → closeSession → broadcast
-  // ══════════════════════════════════════════════════════════
+  // POST /api/logout — End a session
   if (path === "/api/logout" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
-    const { sessionId: reqSessionId, subscriberId: reqSubId, username: reqUsername } = body;
+    const { sessionId, username } = body;
 
-    if (!reqSessionId && !reqSubId && !reqUsername) {
-      return jsonErr("sessionId or (subscriberId, username) is required");
+    if (!sessionId && !username) {
+      return jsonErr("sessionId or username is required");
     }
 
-    // (a) Locate active session
     let session;
-    if (reqSessionId) {
-      session = await db.nasSession.findUnique({ where: { sessionId: reqSessionId } });
+    if (sessionId) {
+      session = await db.nasSession.findUnique({ where: { sessionId } });
     } else {
-      const where: any = { status: "ACTIVE" };
-      if (reqSubId) where.subscriberId = reqSubId;
-      if (reqUsername) where.username = reqUsername;
-      session = await db.nasSession.findFirst({ where, orderBy: { startTime: "desc" } });
-    }
-
-    if (!session) return jsonErr("Session not found", 404);
-    if (session.status === "CLOSED") return jsonErr("Session already closed");
-
-    // (b) Mark DISCONNECTING (TERMINATING is the enum equivalent)
-    try {
-      await db.nasSession.update({
-        where: { id: session.id },
-        data: { status: "TERMINATING", vppRecoveryState: "RECOVERING" },
+      session = await db.nasSession.findFirst({
+        where: { username, status: "ACTIVE" },
+        orderBy: { startTime: "desc" },
       });
-    } catch (err) {
-      logger.warn("Failed to mark session TERMINATING (continuing)", { sessionId: session.sessionId, error: String(err) });
     }
 
-    // (c) §9 Remove VPP state (best-effort — log warning on failure, continue)
-    const rmRes = await callVpp("/subscriber/remove", { sessionId: session.sessionId });
-    if (!rmRes.ok) {
-      logger.warn("VPP remove failed during logout (continuing)", { sessionId: session.sessionId, error: rmRes.error });
+    if (!session) {
+      return jsonErr("Session not found", 404);
+    }
+    if (session.status === "CLOSED") {
+      return jsonErr("Session already closed");
     }
 
-    // (d) Update snapshot: STALE
-    try {
-      await db.sessionSnapshot.update({
-        where: { sessionId: session.sessionId },
-        data: { vppRecoveryState: "STALE", updatedAt: new Date() },
-      });
-    } catch (err) {
-      logger.warn("Snapshot update to STALE failed (continuing)", { sessionId: session.sessionId, error: String(err) });
-    }
-
-    // (e) Close session via existing helper
-    const closed = await closeSession(session.sessionId, "User-Logout", "User initiated logout", "system");
+    const closed = await closeSession(session.sessionId, "User-Request", "User logged out", auth.userId);
 
     await logEvent({
-      nasSessionId: session.id, sessionId: session.sessionId,
-      subscriberId: session.subscriberId, username: session.username,
+      nasSessionId: session.id,
+      sessionId: session.sessionId,
+      subscriberId: session.subscriberId,
+      username: session.username,
       eventType: "SESSION_STOP",
-      context: { reason: "User logout", vppRemoveOk: rmRes.ok, vppError: rmRes.error },
-      source: "api", triggeredBy: auth.userId,
+      context: { reason: "User logout" },
+      source: "api",
+      triggeredBy: auth.userId,
     });
 
-    // (f) Broadcast WS
     broadcastWs("session_stop", {
-      sessionId: session.sessionId, username: session.username, cause: "User-Logout",
+      sessionId: session.sessionId,
+      username: session.username,
+      cause: "User-Request",
     });
 
-    // (g) Return success
+    const totalOctets = Number(closed.inputOctets) + Number(closed.outputOctets);
     return json({
       success: true,
-      sessionId: session.sessionId,
-      terminatedAt: closed?.stopTime || new Date(),
+      session: {
+        sessionId: closed.sessionId,
+        username: closed.username,
+        status: closed.status,
+        duration: closed.sessionTimeSec,
+        downloadBytes: Number(closed.inputOctets),
+        uploadBytes: Number(closed.outputOctets),
+        totalBytes: totalOctets,
+        startTime: closed.startTime,
+        stopTime: closed.stopTime,
+      },
     });
   }
 
@@ -1337,17 +969,16 @@ async function handleRequest(req: Request, path: string, url: URL) {
       where.OR = [
         { username: { contains: search, mode: "insensitive" } },
         { sessionId: { contains: search, mode: "insensitive" } },
-        { subscriber: { name: { contains: search, mode: "insensitive" } } },
-        { subscriber: { phone: { contains: search } } },
-        { subscriber: { code: { contains: search, mode: "insensitive" } } },
+        { Subscriber: { name: { contains: search, mode: "insensitive" } } },
+        { Subscriber: { phone: { contains: search } } },
+        { Subscriber: { code: { contains: search, mode: "insensitive" } } },
       ];
     }
 
     const [sessions, total] = await Promise.all([
       db.nasSession.findMany({
         where,
-        include: {
-          Subscriber: {
+        include: { Subscriber: {
             select: {
               id: true,
               name: true,
@@ -1420,8 +1051,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
           { sessionId: sid },
         ],
       },
-      include: {
-        Subscriber: {
+      include: { Subscriber: {
           select: {
             id: true,
             name: true,
@@ -1432,8 +1062,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
             status: true,
             serviceUsername: true,
             connectionType: true,
-            plan: {
-              select: {
+            Plan: { select: {
                 id: true,
                 name: true,
                 category: true,
@@ -1443,13 +1072,11 @@ async function handleRequest(req: Request, path: string, url: URL) {
                 priceMonthly: true,
                 validityDays: true,
                 maxConcurrentSessions: true,
-                group: {
-                  select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+                RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
                 },
               },
             },
-            radiusGroup: {
-              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+            RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
             },
           },
         },
@@ -1721,21 +1348,18 @@ async function handleRequest(req: Request, path: string, url: URL) {
     const subscriber = await db.subscriber.findUnique({
       where: { id: subscriberId },
       include: {
-        Plan: {
-          select: {
+        Plan: { select: {
             id: true,
             name: true,
             downloadSpeed: true,
             uploadSpeed: true,
             dataLimitGb: true,
             maxConcurrentSessions: true,
-            RadiusGroup: {
-              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+            RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
             },
           },
         },
-        RadiusGroup: {
-          select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+        RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
         },
       },
     });
@@ -1812,8 +1436,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
 
     const activeSessions = await db.nasSession.findMany({
       where: { status: "ACTIVE" },
-      include: {
-        Subscriber: {
+      include: { Subscriber: {
           select: {
             id: true,
             name: true,
@@ -2006,7 +1629,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
       select: {
         subscriberId: true,
         username: true,
-        subscriber: { select: { name: true, plan: { select: { name: true } } } },
+        Subscriber: { select: { name: true, Plan: { select: { name: true } } } },
         inputOctets: true,
         outputOctets: true,
       },
@@ -2026,7 +1649,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
         subscriberId: s.subscriberId,
         username: s.username,
         subscriberName: s.Subscriber?.name,
-        planName: s.Subscriber?.Plan?.name,
+        planName: s.Subscriber?.plan?.name,
         downloadBytes: dl,
         uploadBytes: ul,
         totalBytes: dl + ul,
@@ -2180,329 +1803,110 @@ async function handleRequest(req: Request, path: string, url: URL) {
   }
 
   // ══════════════════════════════════════════════════════════
-  // §42 SESSION SNAPSHOTS
-  // ══════════════════════════════════════════════════════════
-
-  // GET /api/snapshots — list SessionSnapshots (filter by vppRecoveryState / subscriberId / username)
-  if (path === "/api/snapshots" && req.method === "GET") {
-    const where: Record<string, unknown> = {};
-    const vppRecoveryState = url.searchParams.get("vppRecoveryState");
-    const subscriberId = url.searchParams.get("subscriberId");
-    const username = url.searchParams.get("username");
-    if (vppRecoveryState) where.vppRecoveryState = vppRecoveryState;
-    if (subscriberId) where.subscriberId = subscriberId;
-    if (username) where.username = username;
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
-
-    const snapshots = await db.sessionSnapshot.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-    });
-    return json({ snapshots, count: snapshots.length });
-  }
-
-  // GET /api/snapshots/:sessionId — single snapshot detail
-  const snapshotMatch = path.match(/^\/api\/snapshots\/([^/]+)$/);
-  if (snapshotMatch && req.method === "GET") {
-    const sid = snapshotMatch[1];
-    const snapshot = await db.sessionSnapshot.findUnique({ where: { sessionId: sid } });
-    if (!snapshot) return jsonErr("Snapshot not found", 404);
-    return json({ snapshot });
-  }
-
-  // POST /api/sessions/:id/vpp-rebuild — manually trigger VPP rebuild for one session
-  const vppRebuildMatch = path.match(/^\/api\/sessions\/([^/]+)\/vpp-rebuild$/);
-  if (vppRebuildMatch && req.method === "POST") {
-    const sid = vppRebuildMatch[1];
-    const session = await db.nasSession.findFirst({
-      where: { OR: [{ id: sid }, { sessionId: sid }] },
-    });
-    if (!session) return jsonErr("Session not found", 404);
-    const r = await triggerVppRebuildForSession(session.sessionId);
-    return json({
-      success: r.rebuilt,
-      sessionId: session.sessionId,
-      rebuilt: r.rebuilt,
-      error: r.error,
-      vppEpoch: r.vppEpoch,
-    }, r.rebuilt ? 200 : 500);
-  }
-
-  // GET /api/vpp/state — proxies vpp-adapter /vpp/state (+ local activeSessions count)
-  if (path === "/api/vpp/state" && req.method === "GET") {
-    const r = await callVpp("/vpp/state");
-    let activeSessions = 0;
-    try { activeSessions = await db.nasSession.count({ where: { status: "ACTIVE" } }); } catch {}
-    if (!r.ok) {
-      return json({
-        vppConnected: false,
-        vppAdapterReachable: false,
-        error: r.error,
-        activeSessions,
-        lastKnownVppEpoch,
-        lastVppEpochPollAt: lastVppEpochPollAt ? new Date(lastVppEpochPollAt).toISOString() : null,
-      });
-    }
-    return json({
-      vppAdapterReachable: true,
-      vppConnected: (r.data as any)?.vppConnected ?? false,
-      vppEpoch: (r.data as any)?.vppEpoch ?? (r.data as any)?.epoch ?? lastKnownVppEpoch,
-      vppLastRestartAt: (r.data as any)?.vppLastRestartAt ?? (r.data as any)?.lastRestartAt ?? null,
-      activeSessions,
-      lastKnownVppEpoch,
-      lastVppEpochPollAt: lastVppEpochPollAt ? new Date(lastVppEpochPollAt).toISOString() : null,
-      raw: r.data,
-    });
-  }
-
-  // POST /api/vpp/restart-recovery — manually trigger full VPP restart recovery
-  if (path === "/api/vpp/restart-recovery" && req.method === "POST") {
-    const body = await req.json().catch(() => ({}));
-    const prev = (body && typeof body.prevEpoch === "number") ? body.prevEpoch : lastKnownVppEpoch;
-    // Fetch current epoch from vpp-adapter
-    const e = await callVpp<{ epoch: number }>("/vpp/epoch");
-    const newEpoch = e.data?.epoch || (prev + 1);
-    const result = await runVppRestartRecovery(prev, newEpoch, "manual");
-    if (newEpoch > lastKnownVppEpoch) lastKnownVppEpoch = newEpoch;
-    return json({ success: true, prevEpoch: prev, newEpoch, ...result });
-  }
-
-  // GET /api/recovery-logs — list VppRecoveryLog (latest 50, filter by event)
-  if (path === "/api/recovery-logs" && req.method === "GET") {
-    const event = url.searchParams.get("event");
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
-    const where: Record<string, unknown> = {};
-    if (event) where.event = event;
-    const logs = await db.vppRecoveryLog.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    return json({ logs, count: logs.length });
-  }
-
-  // GET /api/reconciliation-logs — list ReconciliationLog (latest 50, filter by scope)
-  if (path === "/api/reconciliation-logs" && req.method === "GET") {
-    const scope = url.searchParams.get("scope");
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
-    const where: Record<string, unknown> = {};
-    if (scope) where.scope = scope;
-    const logs = await db.reconciliationLog.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    return json({ logs, count: logs.length });
-  }
-
-  // POST /api/reconciliation/run — manually trigger session reconciliation
-  // Logs outcome to ReconciliationLog with scope="MANUAL".
-  if (path === "/api/reconciliation/run" && req.method === "POST") {
-    const before = await db.nasSession.count({ where: { status: "ACTIVE" } });
-    const start = Date.now();
-    await runReconciliation("STARTUP" as any).catch(() => {});
-    const durationMs = Date.now() - start;
-    try {
-      await db.reconciliationLog.create({
-        data: {
-          scope: "MANUAL",
-          totalDb: before,
-          totalVpp: before,
-          totalActive: before,
-          totalStale: 0,
-          totalRecovered: before,
-          totalRemoved: 0,
-          durationMs,
-          detailsJson: JSON.stringify({ triggeredBy: auth.userId }),
-        },
-      });
-    } catch {}
-    broadcastWs("reconciliation_manual", { triggeredBy: auth.userId, durationMs });
-    return json({ success: true, scope: "MANUAL", sessionsAffected: before, durationMs });
-  }
-
-  // POST /api/dpi/seed-synthetic — populate DpiClassification with demo data
-  // Only generates if the table is empty (or ?force=true).
-  if (path === "/api/dpi/seed-synthetic" && req.method === "POST") {
-    const force = url.searchParams.get("force") === "true";
-    const existingCount = await db.dpiClassification.count();
-    if (existingCount > 0 && !force) {
-      return json({ success: true, message: "Already seeded", count: existingCount });
-    }
-    if (force) {
-      await db.dpiClassification.deleteMany({});
-    }
-    const apps = [
-      { name: "YouTube", category: "Streaming", protocol: "HTTPS", risk: "LOW" },
-      { name: "Netflix", category: "Streaming", protocol: "HTTPS", risk: "LOW" },
-      { name: "WhatsApp", category: "Messaging", protocol: "TLS", risk: "LOW" },
-      { name: "Instagram", category: "Social", protocol: "HTTPS", risk: "MEDIUM" },
-      { name: "TikTok", category: "Social", protocol: "HTTPS", risk: "MEDIUM" },
-      { name: "Zoom", category: "Collaboration", protocol: "UDP", risk: "LOW" },
-      { name: "Fortnite", category: "Gaming", protocol: "UDP", risk: "MEDIUM" },
-      { name: "BitTorrent", category: "P2P", protocol: "TCP/UDP", risk: "HIGH" },
-      { name: "Tor", category: "Anonymizer", protocol: "TLS", risk: "CRITICAL" },
-      { name: "Spotify", category: "Music", protocol: "HTTPS", risk: "LOW" },
-      { name: "GitHub", category: "Developer", protocol: "HTTPS", risk: "LOW" },
-      { name: "Microsoft 365", category: "Cloud", protocol: "HTTPS", risk: "LOW" },
-      { name: "Telegram", category: "Messaging", protocol: "TLS", risk: "LOW" },
-      { name: "Twitch", category: "Streaming", protocol: "HTTPS", risk: "MEDIUM" },
-      { name: "Steam", category: "Gaming", protocol: "HTTPS", risk: "LOW" },
-    ];
-    const activeSubs = await db.nasSession.findMany({
-      where: { status: "ACTIVE" },
-      select: { framedIp: true, subscriberId: true },
-      take: 5,
-    });
-    if (activeSubs.length === 0) {
-      const anySub = await db.subscriber.findFirst({ select: { id: true, ipAddress: true } });
-      if (anySub) activeSubs.push({ framedIp: anySub.ipAddress || "10.0.0.1", subscriberId: anySub.id } as any);
-    }
-    const rows: any[] = [];
-    const now = Date.now();
-    for (let i = 0; i < 50; i++) {
-      const app = apps[Math.floor(Math.random() * apps.length)];
-      const sub = activeSubs[Math.floor(Math.random() * activeSubs.length)] || { framedIp: "10.0.0.1", subscriberId: "unknown" };
-      rows.push({
-        subscriberIp: sub.framedIp || "10.0.0.1",
-        subscriberId: sub.subscriberId || "unknown",
-        appName: app.name,
-        appCategory: app.category,
-        protocol: app.protocol,
-        bytesIn: BigInt(Math.floor(Math.random() * 50_000_000) + 100_000),
-        bytesOut: BigInt(Math.floor(Math.random() * 5_000_000) + 50_000),
-        flows: Math.floor(Math.random() * 100) + 1,
-        riskLevel: app.risk,
-        detectedAt: new Date(now - Math.floor(Math.random() * 3_600_000)),
-      });
-    }
-    if (rows.length > 0) {
-      await db.dpiClassification.createMany({ data: rows });
-    }
-    return json({ success: true, inserted: rows.length, total: rows.length });
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // §38 DUPLICATE LOGIN POLICY
-  // ══════════════════════════════════════════════════════════
-
-  // GET /api/duplicate-login-policy — list all policies
-  if (path === "/api/duplicate-login-policy" && req.method === "GET") {
-    const policies = await db.duplicateLoginPolicy.findMany({
-      orderBy: { updatedAt: "desc" },
-    });
-    return json({ policies, count: policies.length });
-  }
-
-  // POST /api/duplicate-login-policy — create or update (upsert by name, or by id if provided)
-  if (path === "/api/duplicate-login-policy" && req.method === "POST") {
-    const body = await req.json().catch(() => ({}));
-    const { id, name, description, mode, maxSessions, scope, isEnabled } = body;
-    if (!name) return jsonErr("name is required");
-    const validModes = ["ALLOW_MULTIPLE", "DENY_NEW", "DISCONNECT_OLD", "LIMIT_N"];
-    const validScopes = ["USERNAME", "MAC", "BOTH"];
-    if (mode && !validModes.includes(mode)) return jsonErr(`Invalid mode. Must be one of: ${validModes.join(", ")}`);
-    if (scope && !validScopes.includes(scope)) return jsonErr(`Invalid scope. Must be one of: ${validScopes.join(", ")}`);
-
-    const data: any = {
-      name,
-      description: description || "",
-      mode: mode || "DENY_NEW",
-      maxSessions: typeof maxSessions === "number" ? maxSessions : 1,
-      scope: scope || "USERNAME",
-      isEnabled: isEnabled ?? true,
-    };
-    let policy;
-    if (id) {
-      policy = await db.duplicateLoginPolicy.update({ where: { id }, data });
-    } else {
-      policy = await db.duplicateLoginPolicy.upsert({
-        where: { name },
-        create: data,
-        update: data,
-      });
-    }
-    return json({ success: true, policy });
-  }
-
-  // PUT /api/duplicate-login-policy/:id — update a policy
-  const dlpMatch = path.match(/^\/api\/duplicate-login-policy\/([^/]+)$/);
-  if (dlpMatch && req.method === "PUT") {
-    const id = dlpMatch[1];
-    const body = await req.json().catch(() => ({}));
-    const { name, description, mode, maxSessions, scope, isEnabled } = body;
-    const validModes = ["ALLOW_MULTIPLE", "DENY_NEW", "DISCONNECT_OLD", "LIMIT_N"];
-    const validScopes = ["USERNAME", "MAC", "BOTH"];
-    if (mode && !validModes.includes(mode)) return jsonErr(`Invalid mode. Must be one of: ${validModes.join(", ")}`);
-    if (scope && !validScopes.includes(scope)) return jsonErr(`Invalid scope. Must be one of: ${validScopes.join(", ")}`);
-    const data: any = {};
-    if (name !== undefined) data.name = name;
-    if (description !== undefined) data.description = description;
-    if (mode !== undefined) data.mode = mode;
-    if (maxSessions !== undefined) data.maxSessions = maxSessions;
-    if (scope !== undefined) data.scope = scope;
-    if (isEnabled !== undefined) data.isEnabled = isEnabled;
-
-    const policy = await db.duplicateLoginPolicy.update({ where: { id }, data });
-    return json({ success: true, policy });
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // §35 DPI CLASSIFICATION + §34 NAT EVENT LOGS
-  // ══════════════════════════════════════════════════════════
-
-  // GET /api/dpi/classifications — list DpiClassification (latest 100, with filters)
-  if (path === "/api/dpi/classifications" && req.method === "GET") {
-    const appName = url.searchParams.get("appName");
-    const subscriberId = url.searchParams.get("subscriberId");
-    const subscriberIp = url.searchParams.get("subscriberIp");
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
-    const where: Record<string, unknown> = {};
-    if (appName) where.appName = appName;
-    if (subscriberId) where.subscriberId = subscriberId;
-    if (subscriberIp) where.subscriberIp = subscriberIp;
-    const rows = await db.dpiClassification.findMany({
-      where,
-      orderBy: { detectedAt: "desc" },
-      take: limit,
-    });
-    // Convert BigInt → Number (JSON.stringify can't serialize BigInt natively)
-    const classifications = rows.map((r) => ({
-      ...r,
-      bytesIn: Number(r.bytesIn),
-      bytesOut: Number(r.bytesOut),
-    }));
-    return json({ classifications, count: classifications.length });
-  }
-
-  // GET /api/nat-events — list NatLog (latest 100, with filters)
-  if (path === "/api/nat-events" && req.method === "GET") {
-    const subscriberId = url.searchParams.get("subscriberId");
-    const srcIp = url.searchParams.get("srcIp");
-    const dstDomain = url.searchParams.get("dstDomain");
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
-    const where: Record<string, unknown> = {};
-    if (subscriberId) where.subscriberId = subscriberId;
-    if (srcIp) where.srcIp = srcIp;
-    if (dstDomain) where.dstDomain = { contains: dstDomain };
-    const rows = await db.natLog.findMany({
-      where,
-      orderBy: { timestamp: "desc" },
-      take: limit,
-    });
-    // Convert BigInt → Number for JSON serialization
-    const events = rows.map((r) => ({
-      ...r,
-      bytesSent: Number(r.bytesSent),
-      bytesReceived: Number(r.bytesReceived),
-    }));
-    return json({ events, count: events.length });
-  }
-
-  // ══════════════════════════════════════════════════════════
   // FALLBACK
   // ══════════════════════════════════════════════════════════
 
   return json({ error: "Not Found", path }, 404);
 }
+
+// ─── VPP ENFORCEMENT: Monitor radacct for new active sessions ───
+// Every 5s, check for new radacct rows (acctstoptime IS NULL) that don't have
+// a VPP policer yet. Create policer + NAT + classify for each.
+let lastRadacctCheck = new Date();
+
+setInterval(async () => {
+  try {
+    // Find new active sessions in radacct that started since last check
+    const newSessions = await db.$queryRawUnsafe(
+      "SELECT acctsessionid, username, nasipaddress, framedipaddress, callingstationid, acctstarttime FROM radacct WHERE acctstoptime IS NULL AND acctstarttime >= $1::timestamptz ORDER BY acctstarttime ASC",
+      lastRadacctCheck
+    ) as any[];
+
+    for (const sess of newSessions) {
+      // Check if VPP policer already exists for this session (by IP)
+      const policerName = "pol_" + (sess.framedipaddress || "").replace(/\./g, "_");
+      try {
+        // Resolve speeds from radgroupcheck via radusergroup
+        const groupData = await db.$queryRawUnsafe(
+          "SELECT rgc.attribute, rgc.value FROM radgroupcheck rgc JOIN radusergroup rug ON rug.groupname = rgc.groupname WHERE rug.username = $1 AND rgc.attribute IN ('Cryptsk-Bandwidth-Max-Down', 'Cryptsk-Bandwidth-Max-Up') ORDER BY rgc.priority",
+          sess.username
+        ) as any[];
+
+        let speedDownKbps = 30000; // default 30 Mbps
+        let speedUpKbps = 15000;   // default 15 Mbps
+
+        for (const attr of groupData) {
+          if (attr.attribute === 'Cryptsk-Bandwidth-Max-Down') {
+            speedDownKbps = Math.round(parseInt(attr.value) / 1000); // bps → kbps
+          } else if (attr.attribute === 'Cryptsk-Bandwidth-Max-Up') {
+            speedUpKbps = Math.round(parseInt(attr.value) / 1000);
+          }
+        }
+
+        // Call VPP adapter to program this session
+        const programResp = await fetch("http://127.0.0.1:3015/subscriber/program", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: sess.acctsessionid,
+            subscriberId: sess.username,
+            username: sess.username,
+            framedIp: sess.framedipaddress,
+            mac: sess.callingstationid,
+            nasIp: sess.nasipaddress,
+            speedDownKbps,
+            speedUpKbps,
+            swIfIndex: 2,
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+
+        if (programResp.ok) {
+          const result = await programResp.json();
+          if (result.success) {
+            logger.info("VPP policer created for radacct session", {
+              acctSessionId: sess.acctsessionid,
+              username: sess.username,
+              ip: sess.framedipaddress,
+              speeds: { speedDownKbps, speedUpKbps },
+            });
+            broadcastWs("vpp_enforce", { sessionId: sess.acctsessionid, username: sess.username, ip: sess.framedipaddress, speeds: { speedDownKbps, speedUpKbps } });
+          }
+        }
+      } catch (err) {
+        // VPP programming failed — non-fatal, session continues with NAS-side enforcement
+        logger.warn("VPP enforcement failed for radacct session", {
+          acctSessionId: sess.acctsessionid,
+          error: String(err),
+        });
+      }
+    }
+
+    // Also check for stopped sessions (acctstoptime IS NOT NULL since last check)
+    const stoppedSessions = await db.$queryRawUnsafe(
+      "SELECT acctsessionid, username, framedipaddress FROM radacct WHERE acctstoptime IS NOT NULL AND acctstoptime >= $1::timestamptz",
+      lastRadacctCheck
+    ) as any[];
+
+    for (const sess of stoppedSessions) {
+      try {
+        await fetch("http://127.0.0.1:3015/subscriber/remove", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sess.acctsessionid }),
+          signal: AbortSignal.timeout(3000),
+        });
+        logger.info("VPP policer removed for stopped radacct session", {
+          acctSessionId: sess.acctsessionid,
+          username: sess.username,
+        });
+        broadcastWs("vpp_remove", { sessionId: sess.acctsessionid, username: sess.username });
+      } catch {}
+    }
+
+    lastRadacctCheck = new Date();
+  } catch (err) {
+    logger.error("VPP radacct monitor error", { error: String(err) });
+  }
+}, 5000); // Check every 5 seconds
+
