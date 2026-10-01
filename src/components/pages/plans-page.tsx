@@ -394,7 +394,7 @@ export default function PlansPage() {
     <div className="space-y-6">
       <Skeleton className="skeleton-wave h-7 w-32 mb-2" />
       <Skeleton className="skeleton-wave h-4 w-60" />
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {Array.from({ length: 6 }).map((_, i) => <Card key={i} className="border shadow-sm"><CardContent className="p-6"><Skeleton className="skeleton-wave h-6 w-32 mb-3" /><Skeleton className="skeleton-wave h-10 w-20 mb-4" /><Skeleton className="skeleton-wave h-3 w-full mb-2" /><Skeleton className="skeleton-wave h-3 w-3/4" /></CardContent></Card>)}
       </div>
     </div>
@@ -460,11 +460,11 @@ export default function PlansPage() {
               </SelectContent>
             </Select>
             <div className="ml-auto flex items-center gap-1 border rounded-md p-0.5">
-              <Button variant={view === "grid" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setView("grid")}>
-                <LayoutGrid className="h-3.5 w-3.5" />
+              <Button variant={view === "grid" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" aria-label="Grid view" aria-pressed={view === "grid"} onClick={() => setView("grid")}>
+                <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
-              <Button variant={view === "list" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" onClick={() => setView("list")}>
-                <List className="h-3.5 w-3.5" />
+              <Button variant={view === "list" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" aria-label="List view" aria-pressed={view === "list"} onClick={() => setView("list")}>
+                <List className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -491,25 +491,27 @@ export default function PlansPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 animate-slide-up" style={{ animationDelay: "100ms" }}>
                 {plans.map((plan) => {
                   const CategoryIcon = CATEGORY_ICONS[plan.category] || Zap;
+                  const ipv6Detail = `${plan.ipv6AssignmentMode}${plan.ipv6PrefixDelegation ? " + PD" : ""}${plan.ipv6DefaultPoolId ? " · Pool" : ""}`;
                   return (
-                  <Card key={plan.id} className={`card-hover-lift border-t-4 ${CATEGORY_COLORS[plan.category] || "border-gray-500"} border shadow-sm relative overflow-hidden ${plan.status === "ARCHIVED" ? "opacity-60" : ""} group`}>
+                  <Card key={plan.id} className={`card-hover-lift border-t-4 ${CATEGORY_COLORS[plan.category] || "border-gray-500"} border shadow-sm relative overflow-hidden min-w-0 ${plan.status === "ARCHIVED" ? "opacity-60" : ""} group`}>
                     {plan.isPopular && (
                       <div className="absolute top-3 right-3 bg-emerald-500/10 text-emerald-600 border border-emerald-200 dark:border-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.15)]">
                         <Star className="h-3 w-3" />POPULAR
                       </div>
                     )}
                     <CardHeader className="pb-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <Checkbox
                           checked={compareIds.has(plan.id)}
                           onCheckedChange={() => toggleCompare(plan.id)}
-                          className="h-4 w-4"
+                          className="h-4 w-4 shrink-0"
+                          aria-label={`Compare ${plan.name}`}
                         />
-                        <div className={`h-6 w-6 rounded-md bg-background border flex items-center justify-center ${CATEGORY_ICON_COLORS[plan.category] || ""}`}>
-                          <CategoryIcon className="h-3.5 w-3.5" />
+                        <div className={`h-6 w-6 rounded-md bg-background border flex items-center justify-center shrink-0 ${CATEGORY_ICON_COLORS[plan.category] || ""}`}>
+                          <CategoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
                         </div>
-                        <Badge variant="outline" className="text-[10px]">{CATEGORY_LABELS[plan.category]}</Badge>
-                        <Badge variant={plan.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px]">
+                        <Badge variant="outline" className="text-[10px] shrink-0">{CATEGORY_LABELS[plan.category]}</Badge>
+                        <Badge variant={plan.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px] shrink-0">
                           {plan.status}
                         </Badge>
                       </div>
@@ -541,94 +543,101 @@ export default function PlansPage() {
                         )}
                       </div>
                       <div className="space-y-2 text-sm">
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground flex items-center gap-1"><ArrowDown className="h-3.5 w-3.5 text-emerald-500" />Download</span>
-                          <span className="font-semibold flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-0.5 text-xs bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-md font-medium">
-                              <ArrowDown className="h-2.5 w-2.5" />{plan.downloadSpeed} {plan.speedUnit}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground flex items-center gap-1 shrink-0"><ArrowDown className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />Download</span>
+                          <span className="font-semibold flex items-center justify-end min-w-0">
+                            <span title={`Download speed: ${plan.downloadSpeed} ${plan.speedUnit}`} className="inline-flex items-center gap-0.5 min-w-0 max-w-full text-xs bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-md font-medium">
+                              <ArrowDown className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{plan.downloadSpeed} {plan.speedUnit}</span>
                             </span>
                           </span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground flex items-center gap-1"><ArrowUp className="h-3.5 w-3.5 text-amber-500" />Upload</span>
-                          <span className="font-semibold flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-0.5 text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-md font-medium">
-                              <ArrowUp className="h-2.5 w-2.5" />{plan.uploadSpeed} {plan.speedUnit}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground flex items-center gap-1 shrink-0"><ArrowUp className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />Upload</span>
+                          <span className="font-semibold flex items-center justify-end min-w-0">
+                            <span title={`Upload speed: ${plan.uploadSpeed} ${plan.speedUnit}`} className="inline-flex items-center gap-0.5 min-w-0 max-w-full text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-md font-medium">
+                              <ArrowUp className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{plan.uploadSpeed} {plan.speedUnit}</span>
                             </span>
                           </span>
                         </div>
                         {(plan.downloadSpeedFup || plan.uploadSpeedFup) && (
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>FUP Speed</span>
-                            <span>{plan.downloadSpeedFup || "—"}/{plan.uploadSpeedFup || "—"} {plan.speedUnit}</span>
+                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                            <span className="shrink-0">FUP Speed</span>
+                            <span className="min-w-0 truncate text-right" title={`Post-FUP speeds: ${plan.downloadSpeedFup || "—"} / ${plan.uploadSpeedFup || "—"} ${plan.speedUnit}`}>
+                              {plan.downloadSpeedFup || "—"}/{plan.uploadSpeedFup || "—"} {plan.speedUnit}
+                            </span>
                           </div>
                         )}
                         {plan.dataLimitGb ? (
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">Data Limit</span>
-                            <span className="font-semibold">{plan.dataLimitGb} GB</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground shrink-0">Data Limit</span>
+                            <span className="font-semibold min-w-0 truncate text-right" title={`${plan.dataLimitGb} GB data limit`}>{plan.dataLimitGb} GB</span>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">Data</span>
-                            <span className="font-semibold text-green-600">Unlimited</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground shrink-0">Data</span>
+                            <span className="font-semibold text-green-600 min-w-0 truncate text-right" title="No data cap — unlimited">Unlimited</span>
                           </div>
                         )}
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">SLA</span>
-                          <span className="font-semibold">{plan.slaUptime}%</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">SLA</span>
+                          <span className="font-semibold min-w-0 truncate text-right" title={`${plan.slaUptime}% uptime SLA`}>{plan.slaUptime}%</span>
                         </div>
                         {plan.freeTrialDays > 0 && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">Free Trial</span>
-                            <span className="font-semibold text-green-600">{plan.freeTrialDays} days</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground shrink-0">Free Trial</span>
+                            <span className="font-semibold text-green-600 min-w-0 truncate text-right" title={`${plan.freeTrialDays}-day free trial`}>{plan.freeTrialDays} days</span>
                           </div>
                         )}
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Subscribers</span>
-                          <button type="button" onClick={() => openSubscribers(plan)} className="font-semibold text-red-600 hover:underline cursor-pointer flex items-center gap-1"><Users className="h-3.5 w-3.5" />{plan._count.subscribers}</button>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Subscribers</span>
+                          <button type="button" onClick={() => openSubscribers(plan)} title="View subscribers on this plan" className="font-semibold text-red-600 hover:underline cursor-pointer flex items-center gap-1 min-w-0">
+                            <Users className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{plan._count.subscribers}</span>
+                          </button>
                         </div>
                         {isModuleEnabled("ipv6") && plan.ipv6Enabled && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground flex items-center gap-1"><Globe className="h-3.5 w-3.5 text-emerald-500" />IPv6</span>
-                            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                              {plan.ipv6AssignmentMode}{plan.ipv6PrefixDelegation ? " + PD" : ""}{plan.ipv6DefaultPoolId ? " · Pool" : ""}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted-foreground flex items-center gap-1 shrink-0"><Globe className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />IPv6</span>
+                            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 min-w-0 truncate text-right" title={ipv6Detail}>
+                              {ipv6Detail}
                             </span>
                           </div>
                         )}
                       </div>
                       {(plan.installationCharge > 0 || plan.securityDeposit > 0 || plan.routerRental > 0) && (
-                        <div className="flex flex-wrap gap-2 mt-2">
+                        <div className="flex flex-wrap gap-1.5 mt-2">
                           {plan.installationCharge > 0 && (
-                            <p className="text-xs text-muted-foreground">+ {formatINR(plan.installationCharge)} installation</p>
+                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded" title="One-time installation charge">{formatINR(plan.installationCharge)} Install</span>
                           )}
                           {plan.securityDeposit > 0 && (
-                            <p className="text-xs text-muted-foreground">+ {formatINR(plan.securityDeposit)} deposit</p>
+                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded" title="Refundable security deposit">{formatINR(plan.securityDeposit)} Deposit</span>
                           )}
                           {plan.routerRental > 0 && (
-                            <p className="text-xs text-muted-foreground">+ {formatINR(plan.routerRental)}/mo router</p>
+                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded" title="Monthly router rental">{formatINR(plan.routerRental)}/mo Router</span>
                           )}
                         </div>
                       )}
                     </CardContent>
-                    <CardFooter className="flex items-center gap-1.5 pt-3 border-t flex-wrap">
+                    <CardFooter className="flex items-center gap-1.5 pt-3 border-t flex-wrap mt-auto">
                       <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(plan)}>
                         <Pencil className="h-3 w-3 mr-1" />Edit
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleDuplicate(plan)} title="Clone Plan">
-                        <Copy className="h-4 w-4" />
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleDuplicate(plan)} title="Clone Plan" aria-label="Clone plan">
+                        <Copy className="h-4 w-4" aria-hidden="true" />
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openMigrate(plan)} title="Migrate Subscribers">
-                        <ArrowRightLeft className="h-4 w-4" />
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => openMigrate(plan)} title="Migrate Subscribers" aria-label="Migrate subscribers">
+                        <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => togglePopular(plan)} title={plan.isPopular ? "Remove Popular" : "Mark Popular"}>
-                        {plan.isPopular ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => togglePopular(plan)} title={plan.isPopular ? "Remove Popular" : "Mark Popular"} aria-label={plan.isPopular ? "Remove popular" : "Mark popular"}>
+                        {plan.isPopular ? <StarOff className="h-4 w-4" aria-hidden="true" /> : <Star className="h-4 w-4" aria-hidden="true" />}
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => toggleStatus(plan)} title={plan.status === "ACTIVE" ? "Archive" : "Activate"}>
-                        {plan.status === "ACTIVE" ? <Archive className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => toggleStatus(plan)} title={plan.status === "ACTIVE" ? "Archive" : "Activate"} aria-label={plan.status === "ACTIVE" ? "Archive plan" : "Activate plan"}>
+                        {plan.status === "ACTIVE" ? <Archive className="h-4 w-4" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
                       </Button>
-                      <Button variant="outline" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => { setSelectedId(plan.id); setDeleteOpen(true); }}>
-                        <Trash2 className="h-4 w-4" />
+                      <Button variant="outline" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => { setSelectedId(plan.id); setDeleteOpen(true); }} title="Delete Plan" aria-label="Delete plan">
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </CardFooter>
                   </Card>
@@ -653,8 +662,8 @@ export default function PlansPage() {
                     <span>Showing {(page - 1) * limit + 1}–{Math.min(page * limit, totalPlans)} of {totalPlans}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                      <ChevronLeft className="h-4 w-4" />
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Previous page">
+                      <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                     </Button>
                     {Array.from({ length: totalPages }, (_, i) => i + 1)
                       .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
@@ -672,8 +681,8 @@ export default function PlansPage() {
                           </Button>
                         )
                       )}
-                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-                      <ChevronRight className="h-4 w-4" />
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages} onClick={() => setPage(page + 1)} aria-label="Next page">
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
@@ -727,7 +736,7 @@ export default function PlansPage() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Checkbox checked={compareIds.has(plan.id)} onCheckedChange={() => toggleCompare(plan.id)} className="h-4 w-4" />
+                              <Checkbox checked={compareIds.has(plan.id)} onCheckedChange={() => toggleCompare(plan.id)} className="h-4 w-4" aria-label={`Compare ${plan.name}`} />
                             </TableCell>
                             <TableCell className="text-sm font-medium">
                               <div>
@@ -742,7 +751,7 @@ export default function PlansPage() {
                             <TableCell><Badge variant="outline" className="text-[10px]">{CATEGORY_LABELS[plan.category]}</Badge></TableCell>
                             <TableCell className="text-sm">{plan.downloadSpeed}/{plan.uploadSpeed} {plan.speedUnit}</TableCell>
                             <TableCell className="text-sm font-semibold">{formatINR(plan.priceMonthly)}</TableCell>
-                            <TableCell className="text-sm"><button type="button" onClick={() => openSubscribers(plan)} className="font-semibold text-red-600 hover:underline cursor-pointer">{plan._count.subscribers}</button></TableCell>
+                            <TableCell className="text-sm"><button type="button" onClick={() => openSubscribers(plan)} title="View subscribers on this plan" className="font-semibold text-red-600 hover:underline cursor-pointer">{plan._count.subscribers}</button></TableCell>
                             <TableCell><Badge variant={plan.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px]">{plan.status}</Badge></TableCell>
                             <TableCell>{plan.isPopular ? <Star className="h-4 w-4 text-red-500 fill-red-500" /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                             {isModuleEnabled("ipv6") && (
@@ -758,11 +767,11 @@ export default function PlansPage() {
                             )}
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-1">
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(plan)}><Pencil className="h-3.5 w-3.5" /></Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDuplicate(plan)} title="Clone"><Copy className="h-3.5 w-3.5" /></Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMigrate(plan)} title="Migrate"><ArrowRightLeft className="h-3.5 w-3.5" /></Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => togglePopular(plan)}>{plan.isPopular ? <StarOff className="h-3.5 w-3.5" /> : <Star className="h-3.5 w-3.5" />}</Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => { setSelectedId(plan.id); setDeleteOpen(true); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(plan)} title="Edit plan" aria-label="Edit plan"><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDuplicate(plan)} title="Clone plan" aria-label="Clone plan"><Copy className="h-3.5 w-3.5" aria-hidden="true" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMigrate(plan)} title="Migrate subscribers" aria-label="Migrate subscribers"><ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => togglePopular(plan)} title={plan.isPopular ? "Remove popular" : "Mark popular"} aria-label={plan.isPopular ? "Remove popular" : "Mark popular"}>{plan.isPopular ? <StarOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Star className="h-3.5 w-3.5" aria-hidden="true" />}</Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => { setSelectedId(plan.id); setDeleteOpen(true); }} title="Delete plan" aria-label="Delete plan"><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /></Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -789,8 +798,8 @@ export default function PlansPage() {
                     <span>Showing {(page - 1) * limit + 1}–{Math.min(page * limit, totalPlans)} of {totalPlans}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                      <ChevronLeft className="h-4 w-4" />
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Previous page">
+                      <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                     </Button>
                     {Array.from({ length: totalPages }, (_, i) => i + 1)
                       .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
@@ -808,8 +817,8 @@ export default function PlansPage() {
                           </Button>
                         )
                       )}
-                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-                      <ChevronRight className="h-4 w-4" />
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page >= totalPages} onClick={() => setPage(page + 1)} aria-label="Next page">
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
@@ -833,9 +842,9 @@ export default function PlansPage() {
                     <div className="h-10 w-10 rounded-lg bg-green-100 dark:bg-green-950/30 flex items-center justify-center">
                       <Zap className="h-5 w-5 text-green-600" />
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Plans</p>
-                      <p className="text-2xl font-bold">{analytics.stats.totalPlans}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm text-muted-foreground truncate">Total Plans</p>
+                      <p className="text-2xl font-bold truncate" title="Total plans">{analytics.stats.totalPlans}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -844,9 +853,9 @@ export default function PlansPage() {
                     <div className="h-10 w-10 rounded-lg bg-teal-100 dark:bg-teal-950/30 flex items-center justify-center">
                       <Check className="h-5 w-5 text-teal-600" />
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Active Plans</p>
-                      <p className="text-2xl font-bold">{analytics.stats.activePlans}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm text-muted-foreground truncate">Active Plans</p>
+                      <p className="text-2xl font-bold truncate" title="Active plans">{analytics.stats.activePlans}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -855,9 +864,9 @@ export default function PlansPage() {
                     <div className="h-10 w-10 rounded-lg bg-orange-100 dark:bg-orange-950/30 flex items-center justify-center">
                       <Users className="h-5 w-5 text-orange-600" />
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Active Subscribers</p>
-                      <p className="text-2xl font-bold">{analytics.stats.totalSubscribers}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm text-muted-foreground truncate">Total Active Subscribers</p>
+                      <p className="text-2xl font-bold truncate" title="Total active subscribers">{analytics.stats.totalSubscribers}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -865,7 +874,7 @@ export default function PlansPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Adoption Rate */}
-                <Card className="border shadow-sm animate-slide-up" style={{ animationDelay: "200ms" }}>
+                <Card className="border shadow-sm animate-slide-up min-w-0" style={{ animationDelay: "200ms" }}>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
                       <Users className="h-4 w-4" />Adoption Rate
@@ -891,7 +900,7 @@ export default function PlansPage() {
                 </Card>
 
                 {/* Revenue per Plan */}
-                <Card className="border shadow-sm">
+                <Card className="border shadow-sm min-w-0">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
                       <DollarSign className="h-4 w-4" />Revenue per Plan
@@ -923,7 +932,7 @@ export default function PlansPage() {
                 </Card>
 
                 {/* Category Distribution */}
-                <Card className="border shadow-sm">
+                <Card className="border shadow-sm min-w-0">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
                       <PieChartIcon className="h-4 w-4" />Category Distribution
@@ -957,7 +966,7 @@ export default function PlansPage() {
                 </Card>
 
                 {/* Top Plans by Revenue */}
-                <Card className="border shadow-sm">
+                <Card className="border shadow-sm min-w-0">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
                       <TrendingUp className="h-4 w-4" />Top Revenue Plans
@@ -973,17 +982,17 @@ export default function PlansPage() {
                       <ScrollArea className="h-[300px]">
                         <div className="space-y-3">
                           {analytics.revenue.slice(0, 10).map((r, i) => (
-                            <div key={r.planId || i} className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <span className="h-6 w-6 rounded-full bg-orange-100 dark:bg-orange-950/30 flex items-center justify-center text-xs font-bold text-orange-600">
+                            <div key={r.planId || i} className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="h-6 w-6 rounded-full bg-orange-100 dark:bg-orange-950/30 flex items-center justify-center text-xs font-bold text-orange-600 shrink-0">
                                   {i + 1}
                                 </span>
-                                <div>
-                                  <p className="text-sm font-medium">{r.planName}</p>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate" title={r.planName}>{r.planName}</p>
                                   <p className="text-xs text-muted-foreground">{r.invoiceCount} invoices</p>
                                 </div>
                               </div>
-                              <div className="text-right">
+                              <div className="text-right shrink-0">
                                 <p className="text-sm font-semibold">{formatINR(r.totalRevenue)}</p>
                                 <p className="text-xs text-muted-foreground">of {formatINR(r.totalBilled)} billed</p>
                               </div>
