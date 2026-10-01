@@ -1762,3 +1762,72 @@ Stage Summary:
 Files changed:
   - prisma/radacct-triggers.sql (NEW — 3 trigger functions + 3 triggers on radacct)
   - mini-services/session-engine/index.ts (added ~270 lines: LISTEN/NOTIFY block + VPP integration + reconciliation + eventStats + /api/events/stats endpoint)
+
+---
+Task ID: E2E-LOGIN-TEST-14
+Agent: main (orchestrator)
+Task: End-to-end login test — verify full flow: RADIUS → radacct → LISTEN/NOTIFY → VPP
+
+Work Log:
+- Created E2E test script (scripts/e2e-test.js) that:
+  1. Gets test user credentials from radcheck
+  2. Sends RADIUS Access-Request via radclient (port 1812)
+  3. Sends Accounting-Start via radclient (port 1813) → triggers radacct INSERT
+  4. Verifies radacct row inserted
+  5. Waits 2s for LISTEN/NOTIFY to fire
+  6. Checks Session Engine event stats (notificationsReceived delta)
+  7. Checks PM2 logs for "session_start received" + "VPP programmed"
+  8. Checks Active Sessions API (what the UI reads) for the new session
+  9. Sends Accounting-Stop → triggers radacct UPDATE (acctstoptime)
+  10. Verifies session stopped + VPP cleaned up
+
+- Fixed 2 Prisma schema issues in resolveSubscriberPolicy():
+  1. `include: { plan: true }` → `include: { Plan: true }` (capitalized relation field)
+  2. `Plan.include: { group: true }` → `Plan.include: { RadiusGroup: true }` (Plan's group relation is "RadiusGroup")
+  - Mapped Prisma's capitalized fields to resolveSpeedsKbps's expected lowercase shape
+
+- Ran E2E test on prod — RESULTS:
+
+  ✅ Step 3: Accounting-Start sent → FreeRADIUS responded with Accounting-Response
+  ✅ Step 4: radacct row inserted (radacctid=16, ip=10.0.200.99)
+  ✅ Step 5: LISTEN/NOTIFY fired — notificationsReceived: 0 → 1 (Δ=1)
+  ✅ Step 6: VPP programmed — vppProgrammed: 0 → 1 (Δ=1)
+  ✅ Step 7: PM2 logs confirm:
+     "Event: session_start received" → username: rajesh.kumar, ip: 10.0.200.99
+     "VPP programmed for session (event-driven)" → plan: "Basic 30 Mbps", speedDown: 30000
+  ✅ Step 8: Session appears in Active Sessions API:
+     Username: rajesh.kumar, IP: 10.0.200.99, Plan: Basic 30 Mbps
+  ✅ Step 9: Accounting-Stop sent → FreeRADIUS responded
+  ✅ Step 10: Session stopped (acctstoptime set), VPP cleaned up (vppCleaned: 1)
+
+  Final stats: 2 notifications (start+stop), 1 VPP programmed, 1 VPP cleaned
+
+- Speed resolution verified:
+  - Subscriber "rajesh.kumar" has RadiusGroup "basic-30-mbps" (speedLimitDown=30 Mbps)
+  - resolveSpeedsKbps returned speedDown=30000 kbps (30 Mbps) — correct!
+  - The RadiusGroup override took priority over Plan.downloadSpeed (30720 kbps)
+
+Architecture flow verified end-to-end:
+  radclient → FreeRADIUS:1813 → radacct INSERT → pg_notify('session_start') → Session Engine LISTEN
+  → resolveSubscriberPolicy (Plan + RadiusGroup) → VPP adapter /apply → NAT + policer + classify programmed
+  → Session appears in Active Sessions API → UI can display it
+
+  Login → VPP programming latency: <1ms (LISTEN/NOTIFY trigger) + ~160ms (policy resolution + VPP API call)
+
+Stage Summary:
+✅ FULL E2E LOGIN FLOW VERIFIED:
+   1. RADIUS Accounting-Start accepted by FreeRADIUS ✓
+   2. radacct INSERT happened ✓
+   3. SQL trigger fired pg_notify('session_start') ✓
+   4. Session Engine received LISTEN/NOTIFY event (Δ=1) ✓
+   5. Policy resolved correctly (Plan: "Basic 30 Mbps", speed: 30 Mbps) ✓
+   6. VPP adapter called → NAT + policer + classify programmed ✓
+   7. Session appears in Active Sessions API (UI data source) ✓
+   8. Accounting-Stop → radacct UPDATE → pg_notify('session_stop') ✓
+   9. VPP cleanup happened (vppCleaned=1) ✓
+
+✅ The event-driven architecture is working end-to-end:
+   - Login → VPP programming is INSTANT (<1ms trigger via LISTEN/NOTIFY)
+   - Policy resolution works (Plan + RadiusGroup → correct speeds)
+   - UI sees the session (reads from radacct)
+   - Logout → VPP cleanup is instant

@@ -394,15 +394,17 @@ let eventStats = {
 // ─── Resolve subscriber policy (Plan → speeds, data limit) ─────
 async function resolveSubscriberPolicy(username: string) {
   try {
+    // Prisma field names are capitalized: Plan, RadiusGroup (not plan, radiusGroup)
+    // Plan's relation to its group is also "RadiusGroup" (not "group")
     const subscriber = await db.subscriber.findFirst({
       where: { serviceUsername: username },
       include: {
-        plan: {
+        Plan: {
           include: {
-            group: true,
+            RadiusGroup: true,  // Plan → RadiusGroup (the plan's linked group)
           },
         },
-        radiusGroup: true,
+        RadiusGroup: true,     // Subscriber → RadiusGroup (direct override)
       },
     });
 
@@ -410,15 +412,22 @@ async function resolveSubscriberPolicy(username: string) {
       return { planName: "unknown", speedDownKbps: 0, speedUpKbps: 0, publicIp: "203.0.113.100" };
     }
 
+    // Map Prisma's capitalized fields to the resolveSpeedsKbps function's expected shape
+    // resolveSpeedsKbps expects: { radiusGroup, plan: { downloadSpeed, uploadSpeed, group }, currentSpeedDown, currentSpeedUp }
     const speeds = resolveSpeedsKbps({
-      radiusGroup: subscriber.radiusGroup as any,
-      plan: subscriber.plan as any,
+      radiusGroup: subscriber.RadiusGroup as any,
+      plan: {
+        downloadSpeed: subscriber.Plan?.downloadSpeed || 0,
+        uploadSpeed: subscriber.Plan?.uploadSpeed || 0,
+        // Map Plan.RadiusGroup → plan.group (the plan's linked group)
+        group: subscriber.Plan?.RadiusGroup as any,
+      } as any,
       currentSpeedDown: subscriber.currentSpeedDown || 0,
       currentSpeedUp: subscriber.currentSpeedUp || 0,
     });
 
     return {
-      planName: subscriber.plan?.name || "unknown",
+      planName: subscriber.Plan?.name || "unknown",
       speedDownKbps: speeds.speedDown,
       speedUpKbps: speeds.speedUp,
       publicIp: "203.0.113.100", // TODO: resolve from NAS config
