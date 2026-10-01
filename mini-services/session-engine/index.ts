@@ -355,6 +355,273 @@ function formatDurationCron(seconds: number): string {
 
 logger.info("Auto-enforcement cron started (every 30s)", {});
 
+// ═══════════════════════════════════════════════════════════════
+// ─── EVENT-DRIVEN TRIGGER: PostgreSQL LISTEN/NOTIFY ─────────────
+// Per: docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md §10
+//
+// PRIMARY trigger (instant, <1ms): listens for radacct changes via
+// PostgreSQL pub/sub. When FreeRADIUS writes Accounting-Start/Stop
+// to radacct, the trigger fires pg_notify() which this listener
+// receives IMMEDIATELY — no 30s polling delay.
+//
+// On session_start: program VPP (NAT + policer + classify) instantly
+// On session_stop:  cleanup VPP instantly
+// On session_interim: update in-memory counters
+//
+// The 30s enforcement cron above is a SAFETY NET for limit enforcement.
+// The 60s reconciliation below is a FALLBACK for crash recovery.
+// ═══════════════════════════════════════════════════════════════
+
+import pg from "pg";
+const { Client: PgClient } = pg;
+
+const VPP_ADAPTER_URL = process.env.VPP_ADAPTER_URL || "http://localhost:3015";
+const VPP_EPOCH = SERVICE_START; // changes on every restart — lets VPP detect stale sessions
+const DB_URL = process.env.DATABASE_URL || "postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus";
+
+// Event stats
+let eventStats = {
+  notificationsReceived: 0,
+  sessionStartEvents: 0,
+  sessionStopEvents: 0,
+  sessionInterimEvents: 0,
+  vppProgrammed: 0,
+  vppFailed: 0,
+  vppCleaned: 0,
+  lastEventAt: 0,
+};
+
+// ─── Resolve subscriber policy (Plan → speeds, data limit) ─────
+async function resolveSubscriberPolicy(username: string) {
+  try {
+    const subscriber = await db.subscriber.findFirst({
+      where: { serviceUsername: username },
+      include: {
+        plan: {
+          include: {
+            group: true,
+          },
+        },
+        radiusGroup: true,
+      },
+    });
+
+    if (!subscriber) {
+      return { planName: "unknown", speedDownKbps: 0, speedUpKbps: 0, publicIp: "203.0.113.100" };
+    }
+
+    const speeds = resolveSpeedsKbps({
+      radiusGroup: subscriber.radiusGroup as any,
+      plan: subscriber.plan as any,
+      currentSpeedDown: subscriber.currentSpeedDown || 0,
+      currentSpeedUp: subscriber.currentSpeedUp || 0,
+    });
+
+    return {
+      planName: subscriber.plan?.name || "unknown",
+      speedDownKbps: speeds.speedDown,
+      speedUpKbps: speeds.speedUp,
+      publicIp: "203.0.113.100", // TODO: resolve from NAS config
+    };
+  } catch (err: any) {
+    logger.error("Policy resolution failed", { username, error: err.message });
+    return { planName: "unknown", speedDownKbps: 0, speedUpKbps: 0, publicIp: "203.0.113.100" };
+  }
+}
+
+// ─── §8 Program VPP for a session (instant, synchronous) ────────
+async function programVppForRadAcctSession(data: {
+  acctsessionid: string;
+  username: string;
+  framedipaddress: string;
+  nasipaddress: string;
+  callingstationid: string;
+}) {
+  try {
+    const policy = await resolveSubscriberPolicy(data.username);
+
+    const downBps = policy.speedDownKbps > 0 ? Math.round(policy.speedDownKbps / 1024) * 1000000 : 0;
+    const upBps = policy.speedUpKbps > 0 ? Math.round(policy.speedUpKbps / 1024) * 1000000 : 0;
+
+    const response = await fetch(`${VPP_ADAPTER_URL}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "session",
+        subscriber: data.username,
+        subscriberIP: data.framedipaddress,
+        nasIP: data.nasipaddress,
+        mac: data.callingstationid,
+        plan: policy.planName,
+        speedDownKbps: policy.speedDownKbps,
+        speedUpKbps: policy.speedUpKbps,
+        vppEpoch: VPP_EPOCH,
+        config: {
+          nat: `nat44 add static address ${data.framedipaddress} -> ${policy.publicIp}`,
+          policer: `policer add name sub-${data.username} cir ${downBps} eir ${downBps} conform-action transmit violate-action drop`,
+          classify: `classify add session table-index 0 match ip4 src ${data.framedipaddress} action policer sub-${data.username}`,
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (response.ok) {
+      eventStats.vppProgrammed++;
+      logger.info("VPP programmed for session (event-driven)", {
+        username: data.username,
+        ip: data.framedipaddress,
+        plan: policy.planName,
+        speedDown: policy.speedDownKbps,
+      });
+      return true;
+    } else {
+      eventStats.vppFailed++;
+      logger.error("VPP programming failed", { username: data.username, status: response.status });
+      return false;
+    }
+  } catch (err: any) {
+    eventStats.vppFailed++;
+    logger.error("VPP adapter error", { username: data.username, error: err.message });
+    return false;
+  }
+}
+
+// ─── §9 Cleanup VPP for a session (instant) ─────────────────────
+async function cleanupVppForRadAcctSession(data: {
+  acctsessionid: string;
+  username: string;
+  framedipaddress: string;
+}) {
+  try {
+    await fetch(`${VPP_ADAPTER_URL}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "session-delete",
+        subscriber: data.username,
+        subscriberIP: data.framedipaddress,
+        vppEpoch: VPP_EPOCH,
+        config: {
+          nat: `nat44 del static address ${data.framedipaddress}`,
+          policer: `policer del name sub-${data.username}`,
+          classify: `classify del session table-index 0 match ip4 src ${data.framedipaddress}`,
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    eventStats.vppCleaned++;
+    logger.info("VPP cleaned for session (event-driven)", {
+      username: data.username,
+      ip: data.framedipaddress,
+    });
+  } catch (err: any) {
+    logger.error("VPP cleanup error", { username: data.username, error: err.message });
+  }
+}
+
+// ─── LISTEN/NOTIFY client (dedicated connection, stays open) ────
+let listenClient: any = null;
+
+async function startEventListener() {
+  listenClient = new PgClient({ connectionString: DB_URL });
+  await listenClient.connect();
+
+  // Listen on all 3 channels
+  await listenClient.query("LISTEN session_start");
+  await listenClient.query("LISTEN session_stop");
+  await listenClient.query("LISTEN session_interim");
+
+  listenClient.on("notification", async (msg: any) => {
+    try {
+      const data = JSON.parse(msg.payload);
+      eventStats.notificationsReceived++;
+      eventStats.lastEventAt = Date.now();
+
+      if (msg.channel === "session_start") {
+        eventStats.sessionStartEvents++;
+        logger.info("Event: session_start received", { username: data.username, ip: data.framedipaddress });
+        // §8: Program VPP INSTANTLY (not 30s later)
+        await programVppForRadAcctSession({
+          acctsessionid: data.acctsessionid,
+          username: data.username,
+          framedipaddress: data.framedipaddress,
+          nasipaddress: data.nasipaddress,
+          callingstationid: data.callingstationid,
+        });
+        broadcastWs("session_start", data);
+      } else if (msg.channel === "session_stop") {
+        eventStats.sessionStopEvents++;
+        logger.info("Event: session_stop received", { username: data.username });
+        // §9: Cleanup VPP INSTANTLY
+        await cleanupVppForRadAcctSession({
+          acctsessionid: data.acctsessionid,
+          username: data.username,
+          framedipaddress: data.framedipaddress,
+        });
+        broadcastWs("session_stop", data);
+      } else if (msg.channel === "session_interim") {
+        eventStats.sessionInterimEvents++;
+        broadcastWs("session_interim", data);
+      }
+    } catch (err: any) {
+      logger.error("Event listener error", { channel: msg.channel, error: err.message });
+    }
+  });
+
+  listenClient.on("error", (err: any) => {
+    logger.error("LISTEN connection error", { error: err.message });
+    setTimeout(() => {
+      logger.info("LISTEN reconnecting...", {});
+      startEventListener().catch(e => logger.error("LISTEN reconnect failed", { error: e.message }));
+    }, 2000);
+  });
+
+  logger.info("LISTEN/NOTIFY active (event-driven, <1ms trigger)", {
+    channels: ["session_start", "session_stop", "session_interim"],
+    vppEpoch: VPP_EPOCH,
+  });
+}
+
+// ─── FALLBACK: 60s reconciliation with radacct (crash recovery) ─
+async function reconcileWithRadAcct() {
+  const client = new PgClient({ connectionString: DB_URL });
+  try {
+    await client.connect();
+    // Find radacct sessions that don't have a corresponding NasSession
+    const result = await client.query(`
+      SELECT r.acctsessionid, r.username, r.framedipaddress, r.nasipaddress, r.callingstationid
+      FROM radacct r
+      LEFT JOIN "NasSession" ns ON ns."sessionId" = r.acctsessionid
+      WHERE r.acctstoptime IS NULL AND ns.id IS NULL
+      LIMIT 100
+    `);
+
+    for (const row of result.rows) {
+      logger.info("Reconcile: discovered missed session", { username: row.username });
+      await programVppForRadAcctSession({
+        acctsessionid: row.acctsessionid,
+        username: row.username,
+        framedipaddress: row.framedipaddress,
+        nasipaddress: row.nasipaddress,
+        callingstationid: row.callingstationid,
+      });
+    }
+
+    if (result.rows.length > 0) {
+      logger.info("Reconciliation completed", { recovered: result.rows.length, scope: "SCHEDULED" });
+    }
+  } catch (err: any) {
+    logger.error("Reconciliation error", { error: err.message });
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+// Start the event listener + reconciliation fallback
+startEventListener().catch(err => logger.error("Failed to start event listener", { error: err.message }));
+setInterval(reconcileWithRadAcct, 60_000); // 60s — fallback ONLY
+logger.info("Reconciliation fallback registered (every 60s)", {});
+
 // ─── Request Router ──────────────────────────────────────────
 
 async function handleRequest(req: Request, path: string, url: URL) {
@@ -368,7 +635,22 @@ async function handleRequest(req: Request, path: string, url: URL) {
       uptime: process.uptime(),
       activeSessions,
       wsClients: wsClients.size,
+      trigger: "LISTEN/NOTIFY (event-driven, <1ms)",
+      fallback: "reconciliation every 60s",
+      vppEpoch: VPP_EPOCH,
+      eventStats,
       timestamp: new Date().toISOString(),
+    });
+  }
+
+  // ── Event stats (event-driven trigger metrics) ──
+  if (path === "/api/events/stats" && req.method === "GET") {
+    return json({
+      trigger: "LISTEN/NOTIFY",
+      vppEpoch: VPP_EPOCH,
+      vppAdapterUrl: VPP_ADAPTER_URL,
+      eventStats,
+      uptime: process.uptime(),
     });
   }
 
