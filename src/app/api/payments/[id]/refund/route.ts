@@ -54,62 +54,92 @@ export async function POST(
       );
     }
 
-    // Create the refund record
-    const refund = await db.refund.create({
-      data: {
-        paymentId: id,
-        amount: Math.round(amount * 100) / 100,
-        reason: reason.trim(),
-        mode: mode?.trim() || "Original",
-        notes: notes?.trim() || "",
-        status: "PROCESSED",
-        processedById: userId,
-      },
-    });
+    // [AUDIT F-10 tail] Entire money-moving chain runs in ONE transaction — a
+    // crash between refund.create and subscriber balance increment previously
+    // left books inconsistent (refund recorded but balance not credited, etc.).
+    // Also: cumulative refund cap — sum(Refund.amount) for this payment can
+    // never exceed payment.amount, even across partial refunds.
+    const refundAmount = Math.round(amount * 100) / 100;
 
-    // Mark payment as refunded
-    await db.payment.update({
-      where: { id },
-      data: { status: "REFUNDED" },
-    });
+    const { refund, refundedTotal } = await db.$transaction(async (tx) => {
+      const priorRefunds = await tx.refund.aggregate({
+        where: { paymentId: id, status: { not: "CANCELLED" } },
+        _sum: { amount: true },
+      });
+      const alreadyRefunded = priorRefunds._sum.amount || 0;
+      const refundedTotal = Math.round((alreadyRefunded + refundAmount) * 100) / 100;
 
-    // Add refund amount to subscriber balance
-    await db.subscriber.update({
-      where: { id: payment.subscriberId },
-      data: {
-        balance: {
-          increment: amount,
-        },
-      },
-    });
-
-    // If linked to an invoice, reverse the payment effect
-    if (payment.invoiceId && payment.Invoice) {
-      const invoice = payment.Invoice;
-      const newPaidAmount = Math.max(0, invoice.paidAmount - amount);
-      const newBalanceAmount = invoice.grandTotal - newPaidAmount;
-
-      let newStatus = invoice.status;
-      if (newBalanceAmount > 0 && newPaidAmount > 0) {
-        newStatus = "PARTIALLY_PAID";
-      } else if (newPaidAmount <= 0) {
-        newStatus = "SENT";
+      if (refundedTotal > payment.amount + 0.001) {
+        const remaining = Math.max(0, Math.round((payment.amount - alreadyRefunded) * 100) / 100);
+        throw Object.assign(new Error(
+          `Refund cap exceeded: ₹${alreadyRefunded} already refunded on this payment; at most ₹${remaining} can be refunded`
+        ), { statusCode: 409 });
       }
 
-      await db.invoice.update({
-        where: { id: payment.invoiceId },
+      // Create the refund record
+      const refund = await tx.refund.create({
         data: {
-          paidAmount: newPaidAmount,
-          balanceAmount: Math.max(0, newBalanceAmount),
-          status: newStatus,
-          paidAt: newStatus === "PAID" ? invoice.paidAt : null,
+          paymentId: id,
+          amount: refundAmount,
+          reason: reason.trim(),
+          mode: mode?.trim() || "Original",
+          notes: notes?.trim() || "",
+          status: "PROCESSED",
+          processedById: userId,
         },
       });
-    }
+
+      // Mark payment as refunded (full refund) — partial refunds keep VERIFIED
+      // so the remaining balance stays refundable; transition matrix in
+      // payments/[id]/route.ts treats REFUNDED as terminal either way.
+      if (refundedTotal >= payment.amount - 0.001) {
+        await tx.payment.update({
+          where: { id },
+          data: { status: "REFUNDED" },
+        });
+      }
+
+      // Add refund amount to subscriber balance
+      await tx.subscriber.update({
+        where: { id: payment.subscriberId },
+        data: {
+          balance: {
+            increment: refundAmount,
+          },
+        },
+      });
+
+      // If linked to an invoice, reverse the payment effect
+      if (payment.invoiceId && payment.Invoice) {
+        const invoice = payment.Invoice;
+        const newPaidAmount = Math.max(0, invoice.paidAmount - refundAmount);
+        const newBalanceAmount = invoice.grandTotal - newPaidAmount;
+
+        let newStatus = invoice.status;
+        if (newBalanceAmount > 0 && newPaidAmount > 0) {
+          newStatus = "PARTIALLY_PAID";
+        } else if (newPaidAmount <= 0) {
+          newStatus = "SENT";
+        }
+
+        await tx.invoice.update({
+          where: { id: payment.invoiceId },
+          data: {
+            paidAmount: newPaidAmount,
+            balanceAmount: Math.max(0, newBalanceAmount),
+            status: newStatus,
+            paidAt: newStatus === "PAID" ? invoice.paidAt : null,
+          },
+        });
+      }
+
+      return { refund, refundedTotal };
+    });
 
     return NextResponse.json({
       refund,
-      message: `Refund of ${amount} processed. Added to subscriber balance.`,
+      refundedTotal,
+      message: `Refund of ₹${refundAmount} processed. Added to subscriber balance.`,
     });
   } catch (error) {
     if (error && typeof error === "object" && "statusCode" in error) {

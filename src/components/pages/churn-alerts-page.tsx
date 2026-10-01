@@ -15,7 +15,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -644,7 +644,7 @@ export default function ChurnAlertsPage() {
       {/* Log Communication Dialog */}
       <Dialog open={commDialog} onOpenChange={setCommDialog}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><MessageSquare className="h-4 w-4 text-teal-600" />Log Communication</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><MessageSquare className="h-4 w-4 text-teal-600" />Log Communication</DialogTitle><DialogDescription className="text-xs">Record the retention outreach for this subscriber — reminders, offers, calls or general notes.</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">

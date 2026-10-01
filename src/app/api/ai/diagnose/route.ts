@@ -125,7 +125,8 @@ export async function POST(request: NextRequest) {
     const currentLoad = latestBandwidth ? latestBandwidth.totalBps : 0;
 
     // Build real network path from actual device data in DB
-    const planSpeed = subscriber.Plan ? subscriber.Plan.downloadSpeed / 1000 : 50; // Convert Kbps to Mbps
+    // Plan speeds are stored in Mbps (unit migration) — use directly
+    const planSpeed = subscriber.Plan ? subscriber.Plan.downloadSpeed : 50;
     const areaName = subscriber.Area?.name || "Service Area";
     const deviceName = subscriber.assignedDevice?.name || "Distribution Switch";
     const deviceIp = subscriber.assignedDevice?.ipAddress || "10.0.1.1";

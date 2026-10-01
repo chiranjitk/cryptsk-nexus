@@ -70,8 +70,8 @@ export async function GET(request: NextRequest) {
       const rows = plans.map((p) => {
         return [
           escapeCsv(p.name),
-          String(p.downloadSpeed / 1000),
-          String(p.uploadSpeed / 1000),
+          String(p.downloadSpeed), // plan speeds stored in Mbps (unit migration)
+          String(p.uploadSpeed),
           p.dataLimitGb ? String(p.dataLimitGb) : "Unlimited",
           String(p.validityDays),
           String(p.priceMonthly),

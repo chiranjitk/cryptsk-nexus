@@ -306,40 +306,64 @@ function RefundsSection() {
   const [refundReason, setRefundReason] = useState("");
   const [refundMode, setRefundMode] = useState("Original");
 
-  // GET /api/payments returns { payments, … } (not { refunds }) — query the real
-  // shape and remap each REFUNDED payment row into the fields the table renders.
-  const { data, isLoading } = useQuery<{ payments: { id: string; amount: number; paymentMode: string; status: string; notes: string; receiptNumber: string; createdAt: string; subscriber: { name: string; code: string } | null }[] }>({
+  // GET /api/refunds exposes the true Refund records — reason/mode/status live
+  // there (the old workaround scraped REFUNDED payments and guessed fields).
+  type RefundRow = {
+    id: string; amount: number; reason: string; mode: string; status: string;
+    createdAt: string;
+    payment: { id: string; receiptNumber: string; amount: number; paymentMode: string; status: string; subscriber: { name: string; code: string } | null } | null;
+    processedBy: { id: string; name: string } | null;
+  };
+  const { data, isLoading } = useQuery<{ refunds: RefundRow[]; summary: { totalRefunded: number; count: number; statusCounts: { status: string; count: number; amount: number }[] } }>({
     queryKey: ["collection-refunds"],
-    queryFn: () => fetch("/api/payments?status=REFUNDED&limit=50").then((r) => r.json()),
+    queryFn: () => fetch("/api/refunds?limit=50").then((r) => r.json()),
   });
 
   const refundMut = useMutation({
-    mutationFn: (body: Record<string, string>) => apiFetch(`/api/payments/${body.paymentId}/refund`, { method: "POST", body: JSON.stringify(body) }),
+    // The refund API expects the payment UUID, but operators know receipts by
+    // their number — resolve "RCT-…" (or raw uuid) to the payment id first and
+    // surface a clear error when nothing matches.
+    mutationFn: async (body: Record<string, string>) => {
+      const entered = body.paymentId.trim();
+      let paymentId = entered;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entered)) {
+        const res = await apiFetch<{ payments: { id: string; receiptNumber: string; status: string }[] }>(
+          `/api/payments?search=${encodeURIComponent(entered)}&limit=10`
+        );
+        const match = (res.payments || []).find((p) => p.receiptNumber === entered) || (res.payments || [])[0];
+        if (!match) throw new Error(`No payment found for receipt "${entered}"`);
+        if (match.status !== "VERIFIED") throw new Error(`Payment ${match.receiptNumber} is ${match.status} — only VERIFIED payments can be refunded`);
+        paymentId = match.id;
+      }
+      return apiFetch(`/api/payments/${paymentId}/refund`, { method: "POST", body: JSON.stringify(body) });
+    },
     onSuccess: () => { toast.success("Refund initiated"); setShowRefund(false); setRefundAmount(""); setRefundReason(""); queryClient.invalidateQueries({ queryKey: ["collection-refunds"] }); queryClient.invalidateQueries({ queryKey: ["collection-payments"] }); },
-    onError: () => toast.error("Refund failed"),
+    onError: (e: Error) => toast.error(e.message || "Refund failed"),
   });
 
-  // Refund reason/mode live on the Refund record, which this endpoint does not
-  // expose — fall back to the payment's own notes/mode so rows stay meaningful.
-  const refunds = (data?.payments || []).map((p) => ({
-    id: p.id,
-    amount: p.amount,
-    status: p.status,
-    createdAt: p.createdAt,
-    receiptNumber: p.receiptNumber,
-    mode: p.paymentMode,
-    reason: p.notes,
-    subscriber: p.subscriber,
-  }));
-  const refundTotal = refunds.reduce((s, r) => s + (r.amount || 0), 0);
+  const refunds = data?.refunds || [];
+  const summary = data?.summary;
+  const refundTotal = summary?.totalRefunded ?? refunds.reduce((s, r) => s + (r.amount || 0), 0);
+  const processedCount = summary?.statusCounts?.find((s) => s.status === "PROCESSED")?.count ?? refunds.filter((r) => r.status === "PROCESSED").length;
+
+  const REFUND_STATUS_STYLES: Record<string, string> = {
+    PROCESSED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
+    PENDING: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
+    CANCELLED: "bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700",
+    FAILED: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900",
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3"><p className="text-sm text-muted-foreground">Processed refunds</p><Badge variant="outline" className="bg-orange-100 text-orange-700 border-orange-200">{formatINR(refundTotal)}</Badge></div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <p className="text-sm text-muted-foreground">Processed refunds</p>
+          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-900 font-semibold tabular-nums">{formatINR(refundTotal)}</Badge>
+          <Badge variant="outline" className="text-[10px] text-muted-foreground border-border">{processedCount} processed</Badge>
+        </div>
         <Dialog open={showRefund} onOpenChange={setShowRefund}>
           <DialogTrigger asChild><Button variant="outline" size="sm"><Undo2 className="h-4 w-4 mr-1" />Process Refund</Button></DialogTrigger>
-          <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Process Refund</DialogTitle></DialogHeader>
+          <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Process Refund</DialogTitle><DialogDescription>Refund a VERIFIED payment — the amount is credited back to the subscriber balance and the linked invoice is reversed.</DialogDescription></DialogHeader>
           <div className="grid gap-4 py-4">
             <div><Label className="text-xs">Payment Receipt #</Label><Input value={refundPaymentId} onChange={(e) => setRefundPaymentId(e.target.value)} placeholder="Enter receipt number" /></div>
             <div><Label className="text-xs">Amount (₹)</Label><Input type="number" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} /></div>
@@ -350,10 +374,19 @@ function RefundsSection() {
           </DialogContent>
         </Dialog>
       </div>
-      <Card className="border shadow-sm"><CardContent className="p-0"><div className="overflow-x-auto max-h-96 overflow-y-auto">
-        <Table><TableHeader><TableRow><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Receipt #</TableHead><TableHead className="text-xs">Subscriber</TableHead><TableHead className="text-xs text-right">Amount</TableHead><TableHead className="text-xs">Mode</TableHead><TableHead className="text-xs">Reason</TableHead><TableHead className="text-xs">Status</TableHead></TableRow></TableHeader>
-        <TableBody>{isLoading ? Array.from({ length: 3 }).map((_, i) => <TableRow key={i}><TableCell colSpan={8}><Skeleton className="skeleton-wave h-8" /></TableCell></TableRow>) : refunds.length === 0 ? <TableRow><TableCell colSpan={8} className="text-center py-10"><div className="flex flex-col items-center"><Undo2 className="h-8 w-8 text-muted-foreground/30 mb-2" /><p className="text-muted-foreground">No refunds processed</p></div></TableCell></TableRow> : refunds.map((r: any, i: number) => (
-          <TableRow key={r.id || i}><TableCell className="text-xs">{r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-IN") : "—"}</TableCell><TableCell className="font-mono text-xs">{r.receiptNumber || "—"}</TableCell><TableCell className="text-xs">{r.subscriber?.name || "—"}</TableCell><TableCell className="text-xs text-right font-semibold tabular-nums">{formatINR(r.amount || 0)}</TableCell><TableCell className="text-xs">{r.mode || "—"}</TableCell><TableCell className="text-xs text-muted-foreground max-w-[150px] truncate">{r.reason || "—"}</TableCell><TableCell><Badge variant="outline" className={`text-[10px] ${r.status === "PENDING" ? "bg-yellow-100 text-yellow-700" : r.status === "COMPLETED" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>{r.status}</Badge></TableCell></TableRow>
+      <Card className="border shadow-sm"><CardContent className="p-0"><div className="overflow-x-auto max-h-96 overflow-y-auto nice-scroll">
+        <Table><TableHeader><TableRow><TableHead className="text-xs">Date</TableHead><TableHead className="text-xs">Receipt #</TableHead><TableHead className="text-xs">Subscriber</TableHead><TableHead className="text-xs text-right">Amount</TableHead><TableHead className="text-xs">Refund Mode</TableHead><TableHead className="text-xs">Reason</TableHead><TableHead className="text-xs">Processed By</TableHead><TableHead className="text-xs">Status</TableHead></TableRow></TableHeader>
+        <TableBody>{isLoading ? Array.from({ length: 3 }).map((_, i) => <TableRow key={i}><TableCell colSpan={8}><Skeleton className="skeleton-wave h-8" /></TableCell></TableRow>) : refunds.length === 0 ? <TableRow><TableCell colSpan={8} className="text-center py-10"><div className="flex flex-col items-center"><Undo2 className="h-8 w-8 text-muted-foreground/30 mb-2" /><p className="text-muted-foreground">No refunds processed</p><p className="text-[11px] text-muted-foreground/70 mt-0.5">Refunds appear here once processed against VERIFIED payments</p></div></TableCell></TableRow> : refunds.map((r, i) => (
+          <TableRow key={r.id || i} className="transition-colors hover:bg-muted/40">
+            <TableCell className="text-xs whitespace-nowrap">{r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}</TableCell>
+            <TableCell className="font-mono text-xs">{r.payment?.receiptNumber || "—"}</TableCell>
+            <TableCell className="text-xs"><span className="font-medium">{r.payment?.subscriber?.name || "—"}</span>{r.payment?.subscriber?.code && <span className="text-muted-foreground ml-1.5 font-mono text-[10px]">{r.payment.subscriber.code}</span>}</TableCell>
+            <TableCell className="text-xs text-right font-semibold tabular-nums text-orange-600 dark:text-orange-400">{formatINR(r.amount || 0)}</TableCell>
+            <TableCell className="text-xs">{r.mode || "—"}</TableCell>
+            <TableCell className="text-xs text-muted-foreground max-w-[170px] truncate" title={r.reason || undefined}>{r.reason || "—"}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">{r.processedBy?.name || "System"}</TableCell>
+            <TableCell><Badge variant="outline" className={`text-[10px] font-medium ${REFUND_STATUS_STYLES[r.status] || "bg-gray-100 text-gray-500 border-gray-200"}`}>{r.status}</Badge></TableCell>
+          </TableRow>
         ))}</TableBody></Table>
       </div></CardContent></Card>
     </div>

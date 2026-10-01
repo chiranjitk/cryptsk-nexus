@@ -42,8 +42,8 @@ export async function GET(req: NextRequest) {
     // Build comparison data
     const comparison = allPlans.map((plan) => {
       const isCurrentPlan = plan.id === subscriber.planId;
-      const downloadMbps = plan.downloadSpeed / 1000; // Kbps to Mbps
-      const uploadMbps = plan.uploadSpeed / 1000;
+      const downloadMbps = plan.downloadSpeed; // plan speeds stored in Mbps (unit migration)
+      const uploadMbps = plan.uploadSpeed;
       const pricePerMbps =
         downloadMbps > 0 ? parseFloat((plan.priceMonthly / downloadMbps).toFixed(2)) : 0;
       const pricePerGb =

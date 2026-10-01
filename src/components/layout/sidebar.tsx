@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 
 // ─── Stable no-op subscribe for useSyncExternalStore ─────────
 const emptySubscribe = () => () => {};
@@ -95,6 +95,28 @@ export function AppSidebar() {
       return next;
     });
   };
+
+  // Auto-expand the group that owns the active page. Covers hash deep-links
+  // and reloads (e.g. /#Automation%20Jobs) where currentPage changes WITHOUT a
+  // sidebar click — previously the group stayed collapsed and the active item
+  // was invisible, leaving the sidebar highlight stranded on the old page.
+  useEffect(() => {
+    if (!currentPage) return;
+    setCollapsedGroups((prev) => {
+      const owner = navGroups.find((g) => g.items.some((item) => item.label === currentPage));
+      if (!owner || !prev.has(owner.id)) return prev;
+      const next = new Set(prev);
+      next.delete(owner.id);
+      return next;
+    });
+    // Bring the active item into view (group content renders after expansion)
+    const raf = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-nav-item='${CSS.escape(currentPage)}']`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [currentPage]);
 
   const handleNavClick = (item: NavItem, section: string) => {
     setCurrentPage(item.label, section);
@@ -206,6 +228,7 @@ export function AppSidebar() {
                                     tooltip={item.label}
                                     onClick={() => handleNavClick(item, group.id)}
                                     data-active={isActive ? "true" : undefined}
+                                    data-nav-item={item.label}
                                     className={cn(
                                       "group/nav cryptsk-nav-item h-8 rounded-md text-[13px]",
                                       isActive

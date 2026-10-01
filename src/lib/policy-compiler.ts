@@ -68,11 +68,11 @@ export interface PolicyInput {
   } | null;
   plan?: {
     name: string;
-    downloadSpeed: number; // Kbps
-    uploadSpeed: number; // Kbps
+    downloadSpeed: number; // Mbps (unit migration — converted to Kbps output below)
+    uploadSpeed: number; // Mbps
     dataLimitGb: number | null;
     maxConcurrentSessions: number;
-    burstSpeed?: number | null;
+    burstSpeed?: number | null; // Mbps
     burstDuration?: number | null;
     sessionTimeout?: number | null;
     group?: {
@@ -117,12 +117,14 @@ export function resolvePolicy(input: PolicyInput): ResolvedPolicy {
     });
   }
 
-  // Level 3: Plan itself
+  // Level 3: Plan itself — plan speeds are stored in Mbps since the unit
+  // migration; resolvePolicy's output contract is Kbps, so ×1000 to match
+  // level 1/2 (radiusGroup, also Mbps → ×1000).
   if (input.plan?.downloadSpeed) {
     chain.push({
       source: `plan (${input.plan.name})`,
-      speedDown: input.plan.downloadSpeed,
-      speedUp: input.plan.uploadSpeed,
+      speedDown: input.plan.downloadSpeed * 1000,
+      speedUp: (input.plan.uploadSpeed || 0) * 1000,
       dataLimitMb: input.plan.dataLimitGb ? Math.round(input.plan.dataLimitGb * 1024) : null,
       sessionTimeout: input.plan.sessionTimeout ?? null,
       idleTimeout: null,
@@ -158,8 +160,8 @@ export function resolvePolicy(input: PolicyInput): ResolvedPolicy {
     sessionTimeoutSec: effective.sessionTimeout,
     idleTimeoutSec: effective.idleTimeout,
     maxConcurrentSessions: input.plan?.maxConcurrentSessions ?? 1,
-    burstDownKbps: input.plan?.burstSpeed || undefined,
-    burstUpKbps: input.plan?.burstSpeed || undefined,
+    burstDownKbps: input.plan?.burstSpeed ? input.plan.burstSpeed * 1000 : undefined, // Mbps → Kbps
+    burstUpKbps: input.plan?.burstSpeed ? input.plan.burstSpeed * 1000 : undefined,
     burstDurationSec: input.plan?.burstDuration || undefined,
     chain,
   };

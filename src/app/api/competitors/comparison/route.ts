@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     const comparisonMatrix = tiers.map(tier => {
       // Find our plans in this tier
       const ourPlansInTier = ourPlans.filter(p => {
-        const mbps = p.downloadSpeed / 1000; // Kbps to Mbps
+        const mbps = p.downloadSpeed; // plan speeds stored in Mbps (unit migration)
         return mbps >= tier.min && mbps <= tier.max;
       });
 
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
 
       // Value scores (price per Mbps)
       const ourAvgMbps = ourPlansInTier.length > 0
-        ? ourPlansInTier.reduce((s, p) => s + p.downloadSpeed / 1000, 0) / ourPlansInTier.length
+        ? ourPlansInTier.reduce((s, p) => s + p.downloadSpeed, 0) / ourPlansInTier.length
         : 0;
       const ourValueScore = ourAvgPrice > 0 && ourAvgMbps > 0 ? ourAvgPrice / ourAvgMbps : 0;
 
@@ -120,11 +120,11 @@ export async function GET(request: NextRequest) {
           id: p.id,
           name: p.name,
           category: p.category,
-          downloadSpeed: p.downloadSpeed / 1000,
-          uploadSpeed: p.uploadSpeed / 1000,
+          downloadSpeed: p.downloadSpeed,
+          uploadSpeed: p.uploadSpeed,
           price: p.priceMonthly,
           dataLimitGb: p.dataLimitGb,
-          valueScore: p.downloadSpeed > 0 ? (p.priceMonthly / (p.downloadSpeed / 1000)) : 0,
+          valueScore: p.downloadSpeed > 0 ? (p.priceMonthly / p.downloadSpeed) : 0,
         })),
         ourAvgPrice: Math.round(ourAvgPrice),
         ourMinPrice: Math.round(ourMinPrice),
@@ -189,11 +189,11 @@ export async function GET(request: NextRequest) {
         id: p.id,
         name: p.name,
         category: p.category,
-        downloadSpeed: p.downloadSpeed / 1000,
-        uploadSpeed: p.uploadSpeed / 1000,
+        downloadSpeed: p.downloadSpeed,
+        uploadSpeed: p.uploadSpeed,
         price: p.priceMonthly,
         dataLimitGb: p.dataLimitGb,
-        valueScore: p.downloadSpeed > 0 ? (p.priceMonthly / (p.downloadSpeed / 1000)) : 0,
+        valueScore: p.downloadSpeed > 0 ? (p.priceMonthly / p.downloadSpeed) : 0,
       })),
       competitors: competitorNames.map(name => {
         const plans = competitorPlans.filter(c => c.name === name);
