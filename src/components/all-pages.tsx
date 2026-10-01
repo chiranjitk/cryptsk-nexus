@@ -143,6 +143,11 @@ import ApiKeysPage from '@/components/pages/api-keys-page';
 import AuditLogPage from '@/components/pages/audit-log-page';
 import BackupPage from '@/components/pages/backup-page';
 import IntegrationsPage from '@/components/pages/integrations-page';
+import AlertCenterPage from '@/components/pages/alert-center-page';
+import AlertRulesPage from '@/components/pages/alert-rules-page';
+import AlertSuppressionsPage from '@/components/pages/alert-suppressions-page';
+import AlertHistoryPage from '@/components/pages/alert-history-page';
+import NotificationRulesPage from '@/components/pages/notification-rules-page';
 import PaymentGatewaysPage from '@/components/pages/payment-gateways-page';
 import SmsGatewayPage from '@/components/pages/sms-gateway-page';
 import EmailGatewayPage from '@/components/pages/email-gateway-page';
@@ -304,6 +309,11 @@ export const ALL_PAGES: Record<string, React.ComponentType> = {
   'WhatsApp & Push': WhatsappPushPage,
   'Webhooks': WebhooksPage,
   'Integration Logs': IntegrationLogsPage,
+  'Alert Center': AlertCenterPage,
+  'Alert Rules': AlertRulesPage,
+  'Suppressions': AlertSuppressionsPage,
+  'Alert History': AlertHistoryPage,
+  'Notification Rules': NotificationRulesPage,
   KnowledgeBase: KnowledgeBasePage,
   ModuleManager: ModuleManagerPage,
   IspProfile: IspProfilePage,
