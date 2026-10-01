@@ -248,5 +248,32 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+
+    // ─── 14. Captive Redirect Service (Port 8888 / 8443) ────
+    // High-performance captive portal HTTP/HTTPS redirect server.
+    // nftables REDIRECT :80 → :8888, :443 → :8443
+    {
+      name: 'cryptsk-captive-redirect',
+      script: 'index.ts',
+      interpreter: 'bun',
+      cwd: '/home/z/my-project/mini-services/captive-redirect',
+      env: {
+        PORT: '8888',
+        HTTPS_PORT: '8443',
+        PORTAL_PORT: '3000',
+        PORTAL_SCHEME: 'http',
+        REDIRECT_PATH: '/connect',
+        DATABASE_URL: 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus',
+        WISPR_LOCATION_NAME: 'CRYPTSK Hotspot',
+      },
+      watch: false,
+      restart_delay: 5000,
+      max_restarts: 30,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      error_file: '/home/z/my-project/.logs/captive-redirect-error.log',
+      out_file: '/home/z/my-project/.logs/captive-redirect-out.log',
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

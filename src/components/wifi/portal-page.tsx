@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { formatBytes } from '@/lib/utils/format';
+import { formatBytes } from '@/lib/format-utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -897,8 +897,8 @@ async function apiMutate<T>(url: string, options?: RequestInit): Promise<{ data:
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function PortalPage() {
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const [activeTab, setActiveTab] = useState<TabId>('portals');
   const [portalOptions, setPortalOptions] = useState<Array<{ id: string; name: string }>>([]);
   const activeTabRef = useRef<HTMLButtonElement>(null);
@@ -975,7 +975,7 @@ interface PortalZone {
   name: string;
   slug: string;
   partnerId: string;
-  propertyName: string;
+  partnerName: string;
   enabled: boolean;
   isDefault: boolean;
   autoAuthEnabled: boolean;
@@ -985,7 +985,7 @@ interface PortalZone {
   bandwidthPolicy: string;
   nasIdentifier: string;
   ssidList: string[];
-  _count: { portalMappings: number; authMethods: number; portalPages: number };
+  _count: { PortalMapping: number; PortalAuthentication: number; PortalPage: number };
 }
 
 const EMPTY_ZONE = {
@@ -1040,7 +1040,7 @@ function ZoneFormContent({ form, setForm, zones, editZone, ssidInput, setSsidInp
       {/* Partner Selector */}
       {properties.length > 1 && (
         <div className="space-y-2">
-          <Label>Partner</Label>
+          <Label>Property</Label>
           <Select
             value={form.partnerId || globalPropertyId || ''}
             onValueChange={v => setForm(f => ({ ...f, partnerId: v }))}
@@ -1060,7 +1060,7 @@ function ZoneFormContent({ form, setForm, zones, editZone, ssidInput, setSsidInp
       {properties.length <= 1 && properties.length > 0 && (
         <div className="rounded-lg border border-dashed p-3 bg-muted/30">
           <p className="text-xs text-muted-foreground">
-            Partner: <span className="font-medium text-foreground">{properties[0]?.name || 'Default'}</span>
+            Property: <span className="font-medium text-foreground">{properties[0]?.name || 'Default'}</span>
             {properties.length === 1 && ' — Only one property available. Add more properties in Settings to enable per-property zone assignment.'}
           </p>
         </div>
@@ -1172,8 +1172,8 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
   const canManage = hasPermission('wifi.manage');
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const [properties, setProperties] = useState<Array<{ id: string; name: string }>>([]);
   // P0-2 fix: confirmation state before deleting a portal zone (destructive cascade).
   const [zoneToDelete, setZoneToDelete] = useState<PortalZone | null>(null);
@@ -1188,7 +1188,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
     if (data) {
       setZones(data.map((p: any) => ({
         id: p.id, name: p.name, slug: p.slug || '',
-        partnerId: p.partnerId || '', propertyName: p.partner?.name || '',
+        partnerId: p.partnerId || '', partnerName: p.property?.name || '',
         enabled: p.enabled ?? true, isDefault: p.isDefault ?? false,
         autoAuthEnabled: p.autoAuthEnabled ?? true,
         authMethod: p.authMethod || 'voucher', roamingMode: p.roamingMode || 'auth_origin',
@@ -1196,7 +1196,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
         bandwidthPolicy: p.bandwidthPolicy || 'zone',
         nasIdentifier: p.nasIdentifier || '',
         ssidList: JSON.parse(p.ssidList || '[]'),
-        _count: p._count || { portalMappings: 0, authMethods: 0, portalPages: 0 },
+        _count: p._count || { PortalMapping: 0, PortalAuthentication: 0, PortalPage: 0 },
       })));
     }
     setLoading(false);
@@ -1303,7 +1303,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
           nasIdentifier: zone.nasIdentifier,
           ssidList: zone.ssidList,
           autoAuthEnabled: zone.autoAuthEnabled,
-          propertyName: zone.propertyName,
+          partnerName: zone.partnerName,
         },
       };
       if (detailData) {
@@ -1390,7 +1390,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
     });
     if (!error) { toast({ title: 'Zone created', description: `${form.name} — /${form.slug}` }); await fetchPortals(); onPortalsChanged?.(); setAddOpen(false); }
     else {
-      const hint = error.includes('property') || error.includes('Partner')
+      const hint = error.includes('property') || error.includes('Property')
         ? ' — Please select a property from the top-right dropdown or create one in Settings first.'
         : '';
       toast({ title: 'Error', description: (error || 'Failed') + hint, variant: 'destructive' });
@@ -1471,7 +1471,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
 
       {/* Header */}
       <div className="flex items-center justify-between">
-          <PropertySelector value={propertyFilter} onValueChange={setPropertyFilter} />
+          <PropertySelector value={partnerFilter} onValueChange={setPropertyFilter} />
         <div>
           <p className="text-sm text-muted-foreground">{zones.length} zone{zones.length !== 1 ? 's' : ''} configured
             {roamingZones.length > 0 && <span className="ml-2 text-blue-600 dark:text-blue-400">· {roamingZones.length} seamless roaming</span>}
@@ -1486,7 +1486,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
         {zones.map(zone => {
           const authDef = AUTH_METHODS.find(a => a.value === zone.authMethod);
           const roamingDefs = zone.allowsRoamingFrom.map(slug => zones.find(z => z.slug === slug)).filter(Boolean) as PortalZone[];
-          const propertyInitial = (zone.propertyName || zone.name).charAt(0).toUpperCase();
+          const propertyInitial = (zone.partnerName || zone.name).charAt(0).toUpperCase();
           return (
             <Card key={zone.id} className={cn(
               'relative overflow-hidden bg-gradient-to-br from-white to-gray-50 dark:from-gray-900 dark:to-gray-950',
@@ -1541,7 +1541,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
                   )}>
                     {zone.enabled ? <><CheckCircle2 className="h-3 w-3" /> Active</> : <><XCircle className="h-3 w-3" /> Inactive</>}
                   </Badge>
-                  {zone.propertyName && <Badge variant="outline" className="text-[10px] border-teal-300 text-teal-700 dark:border-teal-700 dark:text-teal-400">🏢 {zone.propertyName}</Badge>}
+                  {zone.partnerName && <Badge variant="outline" className="text-[10px] border-teal-300 text-teal-700 dark:border-teal-700 dark:text-teal-400">🏢 {zone.partnerName}</Badge>}
                   {authDef && <Badge variant="secondary" className={cn('text-[10px]', authDef.color)}>{authDef.label}</Badge>}
                   <Badge variant={zone.autoAuthEnabled ? 'outline' : 'secondary'} className={cn('text-[10px]', zone.autoAuthEnabled ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
                     {zone.autoAuthEnabled ? '🔄 Auto-Reauth' : '🔒 No Auto-Reauth'}
@@ -1812,8 +1812,8 @@ function PortalDesignerTab({ portalOptions }: { portalOptions: Array<{ id: strin
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
   const canManage = hasPermission('wifi.manage');
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const [selectedPortalId, setSelectedPortalId] = useState<string>(portalOptions[0]?.id || '');
   const [aaaConfig, setAaaConfig] = useState<AaaConfig | null>(null);
   const [credentialCategory, setCredentialCategory] = useState<CredentialCategory>('custom');
@@ -4338,8 +4338,8 @@ function VoucherDesignerTab({ portalOptions }: { portalOptions: Array<{ id: stri
   const [selectedGuest, setSelectedGuest] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [guests, setGuests] = useState<any[]>([]);
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const { toast } = useToast();
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
@@ -4846,8 +4846,8 @@ const ALL_AUTH_METHOD_OPTIONS = [
 ];
 
 function AuthMethodsTab() {
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const { toast } = useToast();
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
@@ -6010,8 +6010,8 @@ function AnalyticsTab() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AnalyticsOverview() {
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('today');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -6363,8 +6363,8 @@ function AnalyticsOverview() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AnalyticsLiveMonitor() {
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const REFRESH_INTERVAL = 10000; // 10s
   const [liveStats, setLiveStats] = useState<{
     totalActive: number;
@@ -6742,8 +6742,8 @@ function AnalyticsLiveMonitor() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AnalyticsAuthInsights() {
-  const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const [partnerFilter, setPropertyFilter] = useState<string>('all');
+  const partnerId = partnerFilter !== 'all' ? partnerFilter : undefined;
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('today');
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{

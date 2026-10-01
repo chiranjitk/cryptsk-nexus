@@ -530,7 +530,7 @@ model CaptivePortal {
   id                                                            String               @id @default(uuid())
   name                                                          String
   description                                                   String               @default("")
-  template                                                      PortalTemplate       @default(ISP_DEFAULT)
+  template                                                      PortalTemplate?
   loginMethod                                                   PortalLoginMethod    @default(RADIUS)
   theme                                                         String?
   welcomeTitle                                                  String               @default("Welcome")
@@ -570,6 +570,30 @@ model CaptivePortal {
   priority                                                      Int                  @default(0)
   scheduleConfig                                                String?
   enabled                                                       Boolean              @default(false)
+  // ── StaySuite captive portal engine fields (added for portal-page.tsx) ──
+  listenIp                                                      String               @default("0.0.0.0")
+  listenPort                                                    Int                  @default(80)
+  useSsl                                                        Boolean              @default(false)
+  sslCertPath                                                   String?
+  sslKeyPath                                                    String?
+  isDefault                                                     Boolean              @default(false)
+  autoAuthEnabled                                               Boolean              @default(true)
+  maxConcurrent                                                 Int                  @default(1000)
+  sessionTimeout                                                Int                  @default(86400)
+  idleTimeout                                                   Int                  @default(3600)
+  failMessage                                                   String?
+  slug                                                          String               @unique @default("default-zone")
+  roamingMode                                                   String               @default("auth_origin")
+  allowsRoamingFrom                                             String               @default("[]")
+  authMethod                                                    String               @default("voucher")
+  maxBandwidthDown                                              Int                  @default(5242880)
+  maxBandwidthUp                                                Int                  @default(1048576)
+  bandwidthPolicy                                               String               @default("zone")
+  nasIdentifier                                                 String               @default("")
+  ssidList                                                      String               @default("[]")
+  captchaEnabled                                                Boolean              @default(false)
+  captchaSiteKey                                                String?
+  captchaSecretKey                                              String?
   createdAt                                                     DateTime             @default(now())
   updatedAt DateTime @updatedAt
   SystemInterface                                               SystemInterface?     @relation(fields: [interfaceId], references: [id])
@@ -587,6 +611,13 @@ model CaptivePortal {
   PortalVoucherPool                                             PortalVoucherPool[]
   Subnet                                                        Subnet[]
   PartnerPortalMapping                                           PartnerPortalMapping[]
+  // ── StaySuite portal engine relations ──
+  PortalAuthentication                                          PortalAuthentication[]
+  PortalMapping                                                 PortalMapping[]
+  PortalMappingFallback                                         PortalMapping[] @relation("PortalMappingFallback")
+  PortalPage                                                    PortalPage[]
+  PortalABTest                                                  PortalABTest[]
+  PortalDnsRecord                                               PortalDnsRecord[]
 
   @@index([enabled])
   @@index([interfaceId])
@@ -5719,4 +5750,309 @@ enum WidgetCategory {
   SUBSCRIBER
   SYSTEM
   CUSTOM
+}
+
+// ============================================================
+// CAPTIVE PORTAL ENGINE (StaySuite captive portal — adapted)
+// property → partner, tenant removed, DNS models prefixed Portal*
+// ============================================================
+
+/// PortalAuthentication — Auth methods per portal instance
+model PortalAuthentication {
+  id            String        @id @default(uuid())
+  partnerId     String?
+  portalId      String
+  method        String        @default("voucher") // voucher, room_number, pms_credentials, sms_otp, social, mac_auth, open
+  enabled       Boolean       @default(true)
+  priority      Int           @default(0)
+  config        String        @default("{}") // JSON: method-specific settings
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  CaptivePortal CaptivePortal @relation(fields: [portalId], references: [id], onDelete: Cascade)
+
+  @@unique([portalId, method])
+  @@index([partnerId])
+  @@index([portalId])
+}
+
+/// PortalMapping — Maps portal instance to subnet/VLAN/SSID
+model PortalMapping {
+  id               String        @id @default(uuid())
+  partnerId        String?
+  portalId         String
+  vlanId           Int?
+  vlanConfigId     String?
+  ssid             String?
+  subnet           String?
+  priority         Int           @default(0)
+  fallbackPortalId String?
+  enabled          Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  CaptivePortal    CaptivePortal @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  FallbackPortal   CaptivePortal? @relation("PortalMappingFallback", fields: [fallbackPortalId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId])
+  @@index([portalId])
+  @@index([ssid])
+  @@index([enabled])
+}
+
+/// PortalPage — Portal page design/styling per portal instance
+model PortalPage {
+  id              String                @id @default(uuid())
+  portalId        String
+  language        String                @default("en")
+  title           String?
+  subtitle        String?
+  logoUrl         String?
+  backgroundImage String?
+  backgroundColor String                @default("#ffffff")
+  textColor       String                @default("#1f2937")
+  accentColor     String                @default("#0d9488")
+  termsText       String?
+  termsUrl        String?
+  customCss       String                @default("")
+  customHtml      String                @default("")
+  showSocial      Boolean               @default(false)
+  showBranding    Boolean               @default(true)
+  // Portal Login Page field visibility — synced from credential policy
+  formFields      String                @default("{\"username\":true,\"password\":true,\"roomNumber\":false,\"phone\":false,\"voucherCode\":false,\"terms\":true}")
+  authFlow        String                @default("pms_credentials") // pms_credentials | room_number | voucher | sms_otp | open_access
+  socialProviders String                @default("{\"google\":false,\"facebook\":false,\"apple\":false}")
+  voucherTemplate String                @default("default") // default | elegant | minimal | luxury
+  // Advanced design settings (JSON): layout, gradient, typography, form style, content blocks, social links, etc.
+  designSettings  String                @default("{}")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  CaptivePortal   CaptivePortal         @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  designHistory   PortalDesignHistory[]
+
+  @@unique([portalId, language])
+  @@index([portalId])
+}
+
+/// PortalDesignHistory — Design snapshots for versioning/rollback
+model PortalDesignHistory {
+  id             String      @id @default(cuid())
+  portalId       String
+  portalPageId   String?
+  name           String
+  description    String?
+  designSettings Json
+  createdBy      String?
+  createdAt      DateTime    @default(now())
+  PortalPage     PortalPage? @relation(fields: [portalPageId], references: [id], onDelete: Cascade)
+
+  @@index([portalId, createdAt(sort: Desc)])
+}
+
+/// PortalDesignTemplate — Reusable portal design templates
+/// (Renamed from StaySuite's PortalTemplate to avoid conflict with the existing PortalTemplate enum.)
+model PortalDesignTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  category    String   @default("hotel") // hotel, resort, corporate, minimal, cafe, airport
+  thumbnail   String?
+  htmlContent String
+  cssContent  String
+  isBuiltIn   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+}
+
+/// PortalWhitelist — Captive portal bypass URLs
+model PortalWhitelist {
+  id          String   @id @default(uuid())
+  partnerId   String?
+  domain      String
+  path        String? // null = all paths
+  description String?
+  protocol    String   @default("https") // http, https, both
+  bypassAuth  Boolean  @default(true)
+  priority    Int      @default(0)
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([domain, path])
+  @@index([partnerId])
+  @@index([domain])
+  @@index([status])
+}
+
+/// PortalABTest — A/B testing for portal designs
+model PortalABTest {
+  id           String    @id @default(cuid())
+  portalId     String
+  name         String
+  designA      Json
+  designB      Json
+  trafficSplit Int       @default(50)
+  status       String    @default("active") // active | paused | stopped
+  conversionsA Int       @default(0)
+  conversionsB Int       @default(0)
+  impressionsA Int       @default(0)
+  impressionsB Int       @default(0)
+  startDate    DateTime  @default(now())
+  endDate      DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  CaptivePortal CaptivePortal @relation(fields: [portalId], references: [id], onDelete: Cascade)
+
+  @@index([portalId])
+  @@index([portalId, status])
+}
+
+/// PortalAdCampaign — Ad campaigns for captive portal
+model PortalAdCampaign {
+  id           String    @id @default(uuid())
+  partnerId    String?
+  name         String
+  advertiser   String
+  creativeUrl  String
+  creativeType String    @default("image") // image, video, html
+  linkUrl      String?
+  slot         String    @default("banner") // banner, interstitial, footer, sidebar
+  priority     Int       @default(0)
+  impressions  Int       @default(0)
+  clicks       Int       @default(0)
+  revenue      Float     @default(0)
+  status       String    @default("active") // draft, active, paused, completed
+  startDate    DateTime  @default(now())
+  endDate      DateTime?
+  maxBudget    Float?
+  spentBudget  Float     @default(0)
+  targeting    String?   @default("{}") // JSON: { guestType, roomType, language, etc. }
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([partnerId])
+  @@index([status])
+  @@index([startDate, endDate])
+}
+
+/// WiFiSession — Guest WiFi session tracking (for portal analytics)
+model WiFiSession {
+  id           String    @id @default(uuid())
+  planId       String?
+  username     String?
+  acctUniqueId String?
+  macAddress   String?
+  ipAddress    String?
+  deviceName   String?
+  deviceType   String?
+  startTime    DateTime  @default(now())
+  endTime      DateTime?
+  dataUsed     BigInt    @default(0)
+  duration     Int       @default(0)
+  authMethod   String    @default("voucher")
+  status       String    @default("active")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([macAddress])
+  @@index([username])
+  @@index([acctUniqueId])
+  @@index([planId])
+  @@index([status])
+}
+
+/// WiFiVoucher — Voucher codes for WiFi access
+model WiFiVoucher {
+  id         String    @id @default(uuid())
+  planId     String?
+  code       String    @unique
+  isUsed     Boolean   @default(false)
+  usedAt     DateTime?
+  validFrom  DateTime  @default(now())
+  validUntil DateTime?
+  status     String    @default("active")
+  notes      String?
+  issuedTo   String?
+  issuedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([code])
+  @@index([status])
+}
+
+/// PortalDnsZone — DNS zone for captive portal (renamed from StaySuite's DnsZone)
+model PortalDnsZone {
+  id          String      @id @default(uuid())
+  partnerId   String?
+  domain      String
+  description String?
+  vlanId      Int?
+  enabled     Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  records     PortalDnsRecord[]
+
+  @@unique([domain])
+  @@index([partnerId])
+}
+
+/// PortalDnsRecord — DNS record for captive portal zone (renamed from StaySuite's DnsRecord)
+model PortalDnsRecord {
+  id        String   @id @default(uuid())
+  zoneId    String
+  portalId  String?
+  name      String
+  type      String   @default("A") // A, AAAA, CNAME, MX, TXT, SRV, PTR
+  value     String
+  ttl       Int      @default(300)
+  priority  Int?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  PortalDnsZone PortalDnsZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  CaptivePortal CaptivePortal? @relation(fields: [portalId], references: [id], onDelete: SetNull)
+
+  @@unique([zoneId, name, type])
+  @@index([zoneId])
+  @@index([portalId])
+}
+
+/// PortalDnsRedirect — DNS-based captive portal redirect rule (renamed from StaySuite's DnsRedirectRule)
+model PortalDnsRedirect {
+  id           String   @id @default(uuid())
+  partnerId    String?
+  name         String
+  matchPattern String
+  targetIp     String
+  targetUrl    String?
+  autoDnsmasq  Boolean  @default(true)
+  applyTo      String   @default("unauthenticated")
+  priority     Int      @default(0)
+  enabled      Boolean  @default(true)
+  description  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([partnerId])
+  @@index([enabled])
+  @@index([priority])
+}
+
+/// PortalWalledGarden — Walled garden entries (allowed without auth) for captive portal
+model PortalWalledGarden {
+  id          String   @id @default(uuid())
+  partnerId   String?
+  domain      String
+  path        String?
+  protocol    String   @default("https")
+  description String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([domain, path])
+  @@index([partnerId])
+  @@index([domain])
+  @@index([enabled])
 }

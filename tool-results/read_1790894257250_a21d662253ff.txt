@@ -1,0 +1,2002 @@
+     1→generator client {
+     2→  provider = "prisma-client-js"
+     3→}
+     4→
+     5→datasource db {
+     6→  provider = "postgresql"
+     7→  url      = env("DATABASE_URL")
+     8→}
+     9→
+    10→model AddOnService {
+    11→  id              String            @id @default(uuid())
+    12→  name            String            @unique
+    13→  description     String            @default("")
+    14→  chargeType      AddOnChargeType   @default(FLAT)
+    15→  chargeValue     Float             @default(0)
+    16→  validityDays    Int               @default(30)
+    17→  dataMb          Float?
+    18→  isActive        Boolean           @default(true)
+    19→  sortOrder       Int               @default(0)
+    20→  createdAt       DateTime          @default(now())
+    21→  updatedAt DateTime @updatedAt
+    22→  SubscriberAddOn SubscriberAddOn[]
+    23→
+    24→  @@index([isActive])
+    25→  @@index([sortOrder])
+    26→}
+    27→
+    28→model AgentFollowUp {
+    29→  id           String    @id @default(uuid())
+    30→  agentId      String
+    31→  subscriberId String?
+    32→  type         String    @default("GENERAL")
+    33→  notes        String    @default("")
+    34→  dueDate      DateTime?
+    35→  status       String    @default("PENDING")
+    36→  createdAt    DateTime  @default(now())
+    37→
+    38→  @@index([agentId])
+    39→  @@index([dueDate])
+    40→  @@index([status])
+    41→}
+    42→
+    43→model AgentReconciliation {
+    44→  id              String   @id @default(uuid())
+    45→  agentId         String
+    46→  date            DateTime
+    47→  expectedAmount  Float    @default(0)
+    48→  collectedAmount Float    @default(0)
+    49→  difference      Float    @default(0)
+    50→  status          String   @default("PENDING")
+    51→  reconciledBy    String?
+    52→  createdAt       DateTime @default(now())
+    53→
+    54→  @@index([agentId])
+    55→  @@index([date])
+    56→  @@index([status])
+    57→}
+    58→
+    59→model AlertComment {
+    60→  id           String       @id @default(uuid())
+    61→  alertId      String
+    62→  userId       String
+    63→  message      String
+    64→  createdAt    DateTime     @default(now())
+    65→  updatedAt DateTime @updatedAt
+    66→  NetworkAlert NetworkAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+    67→  User         User         @relation(fields: [userId], references: [id])
+    68→
+    69→  @@index([alertId])
+    70→  @@index([userId])
+    71→}
+    72→
+    73→model AlertRule {
+    74→  id                         String             @id @default(uuid())
+    75→  name                       String
+    76→  condition                  String             @default("")
+    77→  threshold                  Float              @default(0)
+    78→  severity                   String             @default("MEDIUM")
+    79→  notifyChannels             String?
+    80→  cooldownMinutes            Int                @default(5)
+    81→  enabled                    Boolean            @default(true)
+    82→  escalationEnabled          Boolean            @default(false)
+    83→  escalationLevels           String?
+    84→  autoEscalate               Boolean            @default(false)
+    85→  escalationIntervalMinutes  Int                @default(30)
+    86→  maxSeverity                String             @default("CRITICAL")
+    87→  deduplicationWindowMinutes Int                @default(10)
+    88→  createdAt                  DateTime           @default(now())
+    89→  updatedAt DateTime @updatedAt
+    90→  AlertSuppression           AlertSuppression[]
+    91→  NetworkAlert               NetworkAlert[]
+    92→
+    93→  @@index([enabled])
+    94→}
+    95→
+    96→model AlertSuppression {
+    97→  id           String     @id @default(uuid())
+    98→  alertRuleId  String?
+    99→  reason       String     @default("")
+   100→  suppressedBy String     @default("")
+   101→  startsAt     DateTime   @default(now())
+   102→  endsAt       DateTime?
+   103→  createdAt    DateTime   @default(now())
+   104→  updatedAt DateTime @updatedAt
+   105→  AlertRule    AlertRule? @relation(fields: [alertRuleId], references: [id])
+   106→
+   107→  @@index([alertRuleId])
+   108→  @@index([endsAt])
+   109→  @@index([startsAt])
+   110→}
+   111→
+   112→model Announcement {
+   113→  id          String    @id @default(uuid())
+   114→  title       String
+   115→  message     String
+   116→  type        String    @default("INFO")
+   117→  priority    Int       @default(0)
+   118→  target      String    @default("ALL")
+   119→  channels    String    @default("IN_APP")
+   120→  expiresAt   DateTime?
+   121→  isActive    Boolean   @default(true)
+   122→  createdById String?
+   123→  createdAt   DateTime  @default(now())
+   124→  updatedAt DateTime @updatedAt
+   125→
+   126→  @@index([createdAt])
+   127→  @@index([isActive])
+   128→  @@index([priority])
+   129→  @@index([target])
+   130→  @@index([type])
+   131→}
+   132→
+   133→model AnnouncementDismissal {
+   134→  id             String   @id @default(uuid())
+   135→  announcementId String
+   136→  userId         String
+   137→  createdAt      DateTime @default(now())
+   138→
+   139→  @@unique([announcementId, userId])
+   140→  @@index([announcementId])
+   141→  @@index([userId])
+   142→}
+   143→
+   144→model ApiKey {
+   145→  id                String    @id @default(uuid())
+   146→  name              String
+   147→  key               String    @unique
+   148→  userId            String?
+   149→  scopes            String?
+   150→  lastUsedAt        DateTime?
+   151→  lastUsedUserAgent String    @default("")
+   152→  requestCount      Int       @default(0)
+   153→  requestsPerMinute Int       @default(60)
+   154→  requestsPerDay    Int       @default(1000)
+   155→  autoExpiryDays    Int       @default(0)
+   156→  expiresAt         DateTime?
+   157→  lastRotatedAt     DateTime?
+   158→  ipWhitelist       String    @default("")
+   159→  status            String    @default("active")
+   160→  createdAt         DateTime  @default(now())
+   161→  updatedAt DateTime @updatedAt
+   162→
+   163→  @@index([key])
+   164→  @@index([status])
+   165→}
+   166→
+   167→model Area {
+   168→  id                       String                     @id @default(uuid())
+   169→  name                     String
+   170→  code                     String                     @unique
+   171→  description              String                     @default("")
+   172→  parentId                 String?
+   173→  assignedTechnicianId     String?
+   174→  assignedAgentId          String?
+   175→  latitude                 Float?
+   176→  longitude                Float?
+   177→  status                   AreaStatus                 @default(ACTIVE)
+   178→  sortOrder                Int                        @default(0)
+   179→  polygonBoundary          String?
+   180→  createdAt                DateTime                   @default(now())
+   181→  updatedAt DateTime @updatedAt
+   182→  CollectionAgent          CollectionAgent?           @relation(fields: [assignedAgentId], references: [id])
+   183→  Technician               Technician?                @relation(fields: [assignedTechnicianId], references: [id])
+   184→  Area                     Area?                      @relation("AreaToArea", fields: [parentId], references: [id])
+   185→  other_Area               Area[]                     @relation("AreaToArea")
+   186→  AreaBudgetLimit          AreaBudgetLimit[]
+   187→  CaptivePortal            CaptivePortal[]
+   188→  Complaint                Complaint[]
+   189→  Installation             Installation[]
+   190→  NetworkDevice            NetworkDevice[]
+   191→  RecurringInvoiceTemplate RecurringInvoiceTemplate[]
+   192→  Subnet                   Subnet[]
+   193→  Subscriber               Subscriber[]
+   194→  ProvisioningTemplate     ProvisioningTemplate[]
+   195→
+   196→  @@index([assignedAgentId])
+   197→  @@index([assignedTechnicianId])
+   198→  @@index([parentId])
+   199→  @@index([status])
+   200→}
+   201→
+   202→model AreaBudgetLimit {
+   203→  id             String           @id @default(uuid())
+   204→  areaId         String
+   205→  cycleType      BillingCycleType @default(MONTHLY)
+   206→  allottedAmount Float            @default(0)
+   207→  usedAmount     Float            @default(0)
+   208→  cycleStartDate DateTime
+   209→  cycleEndDate   DateTime?
+   210→  alertThreshold Float            @default(80)
+   211→  status         String           @default("active")
+   212→  createdAt      DateTime         @default(now())
+   213→  updatedAt DateTime @updatedAt
+   214→  Area           Area             @relation(fields: [areaId], references: [id], onDelete: Cascade)
+   215→
+   216→  @@index([areaId])
+   217→  @@index([cycleStartDate])
+   218→}
+   219→
+   220→model AttendanceRecord {
+   221→  id           String     @id @default(uuid())
+   222→  technicianId String
+   223→  date         DateTime
+   224→  checkIn      DateTime?
+   225→  checkOut     DateTime?
+   226→  status       String     @default("PRESENT")
+   227→  notes        String     @default("")
+   228→  createdAt    DateTime   @default(now())
+   229→  Technician   Technician @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+   230→
+   231→  @@unique([technicianId, date])
+   232→  @@index([date])
+   233→  @@index([technicianId])
+   234→}
+   235→
+   236→model AuditLog {
+   237→  id             String    @id @default(uuid())
+   238→  userId         String?
+   239→  userName       String    @default("System")
+   240→  action         String
+   241→  entity         String
+   242→  entityId       String
+   243→  details        String?
+   244→  previousValues String?
+   245→  endpoint       String    @default("")
+   246→  method         String    @default("")
+   247→  ipAddress      String    @default("")
+   248→  userAgent      String    @default("")
+   249→  timestamp      DateTime  @default(now())
+   250→  isArchived     Boolean   @default(false)
+   251→  archivedAt     DateTime?
+   252→  User           User?     @relation(fields: [userId], references: [id])
+   253→
+   254→  @@index([action, entity, timestamp])
+   255→  @@index([endpoint])
+   256→  @@index([entityId])
+   257→  @@index([entity])
+   258→  @@index([entity, timestamp])
+   259→  @@index([timestamp])
+   260→  @@index([userId])
+   261→  @@index([userName])
+   262→}
+   263→
+   264→// ============================================================
+   265→// PHASE 1 — DB-backed RBAC + Feature Flags + Licensing + Module State
+   266→// Added per docs/architecture/12_IMPLEMENTATION_PHASE_ROADMAP.md Phase 1
+   267→// These complement v1's existing enum-based UserRole + hardcoded ROLE_PERMISSIONS
+   268→// (which remain as the default roles; the DB-backed models allow custom role
+   269→//  management + per-tenant feature flags + license enforcement).
+   270→// ============================================================
+   271→
+   272→model Role {
+   273→  id           String   @id @default(uuid())
+   274→  name         String   @unique
+   275→  slug         String   @unique
+   276→  description  String   @default("")
+   277→  isSystem     Boolean  @default(false)  // System roles can't be deleted
+   278→  isBreakGlass Boolean  @default(false)  // Break-glass role (emergency access)
+   279→  sortOrder    Int      @default(0)
+   280→  createdAt    DateTime @default(now())
+   281→  updatedAt    DateTime @updatedAt
+   282→  userAssignments UserRoleAssignment[]
+   283→  permissions  RolePermission[]
+   284→
+   285→  @@index([slug])
+   286→  @@index([sortOrder])
+   287→}
+   288→
+   289→model Permission {
+   290→  id          String   @id @default(uuid())
+   291→  resource    String   // e.g., "subscribers", "plans", "users"
+   292→  action      String   // e.g., "read", "create", "update", "delete"
+   293→  description String   @default("")
+   294→  isSystem    Boolean  @default(false)
+   295→  createdAt   DateTime @default(now())
+   296→  roles       RolePermission[]
+   297→
+   298→  @@unique([resource, action])
+   299→  @@index([resource])
+   300→  @@index([action])
+   301→}
+   302→
+   303→model RolePermission {
+   304→  roleId       String
+   305→  permissionId String
+   306→  assignedAt   DateTime  @default(now())
+   307→  assignedBy   String?
+   308→  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+   309→  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+   310→
+   311→  @@id([roleId, permissionId])
+   312→  @@index([permissionId])
+   313→}
+   314→
+   315→model UserRoleAssignment {
+   316→  id         String    @id @default(uuid())
+   317→  userId     String
+   318→  roleId     String
+   319→  assignedAt DateTime  @default(now())
+   320→  assignedBy String?
+   321→  expiresAt  DateTime?
+   322→  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+   323→  role       Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+   324→
+   325→  @@index([userId])
+   326→  @@index([roleId])
+   327→  @@index([expiresAt])
+   328→}
+   329→
+   330→model FeatureFlag {
+   331→  id          String   @id @default(uuid())
+   332→  key         String   @unique  // e.g., "ai_advisor_enabled"
+   333→  name        String
+   334→  description String   @default("")
+   335→  enabled     Boolean  @default(false)
+   336→  value       String?  // optional value (e.g., "max_users=1000")
+   337→  scope       String   @default("global")  // global | user | tenant
+   338→  updatedAt   DateTime @updatedAt
+   339→  createdAt   DateTime @default(now())
+   340→
+   341→  @@index([enabled])
+   342→  @@index([scope])
+   343→}
+   344→
+   345→model License {
+   346→  id           String    @id @default(uuid())
+   347→  key          String    @unique
+   348→  productName  String
+   349→  customerName String
+   350→  maxUsers     Int       @default(0)
+   351→  maxSessions  Int       @default(0)
+   352→  features     Json?
+   353→  status       String    @default("ACTIVE")  // ACTIVE | EXPIRED | SUSPENDED | REVOKED
+   354→  issuedAt     DateTime  @default(now())
+   355→  expiresAt    DateTime?
+   356→  createdAt    DateTime  @default(now())
+   357→  updatedAt    DateTime  @updatedAt
+   358→
+   359→  @@index([status])
+   360→  @@index([expiresAt])
+   361→}
+   362→
+   363→model ModuleState {
+   364→  id             String   @id @default(uuid())
+   365→  moduleId       String   @unique  // matches Module.id in src/lib/modules/registry.ts
+   366→  enabled        Boolean  @default(true)
+   367→  deploymentType String   @default("isp")  // matches DEPLOYMENT_PRESETS
+   368→  settings       Json?
+   369→  updatedAt      DateTime @updatedAt
+   370→  createdAt      DateTime @default(now())
+   371→
+   372→  @@index([enabled])
+   373→  @@index([deploymentType])
+   374→}
+   375→
+   376→model BackupRecord {
+   377→  id               String    @id @default(uuid())
+   378→  type             String    @default("full")
+   379→  status           String    @default("IN_PROGRESS")
+   380→  fileSize         Float     @default(0)
+   381→  filePath         String    @default("Local")
+   382→  duration         Int       @default(0)
+   383→  triggeredBy      String    @default("manual")
+   384→  encrypted        Boolean   @default(false)
+   385→  changeCount      Int       @default(0)
+   386→  verified         Boolean   @default(false)
+   387→  verifiedAt       DateTime?
+   388→  conflictDetected Boolean   @default(false)
+   389→  createdAt        DateTime  @default(now())
+   390→  updatedAt DateTime @updatedAt
+   391→
+   392→  @@index([createdAt])
+   393→  @@index([status])
+   394→}
+   395→
+   396→model BandwidthLog {
+   397→  id            String        @id @default(uuid())
+   398→  deviceId      String
+   399→  interfaceName String        @default("")
+   400→  downloadBps   Int           @default(0)
+   401→  uploadBps     Int           @default(0)
+   402→  totalBps      Int           @default(0)
+   403→  timestamp     DateTime      @default(now())
+   404→  NetworkDevice NetworkDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+   405→
+   406→  @@index([deviceId])
+   407→  @@index([deviceId, timestamp])
+   408→  @@index([timestamp])
+   409→}
+   410→
+   411→model BandwidthPolicy {
+   412→  id                  String   @id @default(uuid())
+   413→  name                String
+   414→  description         String   @default("")
+   415→  planId              String?
+   416→  radiusGroupId       String?
+   417→  downloadKbps        Int
+   418→  uploadKbps          Int
+   419→  burstDownloadKbps   Int      @default(0)
+   420→  burstUploadKbps     Int      @default(0)
+   421→  burstDurationSec    Int      @default(0)
+   422→  priority            Int      @default(5)
+   423→  ceilingDownloadKbps Int      @default(0)
+   424→  ceilingUploadKbps   Int      @default(0)
+   425→  tcClassId           String   @default("")
+   426→  tcParentId          String   @default("")
+   427→  interfaceId         String?
+   428→  fapDownloadKbps     Int?
+   429→  fapUploadKbps       Int?
+   430→  fapDataLimitMb      Int?
+   431→  hardDataLimitMb     Int?
+   432→  enabled             Boolean  @default(true)
+   433→  createdAt           DateTime @default(now())
+   434→  updatedAt DateTime @updatedAt
+   435→
+   436→  @@index([enabled])
+   437→  @@index([interfaceId])
+   438→  @@index([planId])
+   439→  @@index([radiusGroupId])
+   440→}
+   441→
+   442→model BandwidthThrottleConfig {
+   443→  id                String        @id @default(uuid())
+   444→  deviceId          String
+   445→  maxDownloadMbps   Int           @default(100)
+   446→  maxUploadMbps     Int           @default(50)
+   447→  scheduleEnabled   Boolean       @default(false)
+   448→  scheduleStartTime String        @default("09:00")
+   449→  scheduleEndTime   String        @default("18:00")
+   450→  scheduleDays      String?
+   451→  enabled           Boolean       @default(true)
+   452→  createdAt         DateTime      @default(now())
+   453→  updatedAt DateTime @updatedAt
+   454→  NetworkDevice     NetworkDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+   455→
+   456→  @@index([deviceId])
+   457→  @@index([enabled])
+   458→}
+   459→
+   460→model BatchProvisioningJob {
+   461→  id                   String               @id @default(uuid())
+   462→  templateId           String
+   463→  filename             String               @default("")
+   464→  totalUsers           Int                  @default(0)
+   465→  completedUsers       Int                  @default(0)
+   466→  failedUsers          Int                  @default(0)
+   467→  status               BatchJobStatus       @default(PENDING)
+   468→  startedBy            String?
+   469→  startedAt            DateTime?
+   470→  completedAt          DateTime?
+   471→  errorDetail          String               @default("")
+   472→  createdAt            DateTime             @default(now())
+   473→  updatedAt DateTime @updatedAt
+   474→  template             ProvisioningTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+   475→  StartedBy            User?                 @relation(fields: [startedBy], references: [id])
+   476→
+   477→  @@index([createdAt])
+   478→  @@index([status])
+   479→  @@index([templateId])
+   480→}
+   481→
+   482→model BillingMilestone {
+   483→  id              String   @id @default(uuid())
+   484→  planId          String
+   485→  name            String
+   486→  thresholdDataMb Int      @default(0)
+   487→  speedDownKbps   Int      @default(0)
+   488→  speedUpKbps     Int      @default(0)
+   489→  priority        Int      @default(0)
+   490→  enabled         Boolean  @default(true)
+   491→  createdAt       DateTime @default(now())
+   492→  updatedAt DateTime @updatedAt
+   493→  Plan            Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+   494→
+   495→  @@index([planId])
+   496→  @@index([priority])
+   497→}
+   498→
+   499→model BotCommand {
+   500→  id          String   @id @default(uuid())
+   501→  trigger     String
+   502→  response    String
+   503→  description String   @default("")
+   504→  enabled     Boolean  @default(true)
+   505→  createdAt   DateTime @default(now())
+   506→  updatedAt DateTime @updatedAt
+   507→
+   508→  @@index([trigger])
+   509→}
+   510→
+   511→model BwSample {
+   512→  id             String         @id @default(uuid())
+   513→  sourceType     BwSampleSource
+   514→  sourceId       String         @default("")
+   515→  sourceName     String         @default("")
+   516→  downloadBps    Int            @default(0)
+   517→  uploadBps      Int            @default(0)
+   518→  totalBps       Int            @default(0)
+   519→  downloadBytes  BigInt         @default(0)
+   520→  uploadBytes    BigInt         @default(0)
+   521→  totalBytes     BigInt         @default(0)
+   522→  activeSessions Int            @default(0)
+   523→  timestamp      DateTime       @default(now())
+   524→
+   525→  @@index([sourceType, sourceId])
+   526→  @@index([timestamp])
+   527→}
+   528→
+   529→model CaptivePortal {
+   530→  id                                                            String               @id @default(uuid())
+   531→  name                                                          String
+   532→  description                                                   String               @default("")
+   533→  template                                                      PortalTemplate       @default(ISP_DEFAULT)
+   534→  loginMethod                                                   PortalLoginMethod    @default(RADIUS)
+   535→  theme                                                         String?
+   536→  welcomeTitle                                                  String               @default("Welcome")
+   537→  welcomeMessage                                                String               @default("")
+   538→  tosText                                                       String               @default("")
+   539→  successMessage                                                String               @default("You are now connected!")
+   540→  timeoutMessage                                                String               @default("Your session has expired. Please login again.")
+   541→  dataCapMessage                                                String               @default("You have reached your data limit.")
+   542→  sessionTimeoutSec                                             Int                  @default(86400)
+   543→  idleTimeoutSec                                                Int                  @default(3600)
+   544→  dataLimitMb                                                   Int?
+   545→  fapDataLimitMb                                                Int?
+   546→  bandwidthLimitDown                                            Int                  @default(0)
+   547→  bandwidthLimitUp                                              Int                  @default(0)
+   548→  redirectUrl                                                   String               @default("")
+   549→  originalUrlParam                                              String               @default("original_url")
+   550→  allowedHosts                                                  String?
+   551→  enableCaptiveDetection                                        Boolean              @default(true)
+   552→  macAuthEnabled                                                Boolean              @default(false)
+   553→  macAuthUnknownAction                                          String               @default("DENY")
+   554→  socialProviders                                               String?
+   555→  voucherRequired                                               Boolean              @default(false)
+   556→  voucherReusePolicy                                            String               @default("SINGLE_USE")
+   557→  interfaceId                                                   String?
+   558→  locationId                                                    String?
+   559→  siteName                                                      String               @default("")
+   560→  venueType                                                     String               @default("")
+   561→  maxConcurrentSessions                                         Int                  @default(0)
+   562→  passthroughMode                                               Boolean              @default(false)
+   563→  customLoginPageUrl                                            String               @default("")
+   564→  postLoginAdUrl                                                String               @default("")
+   565→  collectPhone                                                  Boolean              @default(false)
+   566→  collectEmail                                                  Boolean              @default(false)
+   567→  collectName                                                   Boolean              @default(false)
+   568→  partnerId                                                     String?
+   569→  revenueSharePercent                                           Float                @default(0)
+   570→  priority                                                      Int                  @default(0)
+   571→  scheduleConfig                                                String?
+   572→  enabled                                                       Boolean              @default(false)
+   573→  createdAt                                                     DateTime             @default(now())
+   574→  updatedAt DateTime @updatedAt
+   575→  SystemInterface                                               SystemInterface?     @relation(fields: [interfaceId], references: [id])
+   576→  location                                                      Area?                @relation(fields: [locationId], references: [id])
+   577→  partner                                                       CollectionAgent?     @relation(fields: [partnerId], references: [id])
+   578→  DhcpSubnet                                                    DhcpSubnet[]
+   579→  DnsRecord                                                     DnsRecord[]
+   580→  PortalAccessRule                                              PortalAccessRule[]
+   581→  PortalAdZone                                                  PortalAdZone[]
+   582→  PortalEventLog                                                PortalEventLog[]
+   583→  PortalMacWhitelist                                            PortalMacWhitelist[]
+   584→  PortalSchedule_PortalSchedule_overridePortalIdToCaptivePortal PortalSchedule[]     @relation("PortalSchedule_overridePortalIdToCaptivePortal")
+   585→  PortalSchedule_PortalSchedule_portalIdToCaptivePortal         PortalSchedule[]     @relation("PortalSchedule_portalIdToCaptivePortal")
+   586→  PortalSession                                                 PortalSession[]
+   587→  PortalVoucherPool                                             PortalVoucherPool[]
+   588→  Subnet                                                        Subnet[]
+   589→  PartnerPortalMapping                                           PartnerPortalMapping[]
+   590→
+   591→  @@index([enabled])
+   592→  @@index([interfaceId])
+   593→  @@index([loginMethod])
+   594→}
+   595→
+   596→model CgnatMapping {
+   597→  id             String     @id @default(uuid())
+   598→  cgnatPoolId    String?
+   599→  mappingType    String     @default("SNAT")
+   600→  internalIp     String
+   601→  internalPort   Int        @default(0)
+   602→  externalIp     String
+   603→  externalPort   Int        @default(0)
+   604→  portBlockCount Int        @default(0)
+   605→  subscriberId   String?
+   606→  subnetId       String?
+   607→  protocol       String     @default("ALL")
+   608→  sessionId      String     @default("")
+   609→  isActive       Boolean    @default(true)
+   610→  lastUsedAt     DateTime?
+   611→  expiresAt      DateTime?
+   612→  createdAt      DateTime   @default(now())
+   613→  updatedAt DateTime @updatedAt
+   614→  CgnatPool      CgnatPool? @relation(fields: [cgnatPoolId], references: [id])
+   615→
+   616→  @@index([cgnatPoolId])
+   617→  @@index([externalIp])
+   618→  @@index([internalIp])
+   619→  @@index([isActive])
+   620→  @@index([subscriberId])
+   621→}
+   622→
+   623→model CgnatPool {
+   624→  id             String         @id @default(uuid())
+   625→  name           String
+   626→  description    String         @default("")
+   627→  poolType       String         @default("SNAT_POOL")
+   628→  startIp        String
+   629→  endIp          String
+   630→  portBlockSize  Int            @default(512)
+   631→  portRangeStart Int            @default(1024)
+   632→  portRangeEnd   Int            @default(65535)
+   633→  activeMappings Int            @default(0)
+   634→  maxMappings    Int            @default(0)
+   635→  healthCheckIp  String         @default("")
+   636→  enabled        Boolean        @default(true)
+   637→  createdAt      DateTime       @default(now())
+   638→  updatedAt DateTime @updatedAt
+   639→  CgnatMapping   CgnatMapping[]
+   640→  Subnet         Subnet[]
+   641→
+   642→  @@index([enabled])
+   643→}
+   644→
+   645→model ChurnCommunication {
+   646→  id           String   @id @default(uuid())
+   647→  trackingId   String
+   648→  subscriberId String
+   649→  actionType   String   @default("")
+   650→  actionDetail String   @default("")
+   651→  note         String   @default("")
+   652→  createdBy    String?
+   653→  createdAt    DateTime @default(now())
+   654→
+   655→  @@index([createdAt])
+   656→  @@index([subscriberId])
+   657→  @@index([trackingId])
+   658→}
+   659→
+   660→model ChurnTracking {
+   661→  id           String   @id @default(uuid())
+   662→  subscriberId String
+   663→  status       String   @default("TRACKING")
+   664→  notes        String   @default("")
+   665→  assignedToId String?
+   666→  createdAt    DateTime @default(now())
+   667→  updatedAt DateTime @updatedAt
+   668→
+   669→  @@index([status])
+   670→  @@index([subscriberId])
+   671→}
+   672→
+   673→model CoaEvent {
+   674→  id              String     @id @default(uuid())
+   675→  subscriberId    String
+   676→  radiusSessionId String?
+   677→  coaType         CoaType
+   678→  coaStatus       CoaStatus  @default(REQUESTED)
+   679→  oldPlanId       String?
+   680→  newPlanId       String?
+   681→  oldBwPolicyId   String?
+   682→  newBwPolicyId   String?
+   683→  bwPercent       Float      @default(0)
+   684→  triggeredBy     String     @default("")
+   685→  triggeredAt     DateTime   @default(now())
+   686→  completedAt     DateTime?
+   687→  errorDetail     String     @default("")
+   688→  Subscriber      Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+   689→
+   690→  @@index([coaStatus])
+   691→  @@index([coaType])
+   692→  @@index([subscriberId])
+   693→  @@index([triggeredAt])
+   694→}
+   695→
+   696→model CollectionAgent {
+   697→  id                  String          @id @default(uuid())
+   698→  userId              String          @unique
+   699→  name                String
+   700→  phone               String          @default("")
+   701→  assignedAreaIds     String?
+   702→  dailyTarget         Float           @default(0)
+   703→  monthlyTarget       Float           @default(0)
+   704→  totalCollectedToday Float           @default(0)
+   705→  totalCollectedMonth Float           @default(0)
+   706→  commissionRate      Float           @default(0)
+   707→  totalCommission     Float           @default(0)
+   708→  createdAt           DateTime        @default(now())
+   709→  updatedAt DateTime @updatedAt
+   710→  Area                Area[]
+   711→  CaptivePortal       CaptivePortal[]
+   712→  User                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+   713→
+   714→  @@index([userId])
+   715→}
+   716→
+   717→model CommissionPayout {
+   718→  id         String    @id @default(uuid())
+   719→  agentId    String
+   720→  amount     Float     @default(0)
+   721→  period     String    @default("")
+   722→  status     String    @default("PENDING")
+   723→  paidOn     DateTime?
+   724→  approvedBy String?
+   725→  createdAt  DateTime  @default(now())
+   726→
+   727→  @@index([agentId])
+   728→  @@index([period])
+   729→  @@index([status])
+   730→}
+   731→
+   732→model Competitor {
+   733→  id                 String   @id @default(uuid())
+   734→  name               String
+   735→  planName           String
+   736→  speed              String   @default("")
+   737→  dataLimit          String   @default("")
+   738→  price              Float
+   739→  validity           String   @default("")
+   740→  category           String   @default("")
+   741→  notes              String   @default("")
+   742→  marketSharePercent Float    @default(0)
+   743→  createdAt          DateTime @default(now())
+   744→  updatedAt DateTime @updatedAt
+   745→
+   746→  @@index([name])
+   747→}
+   748→
+   749→model CompetitorPriceHistory {
+   750→  id           String   @id @default(uuid())
+   751→  competitorId String
+   752→  planName     String   @default("")
+   753→  speed        String   @default("")
+   754→  dataLimit    String   @default("")
+   755→  oldPrice     Float
+   756→  newPrice     Float
+   757→  notes        String   @default("")
+   758→  createdAt    DateTime @default(now())
+   759→
+   760→  @@index([competitorId])
+   761→  @@index([createdAt])
+   762→}
+   763→
+   764→model Complaint {
+   765→  id                String             @id @default(uuid())
+   766→  ticketNumber      String             @unique
+   767→  subscriberId      String?
+   768→  areaId            String?
+   769→  type              ComplaintType
+   770→  priority          ComplaintPriority  @default(P3_MEDIUM)
+   771→  description       String
+   772→  assignedToId      String?
+   773→  status            ComplaintStatus    @default(OPEN)
+   774→  slaHours          Int                @default(24)
+   775→  slaDeadline       DateTime?
+   776→  walkInName        String             @default("")
+   777→  resolutionNotes   String             @default("")
+   778→  resolvedAt        DateTime?
+   779→  resolvedById      String?
+   780→  customerRating    Int?
+   781→  customerFeedback  String             @default("")
+   782→  aiCategory        String             @default("")
+   783→  aiSeverity        String             @default("")
+   784→  aiProbableCause   String             @default("")
+   785→  aiResolutionGuide String             @default("")
+   786→  escalationLevel   Int                @default(0)
+   787→  isSlaPaused       Boolean            @default(false)
+   788→  slaPausedAt       DateTime?
+   789→  slaPausedTotalMs  Int                @default(0)
+   790→  slaPauseReason    String             @default("")
+   791→  createdAt         DateTime           @default(now())
+   792→  updatedAt DateTime @updatedAt
+   793→  Area              Area?              @relation(fields: [areaId], references: [id])
+   794→  Technician        Technician?        @relation(fields: [assignedToId], references: [id])
+   795→  Subscriber        Subscriber?        @relation(fields: [subscriberId], references: [id])
+   796→  ComplaintComment  ComplaintComment[]
+   797→
+   798→  @@index([areaId])
+   799→  @@index([areaId, status])
+   800→  @@index([createdAt])
+   801→  @@index([priority])
+   802→  @@index([status])
+   803→  @@index([status, priority])
+   804→  @@index([subscriberId])
+   805→  @@index([ticketNumber])
+   806→}
+   807→
+   808→model ComplaintComment {
+   809→  id          String    @id @default(uuid())
+   810→  complaintId String
+   811→  userId      String
+   812→  message     String
+   813→  createdAt   DateTime  @default(now())
+   814→  Complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+   815→  User        User      @relation(fields: [userId], references: [id])
+   816→
+   817→  @@index([complaintId])
+   818→  @@index([createdAt])
+   819→  @@index([userId])
+   820→}
+   821→
+   822→model CreditNote {
+   823→  id        String   @id @default(uuid())
+   824→  invoiceId String
+   825→  amount    Float
+   826→  reason    String   @default("")
+   827→  notes     String   @default("")
+   828→  status    String   @default("DRAFT")
+   829→  createdBy String?
+   830→  createdAt DateTime @default(now())
+   831→  updatedAt DateTime @updatedAt
+   832→  User      User?    @relation(fields: [createdBy], references: [id])
+   833→  Invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+   834→
+   835→  @@index([invoiceId])
+   836→  @@index([status])
+   837→}
+   838→
+   839→model CustomerFeedback {
+   840→  id             String       @id @default(uuid())
+   841→  installationId String
+   842→  rating         Int
+   843→  feedback       String       @default("")
+   844→  createdAt      DateTime     @default(now())
+   845→  Installation   Installation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+   846→
+   847→  @@index([installationId])
+   848→  @@index([rating])
+   849→}
+   850→
+   851→model DashboardWidget {
+   852→  id               String             @id @default(uuid())
+   853→  name             String             @unique
+   854→  category         WidgetCategory     @default(SYSTEM)
+   855→  description      String             @default("")
+   856→  widgetType       String             @default("chart")
+   857→  configSchema     String             @default("{}")
+   858→  defaultConfig    String             @default("{}")
+   859→  sortOrder        Int                @default(0)
+   860→  enabled          Boolean            @default(true)
+   861→  createdAt        DateTime           @default(now())
+   862→  updatedAt DateTime @updatedAt
+   863→  UserWidgetConfig UserWidgetConfig[]
+   864→
+   865→  @@index([category])
+   866→  @@index([enabled])
+   867→  @@index([sortOrder])
+   868→}
+   869→
+   870→model DataUsage {
+   871→  id           String     @id @default(uuid())
+   872→  subscriberId String
+   873→  date         String
+   874→  downloadMb   Float      @default(0)
+   875→  uploadMb     Float      @default(0)
+   876→  totalMb      Float      @default(0)
+   877→  sessionId    String?
+   878→  createdAt    DateTime   @default(now())
+   879→  updatedAt DateTime @updatedAt
+   880→  Subscriber   Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+   881→
+   882→  @@unique([subscriberId, date])
+   883→  @@index([date])
+   884→  @@index([subscriberId])
+   885→  @@index([totalMb])
+   886→}
+   887→
+   888→model DdosProtection {
+   889→  id                String             @id @default(uuid())
+   890→  name              String
+   891→  description       String             @default("")
+   892→  protectionType    DdosProtectionType
+   893→  enabled           Boolean            @default(true)
+   894→  thresholdPps      Int                @default(10000)
+   895→  thresholdBps      Int                @default(10000000)
+   896→  thresholdConnRate Int                @default(1000)
+   897→  rateLimitPps      Int?
+   898→  rateLimitBps      Int?
+   899→  burstSize         Int                @default(100)
+   900→  action            DdosAction         @default(DROP)
+   901→  logEnabled        Boolean            @default(true)
+   902→  logPrefix         String             @default("DDOS")
+   903→  notifyEnabled     Boolean            @default(false)
+   904→  notifyEmail       String             @default("")
+   905→  targetInterface   String             @default("")
+   906→  targetPorts       String             @default("")
+   907→  targetProtocols   String             @default("")
+   908→  sourceWhitelist   String             @default("")
+   909→  sourceBlacklist   String             @default("")
+   910→  geoBlockCountries String             @default("")
+   911→  geoBlockAction    DdosAction         @default(DROP)
+   912→  hitCount          Int                @default(0)
+   913→  packetCount       BigInt             @default(0)
+   914→  byteCount         BigInt             @default(0)
+   915→  lastHitAt         DateTime?
+   916→  scheduleEnabled   Boolean            @default(false)
+   917→  scheduleStartTime String             @default("00:00")
+   918→  scheduleEndTime   String             @default("23:59")
+   919→  scheduleDays      String?
+   920→  createdAt         DateTime           @default(now())
+   921→  updatedAt DateTime @updatedAt
+   922→
+   923→  @@index([enabled])
+   924→  @@index([lastHitAt])
+   925→  @@index([protectionType])
+   926→}
+   927→
+   928→model DeviceConfigHistory {
+   929→  id            String        @id @default(uuid())
+   930→  deviceId      String
+   931→  field         String        @default("")
+   932→  oldValue      String        @default("")
+   933→  newValue      String        @default("")
+   934→  changedBy     String        @default("")
+   935→  createdAt     DateTime      @default(now())
+   936→  NetworkDevice NetworkDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+   937→
+   938→  @@index([createdAt])
+   939→  @@index([deviceId])
+   940→}
+   941→
+   942→model DeviceInterface {
+   943→  id                                                             String          @id @default(uuid())
+   944→  deviceId                                                       String
+   945→  name                                                           String
+   946→  description                                                    String          @default("")
+   947→  type                                                           InterfaceType   @default(ETHERNET)
+   948→  status                                                         InterfaceStatus @default(DISABLED)
+   949→  speed                                                          Int             @default(0)
+   950→  macAddress                                                     String          @default("")
+   951→  txBytes                                                        BigInt          @default(0)
+   952→  rxBytes                                                        BigInt          @default(0)
+   953→  connectedDeviceId                                              String?
+   954→  createdAt                                                      DateTime        @default(now())
+   955→  updatedAt DateTime @updatedAt
+   956→  NetworkDevice_DeviceInterface_connectedDeviceIdToNetworkDevice NetworkDevice?  @relation("DeviceInterface_connectedDeviceIdToNetworkDevice", fields: [connectedDeviceId], references: [id])
+   957→  NetworkDevice_DeviceInterface_deviceIdToNetworkDevice          NetworkDevice   @relation("DeviceInterface_deviceIdToNetworkDevice", fields: [deviceId], references: [id], onDelete: Cascade)
+   958→
+   959→  @@index([deviceId])
+   960→}
+   961→
+   962→model DhcpReservation {
+   963→  id           String     @id @default(uuid())
+   964→  dhcpSubnetId String
+   965→  macAddress   String
+   966→  ipAddress    String
+   967→  hostname     String     @default("")
+   968→  clientType   String     @default("SUBSCRIBER")
+   969→  subscriberId String?
+   970→  deviceId     String?
+   971→  description  String     @default("")
+   972→  enabled      Boolean    @default(true)
+   973→  createdAt    DateTime   @default(now())
+   974→  updatedAt DateTime @updatedAt
+   975→  DhcpSubnet   DhcpSubnet @relation(fields: [dhcpSubnetId], references: [id], onDelete: Cascade)
+   976→
+   977→  @@index([dhcpSubnetId])
+   978→  @@index([ipAddress])
+   979→  @@index([macAddress])
+   980→  @@index([subscriberId])
+   981→}
+   982→
+   983→model DhcpSubnet {
+   984→  id              String            @id @default(uuid())
+   985→  name            String
+   986→  interfaceName   String
+   987→  subnet          String
+   988→  netmask         String            @default("255.255.255.0")
+   989→  rangeStart      String
+   990→  rangeEnd        String
+   991→  leaseTimeSec    Int               @default(86400)
+   992→  gateway         String            @default("")
+   993→  dnsServers      String            @default("")
+   994→  domainName      String            @default("")
+   995→  ntpServers      String            @default("")
+   996→  winsServer      String            @default("")
+   997→  optionsJson     String?
+   998→  captivePortalId String?
+   999→  ipamSubnetId    String?
+  1000→  allowedHosts    String?
+  1001→  blockAfterAuth  Boolean           @default(false)
+  1002→  enabled         Boolean           @default(true)
+  1003→  createdAt       DateTime          @default(now())
+  1004→  updatedAt DateTime @updatedAt
+  1005→  DhcpReservation DhcpReservation[]
+  1006→  CaptivePortal   CaptivePortal?    @relation(fields: [captivePortalId], references: [id])
+  1007→
+  1008→  @@index([captivePortalId])
+  1009→  @@index([enabled])
+  1010→  @@index([interfaceName])
+  1011→  @@index([ipamSubnetId])
+  1012→  @@index([subnet])
+  1013→}
+  1014→
+  1015→model DhcpV6Pool {
+  1016→  id             String       @id @default(uuid())
+  1017→  dhcpV6SubnetId String
+  1018→  name           String       @default("")
+  1019→  rangeStart     String
+  1020→  rangeEnd       String
+  1021→  createdAt      DateTime     @default(now())
+  1022→  updatedAt DateTime @updatedAt
+  1023→  DhcpV6Subnet   DhcpV6Subnet @relation(fields: [dhcpV6SubnetId], references: [id], onDelete: Cascade)
+  1024→
+  1025→  @@index([dhcpV6SubnetId])
+  1026→}
+  1027→
+  1028→model DhcpV6PrefixDelegation {
+  1029→  id              String       @id @default(uuid())
+  1030→  dhcpV6SubnetId  String
+  1031→  name            String       @default("")
+  1032→  delegatedPrefix String
+  1033→  prefixLength    Int          @default(48)
+  1034→  clientDuid      String       @default("")
+  1035→  excludedPrefix  String       @default("")
+  1036→  leaseTime       Int          @default(86400)
+  1037→  subscriberId    String?
+  1038→  description     String       @default("")
+  1039→  enabled         Boolean      @default(true)
+  1040→  createdAt       DateTime     @default(now())
+  1041→  updatedAt DateTime @updatedAt
+  1042→  DhcpV6Subnet    DhcpV6Subnet @relation(fields: [dhcpV6SubnetId], references: [id], onDelete: Cascade)
+  1043→
+  1044→  @@index([clientDuid])
+  1045→  @@index([delegatedPrefix])
+  1046→  @@index([dhcpV6SubnetId])
+  1047→  @@index([subscriberId])
+  1048→}
+  1049→
+  1050→model DhcpV6Reservation {
+  1051→  id             String       @id @default(uuid())
+  1052→  dhcpV6SubnetId String
+  1053→  duid           String
+  1054→  iaid           String       @default("")
+  1055→  ipAddress      String
+  1056→  hostname       String       @default("")
+  1057→  clientType     String       @default("SUBSCRIBER")
+  1058→  subscriberId   String?
+  1059→  deviceId       String?
+  1060→  description    String       @default("")
+  1061→  enabled        Boolean      @default(true)
+  1062→  createdAt      DateTime     @default(now())
+  1063→  updatedAt DateTime @updatedAt
+  1064→  DhcpV6Subnet   DhcpV6Subnet @relation(fields: [dhcpV6SubnetId], references: [id], onDelete: Cascade)
+  1065→
+  1066→  @@index([dhcpV6SubnetId])
+  1067→  @@index([duid])
+  1068→  @@index([ipAddress])
+  1069→  @@index([subscriberId])
+  1070→}
+  1071→
+  1072→model DhcpV6Subnet {
+  1073→  id                     String                   @id @default(uuid())
+  1074→  name                   String
+  1075→  interfaceName          String
+  1076→  prefix                 String
+  1077→  prefixLength           Int                      @default(64)
+  1078→  preferredLifetime      Int                      @default(14400)
+  1079→  validLifetime          Int                      @default(86400)
+  1080→  raEnabled              Boolean                  @default(true)
+  1081→  raIntervalSec          Int                      @default(600)
+  1082→  raManagedFlag          Boolean                  @default(true)
+  1083→  raOtherFlag            Boolean                  @default(false)
+  1084→  raDefaultRouter        Boolean                  @default(true)
+  1085→  dnsServers             String                   @default("")
+  1086→  domainSearch           String                   @default("")
+  1087→  ntpServers             String                   @default("")
+  1088→  rapidCommit            Boolean                  @default(false)
+  1089→  optionsJson            String?
+  1090→  enabled                Boolean                  @default(true)
+  1091→  createdAt              DateTime                 @default(now())
+  1092→  updatedAt DateTime @updatedAt
+  1093→  DhcpV6Pool             DhcpV6Pool[]
+  1094→  DhcpV6PrefixDelegation DhcpV6PrefixDelegation[]
+  1095→  DhcpV6Reservation      DhcpV6Reservation[]
+  1096→
+  1097→  @@index([enabled])
+  1098→  @@index([interfaceName])
+  1099→  @@index([prefix])
+  1100→}
+  1101→
+  1102→model DiagnosisBaseline {
+  1103→  id           String   @id @default(uuid())
+  1104→  subscriberId String
+  1105→  riskScore    Int      @default(0)
+  1106→  issuesCount  Int      @default(0)
+  1107→  speedDown    String   @default("")
+  1108→  speedUp      String   @default("")
+  1109→  ping         String   @default("")
+  1110→  summary      String   @default("")
+  1111→  fullResult   String?
+  1112→  createdAt    DateTime @default(now())
+  1113→
+  1114→  @@index([createdAt])
+  1115→  @@index([subscriberId])
+  1116→}
+  1117→
+  1118→model DiagnosticCapture {
+  1119→  id               String         @id @default(uuid())
+  1120→  tool             DiagnosticTool
+  1121→  status           CaptureStatus  @default(STOPPED)
+  1122→  targetHost       String         @default("")
+  1123→  targetPort       Int            @default(0)
+  1124→  targetInterface  String         @default("")
+  1125→  filterExpression String         @default("")
+  1126→  packetCount      Int            @default(0)
+  1127→  snapshotLength   Int            @default(262144)
+  1128→  captureFile      String         @default("")
+  1129→  fileSizeBytes    Int            @default(0)
+  1130→  output           String         @default("")
+  1131→  exitCode         Int            @default(0)
+  1132→  durationMs       Int            @default(0)
+  1133→  pppoeSessionId   String?
+  1134→  packetsCaptured  Int            @default(0)
+  1135→  packetsDropped   Int            @default(0)
+  1136→  startedBy        String         @default("")
+  1137→  startedAt        DateTime?
+  1138→  stoppedAt        DateTime?
+  1139→  createdAt        DateTime       @default(now())
+  1140→  updatedAt DateTime @updatedAt
+  1141→
+  1142→  @@index([startedAt])
+  1143→  @@index([status])
+  1144→  @@index([tool])
+  1145→}
+  1146→
+  1147→model Dispute {
+  1148→  id           String     @id @default(uuid())
+  1149→  subscriberId String
+  1150→  invoiceId    String
+  1151→  amount       Float
+  1152→  reason       String     @default("")
+  1153→  description  String     @default("")
+  1154→  status       String     @default("OPEN")
+  1155→  actionTaken  String     @default("")
+  1156→  resolution   String     @default("")
+  1157→  events       String?
+  1158→  resolvedById String?
+  1159→  createdAt    DateTime   @default(now())
+  1160→  updatedAt DateTime @updatedAt
+  1161→  User         User?      @relation(fields: [resolvedById], references: [id])
+  1162→  Subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
+  1163→
+  1164→  @@index([invoiceId])
+  1165→  @@index([status])
+  1166→  @@index([subscriberId])
+  1167→}
+  1168→
+  1169→model DnsRecord {
+  1170→  id              String           @id @default(uuid())
+  1171→  type            DnsRecordType    @default(A)
+  1172→  name            String
+  1173→  value           String
+  1174→  priority        Int              @default(0)
+  1175→  ttl             Int              @default(300)
+  1176→  interfaceId     String?
+  1177→  captivePortalId String?
+  1178→  description     String           @default("")
+  1179→  enabled         Boolean          @default(true)
+  1180→  createdAt       DateTime         @default(now())
+  1181→  updatedAt DateTime @updatedAt
+  1182→  CaptivePortal   CaptivePortal?   @relation(fields: [captivePortalId], references: [id])
+  1183→  SystemInterface SystemInterface? @relation(fields: [interfaceId], references: [id])
+  1184→
+  1185→  @@index([enabled])
+  1186→  @@index([name])
+  1187→  @@index([type])
+  1188→}
+  1189→
+  1190→model EnterpriseSession {
+  1191→  id                   String               @id @default(uuid())
+  1192→  subscriberId         String
+  1193→  enterpriseUserId     String?
+  1194→  username             String
+  1195→  ipAddress            String
+  1196→  macAddress           String?              @default("")
+  1197→  sessionId            String               @unique
+  1198→  authMethod           String               @default("ldap")
+  1199→  uploadBytes          BigInt               @default(0)
+  1200→  downloadBytes        BigInt               @default(0)
+  1201→  status               String               @default("active")
+  1202→  connectedAt          DateTime             @default(now())
+  1203→  lastActivityAt       DateTime             @default(now())
+  1204→  disconnectedAt       DateTime?
+  1205→  disconnectReason     String?              @default("")
+  1206→  EnterpriseUser       EnterpriseUser?      @relation(fields: [enterpriseUserId], references: [id])
+  1207→  EnterpriseSubscriber EnterpriseSubscriber @relation(fields: [subscriberId], references: [id])
+  1208→
+  1209→  @@index([connectedAt])
+  1210→  @@index([status])
+  1211→  @@index([subscriberId])
+  1212→  @@index([username])
+  1213→}
+  1214→
+  1215→model EnterpriseSubscriber {
+  1216→  id                String              @id @default(uuid())
+  1217→  companyName       String
+  1218→  subscriberId      String              @unique
+  1219→  planId            String?
+  1220→  location          String              @default("")
+  1221→  contactEmail      String              @default("")
+  1222→  contactPhone      String              @default("")
+  1223→  status            String              @default("active")
+  1224→  authMethod        String              @default("local")
+  1225→  bandwidthMode     String              @default("shared_pool")
+  1226→  sharedPoolMbps    Int                 @default(100)
+  1227→  perUserDownMbps   Int                 @default(50)
+  1228→  perUserUpMbps     Int                 @default(20)
+  1229→  dataQuotaGB       Int?
+  1230→  overageAction     String              @default("throttle")
+  1231→  sessionTimeout    Int                 @default(28800)
+  1232→  maxConcurrent     Int                 @default(1)
+  1233→  macBinding        Boolean             @default(false)
+  1234→  notes             String              @default("")
+  1235→  createdAt         DateTime            @default(now())
+  1236→  updatedAt DateTime @updatedAt
+  1237→  EnterpriseSession EnterpriseSession[]
+  1238→  Plan              Plan?               @relation(fields: [planId], references: [id])
+  1239→  EnterpriseUser    EnterpriseUser[]
+  1240→  LdapConfig        LdapConfig?
+  1241→
+  1242→  @@index([authMethod])
+  1243→  @@index([status])
+  1244→}
+  1245→
+  1246→model EnterpriseUser {
+  1247→  id                   String               @id @default(uuid())
+  1248→  subscriberId         String
+  1249→  username             String
+  1250→  displayName          String               @default("")
+  1251→  email                String               @default("")
+  1252→  department           String               @default("")
+  1253→  adGroups             String?
+  1254→  status               String               @default("active")
+  1255→  firstSeenAt          DateTime             @default(now())
+  1256→  lastLoginAt          DateTime?
+  1257→  totalUpload          BigInt               @default(0)
+  1258→  totalDownload        BigInt               @default(0)
+  1259→  sessionCount         Int                  @default(0)
+  1260→  EnterpriseSession    EnterpriseSession[]
+  1261→  EnterpriseSubscriber EnterpriseSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  1262→
+  1263→  @@unique([subscriberId, username])
+  1264→  @@index([subscriberId])
+  1265→}
+  1266→
+  1267→model Equipment {
+  1268→  id                   String                @id @default(uuid())
+  1269→  name                 String
+  1270→  category             EquipmentCategory     @default(OTHER)
+  1271→  manufacturer         String                @default("")
+  1272→  model                String                @default("")
+  1273→  serialNumber         String                @default("")
+  1274→  macAddress           String                @default("")
+  1275→  condition            EquipmentCondition    @default(NEW)
+  1276→  status               EquipmentStatus       @default(IN_STOCK)
+  1277→  stockLocation        String                @default("")
+  1278→  purchaseDate         DateTime?
+  1279→  purchasePrice        Float                 @default(0)
+  1280→  depreciationRate     Float                 @default(20)
+  1281→  currentValue         Float                 @default(0)
+  1282→  warrantyExpiry       DateTime?
+  1283→  warrantyProvider     String                @default("")
+  1284→  warrantyNumber       String                @default("")
+  1285→  vendorName           String                @default("")
+  1286→  vendorId             String?
+  1287→  assignedSubscriberId String?
+  1288→  assignedAt           DateTime?
+  1289→  returnedAt           DateTime?
+  1290→  returnCondition      String                @default("")
+  1291→  repairStatus         String                @default("")
+  1292→  bookValue            Float                 @default(0)
+  1293→  quantity             Int                   @default(1)
+  1294→  warehouseId          String?
+  1295→  createdAt            DateTime              @default(now())
+  1296→  updatedAt DateTime @updatedAt
+  1297→  Subscriber           Subscriber?           @relation(fields: [assignedSubscriberId], references: [id])
+  1298→  Vendor               Vendor?               @relation(fields: [vendorId], references: [id])
+  1299→  Warehouse            Warehouse?            @relation(fields: [warehouseId], references: [id])
+  1300→  EquipmentInspection  EquipmentInspection[]
+  1301→  EquipmentRepair      EquipmentRepair[]
+  1302→  EquipmentReturn      EquipmentReturn[]
+  1303→  PurchaseOrderItem    PurchaseOrderItem[]
+  1304→  RepairRecord         RepairRecord[]
+  1305→  StockAdjustment      StockAdjustment[]
+  1306→  StockTransfer        StockTransfer[]
+  1307→
+  1308→  @@index([category])
+  1309→  @@index([repairStatus])
+  1310→  @@index([serialNumber])
+  1311→  @@index([status])
+  1312→  @@index([stockLocation])
+  1313→  @@index([vendorId])
+  1314→  @@index([warehouseId])
+  1315→}
+  1316→
+  1317→model EquipmentInspection {
+  1318→  id              String    @id @default(uuid())
+  1319→  equipmentId     String
+  1320→  inspectedBy     String?
+  1321→  condition       String    @default("GOOD")
+  1322→  notes           String    @default("")
+  1323→  checklistResult String?
+  1324→  passed          Boolean   @default(true)
+  1325→  createdAt       DateTime  @default(now())
+  1326→  Equipment       Equipment @relation(fields: [equipmentId], references: [id])
+  1327→
+  1328→  @@index([createdAt])
+  1329→  @@index([equipmentId])
+  1330→}
+  1331→
+  1332→model EquipmentRepair {
+  1333→  id            String         @id @default(uuid())
+  1334→  equipmentId   String
+  1335→  reportedIssue String         @default("")
+  1336→  repairType    EqRepairType   @default(HARDWARE)
+  1337→  estimatedCost Float          @default(0)
+  1338→  actualCost    Float          @default(0)
+  1339→  status        EqRepairStatus @default(REPORTED)
+  1340→  repairNotes   String         @default("")
+  1341→  assignedTo    String?
+  1342→  startedAt     DateTime?
+  1343→  completedAt   DateTime?
+  1344→  createdAt     DateTime       @default(now())
+  1345→  updatedAt DateTime @updatedAt
+  1346→  Equipment     Equipment      @relation(fields: [equipmentId], references: [id])
+  1347→
+  1348→  @@index([createdAt])
+  1349→  @@index([equipmentId])
+  1350→  @@index([status])
+  1351→}
+  1352→
+  1353→model EquipmentReturn {
+  1354→  id              String          @id @default(uuid())
+  1355→  equipmentId     String
+  1356→  returnedById    String?
+  1357→  returnDate      DateTime        @default(now())
+  1358→  condition       ReturnCondition @default(FAIR)
+  1359→  inspectionNotes String          @default("")
+  1360→  status          ReturnStatus    @default(PENDING_INSPECTION)
+  1361→  inspectedById   String?
+  1362→  createdAt       DateTime        @default(now())
+  1363→  updatedAt DateTime @updatedAt
+  1364→  Equipment       Equipment       @relation(fields: [equipmentId], references: [id])
+  1365→
+  1366→  @@index([createdAt])
+  1367→  @@index([equipmentId])
+  1368→  @@index([status])
+  1369→}
+  1370→
+  1371→model Expense {
+  1372→  id          String   @id @default(uuid())
+  1373→  category    String   @default("Operational")
+  1374→  description String   @default("")
+  1375→  amount      Float    @default(0)
+  1376→  date        DateTime
+  1377→  reference   String   @default("")
+  1378→  createdBy   String?
+  1379→  createdAt   DateTime @default(now())
+  1380→  updatedAt DateTime @updatedAt
+  1381→
+  1382→  @@index([category])
+  1383→  @@index([date])
+  1384→}
+  1385→
+  1386→model FailoverRule {
+  1387→  id               String    @id @default(uuid())
+  1388→  name             String
+  1389→  primaryWanId     String?
+  1390→  backupWanId      String?
+  1391→  triggerCondition String    @default("Ping Fail")
+  1392→  autoFailback     Boolean   @default(true)
+  1393→  failbackDelaySec Int       @default(60)
+  1394→  preferPrimary    Boolean   @default(true)
+  1395→  priority         Int       @default(1)
+  1396→  enabled          Boolean   @default(true)
+  1397→  lastTriggeredAt  DateTime?
+  1398→  createdAt        DateTime  @default(now())
+  1399→  updatedAt DateTime @updatedAt
+  1400→
+  1401→  @@index([priority])
+  1402→}
+  1403→
+  1404→model Faq {
+  1405→  id        String   @id @default(uuid())
+  1406→  question  String
+  1407→  answer    String   @default("")
+  1408→  category  String   @default("General")
+  1409→  sortOrder Int      @default(0)
+  1410→  status    String   @default("active")
+  1411→  createdAt DateTime @default(now())
+  1412→  updatedAt DateTime @updatedAt
+  1413→
+  1414→  @@index([category])
+  1415→  @@index([sortOrder])
+  1416→  @@index([status])
+  1417→}
+  1418→
+  1419→model FirewallRule {
+  1420→  id                String             @id @default(uuid())
+  1421→  name              String
+  1422→  description       String             @default("")
+  1423→  chain             String             @default("forward")
+  1424→  table             String             @default("filter")
+  1425→  action            FirewallAction     @default(ACCEPT)
+  1426→  matchCriteria     String?
+  1427→  natTarget         String             @default("")
+  1428→  logEnabled        Boolean            @default(false)
+  1429→  logPrefix         String             @default("")
+  1430→  status            FirewallRuleStatus @default(ACTIVE)
+  1431→  priority          Int                @default(0)
+  1432→  scheduleEnabled   Boolean            @default(false)
+  1433→  scheduleStartTime String             @default("")
+  1434→  scheduleEndTime   String             @default("")
+  1435→  scheduleDays      String?
+  1436→  hitCount          Int                @default(0)
+  1437→  bytesProcessed    BigInt             @default(0)
+  1438→  packetsProcessed  BigInt             @default(0)
+  1439→  interfaceId       String?
+  1440→  enabled           Boolean            @default(true)
+  1441→  createdAt         DateTime           @default(now())
+  1442→  updatedAt DateTime @updatedAt
+  1443→  SystemInterface   SystemInterface?   @relation(fields: [interfaceId], references: [id])
+  1444→
+  1445→  @@index([chain])
+  1446→  @@index([enabled])
+  1447→  @@index([priority])
+  1448→  @@index([status])
+  1449→  @@index([table])
+  1450→}
+  1451→
+  1452→model GatewayConfig {
+  1453→  id                     String   @id @default("default")
+  1454→  gatewayMode            String   @default("BRIDGE")
+  1455→  defaultGateway         String   @default("")
+  1456→  dnsForwarders          String   @default("1.1.1.1,8.8.8.8")
+  1457→  enableDnsCache         Boolean  @default(true)
+  1458→  dhcpServerType         String   @default("KEA")
+  1459→  dhcpServerEnabled      Boolean  @default(false)
+  1460→  dhcpServerUrl          String   @default("http://localhost:8080")
+  1461→  dnsServerType          String   @default("DNSMASQ")
+  1462→  dnsServerEnabled       Boolean  @default(false)
+  1463→  portalServerEnabled    Boolean  @default(false)
+  1464→  portalListenPort       Int      @default(8080)
+  1465→  portalHttpsEnabled     Boolean  @default(false)
+  1466→  portalHttpsPort        Int      @default(8443)
+  1467→  tcEnabled              Boolean  @default(false)
+  1468→  tcDefaultClass         String   @default("")
+  1469→  tcCleanupOnLogout      Boolean  @default(true)
+  1470→  natEnabled             Boolean  @default(true)
+  1471→  natMode                String   @default("MASQUERADE")
+  1472→  nftablesEnabled        Boolean  @default(true)
+  1473→  nftablesTable          String   @default("cryptsk")
+  1474→  natLoggingEnabled      Boolean  @default(false)
+  1475→  natLogRetentionDays    Int      @default(7)
+  1476→  connectionTracking     Boolean  @default(true)
+  1477→  conntrackMax           Int      @default(262144)
+  1478→  radiusInterimUpdateSec Int      @default(60)
+  1479→  radiusAcctEnabled      Boolean  @default(true)
+  1480→  arpProtection          Boolean  @default(false)
+  1481→  dhcpSnooping           Boolean  @default(false)
+  1482→  clientIsolation        Boolean  @default(false)
+  1483→  enforceMaxSessions     Boolean  @default(true)
+  1484→  maxSessionAction       String   @default("KICK_OLD")
+  1485→  createdAt              DateTime @default(now())
+  1486→  updatedAt DateTime @updatedAt
+  1487→}
+  1488→
+  1489→model GeneratedLegalNotice {
+  1490→  id              String     @id @default(uuid())
+  1491→  invoiceId       String
+  1492→  subscriberId    String
+  1493→  noticeType      String     @default("")
+  1494→  referenceNumber String     @default("")
+  1495→  content         String     @default("")
+  1496→  generatedById   String?
+  1497→  sentVia         String     @default("")
+  1498→  status          String     @default("DRAFT")
+  1499→  createdAt       DateTime   @default(now())
+  1500→  updatedAt DateTime @updatedAt
+  1501→  User            User?      @relation(fields: [generatedById], references: [id])
+  1502→  Invoice         Invoice    @relation(fields: [invoiceId], references: [id])
+  1503→  Subscriber      Subscriber @relation(fields: [subscriberId], references: [id])
+  1504→
+  1505→  @@index([invoiceId])
+  1506→  @@index([status])
+  1507→  @@index([subscriberId])
+  1508→}
+  1509→
+  1510→model Incident {
+  1511→  id                               String           @id @default(uuid())
+  1512→  title                            String
+  1513→  description                      String           @default("")
+  1514→  severity                         String           @default("MAJOR")
+  1515→  status                           String           @default("INVESTIGATING")
+  1516→  affectedAreaIds                  String?
+  1517→  affectedDeviceIds                String?
+  1518→  affectedSubscriberCount          Int              @default(0)
+  1519→  tags                             String?
+  1520→  estimatedCost                    Float            @default(0)
+  1521→  escalationLevel                  Int              @default(0)
+  1522→  rcaReport                        String           @default("")
+  1523→  rcaData                          String?
+  1524→  targetResolutionHours            Int              @default(2)
+  1525→  escalationHistory                String?
+  1526→  assignedToId                     String?
+  1527→  startedAt                        DateTime         @default(now())
+  1528→  resolvedAt                       DateTime?
+  1529→  resolution                       String           @default("")
+  1530→  createdById                      String?
+  1531→  createdAt                        DateTime         @default(now())
+  1532→  updatedAt DateTime @updatedAt
+  1533→  User_Incident_assignedToIdToUser User?            @relation("Incident_assignedToIdToUser", fields: [assignedToId], references: [id])
+  1534→  User_Incident_createdByIdToUser  User?            @relation("Incident_createdByIdToUser", fields: [createdById], references: [id])
+  1535→  IncidentUpdate                   IncidentUpdate[]
+  1536→
+  1537→  @@index([assignedToId])
+  1538→  @@index([createdById])
+  1539→  @@index([severity])
+  1540→  @@index([startedAt])
+  1541→  @@index([status])
+  1542→}
+  1543→
+  1544→model IncidentUpdate {
+  1545→  id          String   @id @default(uuid())
+  1546→  message     String   @default("")
+  1547→  createdById String?
+  1548→  createdAt   DateTime @default(now())
+  1549→  incidentId  String
+  1550→  Incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  1551→
+  1552→  @@index([createdAt])
+  1553→  @@index([incidentId])
+  1554→}
+  1555→
+  1556→model Installation {
+  1557→  id                     String             @id @default(uuid())
+  1558→  subscriberId           String
+  1559→  technicianId           String
+  1560→  areaId                 String?
+  1561→  scheduledDate          DateTime
+  1562→  scheduledTime          String             @default("")
+  1563→  status                 InstallationStatus @default(SCHEDULED)
+  1564→  checklist              String?
+  1565→  notes                  String             @default("")
+  1566→  photos                 String?
+  1567→  completedAt            DateTime?
+  1568→  customerSignature      String             @default("")
+  1569→  estimatedDurationHours Int                @default(2)
+  1570→  equipmentIds           String?
+  1571→  cancellationReason     String             @default("")
+  1572→  createdAt              DateTime           @default(now())
+  1573→  updatedAt DateTime @updatedAt
+  1574→  CustomerFeedback       CustomerFeedback[]
+  1575→  Area                   Area?              @relation(fields: [areaId], references: [id])
+  1576→  Subscriber             Subscriber         @relation(fields: [subscriberId], references: [id])
+  1577→  Technician             Technician         @relation(fields: [technicianId], references: [id])
+  1578→
+  1579→  @@index([scheduledDate])
+  1580→  @@index([status])
+  1581→  @@index([subscriberId])
+  1582→  @@index([technicianId])
+  1583→}
+  1584→
+  1585→model IntegrationConfig {
+  1586→  id                     String                   @id @default(uuid())
+  1587→  type                   String                   @default("payment_gateway")
+  1588→  name                   String                   @default("")
+  1589→  provider               String                   @default("")
+  1590→  apiKey                 String                   @default("")
+  1591→  apiSecret              String                   @default("")
+  1592→  merchantId             String                   @default("")
+  1593→  environment            String                   @default("test")
+  1594→  enabled                Boolean                  @default(false)
+  1595→  config                 String?
+  1596→  costPerRequest         Float                    @default(0)
+  1597→  monthlyBudget          Float                    @default(0)
+  1598→  monthlyCost            Float                    @default(0)
+  1599→  ipAllowlist            String                   @default("")
+  1600→  apiCalls               Int                      @default(0)
+  1601→  estimatedCost          Float                    @default(0)
+  1602→  createdAt              DateTime                 @default(now())
+  1603→  updatedAt DateTime @updatedAt
+  1604→  IntegrationLog         IntegrationLog[]
+  1605→  IntegrationTransaction IntegrationTransaction[]
+  1606→
+  1607→  @@index([enabled])
+  1608→  @@index([provider])
+  1609→  @@index([type])
+  1610→}
+  1611→
+  1612→model IntegrationLog {
+  1613→  id                String            @id @default(uuid())
+  1614→  integrationId     String
+  1615→  method            String            @default("POST")
+  1616→  url               String            @default("")
+  1617→  statusCode        Int               @default(0)
+  1618→  status            String            @default("pending")
+  1619→  requestSummary    String            @default("")
+  1620→  responseSummary   String            @default("")
+  1621→  errorMessage      String            @default("")
+  1622→  durationMs        Int               @default(0)
+  1623→  retryOf           String?
+  1624→  createdAt         DateTime          @default(now())
+  1625→  IntegrationConfig IntegrationConfig @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  1626→
+  1627→  @@index([createdAt])
+  1628→  @@index([integrationId])
+  1629→  @@index([status])
+  1630→}
+  1631→
+  1632→model IntegrationTransaction {
+  1633→  id                String             @id @default(uuid())
+  1634→  integrationId     String?
+  1635→  gatewayType       String             @default("")
+  1636→  transactionType   String             @default("")
+  1637→  amount            Float              @default(0)
+  1638→  status            String             @default("")
+  1639→  externalRef       String             @default("")
+  1640→  retryCount        Int                @default(0)
+  1641→  createdAt         DateTime           @default(now())
+  1642→  IntegrationConfig IntegrationConfig? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  1643→
+  1644→  @@index([createdAt])
+  1645→  @@index([gatewayType])
+  1646→  @@index([integrationId])
+  1647→  @@index([status])
+  1648→}
+  1649→
+  1650→model Invoice {
+  1651→  id                       String                    @id @default(uuid())
+  1652→  invoiceNumber            String                    @unique
+  1653→  subscriberId             String
+  1654→  planId                   String?
+  1655→  issueDate                DateTime
+  1656→  dueDate                  DateTime
+  1657→  periodStart              DateTime
+  1658→  periodEnd                DateTime
+  1659→  description              String                    @default("")
+  1660→  subtotal                 Float                     @default(0)
+  1661→  cgstAmount               Float                     @default(0)
+  1662→  sgstAmount               Float                     @default(0)
+  1663→  igstAmount               Float                     @default(0)
+  1664→  totalTax                 Float                     @default(0)
+  1665→  totalAmount              Float                     @default(0)
+  1666→  discountType             DiscountType?
+  1667→  discountValue            Float                     @default(0)
+  1668→  discountAmount           Float                     @default(0)
+  1669→  lateFee                  Float                     @default(0)
+  1670→  advanceAdjustment        Float                     @default(0)
+  1671→  grandTotal               Float                     @default(0)
+  1672→  paidAmount               Float                     @default(0)
+  1673→  balanceAmount            Float                     @default(0)
+  1674→  status                   InvoiceStatus             @default(DRAFT)
+  1675→  paymentMode              PaymentMode?
+  1676→  paidAt                   DateTime?
+  1677→  receiptNumber            String                    @default("")
+  1678→  notes                    String                    @default("")
+  1679→  isProRata                Boolean                   @default(false)
+  1680→  proRataDays              Int                       @default(0)
+  1681→  recurringTemplateId      String?
+  1682→  cgstRate                 Float                     @default(0)
+  1683→  sgstRate                 Float                     @default(0)
+  1684→  igstRate                 Float                     @default(0)
+  1685→  reverseCharge            Boolean                   @default(false)
+  1686→  tdsRate                  Float                     @default(0)
+  1687→  tdsAmount                Float                     @default(0)
+  1688→  tdsDeducted              Boolean                   @default(false)
+  1689→  createdAt                DateTime                  @default(now())
+  1690→  updatedAt DateTime @updatedAt
+  1691→  CreditNote               CreditNote[]
+  1692→  GeneratedLegalNotice     GeneratedLegalNotice[]
+  1693→  Plan                     Plan?                     @relation(fields: [planId], references: [id])
+  1694→  RecurringInvoiceTemplate RecurringInvoiceTemplate? @relation(fields: [recurringTemplateId], references: [id])
+  1695→  Subscriber               Subscriber                @relation(fields: [subscriberId], references: [id])
+  1696→  InvoiceLineItem          InvoiceLineItem[]
+  1697→  Payment                  Payment[]
+  1698→  PaymentPlan              PaymentPlan[]
+  1699→  RecoveryEscalation       RecoveryEscalation[]
+  1700→  RecoverySla              RecoverySla[]
+  1701→  TdsEntry                 TdsEntry[]
+  1702→
+  1703→  @@index([dueDate])
+  1704→  @@index([invoiceNumber])
+  1705→  @@index([issueDate])
+  1706→  @@index([status, dueDate])
+  1707→  @@index([status])
+  1708→  @@index([status, issueDate])
+  1709→  @@index([subscriberId])
+  1710→  @@index([subscriberId, status])
+  1711→}
+  1712→
+  1713→model InvoiceLineItem {
+  1714→  id          String   @id @default(uuid())
+  1715→  invoiceId   String
+  1716→  description String   @default("")
+  1717→  quantity    Int      @default(1)
+  1718→  rate        Float    @default(0)
+  1719→  amount      Float    @default(0)
+  1720→  sortOrder   Int      @default(0)
+  1721→  createdAt   DateTime @default(now())
+  1722→  Invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  1723→
+  1724→  @@index([invoiceId])
+  1725→}
+  1726→
+  1727→model IpAddress {
+  1728→  id           String   @id @default(uuid())
+  1729→  address      String
+  1730→  status       String   @default("free")
+  1731→  hostname     String   @default("")
+  1732→  macAddress   String   @default("")
+  1733→  description  String   @default("")
+  1734→  customFields String?
+  1735→  subnetId     String
+  1736→  subscriberId String?
+  1737→  createdAt    DateTime @default(now())
+  1738→  updatedAt DateTime @updatedAt
+  1739→  Subnet       Subnet   @relation(fields: [subnetId], references: [id], onDelete: Cascade)
+  1740→
+  1741→  @@index([address])
+  1742→  @@index([status])
+  1743→  @@index([subnetId])
+  1744→}
+  1745→
+  1746→model IpAssignmentHistory {
+  1747→  id           String    @id @default(uuid())
+  1748→  ipAddressId  String
+  1749→  assignedTo   String    @default("")
+  1750→  assignedType String    @default("")
+  1751→  assignedById String    @default("")
+  1752→  assignedAt   DateTime  @default(now())
+  1753→  releasedAt   DateTime?
+  1754→
+  1755→  @@index([assignedAt])
+  1756→  @@index([ipAddressId])
+  1757→}
+  1758→
+  1759→model IpMacHistory {
+  1760→  id            String      @id @default(uuid())
+  1761→  ipAddress     String
+  1762→  oldMacAddress String      @default("")
+  1763→  newMacAddress String      @default("")
+  1764→  subscriberId  String?
+  1765→  source        String      @default("dhcp")
+  1766→  changedAt     DateTime    @default(now())
+  1767→  Subscriber    Subscriber? @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  1768→
+  1769→  @@index([changedAt])
+  1770→  @@index([ipAddress])
+  1771→  @@index([subscriberId])
+  1772→}
+  1773→
+  1774→model IpamSnapshot {
+  1775→  id                  String   @id @default(uuid())
+  1776→  snapshotDate        DateTime @unique
+  1777→  totalSubnets        Int      @default(0)
+  1778→  totalIps            Int      @default(0)
+  1779→  usedIps             Int      @default(0)
+  1780→  reservedIps         Int      @default(0)
+  1781→  freeIps             Int      @default(0)
+  1782→  utilizationPct      Float    @default(0)
+  1783→  totalVlans          Int      @default(0)
+  1784→  cgnatActiveMappings Int      @default(0)
+  1785→  createdAt           DateTime @default(now())
+  1786→
+  1787→  @@index([snapshotDate])
+  1788→}
+  1789→
+  1790→model IpsAlert {
+  1791→  id               String            @id @default(uuid())
+  1792→  eventType        IpsEventType
+  1793→  severity         IpsSeverity       @default(MEDIUM)
+  1794→  status           IpsAlertStatus    @default(NEW)
+  1795→  sourceIp         String
+  1796→  sourceMac        String            @default("")
+  1797→  destIp           String            @default("")
+  1798→  destPort         Int               @default(0)
+  1799→  protocol         String            @default("")
+  1800→  pps              Int               @default(0)
+  1801→  bps              Int               @default(0)
+  1802→  connCount        Int               @default(0)
+  1803→  threatScore      Int               @default(0)
+  1804→  actionTaken      String            @default("none")
+  1805→  blockRuleId      String?
+  1806→  subscriberId     String?
+  1807→  ruleId           String?
+  1808→  details          String            @default("")
+  1809→  resolvedAt       DateTime?
+  1810→  resolvedBy       String?
+  1811→  createdAt        DateTime          @default(now())
+  1812→  IpsDetectionRule IpsDetectionRule? @relation(fields: [ruleId], references: [id])
+  1813→  Subscriber       Subscriber?       @relation(fields: [subscriberId], references: [id])
+  1814→
+  1815→  @@index([createdAt])
+  1816→  @@index([eventType])
+  1817→  @@index([severity])
+  1818→  @@index([sourceIp])
+  1819→  @@index([status])
+  1820→  @@index([subscriberId])
+  1821→}
+  1822→
+  1823→model IpsBlockRule {
+  1824→  id           String           @id @default(uuid())
+  1825→  sourceIp     String
+  1826→  reason       String           @default("")
+  1827→  action       IpsBlockAction   @default(DROP)
+  1828→  duration     IpsBlockDuration @default(TEMP_30M)
+  1829→  alertId      String?
+  1830→  subscriberId String?
+  1831→  expiresAt    DateTime?
+  1832→  nftHandle    Int              @default(0)
+  1833→  isActive     Boolean          @default(true)
+  1834→  createdBy    String           @default("system")
+  1835→  createdAt    DateTime         @default(now())
+  1836→  updatedAt DateTime @updatedAt
+  1837→  Subscriber   Subscriber?      @relation(fields: [subscriberId], references: [id])
+  1838→
+  1839→  @@index([createdAt])
+  1840→  @@index([expiresAt])
+  1841→  @@index([isActive])
+  1842→  @@index([sourceIp])
+  1843→  @@index([subscriberId])
+  1844→}
+  1845→
+  1846→model IpsDetectionRule {
+  1847→  id            String           @id @default(uuid())
+  1848→  name          String
+  1849→  description   String           @default("")
+  1850→  eventType     IpsEventType
+  1851→  enabled       Boolean          @default(true)
+  1852→  thresholdPps  Int              @default(0)
+  1853→  thresholdBps  Int              @default(0)
+  1854→  thresholdConn Int              @default(0)
+  1855→  windowSeconds Int              @default(60)
+  1856→  autoBlock     Boolean          @default(false)
+  1857→  blockAction   IpsBlockAction   @default(DROP)
+  1858→  blockDuration IpsBlockDuration @default(TEMP_30M)
+  1859→  scoreImpact   Int              @default(20)
+  1860→  targetPorts   String           @default("")
+  1861→  targetProto   String           @default("")
+  1862→  sourceExclude String           @default("")
+  1863→  logEnabled    Boolean          @default(true)
+  1864→  notifyEnabled Boolean          @default(false)
+  1865→  sortOrder     Int              @default(0)
+  1866→  createdAt     DateTime         @default(now())
+  1867→  updatedAt DateTime @updatedAt
+  1868→  IpsAlert      IpsAlert[]
+  1869→
+  1870→  @@index([enabled])
+  1871→  @@index([eventType])
+  1872→  @@index([sortOrder])
+  1873→}
+  1874→
+  1875→model IspSettings {
+  1876→  id                               String      @id @default("default")
+  1877→  companyName                      String      @default("My ISP")
+  1878→  tagline                          String      @default("")
+  1879→  logo                             String      @default("")
+  1880→  address                          String      @default("")
+  1881→  city                             String      @default("")
+  1882→  state                            String      @default("")
+  1883→  pincode                          String      @default("")
+  1884→  phone                            String      @default("")
+  1885→  email                            String      @default("")
+  1886→  website                          String      @default("https://cryptsk.com")
+  1887→  gstin                            String      @default("")
+  1888→  panNumber                        String      @default("")
+  1889→  cinNumber                        String      @default("")
+  1890→  primaryColor                     String      @default("#DC2626")
+  1891→  currency                         String      @default("INR")
+  1892→  timezone                         String      @default("Asia/Kolkata")
+  1893→  language                         String      @default("en")
+  1894→  dateFormat                       String      @default("DD/MM/YYYY")
+  1895→  gracePeriodDays                  Int         @default(5)
+  1896→  lateFeeType                      LateFeeType @default(PERCENTAGE)
+  1897→  lateFeeValue                     Float       @default(0)
+  1898→  invoicePrefix                    String      @default("INV")
+  1899→  customerCodePrefix               String      @default("CRY")
+  1900→  receiptFooterText                String      @default("Thank you for choosing us!")
+  1901→  radiusServerIp                   String      @default("")
+  1902→  radiusServerPort                 Int         @default(1812)
+  1903→  radiusSecret                     String      @default("")
+  1904→  passwordMinLength                Int         @default(8)
+  1905→  passwordRequireUppercase         Boolean     @default(false)
+  1906→  passwordRequireLowercase         Boolean     @default(true)
+  1907→  passwordRequireNumbers           Boolean     @default(true)
+  1908→  passwordRequireSpecial           Boolean     @default(false)
+  1909→  passwordExpiryDays               Int         @default(90)
+  1910→  maxLoginAttempts                 Int         @default(5)
+  1911→  lockoutDurationMinutes           Int         @default(30)
+  1912→  captchaAfterAttempts             Int         @default(3)
+  1913→  loadBalancingConfig              String?
+  1914→  captivePortalEnabled             Boolean     @default(false)
+  1915→  captivePortalName                String      @default("")
+  1916→  captivePortalWelcome             String      @default("")
+  1917→  captivePortalLoginMethod         String      @default("RADIUS")
+  1918→  captivePortalSessionTimeout      Int         @default(86400)
+  1919→  captivePortalBandwidthLimit      String      @default("")
+  1920→  captivePortalRedirectUrl         String      @default("")
+  1921→  captivePortalTos                 String      @default("")
+  1922→  captivePortalAllowedHosts        String      @default("")
+  1923→  smtpHost                         String      @default("")
+  1924→  smtpPort                         Int         @default(587)
+  1925→  smtpUser                         String      @default("")
+  1926→  smtpPass                         String      @default("")
+  1927→  smtpFromEmail                    String      @default("")
+  1928→  smsGateway                       String      @default("")
+  1929→  smsAuthKey                       String      @default("")
+  1930→  smsSenderId                      String      @default("")
+  1931→  whatsappApiToken                 String      @default("")
+  1932→  whatsappPhoneNumberId            String      @default("")
+  1933→  whatsappEnabled                  Boolean     @default(false)
+  1934→  whatsappAutoReply                Boolean     @default(false)
+  1935→  whatsappGreetingMessage          String      @default("")
+  1936→  whatsappAwayMessage              String      @default("")
+  1937→  razorpayKeyId                    String      @default("")
+  1938→  razorpayKeySecret                String      @default("")
+  1939→  paymentGatewayMode               String      @default("test")
+  1940→  hsnCodes                         String?
+  1941→  backupSettings                   String?
+  1942→  cloudBackupConfig                String?
+  1943→  bandwidthThresholds              String?
+  1944→  complaintEscalationEnabled       Boolean     @default(true)
+  1945→  complaintEscalationLevel1Percent Int         @default(75)
+  1946→  complaintEscalationLevel2Percent Int         @default(100)
+  1947→  complaintEscalationRole1         String      @default("MANAGER")
+  1948→  complaintEscalationRole2         String      @default("ADMIN")
+  1949→  incidentSlaMinutes               Int         @default(60)
+  1950→  churnWorkflowConfig              String?
+  1951→  escalationPathConfig             String?
+  1952→  encryptionKey                    String?
+  1953→  auditRetentionDays               Int         @default(90)
+  1954→  auditAutoDelete                  Boolean     @default(false)
+  1955→  lastAssignedUserIndex            Int         @default(0)
+  1956→  invoiceNumberPadding             Int         @default(4)
+  1957→  invoiceStartNumber               Int         @default(1001)
+  1958→  invoiceSeparator                 String      @default("-")
+  1959→  invoiceAutoReset                 String      @default("NEVER")
+  1960→  invoiceLastResetAt               DateTime?
+  1961→  defaultCgstRate                  Float       @default(9)
+  1962→  defaultSgstRate                  Float       @default(9)
+  1963→  defaultIgstRate                  Float       @default(18)
+  1964→  taxType                          String      @default("INTRA_STATE")
+  1965→  taxInclusive                     Boolean     @default(false)
+  1966→  compositeScheme                  Boolean     @default(false)
+  1967→  compositeSchemeRate              Float       @default(6)
+  1968→  whatsappBusinessName             String      @default("")
+  1969→  whatsappBusinessCategory         String      @default("")
+  1970→  whatsappBusinessAddress          String      @default("")
+  1971→  whatsappBusinessEmail            String      @default("")
+  1972→  whatsappBusinessPhone            String      @default("")
+  1973→  whatsappBusinessWebsite          String      @default("")
+  1974→  whatsappBusinessAbout            String      @default("")
+  1975→  whatsappWebhookConfig            String?
+  1976→  kpiTargets                       String?
+  1977→  createdAt                        DateTime    @default(now())
+  1978→  updatedAt DateTime @updatedAt
+  1979→  pointsExpiryDays                 Int         @default(365)
+  1980→  pointsAutoExpiry                 Boolean     @default(false)
+  1981→  grafanaUrl                       String      @default("")
+  1982→  grafanaApiKey                    String      @default("")
+  1983→  gatewayModeEnabled               Boolean     @default(false)
+  1984→  tcRootBandwidthDownMbps          Float       @default(0)
+  1985→  tcRootBandwidthUpMbps            Float       @default(0)
+  1986→  tcAutoRestoreOnBoot              Boolean     @default(true)
+  1987→  tcDefaultUnshapedDownMbps        Float       @default(100)
+  1988→  tcDefaultUnshapedUpMbps          Float       @default(100)
+  1989→  commissionConfig                 String?
+  1990→}
+  1991→
+  1992→model KbArticle {
+  1993→  id               String             @id @default(uuid())
+  1994→  title            String
+  1995→  content          String             @default("")
+  1996→  categoryId       String?
+  1997→  status           String             @default("DRAFT")
+  1998→  tags             String?
+  1999→  views            Int                @default(0)
+  2000→  helpfulVotes     Int                @default(0)
+
+[showing lines 1-2000 of 5723; use offset=2001 with limit to continue reading]

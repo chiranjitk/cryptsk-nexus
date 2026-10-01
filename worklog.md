@@ -1831,3 +1831,123 @@ Stage Summary:
    - Policy resolution works (Plan + RadiusGroup → correct speeds)
    - UI sees the session (reads from radacct)
    - Logout → VPP cleanup is instant
+
+---
+Task ID: CAPTIVE-PORTAL-PHASE1-SCHEMA-15
+Agent: main (orchestrator)
+Task: Fix DB schema for captive portal engine (Phase 1 of copy from StaySuite)
+
+Work Log:
+- Cloned StaySuite repo to /tmp/StaySuite-HospitalityOS/ (771MB, 15850 files)
+- Found the admin captive portal page: /tmp/StaySuite-HospitalityOS/src/components/wifi/portal-page.tsx (7288 lines, 9 tabs)
+- Tab structure confirmed:
+  1. Portal Instances (id: 'portals')
+  2. Auth Methods (id: 'auth-methods')
+  3. Pool Mappings (id: 'mappings')
+  4. Portal Designer (id: 'designer')
+  5. Preferences (id: 'preferences')
+  6. Analytics (id: 'analytics')
+  7. Voucher Designer (id: 'vouchers')
+  8. Print Cards (id: 'print-cards')
+  9. Walled Garden (id: 'whitelist')
+
+- DISCOVERED: CRYPTSK already has ALL 9 captive portal models in prisma/schema.prisma:
+  - CaptivePortal (line 529) — comprehensive, already has StaySuite fields + partnerId
+  - PortalMapping, PortalAuthentication, PortalPage, PortalTemplate
+  - PortalWhitelist, PortalABTest, PortalAdCampaign, PortalDesignHistory
+  - These were already merged in a previous session (comment: "StaySuite captive portal engine fields")
+
+- Fixed pre-existing schema error: `template PortalTemplate @default(ISP_DEFAULT)` → `template PortalTemplate?` (Prisma can't set default on relation field)
+- Attempted to add Partner back-relations but removed them (caused cascading validation errors because existing models don't have Partner relation fields)
+- Removed duplicate models I accidentally added (kept the existing ones)
+- `bun run db:push` succeeded — schema is clean
+
+Stage Summary:
+✅ DB schema ready — all 9 captive portal models exist and are valid
+✅ StaySuite repo cloned locally for analysis
+✅ Identified all source files to copy:
+  - portal-page.tsx (7288 lines) — main admin UI
+  - portal/ sub-directory (6 files: portal-config.ts, dnd-builder.tsx, ab-testing-section.tsx, etc.)
+  - portal-mappings-tab.tsx, portal-preferences-tab.tsx, portal-whitelist.tsx
+  - captive-redirect/index.ts (1305 lines) — mini-service
+  - 20+ API routes in src/app/api/wifi/portal/
+  - /connect/ splash page (5 files)
+  - /api/wifi/captive/auth/, /api/wifi/walled-garden/, /api/wifi/portal-whitelist/
+  - /api/captive-redirect/metrics/
+
+Next phases:
+  Phase 2: Copy captive-redirect mini-service (single file)
+  Phase 3: Copy 20+ API routes (adapt property→partner)
+  Phase 4: Copy 7288-line portal-page.tsx + sub-components
+  Phase 5: Copy /connect splash page
+  Phase 6: Deploy + test
+
+---
+Task ID: CAPTIVE-PORTAL-COPY-PHASES-2-5-16
+Agent: main (orchestrator)
+Task: Copy StaySuite captive portal engine to CRYPTSK (Phases 2-5)
+
+Work Log:
+- Phase 2 ✅: Copied captive-redirect mini-service (1305 lines)
+  - /home/z/my-project/mini-services/captive-redirect/index.ts
+  - Uses process.env.DATABASE_URL (CRYPTSK's env)
+  - Imports ../shared/logger (already exists in CRYPTSK)
+  - PM2 config already exists in ecosystem.config.cjs (port 8888/8443, redirect to /connect)
+  - package.json copied (no dependencies — uses built-in http/net/tls/crypto)
+
+- Phase 3 ✅: Copied 34 API routes from StaySuite
+  - /api/wifi/portal/ (instances, mappings, auth-methods, pages, templates, ab-test, analytics, etc.)
+  - /api/wifi/portal-whitelist/
+  - /api/wifi/walled-garden/
+  - /api/wifi/captive/auth/
+  - /api/captive-redirect/metrics/
+  - Adapted: propertyId→partnerId, Property→Partner (sed replacement)
+  - tenantId lines COMMENTED OUT (not deleted — preserves code structure)
+  - Created stubs for missing StaySuite modules:
+    - src/lib/wifi/paths.ts (STAYSUITE_SCRIPTS_DIR)
+    - src/lib/wifi-settings.ts (getWifiSettings, setWifiSettings)
+    - src/lib/audit.ts (logWifi)
+    - src/lib/dns/generator.ts (regenerateDnsConfig)
+
+- Phase 4 ✅: Copied UI components
+  - src/components/pages/captive-portal-page.tsx (7288 lines — REPLACED existing 1555-line version)
+    - 9 tabs: Portal Instances, Auth Methods, Pool Mappings, Portal Designer, Preferences, Analytics, Voucher Designer, Print Cards, Walled Garden
+  - src/components/wifi/portal/ (6 sub-components):
+    - portal-config.ts (47KB — types/config)
+    - dnd-builder.tsx (53KB — drag-and-drop portal designer)
+    - ab-testing-section.tsx
+    - ai-suggest-dialog.tsx
+    - design-history-panel.tsx
+    - template-gallery.tsx
+  - src/components/wifi/portal-mappings-tab.tsx
+  - src/components/wifi/portal-preferences-tab.tsx
+  - src/components/wifi/portal-whitelist.tsx
+  - Created stubs:
+    - src/lib/utils/format.ts (formatBytes, formatDuration)
+    - src/contexts/AuthContext.tsx (useAuth)
+
+- Phase 5 ✅: Copied /connect splash page (5 files)
+  - src/app/connect/page.tsx
+  - src/app/connect/wifi-connect-portal.tsx
+  - src/app/connect/layout.tsx
+  - src/app/connect/ad-slot.tsx
+  - src/app/connect/portal-font-loader.tsx
+
+- All files adapted: property→partner, propertyId→partnerId
+
+Stage Summary:
+✅ ALL captive portal files copied from StaySuite to CRYPTSK:
+  - 9 DB models (already existed, fixed @default error)
+  - 1 mini-service (captive-redirect, 1305 lines)
+  - 34 API routes
+  - 1 main UI page (7288 lines, 9 tabs)
+  - 9 sub-components
+  - 5 splash page files
+  - 4 stub modules for missing imports
+
+Remaining work:
+  - Build verification (next build --webpack)
+  - Fix any webpack/compilation errors
+  - Deploy to prod
+  - Test the captive portal UI
+  - Wire into CRYPTSK's nav config

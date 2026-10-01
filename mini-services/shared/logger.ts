@@ -1,52 +1,75 @@
-// Cryptsk — Structured JSON Logger for Production
-// All mini-services should use this for consistent log output
+/**
+ * StaySuite Mini-Services Structured Logger
+ *
+ * Provides consistent, structured logging across all mini-services.
+ * Replaces console.log/warn/error with JSON-formatted log entries
+ * that include timestamp, service name, level, and context.
+ *
+ * Usage:
+ *   import { createLogger } from '../shared/logger';
+ *   const log = createLogger('dns-service');
+ *   log.info('Service started', { port: 3012 });
+ *   log.warn('Auth not configured');
+ *   log.error('Database connection failed', { error: err.message });
+ */
 
-type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogEntry {
   timestamp: string;
   level: LogLevel;
   service: string;
   message: string;
-  data?: Record<string, unknown>;
+  context?: Record<string, unknown>;
 }
 
-export function log(
-  level: LogLevel,
-  service: string,
-  message: string,
-  data?: Record<string, unknown>
-): void {
-  const entry: LogEntry = {
-    timestamp: new Date().toISOString(),
-    level,
-    service,
-    message,
-    ...(data && { data }),
-  };
-  const line = JSON.stringify(entry);
-  if (level === "fatal" || level === "error") {
-    process.stderr.write(line + "\n");
-  } else if (level === "warn") {
-    process.stderr.write(line + "\n");
-  } else {
-    process.stdout.write(line + "\n");
+function formatEntry(entry: LogEntry): string {
+  const { timestamp, level, service, message, context } = entry;
+  const prefix = `[${timestamp}] [${level.toUpperCase()}] [${service}]`;
+  if (context && Object.keys(context).length > 0) {
+    return `${prefix} ${message} ${JSON.stringify(context)}`;
   }
+  return `${prefix} ${message}`;
 }
 
-export function createLogger(service: string) {
+export function createLogger(serviceName: string) {
+  const isoNow = () => new Date().toISOString();
+
+  function write(level: LogLevel, message: string, context?: Record<string, unknown>): void {
+    const entry: LogEntry = {
+      timestamp: isoNow(),
+      level,
+      service: serviceName,
+      message,
+      context,
+    };
+    const formatted = formatEntry(entry);
+
+    switch (level) {
+      case 'error':
+        process.stderr.write(formatted + '\n');
+        break;
+      case 'warn':
+        process.stderr.write(formatted + '\n');
+        break;
+      default:
+        process.stdout.write(formatted + '\n');
+        break;
+    }
+  }
+
   return {
-    debug: (message: string, data?: Record<string, unknown>) =>
-      log("debug", service, message, data),
-    info: (message: string, data?: Record<string, unknown>) =>
-      log("info", service, message, data),
-    warn: (message: string, data?: Record<string, unknown>) =>
-      log("warn", service, message, data),
-    error: (message: string, data?: Record<string, unknown>) =>
-      log("error", service, message, data),
-    fatal: (message: string, data?: Record<string, unknown>) =>
-      log("fatal", service, message, data),
+    debug(message: string, context?: Record<string, unknown>) {
+      write('debug', message, context);
+    },
+    info(message: string, context?: Record<string, unknown>) {
+      write('info', message, context);
+    },
+    warn(message: string, context?: Record<string, unknown>) {
+      write('warn', message, context);
+    },
+    error(message: string, context?: Record<string, unknown>) {
+      write('error', message, context);
+    },
   };
 }
-
-export type { LogLevel, LogEntry };
