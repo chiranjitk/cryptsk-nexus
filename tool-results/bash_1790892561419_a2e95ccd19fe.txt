@@ -1,0 +1,682 @@
+✓ Connected
+
+═══ Admin captive page — tab structure ═══
+11:import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+477:              {/* Auth Method Tabs */}
+478:              <Tabs
+479:                value={authTab}
+483:                <TabsList className="w-full h-11 bg-white/[0.05] dark:bg-muted/50 border border-white/[0.08] dark:border-border/20 rounded-xl p-1">
+484:                  <TabsTrigger
+485:                    value="voucher"
+490:                  </TabsTrigger>
+491:                  <TabsTrigger
+492:                    value="room"
+497:                  </TabsTrigger>
+498:                  <TabsTrigger
+499:                    value="ldap"
+504:                  </TabsTrigger>
+505:                </TabsList>
+510:                    <TabsContent value="voucher" className="mt-5">
+532:                              value={voucherCode}
+578:                    </TabsContent>
+583:                    <TabsContent value="ldap" className="mt-5">
+611:                              value={ldapUsername}
+633:                              value={ldapPassword}
+688:                    </TabsContent>
+693:                    <TabsContent value="room" className="mt-5">
+715:                              value={roomNumber}
+736:                              value={lastName}
+782:                    </TabsContent>
+785:              </Tabs>
+
+
+═══ Page size ═══
+905 /opt/staysuite/src/app/portal/captive/page.tsx
+---IMPORTS---
+'use client'
+
+import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
+import Image from 'next/image'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import {
+  Wifi,
+  Shield,
+  Loader2,
+  CheckCircle2,
+  Zap,
+  Clock,
+  ChevronRight,
+  Globe,
+  Lock,
+  Ticket,
+  DoorOpen,
+  ArrowRight,
+  Sparkles,
+  Network,
+  Eye,
+  EyeOff,
+} from 'lucide-react'
+
+
+
+═══ captive-redirect service size ═══
+1305 /opt/staysuite/mini-services/captive-redirect/index.ts
+---PORTS---
+4: * High-performance, production-grade captive portal redirection service.
+14: *   - HTTPS awareness (TLS SNI detection via nftables REDIRECT to port 8443)
+18: *   nftables REDIRECT :80 → :8888  (HTTP captive detection)
+19: *   nftables REDIRECT :443 → :8443 (HTTPS captive detection, TLS SNI)
+21: *   Client → nftables → captive-redirect:8888 → 302 → /connect
+22: *   Client → nftables → captive-redirect:8443 → TLS SNI check → 302 → /connect
+30: *   ✓ Chrome OS         → Chrome captive portal detection
+31: *   ✓ Firefox           → detectportal.firefox.com gets 302
+42: * HTTPS Support:
+44: *   REDIRECT to port 8443. The service reads SNI from the raw TLS bytes, then
+
+
+═══ All captive/wifi API routes (count) ═══
+324
+---ALL WIFI ROUTES---
+/opt/staysuite/src/app/api/wifi/aaa-config/route.ts
+/opt/staysuite/src/app/api/wifi/aaa/route.ts
+/opt/staysuite/src/app/api/wifi/ad-campaigns/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/ad-campaigns/route.ts
+/opt/staysuite/src/app/api/wifi/ad-campaigns/serve/route.ts
+/opt/staysuite/src/app/api/wifi/ad-campaigns/stats/route.ts
+/opt/staysuite/src/app/api/wifi/ad-campaigns/track/route.ts
+/opt/staysuite/src/app/api/wifi/alerts/config/route.ts
+/opt/staysuite/src/app/api/wifi/alerts/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/alerts/route.ts
+/opt/staysuite/src/app/api/wifi/alerts/stats/route.ts
+/opt/staysuite/src/app/api/wifi/anomaly/events/route.ts
+/opt/staysuite/src/app/api/wifi/anomaly/rules/route.ts
+/opt/staysuite/src/app/api/wifi/anomaly/scan/route.ts
+/opt/staysuite/src/app/api/wifi/anomaly/seed/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth/daily-usage/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth/policies/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth-upgrade/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth-upgrade/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth-upgrade/settings/route.ts
+/opt/staysuite/src/app/api/wifi/bandwidth-upgrade/stats/route.ts
+/opt/staysuite/src/app/api/wifi/billing/invoice/route.ts
+/opt/staysuite/src/app/api/wifi/billing/plan-inclusion/route.ts
+/opt/staysuite/src/app/api/wifi/billing/reconciliation/route.ts
+/opt/staysuite/src/app/api/wifi/billing/route.ts
+/opt/staysuite/src/app/api/wifi/billing/run/route.ts
+/opt/staysuite/src/app/api/wifi/billing/summary/route.ts
+/opt/staysuite/src/app/api/wifi/blocked-devices/route.ts
+/opt/staysuite/src/app/api/wifi/captive/auth/route.ts
+/opt/staysuite/src/app/api/wifi/coa/route.ts
+/opt/staysuite/src/app/api/wifi/consent-logs/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/consent-logs/route.ts
+/opt/staysuite/src/app/api/wifi/consent-logs/settings/route.ts
+/opt/staysuite/src/app/api/wifi/consent-logs/stats/route.ts
+/opt/staysuite/src/app/api/wifi/content-filter/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/aps/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/coa/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/connection-health/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/health/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/plan-mapping/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/radius-profiles/[id]/apply/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/radius-profiles/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/radius-profiles/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/recent-failures/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/ssids/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/test-coa/route.ts
+/opt/staysuite/src/app/api/wifi/controllers/test-radius/route.ts
+/opt/staysuite/src/app/api/wifi/devices/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/devices/lookup/route.ts
+/opt/staysuite/src/app/api/wifi/devices/route.ts
+/opt/staysuite/src/app/api/wifi/devices/settings/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/blacklist/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/blacklist/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp-fingerprint/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/hostname-filters/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/hostname-filters/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/leases/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/options/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/options/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/reservations/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/reservations/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/service/[action]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/status/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/subnets/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/subnets/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/tag-rules/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/dhcp/tag-rules/route.ts
+/opt/staysuite/src/app/api/wifi/diagnostics/route.ts
+/opt/staysuite/src/app/api/wifi/dns/route.ts
+/opt/staysuite/src/app/api/wifi/event-wifi/route.ts
+/opt/staysuite/src/app/api/wifi/event-wifi/schedule/route.ts
+/opt/staysuite/src/app/api/wifi/filter-groups/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/filter-groups/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/apply/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/apply-status/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-policies/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-policies/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-pools/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-pools/init/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-pools/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/bandwidth-usage/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/chain-architecture/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/config/preview/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/categories/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/seed/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/sync/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/content-filter/whitelist/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-groups/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-groups/match/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-groups/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/apply/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/assignments/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/assign/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/audit/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/bulk-assign/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/bulk-revoke/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/cleanup/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/discover/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/heartbeat/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/revoke/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/device-policies/stats/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/flush/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/gui-rules/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/gui-rules/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/gui-rules/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/mac-filter/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/mac-filter/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/port-forward-counters/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/port-forwards/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/port-forwards/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/port-forwards/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/port-forwards/seed/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/presets/[id]/apply/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/presets/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/quick-block-counters/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/quick-blocks/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/quick-blocks/check/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/quick-blocks/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/quick-blocks/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rate-limit-counters/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rate-limits/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rate-limits/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rate-limits/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rule-counters/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rules/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/rules/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/schedules/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/schedules/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/security-monitor/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/zones/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/firewall/zones/route.ts
+/opt/staysuite/src/app/api/wifi/freeradius/route.ts
+/opt/staysuite/src/app/api/wifi/gateways/route.ts
+/opt/staysuite/src/app/api/wifi/health/route.ts
+/opt/staysuite/src/app/api/wifi/heatmap/coverage/route.ts
+/opt/staysuite/src/app/api/wifi/heatmap/floor-plans/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/heatmap/floor-plans/route.ts
+/opt/staysuite/src/app/api/wifi/heatmap/route.ts
+/opt/staysuite/src/app/api/wifi/identity-logs/export/route.ts
+/opt/staysuite/src/app/api/wifi/identity-logs/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/identity-logs/route.ts
+/opt/staysuite/src/app/api/wifi/identity-logs/settings/route.ts
+/opt/staysuite/src/app/api/wifi/identity-logs/stats/route.ts
+/opt/staysuite/src/app/api/wifi/ip-pool-actions/route.ts
+/opt/staysuite/src/app/api/wifi/ip-pools/[id]/snat-audit/route.ts
+/opt/staysuite/src/app/api/wifi/ip-pools/[id]/snat-bulk-release/route.ts
+/opt/staysuite/src/app/api/wifi/ip-pools/[id]/snat-usage/route.ts
+/opt/staysuite/src/app/api/wifi/ip-pools/route.ts
+/opt/staysuite/src/app/api/wifi/l7/config/route.ts
+/opt/staysuite/src/app/api/wifi/l7/flows/guest-protocols/route.ts
+/opt/staysuite/src/app/api/wifi/l7/flows/route.ts
+/opt/staysuite/src/app/api/wifi/l7/profiles/route.ts
+/opt/staysuite/src/app/api/wifi/l7/reload/route.ts
+/opt/staysuite/src/app/api/wifi/l7/route.ts
+/opt/staysuite/src/app/api/wifi/l7/rules/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/l7/rules/route.ts
+/opt/staysuite/src/app/api/wifi/l7/stats/route.ts
+/opt/staysuite/src/app/api/wifi/mac-auth/link-guest/route.ts
+/opt/staysuite/src/app/api/wifi/mac-auth/route.ts
+/opt/staysuite/src/app/api/wifi/nas-health/route.ts
+/opt/staysuite/src/app/api/wifi/nas/route.ts
+/opt/staysuite/src/app/api/wifi/network/aliases/route.ts
+/opt/staysuite/src/app/api/wifi/network/backups/route.ts
+/opt/staysuite/src/app/api/wifi/network/bonds/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/network/bonds/route.ts
+/opt/staysuite/src/app/api/wifi/network/bridges/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/network/bridges/route.ts
+/opt/staysuite/src/app/api/wifi/network/interfaces/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/network/interfaces/route.ts
+/opt/staysuite/src/app/api/wifi/network/multiwan/alerts/route.ts
+/opt/staysuite/src/app/api/wifi/network/multiwan/health-check/route.ts
+/opt/staysuite/src/app/api/wifi/network/multiwan/monitoring/route.ts
+/opt/staysuite/src/app/api/wifi/network/multiwan/route.ts
+/opt/staysuite/src/app/api/wifi/network/roles/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/apply/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/bulk/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/dhcp-provision/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/route.ts
+/opt/staysuite/src/app/api/wifi/network/room-vlans/status/route.ts
+/opt/staysuite/src/app/api/wifi/network/routes/route.ts
+/opt/staysuite/src/app/api/wifi/network/route.ts
+/opt/staysuite/src/app/api/wifi/network/vlans/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/network/vlans/route.ts
+/opt/staysuite/src/app/api/wifi/network/wan-failover/route.ts
+/opt/staysuite/src/app/api/wifi/no-show-cleanup/route.ts
+/opt/staysuite/src/app/api/wifi/otp/cleanup/route.ts
+/opt/staysuite/src/app/api/wifi/otp/route.ts
+/opt/staysuite/src/app/api/wifi/otp/send/route.ts
+/opt/staysuite/src/app/api/wifi/otp/verify/route.ts
+/opt/staysuite/src/app/api/wifi/partners/[id]/auths/route.ts
+/opt/staysuite/src/app/api/wifi/partners/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/partners/route.ts
+/opt/staysuite/src/app/api/wifi/partners/stats/route.ts
+/opt/staysuite/src/app/api/wifi/partners/validate/route.ts
+/opt/staysuite/src/app/api/wifi/plan-mapping/route.ts
+/opt/staysuite/src/app/api/wifi/plans/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/connectors/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/event-log/export/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/event-log/retry/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/event-log/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/fias/reload/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/fias/simulate/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/fias/status/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/field-mapping/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/guest-journey/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/[id]/sync/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/[id]/test/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/provisioning-stats/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/rate-plan-mapping/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/test-connection/route.ts
+/opt/staysuite/src/app/api/wifi/pms-integration/test-provisioning/route.ts
+/opt/staysuite/src/app/api/wifi/portal/ab-test/route.ts
+/opt/staysuite/src/app/api/wifi/portal/ab-test/track-conversion/route.ts
+/opt/staysuite/src/app/api/wifi/portal/ab-test/track-impression/route.ts
+/opt/staysuite/src/app/api/wifi/portal/ab-test/track/route.ts
+/opt/staysuite/src/app/api/wifi/portal/ai-suggest/route.ts
+/opt/staysuite/src/app/api/wifi/portal/analytics/route.ts
+/opt/staysuite/src/app/api/wifi/portal/auth-methods/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/auth-methods/route.ts
+/opt/staysuite/src/app/api/wifi/portal/auto-translate/route.ts
+/opt/staysuite/src/app/api/wifi/portal/design-history/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-records/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-records/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-redirects/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-redirects/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-zones/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/dns-zones/route.ts
+/opt/staysuite/src/app/api/wifi/portal/instances/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/instances/route.ts
+/opt/staysuite/src/app/api/wifi/portal/mappings/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/mappings/route.ts
+/opt/staysuite/src/app/api/wifi/portal/pages/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/pages/route.ts
+/opt/staysuite/src/app/api/wifi/portal/portals/route.ts
+/opt/staysuite/src/app/api/wifi/portal/resolve-zone/route.ts
+/opt/staysuite/src/app/api/wifi/portal/route.ts
+/opt/staysuite/src/app/api/wifi/portal/templates/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/portal/templates/route.ts
+/opt/staysuite/src/app/api/wifi/portal/test-lookup/route.ts
+/opt/staysuite/src/app/api/wifi/portal/vouchers/route.ts
+/opt/staysuite/src/app/api/wifi/portal/weather/route.ts
+/opt/staysuite/src/app/api/wifi/portal-whitelist/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/adapter-status/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/config/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/delivery-logs/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/eligible-bookings/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/route.ts
+/opt/staysuite/src/app/api/wifi/pre-arrival/send/route.ts
+/opt/staysuite/src/app/api/wifi/provisioning-logs/route.ts
+/opt/staysuite/src/app/api/wifi/quota/reset/route.ts
+/opt/staysuite/src/app/api/wifi/quotas/route.ts
+/opt/staysuite/src/app/api/wifi/quota/topup/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/quota/topup/route.ts
+/opt/staysuite/src/app/api/wifi/quota/usage/route.ts
+/opt/staysuite/src/app/api/wifi/radius/eap-toggle/route.ts
+/opt/staysuite/src/app/api/wifi/radius-ldap/route.ts
+/opt/staysuite/src/app/api/wifi/radius-profiles/[id]/apply/route.ts
+/opt/staysuite/src/app/api/wifi/radius-profiles/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/radius-profiles/route.ts
+/opt/staysuite/src/app/api/wifi/radius/profiles/route.ts
+/opt/staysuite/src/app/api/wifi/radius/route.ts
+/opt/staysuite/src/app/api/wifi/radius-server/route.ts
+/opt/staysuite/src/app/api/wifi/reports/bandwidth-graph/route.ts
+/opt/staysuite/src/app/api/wifi/reports/bandwidth/route.ts
+/opt/staysuite/src/app/api/wifi/reports/health/route.ts
+/opt/staysuite/src/app/api/wifi/reports/nat-logs/route.ts
+/opt/staysuite/src/app/api/wifi/reports/route.ts
+/opt/staysuite/src/app/api/wifi/reports/syslog/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/reports/syslog/route.ts
+/opt/staysuite/src/app/api/wifi/reports/user-bandwidth/route.ts
+/opt/staysuite/src/app/api/wifi/reports/voucher/route.ts
+/opt/staysuite/src/app/api/wifi/reports/web-surfing/route.ts
+/opt/staysuite/src/app/api/wifi/revenue-dashboard/route.ts
+/opt/staysuite/src/app/api/wifi/satisfaction/active/route.ts
+/opt/staysuite/src/app/api/wifi/satisfaction/route.ts
+/opt/staysuite/src/app/api/wifi/satisfaction/stats/route.ts
+/opt/staysuite/src/app/api/wifi/satisfaction/submit/route.ts
+/opt/staysuite/src/app/api/wifi/sdcp/device-history/route.ts
+/opt/staysuite/src/app/api/wifi/sdcp/enable/route.ts
+/opt/staysuite/src/app/api/wifi/sdcp/security-events/route.ts
+/opt/staysuite/src/app/api/wifi/sdcp/staff-devices/route.ts
+/opt/staysuite/src/app/api/wifi/session-history/hourly-timeline/route.ts
+/opt/staysuite/src/app/api/wifi/session-history/route.ts
+/opt/staysuite/src/app/api/wifi/session-history/user-summary/route.ts
+/opt/staysuite/src/app/api/wifi/sessions/route.ts
+/opt/staysuite/src/app/api/wifi/settings/route.ts
+/opt/staysuite/src/app/api/wifi/sla/alert-bridge/route.ts
+/opt/staysuite/src/app/api/wifi/sla/available-properties/route.ts
+/opt/staysuite/src/app/api/wifi/sla/compliance/route.ts
+/opt/staysuite/src/app/api/wifi/sla/[id]/metrics/route.ts
+/opt/staysuite/src/app/api/wifi/sla/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/sla/route.ts
+/opt/staysuite/src/app/api/wifi/snat-alerts/route.ts
+/opt/staysuite/src/app/api/wifi/snat-overview/route.ts
+/opt/staysuite/src/app/api/wifi/social-auth/facebook/route.ts
+/opt/staysuite/src/app/api/wifi/social-auth/google/route.ts
+/opt/staysuite/src/app/api/wifi/social-auth/route.ts
+/opt/staysuite/src/app/api/wifi/social/auth/route.ts
+/opt/staysuite/src/app/api/wifi/social/callback/route.ts
+/opt/staysuite/src/app/api/wifi/social/test-connection/route.ts
+/opt/staysuite/src/app/api/wifi/sync/route.ts
+/opt/staysuite/src/app/api/wifi/test-credentials/route.ts
+/opt/staysuite/src/app/api/wifi/test-views/route.ts
+/opt/staysuite/src/app/api/wifi/users/[id]/devices/route.ts
+/opt/staysuite/src/app/api/wifi/users/[id]/route.ts
+/opt/staysuite/src/app/api/wifi/users/route.ts
+/opt/staysuite/src/app/api/wifi/vlan/configs/route.ts
+/opt/staysuite/src/app/api/wifi/vlan/route.ts
+/opt/staysuite/src/app/api/wifi/vouchers/route.ts
+/opt/staysuite/src/app/api/wifi/vouchers/send/route.ts
+/opt/staysuite/src/app/api/wifi/walled-garden/route.ts
+
+
+═══ Captive auth route (first 40 lines) ═══
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+
+/**
+ * POST /api/wifi/captive/auth
+ * Captive Portal WiFi Authentication (LEGACY)
+ *
+ * DEPRECATED: This endpoint supports only 3 methods (voucher, room, ldap).
+ * New integrations should use /api/v1/wifi/auth (11 methods, full security).
+ *
+ * Security controls already applied:
+ *   - CP-CRIT-01: nftables rate limiting
+ *   - CP-CRIT-02: Room auth tenant scoping + rate limiting
+ *   - CP-CRIT-03: Tenant isolation required
+ *   - CP-CRIT-06: Atomic voucher claim (TOCTOU prevention)
+ *   - CP-HIGH-07: Exact last name match
+ *
+ * Accepts three auth methods:
+ *  - voucher: { method: "voucher", code: "XXXX", tenantId: string }
+ *  - room:    { method: "room", roomNumber: "101", lastName: "Smith", tenantId: string }
+ *  - ldap:    { method: "ldap", username: "jdoe", password: "secret", propertyId: string }
+ */
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Lazy-import ldapjs to avoid issues when the package is not installed. */
+async function getLdapjs() {
+  let ldapjs: typeof import('ldapjs') | null = null;
+  try {
+    ldapjs = await import('ldapjs');
+  } catch {
+    throw new Error('ldapjs package is not installed');
+  }
+  return ldapjs;
+}
+
+/**
+ * Perform LDAP authentication: admin bind → user search → user bind.
+
+
+═══ CaptivePortal table schema ═══
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "tenantId",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "propertyId",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "name",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "description",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "listenIp",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'0.0.0.0'::text"
+  },
+  {
+    "column_name": "listenPort",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "80"
+  },
+  {
+    "column_name": "useSsl",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "sslCertPath",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "sslKeyPath",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "enabled",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "true"
+  },
+  {
+    "column_name": "isDefault",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "autoAuthEnabled",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "true"
+  },
+  {
+    "column_name": "maxConcurrent",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "1000"
+  },
+  {
+    "column_name": "sessionTimeout",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "86400"
+  },
+  {
+    "column_name": "idleTimeout",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "3600"
+  },
+  {
+    "column_name": "redirectUrl",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "successMessage",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "failMessage",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "slug",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'default-zone'::text"
+  },
+  {
+    "column_name": "roamingMode",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'auth_origin'::text"
+  },
+  {
+    "column_name": "allowsRoamingFrom",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'[]'::text"
+  },
+  {
+    "column_name": "authMethod",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'voucher'::text"
+  },
+  {
+    "column_name": "maxBandwidthDown",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "5242880"
+  },
+  {
+    "column_name": "maxBandwidthUp",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": "1048576"
+  },
+  {
+    "column_name": "bandwidthPolicy",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'zone'::text"
+  },
+  {
+    "column_name": "nasIdentifier",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "''::text"
+  },
+  {
+    "column_name": "ssidList",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'[]'::text"
+  },
+  {
+    "column_name": "captchaEnabled",
+    "data_type": "boolean",
+    "is_nullable": "NO",
+    "column_default": "false"
+  },
+  {
+    "column_name": "captchaSiteKey",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "captchaSecretKey",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "createdAt",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": "CURRENT_TIMESTAMP"
+  },
+  {
+    "column_name": "updatedAt",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": null
+  }
+]
+
+
+═══ CRYPTSK current captive page (local) ═══
+===CRYPTSK LOCAL CAPTIVE===
+/home/z/my-project/src/app/api/captive-portal/[id]/route.ts
+/home/z/my-project/src/app/api/captive-portal/analytics/route.ts
+/home/z/my-project/src/app/api/captive-portal/sessions/[id]/route.ts
+/home/z/my-project/src/app/api/captive-portal/sessions/route.ts
+/home/z/my-project/src/app/api/captive-portal/sessions/disconnect-all/route.ts
+/home/z/my-project/src/app/api/captive-portal/ads/[id]/route.ts
+/home/z/my-project/src/app/api/captive-portal/ads/route.ts
+/home/z/my-project/src/app/api/captive-portal/events/route.ts
+/home/z/my-project/src/app/api/captive-portal/schedules/[id]/route.ts
+/home/z/my-project/src/app/api/captive-portal/schedules/route.ts
+---LINES---
+1555 /home/z/my-project/src/components/pages/captive-portal-page.tsx
+---TABS---
+39:import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+599:            <TabsTrigger value="dashboard"><Activity className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Dashboard</span></TabsTrigger>
+600:            <TabsTrigger value="profiles"><Layout className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Profiles</span></TabsTrigger>
+601:            <TabsTrigger value="subnets"><Network className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Subnets</span></TabsTrigger>
+602:            <TabsTrigger value="sessions"><Users className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Sessions</span></TabsTrigger>
+603:            <TabsTrigger value="rules"><Shield className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Rules</span></TabsTrigger>
+604:            <TabsTrigger value="mac"><Fingerprint className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">MAC</span></TabsTrigger>
+605:            <TabsTrigger value="schedules"><Clock className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Schedule</span></TabsTrigger>
+606:            <TabsTrigger value="vouchers"><Ticket className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Vouchers</span></TabsTrigger>
+607:            <TabsTrigger value="ads"><IndianRupee className="h-3.5 w-3.5 mr-1" /><span className="hidden sm:inline">Ads</span></TabsTrigger>
