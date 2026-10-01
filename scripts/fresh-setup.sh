@@ -75,6 +75,30 @@ conn.close()"
 fi
 
 echo "═══ STEP 6: services via pm2 ═══"
+# next.config.ts is UNTRACKED (local-only, per user order 2026-10-01 — avoids
+# parallel-agent conflicts). Recreate a working default if missing after clone.
+if [ ! -f next.config.ts ]; then
+  cat > next.config.ts << 'NEXTCFG'
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  output: "standalone",
+  typescript: { ignoreBuildErrors: true },
+  reactStrictMode: false,
+  allowedDevOrigins: ["*.space-z.ai", "127.0.0.1", "localhost"],
+  // 256 OOM-crash-looped cold compile of the full page-loaders graph in the
+  // 4GB sandbox; 1536 fits alongside the 12 mini-services.
+  experimental: { turbopackMemoryLimit: 1536 },
+  serverExternalPackages: [
+    "ssh2", "net-snmp", "ros-client", "pg", "pg-native",
+    "bcryptjs", "bcrypt", "nodemailer", "@prisma/client", "canvas", "jsdom",
+  ],
+};
+
+export default nextConfig;
+NEXTCFG
+  echo "recreated next.config.ts (gitignored by design — tune locally)"
+fi
 # NOTE: ecosystem.config.cjs is UNTRACKED (secrets policy). If missing after clone,
 # recreate it from FRESH-SETUP-GUIDE.md §ecosystem — or restore from your local copy.
 if [ -f ecosystem.config.cjs ]; then

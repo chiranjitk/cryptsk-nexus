@@ -108,3 +108,11 @@ ecosystem.config.cjs
 ecosystem.config.production.cjs
 *.env.*
 !.env.example
+
+# ============== next.js config (local-only, per user order) ==============
+# Sandbox-specific tuning lives here (turbopackMemoryLimit etc.); keeping it
+# untracked avoids parallel-agent merge conflicts. fresh-setup.sh recreates
+# a working default if missing after a fresh clone.
+next.config.js
+next.config.ts
+next.config.mjs
