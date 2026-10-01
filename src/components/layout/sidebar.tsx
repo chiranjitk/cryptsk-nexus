@@ -41,7 +41,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { NavGroup, NavItem } from "@/types";
 import { useModuleStore } from "@/store/module-store";
 import { isPageEnabled } from "@/lib/modules/registry";
@@ -137,7 +136,7 @@ export function AppSidebar() {
       className="border-none shadow-[1px_0_8px_-2px_rgba(0,0,0,0.06)] dark:shadow-[1px_0_8px_-2px_rgba(0,0,0,0.25)]"
     >
       {/* ─── Brand Header ─────────────────────────────────── */}
-      <SidebarHeader className="px-4 h-14 flex items-center">
+      <SidebarHeader className="px-4 h-14 shrink-0 flex items-center">
         <div className="flex items-center gap-2.5 w-full">
           <div
             className="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
@@ -159,10 +158,17 @@ export function AppSidebar() {
       <SidebarSeparator className="bg-[#1E293B]/60" />
 
       {/* ─── Navigation ───────────────────────────────────── */}
+      {/* SidebarContent IS the vertical scroll region: the shadcn primitive
+          provides flex-1 min-h-0 overflow-auto, so the nav list gets exactly
+          the space between the header and the footer and can never render
+          behind the user card (the previous nested <ScrollArea h-full> had a
+          fragile percentage-height chain that let long nav lists overflow
+          under the footer on short viewports). Native overflow scrolling —
+          slim scrollbar via scrollbar-width — plus extra bottom padding so
+          the last items scroll fully clear of the footer. */}
       {mounted ? (
-        <SidebarContent className="px-2 py-2 pb-[env(safe-area-inset-bottom)]">
-          <ScrollArea className="h-full">
-            <nav className="flex flex-col gap-0.5 pb-4">
+        <SidebarContent className="px-2 py-2 pb-[env(safe-area-inset-bottom)] [scrollbar-width:thin]">
+          <nav className="flex flex-col gap-0.5 pb-6">
               {filteredNavGroups.map((group) => {
                 const isCollapsed = collapsedGroups.has(group.id);
                 const isGroupActive = group.items.some(
@@ -281,8 +287,7 @@ export function AppSidebar() {
                   </SidebarGroup>
                 );
               })}
-            </nav>
-          </ScrollArea>
+          </nav>
         </SidebarContent>
       ) : (
         <SidebarContent className="px-2 py-2">
@@ -299,8 +304,10 @@ export function AppSidebar() {
         </SidebarContent>
       )}
 
-      {/* ─── Footer (compact, quiet) ─────────────────────── */}
-      <SidebarFooter className="px-2 pb-2 pt-1">
+      {/* ─── Footer (compact, quiet) — true non-overlapping footer:
+          shrink-0 flex sibling AFTER the scrollable nav region, so it owns
+          its own space and nav items always scroll above it ─────────────── */}
+      <SidebarFooter className="px-2 pb-2 pt-1 shrink-0">
         <div className="h-px mb-1.5 mx-1 bg-[#1E293B]/60" />
         <div className="flex items-center gap-2.5 rounded-md px-1.5 py-1.5 group-data-[collapsible=icon]:justify-center hover:bg-[#1E293B]/50 transition-colors">
           <Avatar className="h-7 w-7 shrink-0 border border-[#1E293B]">

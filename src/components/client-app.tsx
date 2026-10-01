@@ -51,20 +51,38 @@ const AuthenticatedShell = dynamic(
 );
 
 // ─── Hash deep-link validation table ─────────────────────────
-// Valid pages = nav-config page labels (flattened with their owning group id
-// as the sidebar section) plus the two non-sidebar pages SelfCare and Login.
+// Derived AUTOMATICALLY from the nav registry (src/lib/nav-config.ts is the
+// single source of truth) — no hand-maintained table to drift. Every nav item
+// is indexed under all lookup forms a user/QA can realistically type:
+//   1. exact label, lower-cased            → "alert center", "subscribers"
+//   2. kebab-cased label                   → "360-customer-view"
+//   3. href slug (canonical kebab-case)    → "alert-center", "cyclic-billing"
+// plus the two non-sidebar pages SelfCare and Login. First key wins, so the
+// nav order in nav-config defines precedence on the (rare) slug collisions.
 // Lookup is case-insensitive; unknown hashes are ignored (no PageNotFound).
+function toKebabSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 const HASH_PAGE_INDEX: Map<string, { label: string; section?: string }> = (() => {
   const index = new Map<string, { label: string; section?: string }>();
+  const addKey = (key: string, entry: { label: string; section?: string }) => {
+    if (key && !index.has(key)) index.set(key, entry);
+  };
   for (const group of navGroups) {
     for (const item of group.items) {
-      if (!index.has(item.label.toLowerCase())) {
-        index.set(item.label.toLowerCase(), { label: item.label, section: group.id });
-      }
+      const entry = { label: item.label, section: group.id };
+      addKey(item.label.toLowerCase(), entry);
+      addKey(toKebabSlug(item.label), entry);
+      // hrefs look like "/alert-center" — strip the leading slash first
+      addKey(toKebabSlug(item.href.replace(/^\//, "")), entry);
     }
   }
-  index.set("selfcare", { label: "SelfCare", section: "SELF-CARE" });
-  index.set("login", { label: "Login" });
+  addKey("selfcare", { label: "SelfCare", section: "SELF-CARE" });
+  addKey("login", { label: "Login" });
   return index;
 })();
 

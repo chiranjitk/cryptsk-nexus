@@ -82,10 +82,15 @@ export function useVoiceAssistant(): UseVoiceAssistantReturn {
   const speechRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // ReturnType<typeof setTimeout> instead of NodeJS.Timeout so the ref works
+  // in tsconfigs with and without node types (client-only timer).
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakAudioRef = useRef<HTMLAudioElement | null>(null);
-  const processCommandRef = useRef<(text: string) => Promise<void>>();
-  const speakTextRef = useRef<(text: string) => Promise<void>>();
+  // React 19 types require an explicit initial value for useRef — passing
+  // undefined keeps the exact same optional-ref semantics (all consumers use
+  // .current assignments and optional ?.() calls).
+  const processCommandRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
+  const speakTextRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
   const welcomePlayedRef = useRef(false);
   const pendingWelcomeNameRef = useRef<string | undefined>(undefined);
 
