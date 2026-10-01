@@ -96,3 +96,9 @@ start-standalone.sh
 data/
 download/
 pgsql-production/runtime/
+
+# ============== agent runtime artifacts (never commit) ==============
+tool-results/
+.zscripts/
+agent-ctx/
+*.pid
