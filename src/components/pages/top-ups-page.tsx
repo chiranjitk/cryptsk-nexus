@@ -332,7 +332,22 @@ export default function TopUpsPage() {
                       </TableHeader>
                       <TableBody>
                         {paginatedProducts.length === 0 ? (
-                          <TableRow><TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No products found.</TableCell></TableRow>
+                          <TableRow>
+                            <TableCell colSpan={8}>
+                              <div className="py-12 text-center">
+                                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                                  <Package className="h-5 w-5 text-muted-foreground" />
+                                </div>
+                                <p className="text-sm font-semibold">No products found</p>
+                                <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">Create your first top-up product — data, time, or speed boost — to start selling add-ons.</p>
+                                <div className="mt-4 flex justify-center">
+                                  <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => { setForm(emptyForm); setAddOpen(true); }}>
+                                    <Plus className="h-4 w-4 mr-2" />Add Product
+                                  </Button>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
                         ) : (
                           paginatedProducts.map((product) => (
                             <TableRow key={product.id} className="hover:bg-muted/50 transition-colors duration-150">
@@ -403,7 +418,17 @@ export default function TopUpsPage() {
                       </TableHeader>
                       <TableBody>
                         {paginatedPurchases.length === 0 ? (
-                          <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No purchases found.</TableCell></TableRow>
+                          <TableRow>
+                            <TableCell colSpan={7}>
+                              <div className="py-12 text-center">
+                                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                                  <History className="h-5 w-5 text-muted-foreground" />
+                                </div>
+                                <p className="text-sm font-semibold">No purchases found</p>
+                                <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">Purchases will show up here as soon as subscribers start buying top-up products.</p>
+                              </div>
+                            </TableCell>
+                          </TableRow>
                         ) : (
                           paginatedPurchases.map((purchase) => {
                             const usagePercent = purchase.totalValue > 0 ? Math.round((purchase.usedValue / purchase.totalValue) * 100) : 0;
