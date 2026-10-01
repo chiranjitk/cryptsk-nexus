@@ -177,8 +177,17 @@ export async function POST(req: NextRequest) {
         await syncGroupToFreeRADIUS(group.name, {
           downloadSpeed,
           uploadSpeed: uploadSpeed || downloadSpeed,
-          dataLimitMb: dataLimitGb ? Math.round(dataLimitGb * 1024) : undefined,
+          burstSpeed: burstSpeed || null,
+          burstDuration: burstDuration || null,
+          dataLimitGb: dataLimitGb || null,
           maxSessions: maxConcurrentSessions ?? 1,
+          validityDays: validityDays || 30,
+          downloadSpeedFup: downloadSpeedFup || null,
+          uploadSpeedFup: uploadSpeedFup || null,
+          contentionRatio: contentionRatio || null,
+          ipv6Enabled: ipv6Enabled || false,
+          ipv6PrefixDelegation: ipv6PrefixDelegation || false,
+          ipv6DefaultPoolId: ipv6DefaultPoolId || null,
         });
 
         await auditCreate(req, "Plan", updatedPlan.id, { name, priceMonthly, speed: `${downloadSpeed} ${speedUnit}`, autoGroup: group.name }, { userId });

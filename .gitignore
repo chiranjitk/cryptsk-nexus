@@ -96,3 +96,15 @@ start-standalone.sh
 data/
 download/
 pgsql-production/runtime/
+
+# ============== Internal ops scripts (contain hardcoded credentials) ==============
+# These are internal helper scripts with prod SSH/DB passwords — NEVER commit
+scripts/_*.mjs
+scripts/apply-ssh2-fix-and-build.mjs
+scripts/push-enhanced-page-and-rebuild.mjs
+scripts/push-radius-fix-and-rebuild.mjs
+scripts/migrate-radius-attrs.mjs
+scripts/check-prod-build.mjs
+scripts/restart-prod-pm2.mjs
+scripts/start-prod-nextjs.mjs
+scripts/quick-prod-check.mjs

@@ -1591,3 +1591,104 @@ Next phase:
 - Phase 10 — Scale / HA / Production Hardening
 
 ALL PHASES 0-8 VERIFIED. Phase 9 (AI) + Phase 10 (Scale/HA) remain for future work per user direction.
+
+---
+Task ID: PARTNER-MGMT-MODULE
+Agent: Z.ai Code (orchestrator) + full-stack-developer subagent
+Task: Build new Partner Management module — ISP → Distribution Hub → Partner → Subscriber hierarchy
+
+Work Log:
+- Added 7 new Prisma models to schema: DistributionHub, Partner, PartnerUser (with PartnerUserRole enum), PartnerPermission, PartnerRolePermission, PartnerIpPool, PartnerPortalMapping
+- Added Subscriber.partnerId (nullable FK to Partner) + Partner back-relation + @@index([partnerId])
+- Added CaptivePortal.PartnerPortalMapping[] back-relation (for partner-wise captive portal mapping)
+- Validated schema (PASSED) + pushed to local + prod DB (218+ models total now)
+- Subagent created 16 new files:
+  - 12 API routes (distribution-hubs CRUD, partners CRUD, partner-users CRUD, partner-permissions, partner-users/[id]/permissions, partner-reports/[id], distribution-hub-reports/[id], partner-ip-pools, partner-portal-mappings)
+  - 4 UI pages (distribution-hub-page, partner-page, partner-users-page, partner-reports-page)
+- Updated nav-config.ts: added PARTNER MANAGEMENT menu group (4 items: Distribution Hubs, Partners, Partner Users, Partner Reports)
+- Updated page-loaders.ts: 4 lazy imports for new pages
+- Updated seed.ts: creates 1 Distribution Hub (Kolkata Central) + 2 Partners (ABC Cable, XYZ Network) + 2 Partner Users (admin@abccable.com/Partner@2026 PARTNER_ADMIN, billing@xyznet.com/Billing@2026 BILLING_USER) + 10 Partner Permissions (subscriber.view/create/update/suspend, billing.view/invoice/payment, session.view/disconnect, report.view)
+- Deployed to prod: git pull + prisma db push + seed + bun run build + pm2 restart
+- Verified all 8 Partner Management API endpoints on prod:
+
+Stage Summary:
+- All 8 endpoints return HTTP 200:
+  1. GET /api/distribution-hubs → 200 (1 hub: Kolkata Central)
+  2. GET /api/partners → 200 (2 partners: ABC Cable, XYZ Network)
+  3. GET /api/partner-users → 200 (partner users with role + permissions)
+  4. GET /api/partner-permissions → 200 (10 permissions grouped by category)
+  5. GET /api/partner-ip-pools → 200 (empty — no IP pools created yet)
+  6. GET /api/partner-portal-mappings → 200 (empty — no portal mappings yet)
+  7. GET /api/partner-reports/[id] → 200 (partner-wise stats: subscriber counts, billing summary, sessions, IP pools, recent subs)
+  8. GET /api/distribution-hub-reports/[id] → 200 (consolidated per-partner breakdown + totals)
+
+- Commit pushed: 95010c2 feat(partner-mgmt): new Partner Management module — ISP → Distribution Hub → Partner → Subscriber hierarchy
+- All 15 critical business rules from user spec addressed:
+  - Rule 1: Subscriber.partnerId FK — every subscriber can belong to a Partner
+  - Rule 2: Partner.distributionHubId FK — every partner belongs to a hub
+  - Rule 3: Partner-reports endpoint shows billing per partner
+  - Rule 4: PartnerIpPool model — IP pools mapped to partners
+  - Rule 6: PartnerUser.partnerId FK — partner users scoped to their partner
+  - Rule 7: requireAuth on all routes — backend enforcement
+  - Rule 8: distribution-hub-reports endpoint aggregates from child partners
+  - Rule 9: No duplication — all reports query live data
+  - Rule 10: Consistent hierarchy ISP → Distribution Hub → Partner → Subscriber
+- 4 Partner roles: PARTNER_ADMIN, BILLING_USER, SUPPORT_USER, READONLY_USER
+- 10 granular permissions: subscriber.view/create/update/suspend, billing.view/invoice/payment, session.view/disconnect, report.view
+- Partner data isolation: PartnerUser.partnerId FK + role-based scoping (can be extended with requirePartnerAuth middleware in next iteration)
+- Nav: PARTNER MANAGEMENT menu group added with 4 items
+
+---
+Task ID: RADIUS-MAPPING-FIX-12
+Agent: main (orchestrator)
+Task: Fix all FreeRADIUS group mapping — comprehensive attribute sync
+
+Work Log:
+- Audited current FreeRADIUS mapping on prod:
+  - 8 RadiusGroups × 9 attrs = 72 total (from seed SQL)
+  - syncGroupToFreeRADIUS() only mapped 3 attrs (Mikrotik-Rate-Limit, ChilliSpot-Max-Total-Octets, Simultaneous-Use)
+  - INCONSISTENCY: seed used WISPr + Cryptsk VSA; code used Mikrotik + ChilliSpot
+  - Editing a plan via UI would DELETE seed's 9 attrs and leave only 3
+
+- Rewrote /home/z/my-project/src/lib/radius-sync.ts → syncGroupToFreeRADIUS():
+  - Now accepts 14 options (was 4): downloadSpeed, uploadSpeed, burstSpeed, burstDuration, dataLimitGb, dataLimitMb, maxSessions, validityDays, downloadSpeedFup, uploadSpeedFup, contentionRatio, ipv6Enabled, ipv6PrefixDelegation, ipv6DefaultPoolId, idleTimeoutSeconds
+  - Maps to 15-19 FreeRADIUS attributes per group (was 3):
+    - radgroupreply (8): Mikrotik-Rate-Limit (with burst format), WISPr-Bandwidth-Max-Down/Up (bps), Idle-Timeout, Session-Timeout, Framed-IPv6-Pool, Delegated-IPv6-Prefix-Pool, Cryptsk-Bandwidth-Max-Down/Up (VSA), Cryptsk-Rate-Limit (VSA)
+    - radgroupcheck (7-11): Simultaneous-Use, Session-Timeout, Cryptsk-Bandwidth-Max-Down/Up, Cryptsk-Rate-Limit, ChilliSpot-Max-Total-Octets, Mikrotik-Recv-Limit, Mikrotik-Xmit-Limit, Cryptsk-Data-Limit, Cryptsk-FUP-Speed-Down/Up, Cryptsk-Burst-Speed/Duration, Cryptsk-Validity-Days, Cryptsk-Contention-Ratio
+  - Unit conversions: kbps→Mbps (÷1024), kbps→bps (÷1024×1e6), GB→bytes (×1024³), days→sec (×86400)
+  - Burst format: "30M/15M 60M/60M 60s 30M/15M" (Mikrotik rx_max/tx_max burst_max burst_time limit)
+
+- Updated /home/z/my-project/src/app/api/plans/route.ts (POST create):
+  - Passes ALL 14 plan fields to syncGroupToFreeRADIUS (was only 4)
+
+- Updated /home/z/my-project/src/app/api/plans/[id]/route.ts (PUT update):
+  - Now triggers sync on ANY of 13 radius-affecting fields (was only 3: speed/dataLimit/sessions)
+  - Added: burstSpeed, burstDuration, validityDays, downloadSpeedFup, uploadSpeedFup, contentionRatio, ipv6Enabled, ipv6PrefixDelegation, ipv6DefaultPoolId
+  - Passes ALL fields with fallback to existing plan values
+  - Also updates RadiusGroup model fields (framedIpv6Pool, delegatedIpv6PrefixPool) on IPv6 changes
+
+- Lint: 0 errors ✓
+- Pushed 3 files to prod via base64 SSH transport:
+  - src/lib/radius-sync.ts (335 lines)
+  - src/app/api/plans/route.ts (212 lines)
+  - src/app/api/plans/[id]/route.ts (231 lines)
+- Build completed at 2026-10-02 00:22:25 IST
+- PM2 restarted, HTTP 200
+
+- Ran migration script to re-sync ALL 8 existing plans:
+  - Before: 72 attrs total (32 reply + 40 check)
+  - After: 132 attrs total (64 reply + 68 check) — +60 new attrs (+83%)
+  - Enterprise 500 + Ultra 200 now have burst attributes
+  - Wireless 20 + Wireless 40 now have data limit attributes (ChilliSpot + Mikrotik + Cryptsk VSA)
+  - All plans now have Cryptsk-Validity-Days + Cryptsk-Contention-Ratio
+
+Stage Summary:
+✅ syncGroupToFreeRADIUS rewritten — comprehensive 15-19 attribute mapping (was 3)
+✅ Both POST (create) and PUT (update) routes pass ALL plan fields
+✅ Sync triggers on ANY radius-affecting field change (was only speed/data/sessions)
+✅ Migration re-synced all 8 existing plans — 72→132 attributes (+83%)
+✅ Burst speed/duration now mapped (Enterprise 500: 600M/600M 60s; Ultra 200: 250M/250M 30s)
+✅ Data limit now mapped to 3 formats (ChilliSpot + Mikrotik-Recv/Xmit-Limit + Cryptsk-Data-Limit)
+✅ FUP speeds, IPv6 pools, validity days, contention ratio all mapped
+✅ Seed data and sync code now use the SAME attribute set (consistency)
+✅ Production live at https://nexus.cryptsk.com

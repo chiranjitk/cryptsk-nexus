@@ -93,11 +93,15 @@ export async function PUT(
       },
     });
 
-    // Sync RADIUS group attributes and RadiusGroup model if speed/data limit/sessions changed
-    const speedChanged = body.downloadSpeed !== undefined || body.uploadSpeed !== undefined;
-    const dataLimitChanged = body.dataLimitGb !== undefined;
-    const sessionsChanged = body.maxConcurrentSessions !== undefined;
-    if (speedChanged || dataLimitChanged || sessionsChanged) {
+    // Sync RADIUS group attributes if ANY plan field that affects FreeRADIUS changed
+    const radiusFields = [
+      'downloadSpeed', 'uploadSpeed', 'burstSpeed', 'burstDuration',
+      'dataLimitGb', 'maxConcurrentSessions', 'validityDays',
+      'downloadSpeedFup', 'uploadSpeedFup', 'contentionRatio',
+      'ipv6Enabled', 'ipv6PrefixDelegation', 'ipv6DefaultPoolId',
+    ];
+    const radiusChanged = radiusFields.some(f => body[f] !== undefined);
+    if (radiusChanged) {
       const planWithGroup = await db.plan.findUnique({
         where: { id },
         include: { RadiusGroup: { select: { id: true, name: true } } },
@@ -105,27 +109,46 @@ export async function PUT(
       const groupName = planWithGroup?.RadiusGroup?.name;
       if (groupName && planWithGroup?.RadiusGroup?.id) {
         try {
+          // Use updated values, falling back to existing plan values
           const newDown = body.downloadSpeed ?? plan.downloadSpeed;
           const newUp = body.uploadSpeed ?? plan.uploadSpeed;
-          const newDataLimitMb = body.dataLimitGb !== undefined
-            ? (body.dataLimitGb ? Math.round(body.dataLimitGb * 1024) : null)
-            : (plan.dataLimitGb ? Math.round(plan.dataLimitGb * 1024) : null);
+          const newDataLimitGb = body.dataLimitGb !== undefined
+            ? (body.dataLimitGb || null)
+            : plan.dataLimitGb;
+          const newDataLimitMb = newDataLimitGb ? Math.round(newDataLimitGb * 1024) : null;
 
           // Update RadiusGroup model fields to stay in sync with plan
           await db.radiusGroup.update({
             where: { id: planWithGroup.RadiusGroup.id },
             data: {
-              ...(speedChanged && { speedLimitDown: newDown, speedLimitUp: newUp }),
-              ...(dataLimitChanged && { dataLimit: newDataLimitMb }),
+              ...(body.downloadSpeed !== undefined && { speedLimitDown: newDown }),
+              ...(body.uploadSpeed !== undefined && { speedLimitUp: newUp }),
+              ...(body.dataLimitGb !== undefined && { dataLimit: newDataLimitMb }),
+              ...(body.ipv6Enabled !== undefined && {
+                framedIpv6Pool: body.ipv6Enabled ? (body.ipv6DefaultPoolId || plan.ipv6DefaultPoolId || "auto") : "",
+              }),
+              ...(body.ipv6PrefixDelegation !== undefined && {
+                delegatedIpv6PrefixPool: body.ipv6PrefixDelegation ? "auto" : "",
+              }),
             },
           });
 
-          // Sync to FreeRADIUS raw tables (radgroupreply, radgroupcheck)
+          // Sync ALL plan fields to FreeRADIUS raw tables
           await syncGroupToFreeRADIUS(groupName, {
             downloadSpeed: newDown,
             uploadSpeed: newUp,
+            burstSpeed: body.burstSpeed !== undefined ? (body.burstSpeed || null) : plan.burstSpeed,
+            burstDuration: body.burstDuration !== undefined ? (body.burstDuration || null) : plan.burstDuration,
+            dataLimitGb: newDataLimitGb ?? undefined,
             dataLimitMb: newDataLimitMb ?? undefined,
             maxSessions: body.maxConcurrentSessions ?? plan.maxConcurrentSessions ?? 1,
+            validityDays: body.validityDays ?? plan.validityDays ?? 30,
+            downloadSpeedFup: body.downloadSpeedFup !== undefined ? (body.downloadSpeedFup || null) : plan.downloadSpeedFup,
+            uploadSpeedFup: body.uploadSpeedFup !== undefined ? (body.uploadSpeedFup || null) : plan.uploadSpeedFup,
+            contentionRatio: body.contentionRatio ?? plan.contentionRatio ?? null,
+            ipv6Enabled: body.ipv6Enabled ?? plan.ipv6Enabled ?? false,
+            ipv6PrefixDelegation: body.ipv6PrefixDelegation ?? plan.ipv6PrefixDelegation ?? false,
+            ipv6DefaultPoolId: body.ipv6DefaultPoolId ?? plan.ipv6DefaultPoolId ?? null,
           });
         } catch (radiusErr) {
           console.error("[Plan PUT] RADIUS group sync failed:", radiusErr);
