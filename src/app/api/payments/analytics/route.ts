@@ -225,7 +225,9 @@ export async function GET(req: NextRequest) {
     // ── 14-day trend ──
     const trendMap = new Map<string, number>();
     for (let i = 13; i >= 0; i--) {
-      trendMap[startOfDay(new Date(Date.now() - i * 86400000)).toISOString().slice(0, 10)] = 0;
+      // [FIX] was `trendMap[key] = 0` — bracket notation on a Map sets an object
+      // property, not an entry, so the trend was always empty.
+      trendMap.set(startOfDay(new Date(Date.now() - i * 86400000)).toISOString().slice(0, 10), 0);
     }
     for (const p of trendPayments) {
       const key = startOfDay(p.createdAt).toISOString().slice(0, 10);
