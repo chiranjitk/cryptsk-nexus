@@ -217,7 +217,7 @@ export async function auditLog(
   if (silent) {
     // Fire-and-forget — don't block the response
     db.auditLog.create({ data: logData }).catch((err) => {
-      logger.error("audit_log_write_failed_silent", { error: err instanceof Error ? err.message : String(err), action, resource, resourceId });
+      logger.error("audit_log_write_failed_silent", { error: err instanceof Error ? err.message : String(err), action, entity, entityId });
     });
     return;
   }
@@ -226,7 +226,7 @@ export async function auditLog(
     await db.auditLog.create({ data: logData });
   } catch (error) {
     // Audit log failure should never break the main operation
-    logger.error("audit_log_write_failed", { error: error instanceof Error ? error.message : String(error), action, resource, resourceId });
+    logger.error("audit_log_write_failed", { error: error instanceof Error ? error.message : String(error), action, entity, entityId });
   }
 }
 

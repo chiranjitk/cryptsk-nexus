@@ -21,7 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
-import { useIntegrationAction } from "@/components/integrations/shared";
+import { useIntegrationAction } from "@/components/integrations/legacy-shared";
 
 interface AlertRule {
   id: string;

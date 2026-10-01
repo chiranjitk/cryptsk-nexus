@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
-import { formatTimestamp } from "@/components/integrations/shared";
+import { formatTimestamp } from "@/components/integrations/legacy-shared";
 
 interface HistoryItem {
   id: string;

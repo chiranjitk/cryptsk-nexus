@@ -49,8 +49,9 @@ local-*
 *.log
 dev.log
 dev.out.log
-test
-prompt
+# root-level scratch files only (anchored — do not match src/**/test)
+/test
+/prompt
 
 server.log
 # Skills directory

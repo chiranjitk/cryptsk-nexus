@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/utils";
-import { formatTimestamp } from "@/components/integrations/shared";
+import { formatTimestamp } from "@/components/integrations/legacy-shared";
 
 interface Analytics {
   dailyTrend: { date: string; count: number }[];
