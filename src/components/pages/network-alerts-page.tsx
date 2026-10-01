@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
   AlertTriangle,
-  AlertCircle,
   CheckCircle2,
-  Clock,
   Plus,
   Search,
   Eye,
@@ -37,10 +35,11 @@ import {
   Volume2,
   VolumeX,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, AreaChart, Area, LineChart, Line,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, Line,
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,7 +71,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
-import { format, formatDistanceToNow, parseISO } from "date-fns";
+import { SeverityBadge, StatusBadge, LivePulse, normalizeSeverity, SEVERITY_META } from "@/components/alerts/shared";
+import { format } from "date-fns";
 
 const CHART_COLORS = ["#EF4444", "#F97316", "#EAB308", "#3B82F6", "#22C55E", "#8B5CF6"];
 
@@ -168,19 +168,26 @@ interface MaintenanceWindow {
 }
 
 // ─── Constants ──────────────────────────────────────────────────
-const SEVERITY_CONFIG: Record<string, { bg: string; text: string; border: string; dot: string }> = {
-  Critical: { bg: "bg-red-100 dark:bg-red-950", text: "text-red-700 dark:text-red-300", border: "border-red-300 dark:border-red-800", dot: "bg-red-500" },
-  High: { bg: "bg-orange-100 dark:bg-orange-950", text: "text-orange-700 dark:text-orange-300", border: "border-orange-300 dark:border-orange-800", dot: "bg-orange-500" },
-  Medium: { bg: "bg-yellow-100 dark:bg-yellow-950", text: "text-yellow-700 dark:text-yellow-300", border: "border-yellow-300 dark:border-yellow-800", dot: "bg-yellow-500" },
-  Low: { bg: "bg-teal-100 dark:bg-teal-950", text: "text-teal-700 dark:text-teal-300", border: "border-teal-300 dark:border-teal-800", dot: "bg-teal-500" },
+const SEVERITY_CHIP_FILTERS = ["ALL", "Critical", "High", "Medium", "Low"] as const;
+
+// Severity chip tone (matches the shared-kit severity palette).
+const SEVERITY_CHIP_STYLES: Record<string, string> = {
+  ALL: "data-[on=true]:bg-slate-900 data-[on=true]:text-white data-[on=true]:border-slate-900",
+  Critical: "data-[on=true]:bg-red-50 data-[on=true]:text-red-700 data-[on=true]:border-red-300",
+  High: "data-[on=true]:bg-orange-50 data-[on=true]:text-orange-700 data-[on=true]:border-orange-300",
+  Medium: "data-[on=true]:bg-amber-50 data-[on=true]:text-amber-700 data-[on=true]:border-amber-300",
+  Low: "data-[on=true]:bg-emerald-50 data-[on=true]:text-emerald-700 data-[on=true]:border-emerald-300",
 };
 
-const SEVERITY_ICONS: Record<string, React.ElementType> = {
-  Critical: AlertTriangle,
-  High: AlertCircle,
-  Medium: BellRing,
-  Low: Clock,
-};
+// Status badge shared with the rest of the ALERT MANAGEMENT module.
+// The kit normalizes Active/Acknowledged/Resolved; "Working" is a local
+// extension rendered in the same acknowledged (sky) tone.
+function AlertStatusBadge({ status }: { status?: string | null }) {
+  if ((status ?? "").toLowerCase() === "working") {
+    return <Badge variant="outline" className="bg-sky-100 text-sky-700 border-sky-200 text-[10px] font-semibold">Working</Badge>;
+  }
+  return <StatusBadge status={status} />;
+}
 
 const ALERT_TYPES = ["Device Down", "Bandwidth Threshold", "CPU High", "Interface Down", "Memory High", "Custom"];
 const CONDITIONS = ["device/status", "device/cpu", "device/memory", "device/bandwidth", "interface/status"];
@@ -286,6 +293,9 @@ export default function NetworkAlertsPage() {
     title: "", description: "", scheduledAt: getTodayStr(), startTime: "09:00", endTime: "17:00",
   });
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [autoRefreshSec, setAutoRefreshSec] = useState(30); // live feed cadence: 15/30/60/0(off)
+  const [resolveTarget, setResolveTarget] = useState<NetworkAlert | null>(null);
+  const [resolveNote, setResolveNote] = useState("");
   const [suppressAlertDialog, setSuppressAlertDialog] = useState<NetworkAlert | null>(null);
   const [suppressAlertReason, setSuppressAlertReason] = useState("");
   const [suppressAlertDuration, setSuppressAlertDuration] = useState(1);
@@ -295,11 +305,10 @@ export default function NetworkAlertsPage() {
 
   // ─── Queries ─────────────────────────────────────────
   const { data, isLoading } = useQuery({
-    queryKey: ["alerts", search, severityFilter, ruleSearch],
+    queryKey: ["alerts", search, ruleSearch],
     queryFn: () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
-      if (severityFilter && severityFilter !== "ALL") params.set("severity", severityFilter);
       if (ruleSearch) params.set("ruleSearch", ruleSearch);
       return apiFetch<{
         alerts: NetworkAlert[]; rules: AlertRule[]; users: UserItem[];
@@ -307,6 +316,9 @@ export default function NetworkAlertsPage() {
         stats: { active: number; today: number; acknowledged: number; resolved: number };
       }>(`/api/alerts?${params}`);
     },
+    // Severity/status filtering happens client-side so the chip counts
+    // always reflect the full fetched set.
+    refetchInterval: autoRefreshSec > 0 ? autoRefreshSec * 1000 : false,
   });
 
   const { data: historyData, isLoading: historyLoading } = useQuery({
@@ -395,10 +407,10 @@ export default function NetworkAlertsPage() {
   });
 
   const resolveMutation = useMutation({
-    mutationFn: (id: string) => apiFetch("/api/alerts", {
-      method: "POST", body: JSON.stringify({ action: "resolve", id }),
+    mutationFn: ({ id, resolution }: { id: string; resolution?: string }) => apiFetch("/api/alerts", {
+      method: "POST", body: JSON.stringify({ action: "resolve", id, resolution: resolution || undefined }),
     }),
-    onSuccess: () => { toast.success("Alert resolved"); queryClient.invalidateQueries({ queryKey: ["alerts"] }); setDetailAlert(null); },
+    onSuccess: () => { toast.success("Alert resolved"); queryClient.invalidateQueries({ queryKey: ["alerts"] }); setDetailAlert(null); setResolveTarget(null); setResolveNote(""); },
     onError: () => toast.error("Failed to resolve alert"),
   });
 
@@ -697,9 +709,18 @@ export default function NetworkAlertsPage() {
   const ackCount = stats.acknowledged;
   const resolvedCount = stats.resolved;
 
+  // Severity chip counts — computed from the full fetched set so they
+  // stay stable regardless of the active chip/status filter.
+  const severityCounts = useMemo(() => {
+    const counts: Record<string, number> = { ALL: alerts.length, Critical: 0, High: 0, Medium: 0, Low: 0 };
+    for (const a of alerts) counts[a.severity] = (counts[a.severity] ?? 0) + 1;
+    return counts;
+  }, [alerts]);
+
   const filteredAlerts = alerts.filter((a) => {
+    const matchSeverity = severityFilter === "ALL" || a.severity === severityFilter;
     const matchStatus = statusFilter === "ALL" || a.status === statusFilter;
-    return matchStatus;
+    return matchSeverity && matchStatus;
   }).sort((a, b) => {
     const sevOrder = { Critical: 0, High: 1, Medium: 2, Low: 3 };
     return (sevOrder[a.severity] ?? 4) - (sevOrder[b.severity] ?? 4);
@@ -714,11 +735,28 @@ export default function NetworkAlertsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Network Alerts</h1>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            Network Alerts
+            <LivePulse label={autoRefreshSec > 0 ? "LIVE" : "PAUSED"} />
+          </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Monitor, acknowledge, and manage network alerts</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant={soundEnabled ? "default" : "outline"} size="sm" onClick={() => setSoundEnabled(!soundEnabled)} title={soundEnabled ? "Sound notifications on" : "Sound notifications off"} className="shrink-0">
+          <Select value={String(autoRefreshSec)} onValueChange={(v) => setAutoRefreshSec(Number(v))}>
+            <SelectTrigger className="w-[128px] h-9 text-xs shrink-0" aria-label="Auto refresh interval" title="Auto refresh interval">
+              <span className="flex items-center gap-1.5">
+                <RefreshCw className={`h-3 w-3 text-muted-foreground ${autoRefreshSec > 0 ? "" : "opacity-40"}`} />
+                <SelectValue />
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15">Every 15s</SelectItem>
+              <SelectItem value="30">Every 30s</SelectItem>
+              <SelectItem value="60">Every 60s</SelectItem>
+              <SelectItem value="0">Paused</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant={soundEnabled ? "default" : "outline"} size="sm" onClick={() => setSoundEnabled(!soundEnabled)} aria-label={soundEnabled ? "Disable sound notifications" : "Enable sound notifications"} title={soundEnabled ? "Sound notifications on" : "Sound notifications off"} className="shrink-0">
             {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </Button>
           <Dialog open={maintenanceDialogOpen} onOpenChange={setMaintenanceDialogOpen}>
@@ -910,31 +948,43 @@ export default function NetworkAlertsPage() {
         <TabsContent value="alerts">
           <Card className="border shadow-sm">
             <CardContent className="p-4">
-              <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search alerts..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
+              <div className="flex flex-col gap-3 mb-4">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder="Search alerts..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
+                  </div>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-full sm:w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Status</SelectItem>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Acknowledged">Acknowledged</SelectItem>
+                      <SelectItem value="Working">Working</SelectItem>
+                      <SelectItem value="Resolved">Resolved</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger className="w-full sm:w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Severity</SelectItem>
-                    <SelectItem value="Critical">Critical</SelectItem>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Medium">Medium</SelectItem>
-                    <SelectItem value="Low">Low</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full sm:w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All Status</SelectItem>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Acknowledged">Acknowledged</SelectItem>
-                    <SelectItem value="Working">Working</SelectItem>
-                    <SelectItem value="Resolved">Resolved</SelectItem>
-                  </SelectContent>
-                </Select>
+                {/* Severity filter chips with live counts (client-side over the full fetched set) */}
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by severity">
+                  {SEVERITY_CHIP_FILTERS.map((s) => {
+                    const on = severityFilter === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        data-on={on}
+                        onClick={() => setSeverityFilter(s)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${on ? SEVERITY_CHIP_STYLES[s] : "border-muted-foreground/20 bg-background text-muted-foreground hover:bg-muted/60"}`}
+                      >
+                        {s === "ALL" ? "All" : s}
+                        <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${on ? "bg-black/10 dark:bg-white/15" : "bg-muted"}`}>
+                          {severityCounts[s] ?? 0}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               {selectedAlerts.size > 0 && (
                 <div className="flex items-center gap-3 mb-3 p-2.5 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-200 dark:border-red-800">
@@ -942,7 +992,7 @@ export default function NetworkAlertsPage() {
                   <Button size="sm" variant="outline" onClick={toggleSelectAllActive}>Select/Deselect All Active</Button>
                   <Button size="sm" className="bg-[#DC2626] hover:bg-[#B91C1C] text-white ml-auto" onClick={() => bulkAckMutation.mutate(Array.from(selectedAlerts))} disabled={bulkAckMutation.isPending}>
                     {bulkAckMutation.isPending && <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />}
-                    Acknowledge Selected
+                    Acknowledge Selected ({selectedAlerts.size})
                   </Button>
                 </div>
               )}
@@ -973,19 +1023,23 @@ export default function NetworkAlertsPage() {
                     {filteredAlerts.length === 0 ? (
                       <TableRow><TableCell colSpan={9} className="text-center py-12 text-muted-foreground">No alerts found.</TableCell></TableRow>
                     ) : filteredAlerts.map((alert) => {
-                      const sev = SEVERITY_CONFIG[alert.severity];
                       const isActive = alert.status === "Active";
                       return (
                         <TableRow key={alert.id} className="hover:bg-muted/50 transition-colors duration-150">
                           <TableCell>
-                            {isActive && <Checkbox checked={selectedAlerts.has(alert.id)} onCheckedChange={() => toggleSelectAlert(alert.id)} />}
+                            {isActive && <Checkbox checked={selectedAlerts.has(alert.id)} onCheckedChange={() => toggleSelectAlert(alert.id)} aria-label={`Select alert ${alert.type}`} />}
                           </TableCell>
                           <TableCell>
-                            <div className={`w-2 h-2 rounded-full ${sev.dot}`} />
+                            <div className={`w-2 h-2 rounded-full ${SEVERITY_META[normalizeSeverity(alert.severity)].dot}`} />
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <Badge variant="outline" className={`text-[10px] ${sev.bg} ${sev.text} ${sev.border}`}>{alert.severity}</Badge>
+                              <SeverityBadge severity={alert.severity} />
+                              {alert.escalationLevel > 0 && (
+                                <Badge variant="outline" className="text-[10px] font-semibold text-red-600 border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300" title={`Escalated to level ${alert.escalationLevel}`}>
+                                  <Zap className="h-2.5 w-2.5 mr-0.5" />×{alert.escalationLevel}
+                                </Badge>
+                              )}
                               {alert.duplicateCount > 1 && (
                                 <Badge variant="secondary" className="text-[10px]"><Copy className="h-2.5 w-2.5 mr-0.5" />{alert.duplicateCount}</Badge>
                               )}
@@ -1000,24 +1054,14 @@ export default function NetworkAlertsPage() {
                                 <p className="text-sm">{alert.message}</p>
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                   <p className="text-xs text-muted-foreground">{alert.type}</p>
-                                  {alert.escalationLevel > 0 && (
-                                    <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-                                      <ArrowUpCircle className="h-2.5 w-2.5 mr-0.5" />Escalated L{alert.escalationLevel}
-                                    </Badge>
-                                  )}
                                 </div>
                               </div>
                             </button>
                           </TableCell>
                           <TableCell className="text-sm font-mono">{alert.device}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{formatTimeAgo(alert.triggeredAt)}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground" title={formatDateTime(alert.triggeredAt)}>{formatTimeAgo(alert.triggeredAt)}</TableCell>
                           <TableCell>
-                            <Badge variant="outline" className={
-                              alert.status === "Active" ? "badge-active" :
-                              alert.status === "Acknowledged" ? "badge-suspended" :
-                              alert.status === "Working" ? "badge-pending" :
-                              "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300"
-                            }>{alert.status}</Badge>
+                            <AlertStatusBadge status={alert.status} />
                           </TableCell>
                           <TableCell className="text-xs">
                             {alert.assignedTo ? (
@@ -1031,14 +1075,14 @@ export default function NetworkAlertsPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-0.5">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDetailAlert(alert)} title="View details"><Eye className="h-3.5 w-3.5" /></Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDetailAlert(alert)} title="View details" aria-label={`View details of ${alert.type} alert`}><Eye className="h-3.5 w-3.5" /></Button>
                               {(alert.status === "Active" || alert.status === "Acknowledged") && (
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAssignDialogAlert(alert)} title="Assign to user">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAssignDialogAlert(alert)} title="Assign to user" aria-label={`Assign ${alert.type} alert`}>
                                   <UserPlus className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {alert.assignedToId && (
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-500" onClick={() => unassignMutation.mutate(alert.id)} title="Unassign">
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-500" onClick={() => unassignMutation.mutate(alert.id)} title="Unassign" aria-label={`Unassign ${alert.type} alert`}>
                                   <UserMinus className="h-3.5 w-3.5" />
                                 </Button>
                               )}
@@ -1046,15 +1090,15 @@ export default function NetworkAlertsPage() {
                                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => ackMutation.mutate(alert.id)}><Eye className="h-3 w-3 mr-1" />Ack</Button>
                               )}
                               {(alert.status === "Active" || alert.status === "Acknowledged" || alert.status === "Working") && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => resolveMutation.mutate(alert.id)}><Check className="h-3 w-3 mr-1" />Resolve</Button>
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => { setResolveTarget(alert); setResolveNote(""); }}><Check className="h-3 w-3 mr-1" />Resolve</Button>
                               )}
                               {(alert.status === "Active" || alert.status === "Acknowledged") && (
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-500" onClick={() => escalateMutation.mutate(alert.id)} title="Escalate">
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-500" onClick={() => escalateMutation.mutate(alert.id)} title="Escalate" aria-label={`Escalate ${alert.type} alert`}>
                                   <ArrowUpCircle className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {(alert.status === "Active" || alert.status === "Acknowledged") && (
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-500" onClick={() => { setSuppressAlertDialog(alert); setSuppressAlertReason(""); setSuppressAlertDuration(1); }} title="Suppress">
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-500" onClick={() => { setSuppressAlertDialog(alert); setSuppressAlertReason(""); setSuppressAlertDuration(1); }} title="Suppress" aria-label={`Suppress ${alert.type} alert`}>
                                   <Ban className="h-3.5 w-3.5" />
                                 </Button>
                               )}
@@ -1082,7 +1126,6 @@ export default function NetworkAlertsPage() {
             {filteredRules.length === 0 ? (
               <Card className="border shadow-sm"><CardContent className="py-12 text-center text-muted-foreground">No alert rules configured.</CardContent></Card>
             ) : filteredRules.map((rule) => {
-              const sev = SEVERITY_CONFIG[rule.severity as keyof typeof SEVERITY_CONFIG] || SEVERITY_CONFIG.Low;
               return (
                 <Card key={rule.id} className={`border shadow-sm ${!rule.enabled ? "opacity-60" : ""}`}>
                   <CardContent className="p-4">
@@ -1104,7 +1147,7 @@ export default function NetworkAlertsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <p className="text-sm font-medium">{rule.name}</p>
-                          <Badge variant="outline" className={`text-[10px] ${sev.bg} ${sev.text} ${sev.border}`}>{rule.severity}</Badge>
+                          <SeverityBadge severity={rule.severity} />
                           {rule.escalationEnabled && (
                             <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300 bg-purple-50 dark:bg-purple-950/30">
                               <Layers className="h-2.5 w-2.5 mr-0.5" />{rule.escalationLevels.length} Levels
@@ -1131,12 +1174,12 @@ export default function NetworkAlertsPage() {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        <Switch checked={rule.enabled} onCheckedChange={() => toggleRuleMutation.mutate(rule.id)} />
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSuppressDialogRule(rule)} title={rule.isSuppressed ? "Update suppression" : "Suppress rule"}>
+                        <Switch checked={rule.enabled} onCheckedChange={() => toggleRuleMutation.mutate(rule.id)} aria-label={`Toggle rule ${rule.name}`} />
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSuppressDialogRule(rule)} title={rule.isSuppressed ? "Update suppression" : "Suppress rule"} aria-label={`${rule.isSuppressed ? "Update suppression for" : "Suppress"} rule ${rule.name}`}>
                           <Ban className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRule(rule)}><Edit2 className="h-3.5 w-3.5" /></Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteRuleTarget(rule)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRule(rule)} title="Edit rule" aria-label={`Edit rule ${rule.name}`}><Edit2 className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteRuleTarget(rule)} title="Delete rule" aria-label={`Delete rule ${rule.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </div>
                   </CardContent>
@@ -1373,14 +1416,13 @@ export default function NetworkAlertsPage() {
               ) : (
                 <div className="space-y-4">
                   {history.map((item) => {
-                    const sev = SEVERITY_CONFIG[item.severity] || SEVERITY_CONFIG.Low;
                     const duration = item.duration !== null ? (item.duration < 60 ? `${item.duration}m` : `${Math.floor(item.duration / 60)}h ${item.duration % 60}m`) : "—";
                     return (
                       <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-                        <div className={`mt-1 w-3 h-3 rounded-full shrink-0 ${sev.dot}`} />
+                        <div className={`mt-1 w-3 h-3 rounded-full shrink-0 ${SEVERITY_META[normalizeSeverity(item.severity)].dot}`} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <Badge variant="outline" className={`text-[10px] ${sev.bg} ${sev.text} ${sev.border}`}>{item.severity}</Badge>
+                            <SeverityBadge severity={item.severity} />
                             <span className="text-xs text-muted-foreground">{formatDateTime(item.triggeredAt)}</span>
                             {item.duration !== null && <span className="text-xs text-muted-foreground">Duration: {duration}</span>}
                             {item.duplicateCount > 1 && <Badge variant="secondary" className="text-[10px]"><Copy className="h-2.5 w-2.5 mr-0.5" />{item.duplicateCount} occurrences</Badge>}
@@ -1413,9 +1455,9 @@ export default function NetworkAlertsPage() {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${SEVERITY_CONFIG[detailAlert.severity]?.dot || ""}`} />
+                  <div className={`w-3 h-3 rounded-full ${SEVERITY_META[normalizeSeverity(detailAlert.severity)].dot}`} />
                   <span>{detailAlert.type}</span>
-                  <Badge variant="outline" className={`text-[10px] ${SEVERITY_CONFIG[detailAlert.severity]?.bg} ${SEVERITY_CONFIG[detailAlert.severity]?.text} ${SEVERITY_CONFIG[detailAlert.severity]?.border}`}>{detailAlert.severity}</Badge>
+                  <SeverityBadge severity={detailAlert.severity} />
                   {detailAlert.duplicateCount > 1 && (
                     <Badge variant="secondary" className="text-[10px]"><Copy className="h-2.5 w-2.5 mr-0.5" />{detailAlert.duplicateCount} occurrences</Badge>
                   )}
@@ -1435,11 +1477,7 @@ export default function NetworkAlertsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 bg-muted/30 rounded-lg">
                     <p className="text-xs text-muted-foreground">Status</p>
-                    <Badge variant="outline" className={
-                      detailAlert.status === "Active" ? "badge-active mt-1" :
-                      detailAlert.status === "Acknowledged" ? "badge-suspended mt-1" :
-                      "bg-green-100 text-green-700 mt-1"
-                    }>{detailAlert.status}</Badge>
+                    <div className="mt-1"><AlertStatusBadge status={detailAlert.status} /></div>
                   </div>
                   <div className="p-3 bg-muted/30 rounded-lg">
                     <p className="text-xs text-muted-foreground">Device</p>
@@ -1566,7 +1604,7 @@ export default function NetworkAlertsPage() {
                         <Ban className="h-3.5 w-3.5 mr-1.5" />Suppress
                       </Button>
                     )}
-                    <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => resolveMutation.mutate(detailAlert.id)} disabled={resolveMutation.isPending}>
+                    <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => { setResolveTarget(detailAlert); setResolveNote(""); }} disabled={resolveMutation.isPending}>
                       {resolveMutation.isPending && <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />}
                       Resolve
                     </Button>
@@ -1619,6 +1657,38 @@ export default function NetworkAlertsPage() {
                 <Button className="bg-amber-600 hover:bg-amber-700 text-white" onClick={handleSuppressRule} disabled={suppressMutation.isPending}>
                   {suppressMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   <Ban className="h-4 w-4 mr-1.5" />Suppress
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Resolve Dialog (optional resolution note) ═══ */}
+      <Dialog open={!!resolveTarget} onOpenChange={(o) => { if (!o) { setResolveTarget(null); setResolveNote(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-600" />Resolve Alert</DialogTitle>
+          </DialogHeader>
+          {resolveTarget && (
+            <div className="space-y-4 py-2">
+              <p className="text-sm text-muted-foreground">
+                Resolve <strong>{resolveTarget.type}</strong> on <span className="font-mono text-xs">{resolveTarget.device || "unknown device"}</span>?
+                The alert will move to resolved history{resolveNote.trim() ? " with your resolution note" : ""}.
+              </p>
+              <div>
+                <Label className="mb-1 block">Resolution note (optional)</Label>
+                <Textarea value={resolveNote} onChange={(e) => setResolveNote(e.target.value)} placeholder="e.g. Replaced faulty PSU; link restored" rows={3} />
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" onClick={() => { setResolveTarget(null); setResolveNote(""); }}>Cancel</Button>
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => resolveMutation.mutate({ id: resolveTarget.id, resolution: resolveNote.trim() || undefined })}
+                  disabled={resolveMutation.isPending}
+                >
+                  {resolveMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  <Check className="h-4 w-4 mr-1.5" />Resolve
                 </Button>
               </div>
             </div>
