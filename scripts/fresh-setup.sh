@@ -99,10 +99,17 @@ export default nextConfig;
 NEXTCFG
   echo "recreated next.config.ts (gitignored by design — tune locally)"
 fi
-# NOTE: ecosystem.config.cjs is UNTRACKED (secrets policy). If missing after clone,
-# recreate it from FRESH-SETUP-GUIDE.md §ecosystem — or restore from your local copy.
+# ecosystem.config.cjs is gitignored (secrets policy) but a sanitized tracked
+# template lives at scripts/ecosystem.config.cjs.template — restore from it.
+if [ ! -f ecosystem.config.cjs ] && [ -f scripts/ecosystem.config.cjs.template ]; then
+  cp scripts/ecosystem.config.cjs.template ecosystem.config.cjs
+  echo "restored ecosystem.config.cjs from tracked template"
+fi
 if [ -f ecosystem.config.cjs ]; then
-  npx pm2 start ecosystem.config.cjs || npx pm2 resurrect || true
+  echo "starting main app only (memory discipline — 6 daemons stay stopped):"
+  npx pm2 startOrRestart ecosystem.config.cjs --only cryptsk-isp
+  echo "(remaining 12 services registered but stopped — start selectively if needed:"
+  echo " npx pm2 start ecosystem.config.cjs --only cryptsk-gateway-service,cryptsk-billing-cron,cryptsk-session-engine )"
 else
   echo "⚠ ecosystem.config.cjs missing (gitignored by design) — start app manually:"
   echo "  DATABASE_URL='$DB_URL' NODE_OPTIONS=--max-old-space-size=1024 setsid nohup npx next dev -p 3000 -H 0.0.0.0 >> dev.log 2>&1 &"

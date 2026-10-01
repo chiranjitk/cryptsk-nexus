@@ -1,0 +1,98 @@
+// ============================================================================
+// CryptSK Nexus — pm2 process tree (13 services)
+// UNTRACKED by git (secrets policy). Restored after sandbox reset by:
+//   bash scripts/fresh-setup.sh   (copies scripts/ecosystem.config.cjs.template)
+// MEMORY DISCIPLINE:
+//   - Warm start main app ONLY:  npx pm2 startOrRestart ecosystem.config.cjs --only cryptsk-isp
+//   - 6 daemons stay STOPPED:    cryptsk-syslog-service, cryptsk-whatsapp-bot,
+//     cryptsk-ips-daemon, cryptsk-snmp-service, cryptsk-network-monitor,
+//     cryptsk-multiwan-monitor
+//   - NEVER bare `pm2 restart cryptsk-isp` (wipes env → login 500)
+// ============================================================================
+
+// Sandbox-local postgres runs with trust auth on 127.0.0.1 — the password is
+// ignored locally; keep it consistent with package.json scripts regardless.
+const DB_URL = 'postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus';
+
+const bunService = (name, dir, extraEnv = {}, opts = {}) => ({
+  name: `cryptsk-${name}`,
+  script: 'index.ts',
+  interpreter: 'bun',
+  cwd: `/home/z/my-project/mini-services/${dir}`,
+  env: { DATABASE_URL: DB_URL, ...extraEnv },
+  watch: false,
+  restart_delay: 5000,
+  max_restarts: 30,
+  exp_backoff_restart_delay: 5000,
+  log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+  error_file: `/home/z/my-project/.logs/${name}-error.log`,
+  out_file: `/home/z/my-project/.logs/${name}-out.log`,
+  merge_logs: true,
+  time: true,
+  ...opts,
+});
+
+module.exports = {
+  apps: [
+    // ─── 1. Main Next.js Application (Port 3000) ─────────────
+    {
+      name: 'cryptsk-isp',
+      script: 'npx',
+      args: 'next dev -p 3000 -H 0.0.0.0',
+      cwd: '/home/z/my-project',
+      env: {
+        DATABASE_URL: DB_URL,
+        SESSION_SECRET: 'cryptsk_session_secret_key_2026_isp_platform',
+        NODE_OPTIONS: '--max-old-space-size=2048',
+      },
+      watch: false,
+      max_memory_restart: '3800M',
+      restart_delay: 5000,
+      exp_backoff_restart_delay: 5000,
+      max_restarts: 50,
+      listen_timeout: 120000,
+      kill_timeout: 15000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      error_file: '/home/z/my-project/.logs/cryptsk-isp-error.log',
+      out_file: '/home/z/my-project/.logs/cryptsk-isp-out.log',
+      merge_logs: true,
+      time: true,
+    },
+
+    // ─── 2. RADIUS Service (Port 3799) ───────────────────────
+    bunService('radius-service', 'radius-service', { RADIUS_API_SECRET: 'cryptsk-radius-shared-secret-2026' }),
+
+    // ─── 3. IPS Daemon (Port 3030) ── [KEEP STOPPED] ────────
+    bunService('ips-daemon', 'ips-daemon'),
+
+    // ─── 4. nDPI Service (Port 3031) ─────────────────────────
+    bunService('ndpi-service', 'ndpi-service'),
+
+    // ─── 5. Gateway Service (Port 3005) ──────────────────────
+    bunService('gateway-service', 'gateway-service'),
+
+    // ─── 6. Multi-WAN Monitor (Port 3006) ── [KEEP STOPPED] ─
+    bunService('multiwan-monitor', 'multiwan-monitor'),
+
+    // ─── 7. Syslog Service (UDP 1514) ── [KEEP STOPPED] ─────
+    bunService('syslog-service', 'syslog-service'),
+
+    // ─── 8. Diameter Service (Port 3870) ─────────────────────
+    bunService('diameter-service', 'diameter-service', {}),
+
+    // ─── 9. SNMP Service (Port 3020) ── [KEEP STOPPED] ──────
+    bunService('snmp-service', 'snmp-service', {}),
+
+    // ─── 10. Network Monitor (polling) ── [KEEP STOPPED] ────
+    bunService('network-monitor', 'network-monitor'),
+
+    // ─── 11. Billing Cron (Port 3004) ────────────────────────
+    bunService('billing-cron', 'billing-cron', { SESSION_SECRET: 'cryptsk_session_secret_key_2026_isp_platform' }),
+
+    // ─── 12. WhatsApp Bot ── [KEEP STOPPED] ─────────────────
+    bunService('whatsapp-bot', 'whatsapp-bot'),
+
+    // ─── 13. Session Engine (internal) ───────────────────────
+    bunService('session-engine', 'session-engine'),
+  ],
+};

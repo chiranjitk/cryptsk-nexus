@@ -4247,3 +4247,23 @@ Stage Summary:
 - Headline findings: (1) 16+ unauthenticated route families incl. /api/vpp (BNG dataplane) and api-keys create/PATCH; (2) firewall UI create → matchCriteria:"{}" auto-applied → match-everything DROP outage risk; (3) audit trail mutable/forgable by any user; (4) side revenue (top-ups/add-ons/vouchers/charge-overrides) never reaches the ledger; (5) 19 UI↔API envelope-mismatch surfaces with permanent-empty lists; (6) 13 fabricated-telemetry surfaces; (7) 15 runtime-broken endpoints (ipam/captive-portal 500 with data present); (8) fake last-mile delivery (WA/retention/reminders/alert channels recorded SENT, never sent).
 - Worst domain: Policy & Security 35/100. Best: Finance 82/100.
 - No source files modified. No pm2/restart operations. Next phase owner should start P0 (auth sweep + runtime-500 fixes ≈ 1.5 days) before resuming UI polish waves.
+
+---
+Task ID: RESET-RECOVERY-1
+Agent: Z.ai Code (coordinator)
+Task: Sandbox reset recovery + start the app (user: "Start the app" → "What happened is sandbox reset")
+
+Work Log:
+- Diagnosed reset scope: pm2 table empty; git-tracked files survived (HEAD e85fb86); ALL untracked runtime files wiped — ecosystem.config.cjs, next.config.ts, PG binaries + data dir, /tmp. .env survived but stale (file:sqlite). Confirmed user's observation: git-tracked = persistent, untracked = ephemeral.
+- Rebuilt PostgreSQL 16.4 portable from zonky maven jar → runtime-applications/pgsql (initdb trust auth, 127.0.0.1:5432). Created users z/cryptsknexus (CryptskNexus2026) + cryptsknexus2 (nexus_pg_2026, matches package.json convention) + db cryptsknexus.
+- prisma db push (228 tables) + pgsql-production/complete-database.sql (→241 tables, documented target) + seeds: seed.ts (admin+15 subs+8 plans+RADIUS), seed-payments (49 payments/6 aging invoices), seed-alerts (6 rules/14 alerts), seed-support (7 technicians/11 complaints), seed-topup-products (5 purchases).
+- Rewrote .env → postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus; recreated next.config.ts (standalone + serverExternalPackages + turbopackMemoryLimit 1536).
+- Recreated ecosystem.config.cjs (13 services, correct DB URL, warm-start discipline comments) AND committed tracked sanitized template scripts/ecosystem.config.cjs.template + updated scripts/fresh-setup.sh: auto-copies template → ecosystem.config.cjs when missing, then startOrRestart --only cryptsk-isp. Future resets = one command.
+- Warm start: npx pm2 startOrRestart ecosystem.config.cjs --only cryptsk-isp → online, :3000 LISTEN, :5432 LISTEN.
+- Agent-browser E2E verification: login screen renders at / → UI login admin@cryptsk.com/Admin@2026 → 200, dashboard full shell; KPIs live from DB (15 subs / 11 active / ₹10,389 MRR / collection 50%); status bar "DB Online, API 54ms"; Subscribers page: 15 total, 11 active 73%, ARPU ₹944.45, all cards consistent; ZERO console errors. Screenshots /tmp/dash.png, /tmp/subs.png.
+
+Stage Summary:
+- App is UP and browser-verified end-to-end after deep reset; DB rebuilt to 241 tables with full seed corpus; admin auth works.
+- Root-cause fix for recurring reset pain: ecosystem template now TRACKED (no real secrets — DB runs trust auth locally; SESSION_SECRET already in tracked package.json); fresh-setup.sh restores configs + warm-starts main app only.
+- REMINDERS for next agents: (1) shell exports stale DATABASE_URL=file:... globally — ALWAYS prefix commands with DATABASE_URL=postgresql://... (2) warm start only: npx pm2 startOrRestart ecosystem.config.cjs --only cryptsk-isp; NEVER bare pm2 restart cryptsk-isp; (3) 6 daemons stay stopped; (4) zonky PG bin has no psql — use bun+pg or Prisma for SQL; (5) restart postgres after reset: runtime-applications/pgsql/bin/pg_ctl -D runtime-applications/pgsql/data -o "-p 5432 -h 127.0.0.1" -l runtime-applications/pgsql/pg.log start.
+- Next: resume P0 backlog from BUSINESS_AUDIT_REPORT.md (auth sweep + 4 runtime-500 fixes + firewall matchCriteria guard + negative-payment validation); cron 429481 webDevReview continues.
