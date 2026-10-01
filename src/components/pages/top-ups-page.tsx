@@ -46,6 +46,7 @@ interface TopUpProduct {
 
 interface TopUpPurchase {
   id: string;
+  productId?: string;
   subscriberCode: string;
   subscriberName: string;
   product: string;
@@ -67,29 +68,54 @@ interface TopUpFormData {
   price: number;
 }
 
-const FALLBACK_PRODUCTS: TopUpProduct[] = [
-  { id: "tp-1", name: "50 GB Data Boost", type: "DATA", value: "50 GB", validity: "30 days", price: 199, active: true, purchaseCount: 142 },
-  { id: "tp-2", name: "100 GB Data Boost", type: "DATA", value: "100 GB", validity: "30 days", price: 349, active: true, purchaseCount: 89 },
-  { id: "tp-3", name: "500 GB Data Pack", type: "DATA", value: "500 GB", validity: "60 days", price: 999, active: true, purchaseCount: 34 },
-  { id: "tp-4", name: "24-Hour Unlimited", type: "TIME", value: "24 hours", validity: "24 hours", price: 49, active: true, purchaseCount: 256 },
-  { id: "tp-5", name: "7-Day Unlimited", type: "TIME", value: "7 days", validity: "7 days", price: 149, active: true, purchaseCount: 178 },
-  { id: "tp-6", name: "Speed Boost 200 Mbps", type: "SPEED_BOOST", value: "200 Mbps", validity: "24 hours", price: 99, active: true, purchaseCount: 312 },
-  { id: "tp-7", name: "Speed Boost 500 Mbps", type: "SPEED_BOOST", value: "500 Mbps", validity: "6 hours", price: 69, active: true, purchaseCount: 198 },
-  { id: "tp-8", name: "1 TB Data Mega Pack", type: "DATA", value: "1 TB", validity: "90 days", price: 1799, active: false, purchaseCount: 12 },
-];
-
-const FALLBACK_PURCHASES: TopUpPurchase[] = [
-  { id: "pu-1", subscriberCode: "CRY-00104", subscriberName: "Arun Mehta", product: "50 GB Data Boost", productType: "DATA", purchasedAt: "2025-01-14", expiresAt: "2025-02-13", totalValue: 50, usedValue: 32.5, remainingValue: 17.5, status: "ACTIVE", price: 199 },
-  { id: "pu-2", subscriberCode: "CRY-00104", subscriberName: "Arun Mehta", product: "Speed Boost 200 Mbps", productType: "SPEED_BOOST", purchasedAt: "2025-01-15", expiresAt: "2025-01-16", totalValue: 24, usedValue: 8, remainingValue: 16, status: "ACTIVE", price: 99 },
-  { id: "pu-3", subscriberCode: "CRY-00218", subscriberName: "Priya Sharma", product: "100 GB Data Boost", productType: "DATA", purchasedAt: "2025-01-01", expiresAt: "2025-01-31", totalValue: 100, usedValue: 100, remainingValue: 0, status: "USED", price: 349 },
-  { id: "pu-4", subscriberCode: "CRY-00156", subscriberName: "Rahul Verma", product: "7-Day Unlimited", productType: "TIME", purchasedAt: "2024-12-20", expiresAt: "2024-12-27", totalValue: 168, usedValue: 168, remainingValue: 0, status: "EXPIRED", price: 149 },
-  { id: "pu-5", subscriberCode: "CRY-00089", subscriberName: "Kiran Joshi", product: "500 GB Data Pack", productType: "DATA", purchasedAt: "2025-01-10", expiresAt: "2025-03-11", totalValue: 500, usedValue: 87.2, remainingValue: 412.8, status: "ACTIVE", price: 999 },
-  { id: "pu-6", subscriberCode: "CRY-00301", subscriberName: "Sunita Devi", product: "24-Hour Unlimited", productType: "TIME", purchasedAt: "2025-01-14", expiresAt: "2025-01-15", totalValue: 24, usedValue: 24, remainingValue: 0, status: "EXPIRED", price: 49 },
-  { id: "pu-7", subscriberCode: "CRY-00175", subscriberName: "Deepak Singh", product: "Speed Boost 500 Mbps", productType: "SPEED_BOOST", purchasedAt: "2025-01-15", expiresAt: "2025-01-15", totalValue: 6, usedValue: 2, remainingValue: 4, status: "ACTIVE", price: 69 },
-];
-
 const PAGE_SIZE = 8;
 const emptyForm: TopUpFormData = { name: "", type: "DATA", value: "", validity: "", price: 0 };
+
+// ─── API row normalizers (schema shape → page shape) ─────────────
+function formatValidity(hours: number | null | undefined): string {
+  if (!hours || hours <= 0) return "—";
+  if (hours % 24 === 0) return `${hours / 24} Days`;
+  return `${hours} Hrs`;
+}
+
+function formatValue(type: TopUpType, value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  if (type === "DATA") return `${value} GB`;
+  if (type === "SPEED_BOOST") return `+${value} Mbps`;
+  return `${value} Hrs`;
+}
+
+function normalizeProduct(raw: Record<string, unknown>): TopUpProduct {
+  const type = (raw.type as TopUpType) ?? "DATA";
+  return {
+    id: String(raw.id ?? ""),
+    name: String(raw.name ?? ""),
+    type,
+    value: typeof raw.value === "string" ? raw.value : formatValue(type, raw.value as number),
+    validity: typeof raw.validity === "string" ? raw.validity : formatValidity(raw.validityHours as number),
+    price: Number(raw.price ?? 0),
+    active: Boolean(raw.isActive ?? raw.active ?? false),
+    purchaseCount: Number(raw.purchaseCount ?? 0),
+  };
+}
+
+function normalizePurchase(raw: Record<string, unknown>): TopUpPurchase {
+  return {
+    id: String(raw.id ?? ""),
+    productId: raw.productId !== undefined ? String(raw.productId) : undefined,
+    subscriberCode: String(raw.subscriberCode ?? ""),
+    subscriberName: String(raw.subscriberName ?? "Unknown"),
+    product: String(raw.product ?? "Unknown product"),
+    productType: (raw.productType as TopUpType) ?? "DATA",
+    purchasedAt: raw.purchasedAt ? String(raw.purchasedAt) : "",
+    expiresAt: raw.expiresAt ? String(raw.expiresAt) : "—",
+    totalValue: Number(raw.totalValue ?? 0),
+    usedValue: Number(raw.usedValue ?? 0),
+    remainingValue: Number(raw.remainingValue ?? 0),
+    status: (raw.status as PurchaseStatus) ?? "ACTIVE",
+    price: Number(raw.price ?? 0),
+  };
+}
 
 // ─── Helpers ────────────────────────────────────────────────────
 function formatINR(amount: number): string {
@@ -146,21 +172,24 @@ export default function TopUpsPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/top-ups");
-        if (!res.ok) throw new Error("Failed to fetch top-ups");
-        const data = await res.json();
-        if (data && typeof data === "object") {
-          setProducts(Array.isArray(data.products) ? data.products : FALLBACK_PRODUCTS);
-          setPurchases(Array.isArray(data.purchases) ? data.purchases : FALLBACK_PURCHASES);
-        } else {
-          setProducts(FALLBACK_PRODUCTS);
-          setPurchases(FALLBACK_PURCHASES);
-        }
+        const [prodRes, purRes] = await Promise.all([
+          fetch("/api/top-ups?action=list-products&active=false"),
+          fetch("/api/top-ups?action=list-purchases"),
+        ]);
+        if (!prodRes.ok) throw new Error("Failed to fetch top-up products");
+        const prodData = await prodRes.json();
+        const purData = purRes.ok ? await purRes.json().catch(() => null) : null;
+        setProducts(
+          Array.isArray(prodData?.products) ? prodData.products.map(normalizeProduct) : []
+        );
+        setPurchases(
+          Array.isArray(purData?.purchases) ? purData.purchases.map(normalizePurchase) : []
+        );
       } catch (err) {
         // logger
         setError(err instanceof Error ? err.message : "Unknown error");
-        setProducts(FALLBACK_PRODUCTS);
-        setPurchases(FALLBACK_PURCHASES);
+        setProducts([]);
+        setPurchases([]);
       } finally {
         setLoading(false);
       }
@@ -236,6 +265,8 @@ export default function TopUpsPage() {
   }
 
   const totalRevenue = purchases.reduce((sum, p) => sum + p.price, 0);
+  const purchaseCountFor = (productId: string) =>
+    productId ? purchases.filter((p) => p.productId === productId).length : 0;
   const activePurchases = purchases.filter((p) => p.status === "ACTIVE").length;
 
   return (
@@ -356,7 +387,7 @@ export default function TopUpsPage() {
                               <TableCell className="text-xs font-medium tabular-nums">{product.value}</TableCell>
                               <TableCell className="text-xs text-muted-foreground hidden md:table-cell">{product.validity}</TableCell>
                               <TableCell className="text-sm font-bold tabular-nums">{formatINR(product.price)}</TableCell>
-                              <TableCell className="text-xs text-muted-foreground hidden md:table-cell tabular-nums">{product.purchaseCount}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground hidden md:table-cell tabular-nums">{purchaseCountFor(product.id)}</TableCell>
                               <TableCell>
                                 <Badge variant={product.active ? "default" : "secondary"} className="text-[10px]">{product.active ? "Active" : "Inactive"}</Badge>
                               </TableCell>
