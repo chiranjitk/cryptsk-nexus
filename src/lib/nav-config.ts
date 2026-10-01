@@ -193,7 +193,6 @@ export const navGroups: NavGroup[] = [
       { label: "IP-MAC History", href: "/ip-mac-history", icon: FileSearch },
       { label: "Zone Budgets", href: "/zone-budgets", icon: PieChart },
       { label: "NAT Logs", href: "/nat-logs", icon: FileSearch },
-      { label: "Network Alerts", href: "/network-alerts", icon: Siren },
       { label: "Grafana Dashboards", href: "/grafana-dashboards", icon: BarChart3 },
     ],
   },
