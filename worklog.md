@@ -3614,3 +3614,19 @@ Stage Summary:
 - Runtime state: 13/13 pm2 services online, app :3000 = 200, PG healthy, git clean at e7b7337 synced with origin/main.
 - Known non-blockers: (a) React duplicate-key warnings for Equipment/Promotions/360° (labels intentionally appear in 2 registry modules — cosmetic, pre-existing); (b) /api/auth/me returns 500-shape body with auth-required message (works as expected for unauthenticated); (c) container RAM is tight (4GB) — compile of full client graph needs ~1.5GB headroom; if adding many more pages, consider stopping heavy idle mini-services during cold compiles.
 - NEXT SUGGESTIONS: (1) persist module toggles per-module page visibility preview in Module Manager sidebar-preview section; (2) per-page (not per-module) feature flags now that registry pages[] support required flag; (3) Alert Center MTTA/MTTR tiles need seeded NetworkAlert history to show non-zero metrics; (4) wire "Integration Logs" viewer to /api/integrations/logs with severity filter + auto-refresh; (5) guard: add a CI/dev check that every nav-config label exists in some registry module (would have caught this bug instantly).
+
+---
+Task ID: GITIGNORE-NEXTCONFIG-2026-10-01
+Agent: Z.ai Code (interactive session with user)
+Task: User order — "next.config.js add this file to gitignore"
+
+Work Log:
+- Project only has next.config.ts (no .js); it was TRACKED. Applied the same local-only policy as ecosystem.config.cjs: gitignored next.config.js/.ts/.mjs + git rm --cached next.config.ts (local file kept intact, 1501b).
+- First attempt lost the staged deletion in a stash→pop cycle (file exists on disk + now ignored → deletion not representable in worktree diff) — commit 34a7862 shipped only .gitignore+script; re-ran git rm --cached + commit f51d02a → tracking count now 0. Lesson: NEVER funnel an index-only deletion through git stash; commit it directly.
+- fresh-setup.sh: added fallback that recreates a working default next.config.ts if missing after fresh clone (turbopackMemoryLimit 1536 + serverExternalPackages) — same pattern as the ecosystem fallback.
+- Parallel-agent note: 14c62f8 (worklog append, 24 lines) landed mid-flow; rebase clean, no conflicts.
+- PUSHED: 34a7862 + f51d02a. App :3000 healthy after change.
+
+Stage Summary:
+- next.config.* is now local-only: no more parallel-agent merge conflicts on it; tune turbopackMemoryLimit etc. freely without commits.
+- Fresh-clone safety preserved via fresh-setup.sh auto-recreate fallback.
