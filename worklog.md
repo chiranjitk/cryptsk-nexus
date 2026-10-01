@@ -1951,3 +1951,33 @@ Remaining work:
   - Deploy to prod
   - Test the captive portal UI
   - Wire into CRYPTSK's nav config
+
+---
+Task ID: CAPTIVE-PORTAL-IPPOOL-FIX-17
+Agent: main (orchestrator)
+Task: Fix IP Pool integration — use CRYPTSK's existing PartnerIpPool instead of StaySuite's IpPool
+
+Work Log:
+- User correction: CRYPTSK DOES have IP Pool system — PartnerIpPool model (line 3599) + IPAM UI page (src/components/pages/ipam-page.tsx)
+- User says: "in ui already have ipam where subnets created that map to partner" — the existing IPAM manages subnets per partner
+- User says: VLAN not needed, IP Pool is major
+- User says: rename IPAM menu to "IP Pool Management"
+
+- Added `ipPoolId String?` field to PortalMapping model (FK to PartnerIpPool)
+- Added `PartnerIpPool PartnerIpPool? @relation(fields: [ipPoolId], references: [id], onDelete: SetNull)` to PortalMapping
+- Added `PortalMappings PortalMapping[]` back-relation on PartnerIpPool model
+- Added `@@index([ipPoolId])` on PortalMapping for fast lookups
+- Renamed nav menu: "Subnets (IPAM)" → "IP Pool Management" in src/lib/nav-config.ts line 130
+- `bun run db:push` succeeded
+
+Stage Summary:
+✅ PortalMapping now has `ipPoolId` FK to PartnerIpPool — the captive portal "Pool Mappings" tab will use CRYPTSK's existing IP pool system
+✅ Nav menu renamed to "IP Pool Management" (was "Subnets (IPAM)")
+✅ Schema pushed to DB
+✅ PartnerIpPool already has `partnerId` — IP pools are already partner-linked
+✅ The flow: IP Pool Management page creates PartnerIpPool entries (per partner) → Captive Portal Pool Mappings tab references those pools via ipPoolId
+
+Relationship:
+  Partner (1) → PartnerIpPool (N) — IP pools per partner
+  PartnerIpPool (1) → PortalMapping (N) — portal mappings reference IP pools
+  CaptivePortal (1) → PortalMapping (N) — portal instances have mappings

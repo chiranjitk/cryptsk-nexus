@@ -127,7 +127,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "NAS Clients", href: "/nas-clients", icon: RadioTower },
       { label: "NAS Devices", href: "/nas-devices", icon: Server },
-      { label: "Subnets (IPAM)", href: "/ipam", icon: MapPinned },
+      { label: "IP Pool Management", href: "/ipam", icon: MapPinned },
       { label: "System Interfaces", href: "/system-interfaces", icon: Cable },
       { label: "DHCP Server", href: "/dhcp", icon: Server },
       { label: "DNS Server", href: "/dns", icon: Globe },

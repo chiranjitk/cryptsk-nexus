@@ -3607,6 +3607,7 @@ model PartnerIpPool {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   Partner     Partner   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  PortalMappings PortalMapping[]  // back-relation from captive portal mappings
 
   @@index([partnerId])
   @@index([poolType])
@@ -5780,6 +5781,7 @@ model PortalMapping {
   id               String        @id @default(uuid())
   partnerId        String?
   portalId         String
+  ipPoolId         String?       // FK to PartnerIpPool — the IP pool/subnet assigned to this portal
   vlanId           Int?
   vlanConfigId     String?
   ssid             String?
@@ -5791,9 +5793,11 @@ model PortalMapping {
   updatedAt        DateTime      @updatedAt
   CaptivePortal    CaptivePortal @relation(fields: [portalId], references: [id], onDelete: Cascade)
   FallbackPortal   CaptivePortal? @relation("PortalMappingFallback", fields: [fallbackPortalId], references: [id], onDelete: SetNull)
+  PartnerIpPool    PartnerIpPool? @relation(fields: [ipPoolId], references: [id], onDelete: SetNull)
 
   @@index([partnerId])
   @@index([portalId])
+  @@index([ipPoolId])
   @@index([ssid])
   @@index([enabled])
 }
