@@ -12,12 +12,14 @@ export async function POST(
     const { id } = await params;
     const body = await req.json();
 
-    const { amount, reason, mode, notes } = body as {
+    const { amount, reason, notes } = body as {
       amount: number;
       reason: string;
-      mode?: string;
       notes?: string;
     };
+    // [PAYMENTS-NOLEAK] The page sends `refundMode` while this route only read
+    // `mode` — the chosen refund mode silently defaulted to "Original".
+    const mode = (body.refundMode || body.mode) as string | undefined;
 
     if (!amount || amount <= 0) {
       return NextResponse.json({ error: "Refund amount must be greater than 0" }, { status: 400 });

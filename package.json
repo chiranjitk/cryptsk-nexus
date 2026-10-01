@@ -21,7 +21,8 @@
     "deploy:logs": "node scripts/deploy.mjs --logs",
     "deploy:no-push": "node scripts/deploy.mjs --no-push",
     "db:seed": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus bun run prisma/seed.ts",
-    "db:seed-alerts": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus bun run prisma/seed-alerts.ts"
+    "db:seed-alerts": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus bun run prisma/seed-alerts.ts",
+    "db:seed-payments": "DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@127.0.0.1:5432/cryptsknexus bun run prisma/seed-payments.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

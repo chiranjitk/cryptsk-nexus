@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { auditLog } from "@/lib/services/audit-service";
+import { newReceiptNumber } from "@/lib/services/receipt";
 import { blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
 
 export async function GET(request: NextRequest) {
@@ -589,8 +590,13 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Record Installment Payment ──
+    // [PAYMENTS-NOLEAK] Recording an installment used to update the installment
+    // row ONLY — no Payment row, no Invoice.paidAmount movement. The collected
+    // EMI money was invisible to the payments ledger, receipts and collector
+    // stats. Now each installment payment materializes as a VERIFIED Payment
+    // (with receipt) and settles the linked invoice, atomically.
     if (action === "pay-installment") {
-      const { installmentId, paymentMode: instPaymentMode } = body;
+      const { installmentId, paymentMode: instPaymentMode, transactionRef: instRef, notes: instNotes } = body;
       if (!installmentId) return NextResponse.json({ error: "Installment ID required" }, { status: 400 });
 
       const installment = await db.paymentPlanInstallment.findUnique({
@@ -600,26 +606,65 @@ export async function POST(request: NextRequest) {
       if (!installment) return NextResponse.json({ error: "Installment not found" }, { status: 404 });
       if (installment.status === "paid") return NextResponse.json({ error: "Already paid" }, { status: 400 });
 
-      await db.paymentPlanInstallment.update({
-        where: { id: installmentId },
-        data: { status: "paid", paidAmount: installment.amount, paidAt: new Date() },
+      const result = await db.$transaction(async (tx) => {
+        await tx.paymentPlanInstallment.update({
+          where: { id: installmentId },
+          data: { status: "paid", paidAmount: installment.amount, paidAt: new Date() },
+        });
+
+        const allInstallments = await tx.paymentPlanInstallment.findMany({
+          where: { paymentPlanId: installment.PaymentPlan.id },
+        });
+        const paidCount = allInstallments.filter((i) => i.status === "paid").length;
+
+        await tx.paymentPlan.update({
+          where: { id: installment.PaymentPlan.id },
+          data: {
+            paidInstallments: paidCount,
+            status: paidCount >= installment.PaymentPlan.emiCount ? "completed" : "active",
+          },
+        });
+
+        const receiptNumber = newReceiptNumber();
+        const payment = await tx.payment.create({
+          data: {
+            subscriberId: installment.PaymentPlan.subscriberId,
+            invoiceId: installment.PaymentPlan.invoiceId,
+            amount: installment.amount,
+            paymentMode: (instPaymentMode || "CASH") as never,
+            transactionRef: instRef || "",
+            status: "VERIFIED",
+            receiptNumber,
+            collectedById: userId,
+            verifiedById: userId,
+            notes: `${instNotes || ""} EMI #${installment.installmentNumber}/${installment.PaymentPlan.emiCount} (auto-verified)`.trim(),
+          },
+        });
+
+        if (installment.PaymentPlan.invoiceId) {
+          const inv = await tx.invoice.findUnique({ where: { id: installment.PaymentPlan.invoiceId } });
+          if (inv) {
+            const newPaid = Math.round((inv.paidAmount + installment.amount) * 100) / 100;
+            const newBalance = Math.round((inv.grandTotal - newPaid) * 100) / 100;
+            await tx.invoice.update({
+              where: { id: inv.id },
+              data: {
+                paidAmount: newPaid,
+                balanceAmount: Math.max(0, newBalance),
+                status: newBalance <= 0.01 ? "PAID" : "PARTIALLY_PAID",
+                paidAt: newBalance <= 0.01 ? new Date() : inv.paidAt,
+              },
+            });
+          }
+        }
+
+        return { payment, paidCount };
       });
 
-      const allInstallments = await db.paymentPlanInstallment.findMany({
-        where: { paymentPlanId: installment.PaymentPlan.id },
+      await auditLog(request, "UPDATE", "PaymentPlanInstallment", installmentId, {
+        amount: installment.amount, paymentId: result.payment.id, receipt: result.payment.receiptNumber,
       });
-      const paidCount = allInstallments.filter((i) => i.status === "paid").length;
-
-      await db.paymentPlan.update({
-        where: { id: installment.PaymentPlan.id },
-        data: {
-          paidInstallments: paidCount,
-          status: paidCount >= installment.PaymentPlan.emiCount ? "completed" : "active",
-        },
-      });
-
-      await auditLog(request, "UPDATE", "PaymentPlanInstallment", installmentId, { amount: installment.amount });
-      return NextResponse.json({ success: true, message: "Installment payment recorded" });
+      return NextResponse.json({ success: true, message: "Installment payment recorded", paymentId: result.payment.id, receiptNumber: result.payment.receiptNumber });
     }
 
     // ── Default Payment Plan ──

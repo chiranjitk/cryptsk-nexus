@@ -1638,13 +1638,18 @@ model IntegrationTransaction {
   status            String             @default("")
   externalRef       String             @default("")
   retryCount        Int                @default(0)
+  /// [PAYMENTS-NOLEAK] Reconciliation link — gateway transaction matched to a
+  /// local Payment row. NULL = unmatched (revenue-leak suspect until linked).
+  paymentId         String?
   createdAt         DateTime           @default(now())
   IntegrationConfig IntegrationConfig? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  Payment           Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([gatewayType])
   @@index([integrationId])
   @@index([status])
+  @@index([paymentId])
 }
 
 model Invoice {
@@ -2599,6 +2604,7 @@ model Payment {
   Subscriber                       Subscriber    @relation(fields: [subscriberId], references: [id])
   User_Payment_verifiedByIdToUser  User?         @relation("Payment_verifiedByIdToUser", fields: [verifiedById], references: [id])
   Refund                           Refund[]
+  IntegrationTransaction           IntegrationTransaction[]
 
   @@index([createdAt])
   @@index([invoiceId])
