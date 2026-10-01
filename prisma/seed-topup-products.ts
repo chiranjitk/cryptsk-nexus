@@ -12,6 +12,10 @@
 //   • Speed Boost 100 Mbps — 24 Hours ₹69   — SPEED_BOOST
 //   • 24-Hour Unlimited Pass ₹49            — TIME
 //
+// Also seeds 5 demo SubscriberTopUp PURCHASES linked to real
+// subscribers in the DB (skipped when they already exist, tagged by
+// fixed ids) so the Purchase History tab demonstrates real flows.
+//
 // NOTE: the suggested OTT Bundle / Static IP / Voice Pack concepts
 // are NOT representable — TopUpType only has DATA/TIME/SPEED_BOOST —
 // so the closest in-catalogue products were seeded instead.
@@ -99,6 +103,52 @@ async function main() {
   const spread = byType.map((t) => `${t.type}:${t._count.id}`).join(", ");
   const total = await db.topUpProduct.count({ where: { description: { contains: DEMO_TAG } } });
   console.log(`  top-up products seeded: ${total} (${spread})`);
+
+  // ── Demo purchases: link demo products to real subscribers ──
+  const subscribers = await db.subscriber.findMany({
+    orderBy: { createdAt: "asc" },
+    take: 5,
+    select: { id: true, name: true, code: true },
+  });
+  if (subscribers.length === 0) {
+    console.log("  no subscribers found — skipping demo purchases");
+  } else {
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const purchaseSpecs = [
+      { id: "stub-demo-1", productId: "tup-demo-data-50gb",  sub: 0, daysAgo: 12, status: "ACTIVE" as const,  usedFraction: 0.4 },
+      { id: "stub-demo-2", productId: "tup-demo-data-10gb",  sub: 1, daysAgo: 6,  status: "ACTIVE" as const,  usedFraction: 0.7 },
+      { id: "stub-demo-3", productId: "tup-demo-boost-50",   sub: 2, daysAgo: 20, status: "EXPIRED" as const, usedFraction: 1.0 },
+      { id: "stub-demo-4", productId: "tup-demo-time-24h",   sub: 3, daysAgo: 30, status: "EXPIRED" as const, usedFraction: 1.0 },
+      { id: "stub-demo-5", productId: "tup-demo-data-200gb", sub: 4 % Math.max(subscribers.length, 1), daysAgo: 3, status: "ACTIVE" as const, usedFraction: 0.15 },
+    ];
+    let created = 0;
+    for (const spec of purchaseSpecs) {
+      const subscriber = subscribers[spec.sub % subscribers.length];
+      if (!subscriber) continue;
+      const product = await db.topUpProduct.findUnique({ where: { id: spec.productId } });
+      if (!product) continue;
+      const purchasedAt = new Date(now - spec.daysAgo * DAY);
+      const expiresAt = new Date(purchasedAt.getTime() + product.validityHours * 60 * 60 * 1000);
+      const existingRow = await db.subscriberTopUp.findUnique({ where: { id: spec.id } });
+      if (existingRow) continue;
+      await db.subscriberTopUp.create({
+        data: {
+          id: spec.id,
+          subscriberId: subscriber.id,
+          topUpProductId: product.id,
+          purchasedAt,
+          expiresAt,
+          usedAmount: Math.round(product.value * spec.usedFraction * 10) / 10,
+          remainingAmount: Math.round(product.value * (1 - spec.usedFraction) * 10) / 10,
+          status: spec.status,
+        },
+      });
+      created += 1;
+    }
+    console.log(`  demo purchases created: ${created} (real subscribers × demo products)`);
+  }
+
   console.log(`── seed-topups: done ──`);
   await db.$disconnect();
 }
