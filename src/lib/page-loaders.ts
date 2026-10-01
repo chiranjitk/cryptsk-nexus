@@ -168,6 +168,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Webhooks': () => import('@/components/pages/webhooks-page'),
   'Integration Logs': () => import('@/components/pages/integration-logs-page'),
   'Alert Center': () => import('@/components/pages/alert-center-page'),
+  'Live Alerts': () => import('@/components/pages/network-alerts-page'),
   'Alert Rules': () => import('@/components/pages/alert-rules-page'),
   'Suppressions': () => import('@/components/pages/alert-suppressions-page'),
   'Alert History': () => import('@/components/pages/alert-history-page'),

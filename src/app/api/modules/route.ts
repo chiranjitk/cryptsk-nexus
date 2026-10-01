@@ -87,6 +87,16 @@ async function readConfigHybrid(): Promise<ModuleConfig> {
       if (state.enabled) enabledModules.push(modId);
       deploymentType = state.deploymentType || deploymentType;
     }
+    // ─── Auto-enable newly shipped modules ───────────────────────
+    // Modules with NO persisted row yet (added to the registry after
+    // the last save) fall back to their registry default, so fresh
+    // modules appear in the sidebar / Module Manager immediately
+    // instead of staying invisible until the next explicit save.
+    for (const mod of MODULES) {
+      if (!dbStates.has(mod.id) && mod.defaultEnabled && !enabledModules.includes(mod.id)) {
+        enabledModules.push(mod.id);
+      }
+    }
     return {
       enabledModules: enabledModules.length > 0 ? enabledModules : getDefaultEnabledModules(),
       deploymentType,

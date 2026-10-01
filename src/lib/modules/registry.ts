@@ -88,7 +88,6 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Authentication Log", section: "MONITORING" },
       { label: "RADIUS Attributes", section: "SERVICES" },
       { label: "MultiWAN", section: "NETWORK" },
-      { label: "Network Alerts", section: "MONITORING" },
       { label: "Hotspot", section: "SERVICES" },
       { label: "Diagnostic Tools", section: "MONITORING" },
       { label: "BW Reports", section: "MONITORING" },
@@ -397,6 +396,52 @@ export const MODULES: ModuleDefinition[] = [
   },
 
   // ══════════════════════════════════════════════════════════════
+  // INTEGRATIONS — Payment / SMS / Email / WhatsApp-Push / Webhooks / Logs
+  // (split out of Settings → Integrations into a dedicated module)
+  // ══════════════════════════════════════════════════════════════
+  {
+    id: "integrations",
+    name: "Integrations Hub",
+    description: "Dedicated integrations module — Payment Gateways (Razorpay, PhonePe, Stripe…), SMS Gateway (MSG91), Email/SMTP, WhatsApp & Push (FCM), Webhooks, and global integration logs",
+    icon: "PlugZap",
+    category: "communication",
+    version: "1.0.0",
+    defaultEnabled: true,
+    pages: [
+      { label: "Payment Gateways", section: "INTEGRATIONS", required: true },
+      { label: "SMS Gateway", section: "INTEGRATIONS" },
+      { label: "Email Gateway", section: "INTEGRATIONS" },
+      { label: "WhatsApp & Push", section: "INTEGRATIONS" },
+      { label: "Webhooks", section: "INTEGRATIONS" },
+      { label: "Integration Logs", section: "INTEGRATIONS" },
+    ],
+    dependencies: ["core"],
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // ALERT MANAGEMENT — Center, Live Alerts, Rules, Suppressions,
+  // History, Notification Rules (split out of Network Alerts page)
+  // ══════════════════════════════════════════════════════════════
+  {
+    id: "alert-management",
+    name: "Alert Management",
+    description: "Dedicated alert operations — Alert Center dashboard, live network alert stream, alert rules engine, suppressions, alert history with export, and notification routing rules",
+    icon: "BellRing",
+    category: "operations",
+    version: "1.0.0",
+    defaultEnabled: true,
+    pages: [
+      { label: "Alert Center", section: "ALERT MANAGEMENT", required: true },
+      { label: "Live Alerts", section: "ALERT MANAGEMENT", required: true },
+      { label: "Alert Rules", section: "ALERT MANAGEMENT" },
+      { label: "Suppressions", section: "ALERT MANAGEMENT" },
+      { label: "Alert History", section: "ALERT MANAGEMENT" },
+      { label: "Notification Rules", section: "ALERT MANAGEMENT" },
+    ],
+    dependencies: ["core"],
+  },
+
+  // ══════════════════════════════════════════════════════════════
   // PARTNER MANAGEMENT — ISP → Distribution Hub → Partner → Subscriber
   // ══════════════════════════════════════════════════════════════
   {
@@ -474,7 +519,7 @@ export const DEPLOYMENT_PRESETS: PresetConfig[] = [
     name: "ISP / WISP",
     description: "Full ISP management with network infrastructure, gateway, and all operational features",
     icon: "Radio",
-    enabledModules: ["core", "network-infra", "services", "gateway", "ips", "app-awareness", "traffic-analytics", "qos-monitor", "latency-monitor", "field-ops", "finance", "ai-intelligence", "voice-assistant"],
+    enabledModules: ["core", "network-infra", "services", "gateway", "ips", "app-awareness", "traffic-analytics", "qos-monitor", "latency-monitor", "field-ops", "finance", "ai-intelligence", "voice-assistant", "integrations", "alert-management"],
   },
   {
     id: "education",
@@ -509,7 +554,7 @@ export const DEPLOYMENT_PRESETS: PresetConfig[] = [
     name: "Enterprise",
     description: "Core CRM, billing, and operations without network infrastructure (for managed service providers)",
     icon: "Briefcase",
-    enabledModules: ["core", "field-ops", "finance", "ai-intelligence", "services"],
+    enabledModules: ["core", "field-ops", "finance", "ai-intelligence", "services", "integrations", "alert-management"],
   },
   {
     id: "full",

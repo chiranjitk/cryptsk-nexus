@@ -272,12 +272,13 @@ export default function ModuleManagerPage() {
   const presets = (data?.presets || []) as (typeof DEPLOYMENT_PRESETS[number] & { isActive: boolean })[];
 
   // Group modules by category
-  const categories = ["core", "network", "gateway", "addon", "operations", "finance", "ai"] as ModuleCategory[];
+  const categories = ["core", "network", "gateway", "addon", "communication", "operations", "finance", "ai"] as ModuleCategory[];
   const categoryLabels: Record<string, string> = {
     core: "Core Platform",
     network: "Network Infrastructure",
     gateway: "Gateway Controller",
     addon: "Add-on Modules",
+    communication: "Communication & Integrations",
     operations: "Field Operations",
     finance: "Finance Suite",
     ai: "AI Intelligence",

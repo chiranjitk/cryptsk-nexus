@@ -14,7 +14,10 @@ const nextConfig: NextConfig = {
   // memory-constrained dev boxes prefer `rm -rf .next` over a persistent
   // cache, and run dev with NODE_OPTIONS=--max-old-space-size=1536.
   experimental: {
-    turbopackMemoryLimit: 256,
+    // 256 OOM-crash-looped during cold compile of the full page-loaders
+    // graph (dies ~30s into "Compiling / ..." with 0-byte responses).
+    // 1536 fits the 4GB sandbox alongside the 12 mini-services.
+    turbopackMemoryLimit: 1536,
   },
   // ─── Treat native/binary Node modules as externals ───────────
   // ssh2 / net-snmp / ros-client / pg use binary assets that
