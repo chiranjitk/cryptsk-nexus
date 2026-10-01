@@ -102,3 +102,9 @@ tool-results/
 .zscripts/
 agent-ctx/
 *.pid
+
+# ============== deployment configs with secrets (never commit) ==============
+ecosystem.config.cjs
+ecosystem.config.production.cjs
+*.env.*
+!.env.example
