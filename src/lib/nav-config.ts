@@ -63,6 +63,12 @@ import {
   Scroll,
   MonitorSmartphone,
   FileSearch,
+  Smartphone,
+  Mail,
+  MessageSquare,
+  Webhook,
+  BellRing,
+  PauseCircle,
   ClipboardList,
   ScanEye,
   Timer,
@@ -320,10 +326,43 @@ export const navGroups: NavGroup[] = [
       { label: "Audit Log", href: "/audit-log", icon: ScrollText },
       { label: "Automation Jobs", href: "/automation-jobs", icon: CalendarClockIcon },
       { label: "Backup", href: "/backup", icon: DatabaseBackup },
-      { label: "Integrations", href: "/integrations", icon: Plug },
       { label: "Knowledge Base", href: "/knowledge-base", icon: BookOpen },
       { label: "Module Manager", href: "/module-manager", icon: Layers },
       { label: "System Health", href: "/system-health", icon: Heart },
+    ],
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // INTEGRATIONS
+  // ════════════════════════════════════════════════════════════
+  {
+    id: "INTEGRATIONS",
+    label: "INTEGRATIONS",
+    defaultOpen: false,
+    items: [
+      { label: "Payment Gateways", href: "/payment-gateways", icon: CreditCard },
+      { label: "SMS Gateway", href: "/sms-gateway", icon: Smartphone },
+      { label: "Email Gateway", href: "/email-gateway", icon: Mail },
+      { label: "WhatsApp & Push", href: "/whatsapp-push", icon: MessageSquare },
+      { label: "Webhooks", href: "/webhooks", icon: Webhook },
+      { label: "Integration Logs", href: "/integration-logs", icon: FileText },
+    ],
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // ALERT MANAGEMENT
+  // ════════════════════════════════════════════════════════════
+  {
+    id: "ALERT MANAGEMENT",
+    label: "ALERT MANAGEMENT",
+    defaultOpen: false,
+    items: [
+      { label: "Alert Center", href: "/alert-center", icon: BellRing },
+      { label: "Live Alerts", href: "/network-alerts", icon: Siren, badgeVariant: "destructive" },
+      { label: "Alert Rules", href: "/alert-rules", icon: ClipboardList },
+      { label: "Suppressions", href: "/alert-suppressions", icon: PauseCircle },
+      { label: "Alert History", href: "/alert-history", icon: History },
+      { label: "Notification Rules", href: "/notification-rules", icon: Bell },
     ],
   },
 ];

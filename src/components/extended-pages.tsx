@@ -130,6 +130,12 @@ import ApiKeysPage from '@/components/pages/api-keys-page';
 import AuditLogPage from '@/components/pages/audit-log-page';
 import BackupPage from '@/components/pages/backup-page';
 import IntegrationsPage from '@/components/pages/integrations-page';
+import PaymentGatewaysPage from '@/components/pages/payment-gateways-page';
+import SmsGatewayPage from '@/components/pages/sms-gateway-page';
+import EmailGatewayPage from '@/components/pages/email-gateway-page';
+import WhatsappPushPage from '@/components/pages/whatsapp-push-page';
+import WebhooksPage from '@/components/pages/webhooks-page';
+import IntegrationLogsPage from '@/components/pages/integration-logs-page';
 import KnowledgeBasePage from '@/components/pages/knowledge-base-page';
 import ModuleManagerPage from '@/components/pages/module-manager-page';
 import IspProfilePage from '@/components/pages/isp-profile-page';
@@ -261,6 +267,12 @@ export const EXTENDED_PAGES: Record<string, React.ComponentType> = {
   'Audit Log': AuditLogPage,
   'Backup': BackupPage,
   'Integrations': IntegrationsPage,
+  'Payment Gateways': PaymentGatewaysPage,
+  'SMS Gateway': SmsGatewayPage,
+  'Email Gateway': EmailGatewayPage,
+  'WhatsApp & Push': WhatsappPushPage,
+  'Webhooks': WebhooksPage,
+  'Integration Logs': IntegrationLogsPage,
   'Knowledge Base': KnowledgeBasePage,
   'Module Manager': ModuleManagerPage,
   'ISP Profile': IspProfilePage,
