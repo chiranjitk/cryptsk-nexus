@@ -4267,3 +4267,17 @@ Stage Summary:
 - Root-cause fix for recurring reset pain: ecosystem template now TRACKED (no real secrets — DB runs trust auth locally; SESSION_SECRET already in tracked package.json); fresh-setup.sh restores configs + warm-starts main app only.
 - REMINDERS for next agents: (1) shell exports stale DATABASE_URL=file:... globally — ALWAYS prefix commands with DATABASE_URL=postgresql://... (2) warm start only: npx pm2 startOrRestart ecosystem.config.cjs --only cryptsk-isp; NEVER bare pm2 restart cryptsk-isp; (3) 6 daemons stay stopped; (4) zonky PG bin has no psql — use bun+pg or Prisma for SQL; (5) restart postgres after reset: runtime-applications/pgsql/bin/pg_ctl -D runtime-applications/pgsql/data -o "-p 5432 -h 127.0.0.1" -l runtime-applications/pgsql/pg.log start.
 - Next: resume P0 backlog from BUSINESS_AUDIT_REPORT.md (auth sweep + 4 runtime-500 fixes + firewall matchCriteria guard + negative-payment validation); cron 429481 webDevReview continues.
+
+---
+Task ID: GIT-NEXTCONFIG-1
+Agent: Z.ai Code (coordinator)
+Task: User order — remove nexus.cryptsk.com cross-domain from next.config and commit it to GitHub
+
+Work Log:
+- Verified current + all historical tracked versions of next.config.ts: NONE ever contained https://nexus.cryptsk.com — allowedDevOrigins was always ["*.space-z.ai","127.0.0.1","localhost"]. Added an explicit comment forbidding production domains in the allowlist.
+- Reversed the 2026-10-01 untracking policy per new user order: removed next.config.js/.ts/.mjs from .gitignore; wrote enriched next.config.ts (memory-doctrine comments preserved: turbopackMemoryLimit 1536, FS-cache RSS note, serverExternalPackages rationale).
+- Updated scripts/fresh-setup.sh comment (config now tracked; recreation block kept as fork-fallback only).
+- Zero runtime impact: file content functionally identical to the live config; no restart required.
+
+Stage Summary:
+- next.config.ts is now TRACKED in GitHub → survives future sandbox resets via git pull. Production domain absent from the repo (verified by history grep). ecosystem.config.cjs remains gitignored (secrets policy) with tracked template.

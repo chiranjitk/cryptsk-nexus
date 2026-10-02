@@ -75,8 +75,9 @@ conn.close()"
 fi
 
 echo "═══ STEP 6: services via pm2 ═══"
-# next.config.ts is UNTRACKED (local-only, per user order 2026-10-01 — avoids
-# parallel-agent conflicts). Recreate a working default if missing after clone.
+# next.config.ts is TRACKED in git (user order 2026-10-02) so it survives
+# resets via pull. This recreation block remains only as a fallback for
+# fresh clones from forks that predate the tracking change.
 if [ ! -f next.config.ts ]; then
   cat > next.config.ts << 'NEXTCFG'
 import type { NextConfig } from "next";
