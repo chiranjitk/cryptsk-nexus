@@ -58,10 +58,13 @@ async function fetchPropertiesOnce(): Promise<Partner[]> {
 
   fetchInProgress = (async () => {
     try {
-      const res = await fetch('/api/properties?limit=100');
+      // CRYPTSK: fetch from /api/partners (StaySuite used /api/properties)
+      const res = await fetch('/api/partners?limit=100');
       const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        cachedProperties = json.data.map((p: Record<string, unknown>) => ({
+      // CRYPTSK returns { partners: [...] } (StaySuite returned { success, data })
+      const list = json.partners || json.data || (Array.isArray(json) ? json : []);
+      if (Array.isArray(list)) {
+        cachedProperties = list.map((p: Record<string, unknown>) => ({
           id: p.id as string,
           name: p.name as string,
         }));
@@ -84,8 +87,8 @@ export function PropertySelector({
   onValueChange,
   showAll = true,
   allValue = 'all',
-  allLabel = 'All Properties',
-  placeholder = 'Select property',
+  allLabel = 'All Partner',
+  placeholder = 'Select partner',
   className = 'w-full sm:w-48',
   showIcon = false,
   filterIcon = false,

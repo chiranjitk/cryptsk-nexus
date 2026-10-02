@@ -898,7 +898,7 @@ async function apiMutate<T>(url: string, options?: RequestInit): Promise<{ data:
 
 export default function PortalPage() {
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const [activeTab, setActiveTab] = useState<TabId>('portals');
   const [portalOptions, setPortalOptions] = useState<Array<{ id: string; name: string }>>([]);
   const activeTabRef = useRef<HTMLButtonElement>(null);
@@ -1046,7 +1046,7 @@ function ZoneFormContent({ form, setForm, zones, editZone, ssidInput, setSsidInp
             onValueChange={v => setForm(f => ({ ...f, partnerId: v }))}
           >
             <SelectTrigger>
-              <SelectValue placeholder="Select property" />
+              <SelectValue placeholder="Select partner" />
             </SelectTrigger>
             <SelectContent>
               {properties.map(p => (
@@ -1173,7 +1173,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
   const { hasPermission } = useAuth();
   const canManage = hasPermission('wifi.manage');
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const [properties, setProperties] = useState<Array<{ id: string; name: string }>>([]);
   // P0-2 fix: confirmation state before deleting a portal zone (destructive cascade).
   const [zoneToDelete, setZoneToDelete] = useState<PortalZone | null>(null);
@@ -1181,7 +1181,7 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
   // Audit 4.2 / 4.3: confirmation state for state-flipping portal toggles (disable kicks guests; default affects every new /connect hit).
   const [zoneTogglePending, setZoneTogglePending] = useState<{ type: 'enabled' | 'default'; zone: PortalZone } | null>(null);
   const [zoneToggleInFlight, setZoneToggleInFlight] = useState(false);
-  useEffect(() => { fetch('/api/properties?limit=100').then(r => r.json()).then(d => { if (d.success) setProperties(d.data.map((p: any) => ({ id: p.id, name: p.name }))); }).catch(() => {}); }, []);
+  useEffect(() => { fetch('/api/partners?limit=100').then(r => r.json()).then(d => { if (d.partners) setProperties(d.partners.map((p: any) => ({ id: p.id, name: p.name }))); }).catch(() => {}); }, []);
   const fetchPortals = useCallback(async () => {
     setLoading(true);
     const data = await apiFetch<any[]>('/api/wifi/portal/instances');
@@ -1477,8 +1477,8 @@ function PortalListTab({ onPortalsChanged }: { onPortalsChanged?: () => void }) 
             {roamingZones.length > 0 && <span className="ml-2 text-blue-600 dark:text-blue-400">· {roamingZones.length} seamless roaming</span>}
           </p>
         </div>
-        <Button onClick={openAdd} disabled={!partnerId} className="bg-primary hover:bg-primary/90 text-primary-foreground" title={partnerId ? undefined : 'Select a property first'}><Plus className="h-4 w-4 mr-2" />Add Zone</Button>
-        {!partnerId && <p className="text-xs text-muted-foreground">Select a property first to add zones.</p>}
+        <Button onClick={openAdd} disabled={false} className="bg-primary hover:bg-primary/90 text-primary-foreground" title={partnerId ? undefined : 'Select a partner first'}><Plus className="h-4 w-4 mr-2" />Add Zone</Button>
+        {!partnerId && <p className="text-xs text-muted-foreground">Select a partner from the dropdown or use default.</p>}
       </div>
 
       {/* Zone Cards */}
@@ -1813,7 +1813,7 @@ function PortalDesignerTab({ portalOptions }: { portalOptions: Array<{ id: strin
   const { hasPermission } = useAuth();
   const canManage = hasPermission('wifi.manage');
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const [selectedPortalId, setSelectedPortalId] = useState<string>(portalOptions[0]?.id || '');
   const [aaaConfig, setAaaConfig] = useState<AaaConfig | null>(null);
   const [credentialCategory, setCredentialCategory] = useState<CredentialCategory>('custom');
@@ -4339,7 +4339,7 @@ function VoucherDesignerTab({ portalOptions }: { portalOptions: Array<{ id: stri
   const [loading, setLoading] = useState(true);
   const [guests, setGuests] = useState<any[]>([]);
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const { toast } = useToast();
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
@@ -4847,7 +4847,7 @@ const ALL_AUTH_METHOD_OPTIONS = [
 
 function AuthMethodsTab() {
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const { toast } = useToast();
   // XC-1 fix: RBAC gate on destructive actions.
   const { hasPermission } = useAuth();
@@ -6011,7 +6011,7 @@ function AnalyticsTab() {
 
 function AnalyticsOverview() {
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('today');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -6364,7 +6364,7 @@ function AnalyticsOverview() {
 
 function AnalyticsLiveMonitor() {
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const REFRESH_INTERVAL = 10000; // 10s
   const [liveStats, setLiveStats] = useState<{
     totalActive: number;
@@ -6743,7 +6743,7 @@ function AnalyticsLiveMonitor() {
 
 function AnalyticsAuthInsights() {
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
-  const partnerId = propertyFilter !== 'all' ? propertyFilter : undefined;
+  const partnerId = propertyFilter !== 'all' ? propertyFilter : (properties.length > 0 ? properties[0].id : 'default');
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('today');
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{
