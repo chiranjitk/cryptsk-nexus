@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         assignedToId: true,
         createdAt: true,
         areaId: true,
-        areasManaged: { select: { id: true, name: true } },
+        Area: { select: { name: true } },
         Subscriber: { select: { id: true, name: true, phone: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -164,21 +164,25 @@ export async function GET(req: NextRequest) {
 
       const recommended = scoredTechnicians[0] || null;
 
+      // [e2e-fix] lowercase alias — page reads rec.complaint.*
+      const complaintOut = {
+        id: complaint.id,
+        ticketNumber: complaint.ticketNumber,
+        type: complaint.type,
+        priority: complaint.priority,
+        description: complaint.description,
+        subscriberName: complaint.Subscriber?.name || "Walk-in",
+        subscriberPhone: complaint.Subscriber?.phone || "",
+        areaName: complaint.Area?.name || "Unassigned",
+        areaId: complaint.areaId,
+        assignedToId: complaint.assignedToId,
+        daysOpen,
+        createdAt: complaint.createdAt,
+      };
+
       return {
-        Complaint: {
-          id: complaint.id,
-          ticketNumber: complaint.ticketNumber,
-          type: complaint.type,
-          priority: complaint.priority,
-          description: complaint.description,
-          subscriberName: complaint.Subscriber?.name || "Walk-in",
-          subscriberPhone: complaint.Subscriber?.phone || "",
-          areaName: complaint.Area?.name || "Unassigned",
-          areaId: complaint.areaId,
-          assignedToId: complaint.assignedToId,
-          daysOpen,
-          createdAt: complaint.createdAt,
-        },
+        Complaint: complaintOut,
+        complaint: complaintOut,
         recommendedTechnician: recommended
           ? {
               technicianId: recommended.technicianId,

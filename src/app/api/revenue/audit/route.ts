@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
             Subscriber: { select: { name: true } },
           },
         },
-        creator: { select: { name: true } },
+        User: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
         date: cn.createdAt.toISOString(),
         subscriberName: cn.Invoice.Subscriber.name,
         referenceNumber: cn.Invoice.invoiceNumber,
-        createdBy: cn.creator?.name || "System",
+        createdBy: cn.User?.name || "System",
       });
     }
 
@@ -120,13 +120,13 @@ export async function GET(request: NextRequest) {
         status: true,
         createdAt: true,
         mode: true,
-        payment: {
+        Payment: {
           select: {
             Subscriber: { select: { name: true } },
             Invoice: { select: { invoiceNumber: true } },
           },
         },
-        processedBy: { select: { name: true } },
+        User: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -139,9 +139,9 @@ export async function GET(request: NextRequest) {
         reason: r.reason || `Refund via ${r.mode}`,
         status: r.status,
         date: r.createdAt.toISOString(),
-        subscriberName: r.payment.Subscriber.name,
-        referenceNumber: r.payment.Invoice?.invoiceNumber || r.id.slice(0, 8),
-        createdBy: r.processedBy?.name || "System",
+        subscriberName: r.Payment.Subscriber.name,
+        referenceNumber: r.Payment.Invoice?.invoiceNumber || r.id.slice(0, 8),
+        createdBy: r.User?.name || "System",
       });
     }
 
@@ -281,7 +281,7 @@ export async function GET(request: NextRequest) {
     // Frequent refunds per subscriber (>3 refunds)
     const refundBySub = new Map<string, typeof refunds>();
     for (const r of refunds) {
-      const subName = r.payment.Subscriber.name;
+      const subName = r.Payment.Subscriber.name;
       const list = refundBySub.get(subName) || [];
       list.push(r);
       refundBySub.set(subName, list);

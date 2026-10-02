@@ -29,9 +29,9 @@ export async function GET(request: NextRequest) {
       id: ip.id,
       ip: ip.address,
       subnetId: ip.subnetId,
-      subnetName: ip.subnet?.name || "",
-      subnetCidr: ip.subnet?.cidr || ip.subnet?.network || "",
-      allocationStrategy: ip.subnet?.allocationStrategy || "STATIC",
+      subnetName: ip.Subnet?.name || "",
+      subnetCidr: ip.Subnet?.cidr || ip.Subnet?.network || "",
+      allocationStrategy: ip.Subnet?.allocationStrategy || "STATIC",
       status: ip.status,
       subscriberId: ip.subscriberId || "",
       updatedAt: ip.updatedAt?.toISOString() || "",
@@ -107,8 +107,8 @@ export async function POST(request: NextRequest) {
         );
 
         // If strategy is DHCP_POOL, also update radippool
-        if (strategy === "DHCP_POOL" && ipRecord.subnet?.frPoolName) {
-          const gateway = ipRecord.subnet.gateway || "";
+        if (strategy === "DHCP_POOL" && ipRecord.Subnet?.frPoolName) {
+          const gateway = ipRecord.Subnet.gateway || "";
           await db.$executeRawUnsafe(
             `UPDATE radippool
              SET username = $1, "NASIPAddress" = $2
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
             username,
             gateway,
             ipRecord.address,
-            ipRecord.subnet.frPoolName,
+            ipRecord.Subnet.frPoolName,
           );
         }
 
@@ -164,11 +164,11 @@ export async function POST(request: NextRequest) {
         );
 
         // If IP was in radippool, expire the lease
-        if (ipRecord.subnet?.frPoolName) {
+        if (ipRecord.Subnet?.frPoolName) {
           await db.$executeRawUnsafe(
             `UPDATE radippool SET expiry_time = NOW() WHERE "FramedIPAddress" = $1::inet AND pool_name = $2`,
             ipRecord.address,
-            ipRecord.subnet.frPoolName,
+            ipRecord.Subnet.frPoolName,
           );
         }
 
