@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         Subscriber: { select: { id: true, name: true, code: true, phone: true } },
-        resolvedBy: { select: { id: true, name: true } },
+        User: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: "desc" },
       take: 100,

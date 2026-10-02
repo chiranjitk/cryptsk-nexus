@@ -4945,3 +4945,32 @@ Work Log:
 Stage Summary:
 - GIT_RULES.md is now the authoritative git doctrine for all agents/cron/subagents — git-tracked, so every fresh sandbox clone inherits it. The pre-existing ad-hoc flow (stash→pull --rebase→stash pop→add specific files→commit→pull --rebase→push) is superseded by the user-ordered flow: COMMIT FIRST → pull --rebase → careful merge → push, with hard reset to origin permanently banned.
 - Note: canonical webDevReview cron 430270 still "Disabled due to exec limits exceeded" (platform quota) — backlog unchanged.
+---
+Task ID: RPT-E2E-1
+Agent: Z.ai Code (Reports full E2E — all pages, all buttons, all exports)
+Task: User directive "do all report e2e test all page all report all buttons all exported data" — comprehensive API matrix + browser sweep of all 26 REPORTS pages, fix everything found
+
+Work Log:
+- Endpoint discovery: mapped every API call of all 26 REPORTS pages (grep of fetch/apiFetch across page components) → 60+ distinct endpoints across /api/reports/*, revenue, collection, due-recovery, gst, collections, compliance, resellers, partners, technicians, churn, competitors, export, audit-log.
+- Built /home/z/.e2e/reports-e2e.sh (v2, binary-safe: body→file + magic-byte checks PK/%PDF/BOM, fmt_join for ?/& correctness). First run: 71 PASS / 23 FAIL → triaged: 8 were script artifacts (binary body corrupted status parse; `&format` on query-less paths), 4 were misclassified (exp-* return CSV by design), 7 were REAL 500s.
+- FIXED 7 real 500s (root causes from pm2 error log + Prisma validation messages, all wrong-field-name/case bugs):
+  1. /api/revenue/leakage — crash `reading '0'`: query selects `Invoice:` but code read `sub.invoices` → `sub.Invoice[0]`.
+  2. /api/revenue/audit — CreditNote include `creator`→`User`; Refund include `payment`→`Payment` AND `processedBy`→`User` (schema: relation User on processedById); mappings `cn.creator?.name`→`cn.User?.name`, `r.payment.*`→`r.Payment.*` ×2 (incl. line-284 frequent-refunds block).
+  3. /api/disputes — Dispute include `resolvedBy`→`User` (relation on resolvedById).
+  4. /api/collections/smart — `getBestTime(Payment: …)` param name vs `payments` body (ReferenceError) → renamed param; added empty-modeCounts guard (`sortedModes[0][0]` crash) returning SMS default; `p.invoice!`→`p.Invoice!` in avg-days-to-pay reducer.
+  5. /api/technicians/dispatch — Complaint select had nonexistent `areasManaged` (PrismaClientValidationError) → removed; added `Area {name}` include for real areaName; added lowercase `complaint` alias on recommendation objects (page reads rec.complaint.*, kept capital `Complaint` for compat).
+  6. /api/technicians/leaderboard — prev-month complaints select omitted `createdAt` but line 196 used `c.createdAt.getTime()` → added to select.
+  7. /api/compliance/audit-report — Refund select `payment`→`Payment`.
+- FIXED missing export: /api/reports/lifecycle had NO xlsx branch (JSON when format=xlsx) → added `|| format === "xlsx"` + xlsxResponse branch (mirrors csv branch, auditExport already covered).
+- FIXED 2 frontend crash-pages via backend lowercase aliases ([e2e-fix] comments):
+  8. DueRecoveryPage crashed `reading 'name'` on `inv.subscriber.name` — API returns capital `Subscriber` → added lowercase aliases in ALL 5 GET branches of /api/due-recovery (main invoices enriched rows + payment-plans + escalations + sla (with nested area) + legal-notices; Unknown-fallback object when relation null).
+  9. TechnicianPerformancePage crashed `reading 'areaName'` on `rec.complaint.areaName` — dispatch route returned capital `Complaint` → lowercase alias (see #5).
+- Browser E2E (agent-browser): ALL 26 REPORTS pages render clean (Reports hub 28 btns … Audit Log 141 btns; 0 error boundaries after fixes). Interactive: Collection Register Export PDF click → EXPORT audit row (entity=Payment) = end-to-end server-side PDF verified via DB; drill-down Eye on Collection Register (Ananya Ghosh) and Statement register → both landed on #360° Customer View; Statement ledger API contract verified (summary + subscriber Sneha Mukherjee + 10 entries); Report Snapshots "Monthly" run-now → new invoice-register MONTHLY row DB-verified; Reports hub all 9 role-tabs cycle; date-window guard confirmed (Invoice Register MTD empty → exports disabled = correct).
+- Infra observation (not a bug): dev server restarts under heavy compile pressure (pm2 max_memory_restart 3800M, Turbopack 1536MB cap on 4GB sandbox) — first unthrottled matrix run killed the server twice mid-run (status=000 tails); throttled re-run (1.2s/request) completed. Browser sessions "log out" when the server restarts (client fetch fails → login redirect) — expected in dev mode.
+- Final result: API matrix 94/94 PASS (throttled run): 9 core JSON + 24 format branches (8 routes × csv/xlsx/pdf) + 3 snapshot downloads + 58 page-data endpoints incl. Data Export CSVs. All 9 touched routes eslint-clean.
+
+Stage Summary:
+- Reports section is now fully E2E-green: every one of the 26 pages loads, every page's data API returns 200, all 8 Phase-1/2/3 report routes export csv+xlsx+pdf, snapshots download in 3 formats, drill-down, run-now, hub tabs and export buttons verified working.
+- 7 runtime-500 endpoints + 1 missing xlsx export + 2 page-crash case-mismatches fixed — these were pre-existing bugs independent of Phase 1-3 work (several match the P0 backlog "runtime 500" family: technicians/dispatch, technicians/leaderboard, disputes, collections/smart, compliance/audit-report, revenue/leakage, revenue/audit now ALL fixed; remaining known-500s from backlog: /api/ipam, /api/captive-portal, technicians/[id], complaints auto-assign — still open).
+- Pattern note for future fixes: recurring root cause is Prisma relation-name case mismatch (schema relations are PascalCase: Subscriber/Payment/User/Invoice/Area) — backend must map to the page's expected lowercase shapes or pages must use schema casing; 4 of 9 fixes were exactly this.
+- Test assets kept: /home/z/.e2e/reports-e2e.sh (full matrix, re-runnable), /home/z/.e2e/sweep-page.sh (resilient single-page browser sweep with re-login).

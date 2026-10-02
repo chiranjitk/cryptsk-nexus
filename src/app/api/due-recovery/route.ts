@@ -56,8 +56,15 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // [e2e-fix] lowercase aliases — page reads plan.subscriber/plan.invoice
+      const plansOut = plans.map((p) => ({
+        ...p,
+        subscriber: p.Subscriber || { id: p.subscriberId, name: "Unknown", code: "", phone: "" },
+        invoice: p.Invoice,
+      }));
+
       return NextResponse.json({
-        paymentPlans: plans,
+        paymentPlans: plansOut,
         stats: {
           total: plans.length,
           active: plans.filter((p) => p.status === "active").length,
@@ -78,7 +85,13 @@ export async function GET(request: NextRequest) {
         orderBy: { createdAt: "desc" },
         take: 100,
       });
-      return NextResponse.json({ escalations });
+      // [e2e-fix] lowercase aliases — page reads esc.subscriber/esc.invoice
+      const escalationsOut = escalations.map((e) => ({
+        ...e,
+        subscriber: e.Subscriber || { name: "Unknown", code: "", phone: "" },
+        invoice: e.Invoice,
+      }));
+      return NextResponse.json({ escalations: escalationsOut });
     }
 
     // Handle SLA data
@@ -100,7 +113,16 @@ export async function GET(request: NextRequest) {
         escalated: slaRecords.filter((s) => s.status === "ESCALATED").length,
       };
 
-      return NextResponse.json({ slaRecords, slaStats });
+      // [e2e-fix] lowercase aliases — page reads sla.subscriber.area/sla.invoice
+      const slaOut = slaRecords.map((s) => ({
+        ...s,
+        subscriber: s.Subscriber
+          ? { ...s.Subscriber, area: s.Subscriber.Area || null }
+          : { name: "Unknown", code: "", phone: "", area: null },
+        invoice: s.Invoice,
+      }));
+
+      return NextResponse.json({ slaRecords: slaOut, slaStats });
     }
 
     // Handle disputes data
@@ -127,7 +149,13 @@ export async function GET(request: NextRequest) {
         orderBy: { createdAt: "desc" },
         take: 100,
       });
-      return NextResponse.json({ notices });
+      // [e2e-fix] lowercase aliases — page reads notice.subscriber?./notice.invoice?
+      const noticesOut = notices.map((n) => ({
+        ...n,
+        subscriber: n.Subscriber,
+        invoice: n.Invoice,
+      }));
+      return NextResponse.json({ notices: noticesOut });
     }
 
     // Handle agent dashboard data
@@ -296,6 +324,10 @@ export async function GET(request: NextRequest) {
         escalationLevel: currentEscalation?.level || 0,
         escalationAction: currentEscalation?.action || null,
         slaStatus: slaRecord?.status || null,
+        // [e2e-fix] lowercase aliases — page reads inv.subscriber.{id,code,name,area?}
+        subscriber: inv.Subscriber
+          ? { ...inv.Subscriber, area: inv.Subscriber.Area || null }
+          : { id: inv.subscriberId, name: "Unknown", code: "", phone: "", area: null },
       };
     });
 
