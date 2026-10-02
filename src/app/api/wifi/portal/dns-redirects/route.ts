@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const redirects = await db.dnsRedirectRule.findMany({
       where,
       include: {
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

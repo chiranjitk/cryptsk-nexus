@@ -371,10 +371,10 @@ export async function POST(request: NextRequest) {
       const room = await db.room.findFirst({
         where: {
           number: trimmedRoom,
-          property: { tenantId },
+          partner: { tenantId },
         },
         include: {
-          property: { select: { id: true, name: true, tenantId: true } },
+          partner: { select: { id: true, name: true, tenantId: true } },
           bookings: {
             where: {
               status: { in: ['confirmed', 'checked_in'] },

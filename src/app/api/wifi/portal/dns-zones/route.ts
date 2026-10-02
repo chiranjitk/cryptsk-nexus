@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
         _count: {
           select: { records: true },
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

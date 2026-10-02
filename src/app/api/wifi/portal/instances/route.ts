@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
             portalPages: true,
           },
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching portal instances:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: error.message || 'Failed to fetch portal instances' } },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch portal instances' } },
       { status: 500 }
     );
   }
@@ -125,13 +125,13 @@ export async function POST(request: NextRequest) {
     // Resolve partnerId: if 'default' or invalid UUID, use tenant's first property
     let resolvedPropertyId = partnerId;
     if (partnerId === 'default' || partnerId.length !== 36) {
-      console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" `);
+      console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" for tenant ${tenantId}`);
       const firstPartner = await db.partner.findFirst({
         where: {},
         select: { id: true },
       });
       if (!firstPartner) {
-        console.error(`[PortalInstances POST] 404: No property found `);
+        console.error(`[PortalInstances POST] 404: No property found for tenant ${tenantId}`);
         return NextResponse.json(
           { success: false, error: { code: 'NOT_FOUND', message: 'No property found for this tenant' } },
           { status: 404 }
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!property) {
-      console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found `);
+      console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found for tenant ${tenantId}`);
       return NextResponse.json(
         { success: false, error: { code: 'NOT_FOUND', message: 'Partner not found' } },
         { status: 404 }

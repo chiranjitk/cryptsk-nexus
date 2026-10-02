@@ -21,7 +21,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         captivePortal: {
           select: { id: true, name: true },
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },
