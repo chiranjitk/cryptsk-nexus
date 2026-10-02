@@ -148,6 +148,13 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Partner Reports': () => import('@/components/pages/partner-reports-page'),
 
   // ══════════════════════════════════════════════════════════════
+  // REPORTS — Unified MIS suite (new register reports)
+  // ══════════════════════════════════════════════════════════════
+  'Invoice Register': () => import('@/components/pages/invoice-register-page'),
+  'AR Aging': () => import('@/components/pages/ar-aging-page'),
+  'Subscriber Lifecycle Report': () => import('@/components/pages/subscriber-lifecycle-report-page'),
+
+  // ══════════════════════════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════════════════════════
   'ISP Profile': () => import('@/components/pages/isp-profile-page'),

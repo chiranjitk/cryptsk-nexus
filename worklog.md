@@ -4341,3 +4341,63 @@ Stage Summary:
 - Deliverable committed: REPORTS_SECTION_ANALYSIS_AND_PLAN.md
 - Phase 1 scope locked: report-export.ts + REPORTS nav section + Invoice Register + AR Aging + Subscriber Lifecycle Report (pages+APIs, all authed/audited/exportable) + registry/loaders + globals.css discipline + browser verification.
 - Key architecture decisions: single-level slugs (distinct labels, no nesting), CANCELLED excluded from totals, side-revenue union-of-sources, BigInt->Number at edge, no new heavy client deps (print-to-PDF).
+---
+Task ID: 2-a
+Agent: general-purpose (report APIs)
+Task: Build invoice-register, ar-aging, lifecycle report APIs
+
+Work Log:
+- Read worklog tail (RPT-A/B/C + RPT-MAIN doctrine: Phase 1 = 3 report APIs, CANCELLED excluded from totals, BigInt→Number at edge).
+- Read conventions: revenue/aging-enhanced (bucket logic), export/invoices (csvResponse + AuthError envelope), api-auth.ts (requireAuth returns userId / throws AuthError{statusCode}), export-utils.ts (csvResponse(headers, rows, filename)), audit-service.ts:332 auditExport(request, entity, format, recordCount), db.ts (db from @/lib/db).
+- Grep-verified schema.prisma: Invoice has cgstAmount/sgstAmount/igstAmount + grandTotal/paidAmount/balanceAmount; relation names are CAPITALIZED (Subscriber/Plan/Area) in where+include; InvoiceStatus + SubscriberStatus enums confirmed; AuditLog has userName (default "System"), entityId, details/previousValues as JSON strings.
+- Live data inspection (read-only bun+Prisma, DATABASE_URL prefix discipline): AuditLog holds ZERO rows with entity='Subscriber' (only 2 'Auth') → lifecycle mapping vocabulary taken from audit-service AuditAction union + real call-sites (CREATE/UPDATE/BULK_*/STATUS_CHANGE/CHURN_ACTION/DELETE); fallback mapping documented in route header comment. Also confirmed AuditLog.details=JSON.stringify(details||{}) and previousValues=prev-or-diff{field:{old,new}} (audit-service.ts:205-210) → status-transition refinement handles both shapes.
+- Wrote 3 routes (only files touched), each: force-dynamic + nodejs, requireAuth FIRST, AuthError→statusCode / else 500 {success:false,error}, ?format=csv → auditExport + csvResponse, caps 2000 rows, money sums skip CANCELLED.
+  - invoice-register: from/to default MTD→today (local-time, end-of-day inclusive), status comma-list validated against InvoiceStatus (type-safe InvoiceStatus[]), planId, areaId→Subscriber.areaId, q insensitive contains on invoiceNumber|Subscriber.code|Subscriber.name, limit default 500 max 2000, orderBy issueDate desc; summary{count,totalBilled,totalPaid,totalOutstanding,cancelledCount} over returned rows; JSON rows ISO dates; CSV per spec columns (dates YYYY-MM-DD local to avoid UTC off-by-one).
+  - ar-aging: asOf default today; open = balanceAmount>0 AND status notIn [PAID,CANCELLED,CREDIT_NOTE,DRAFT] AND issueDate<=endOf(asOf); daysOverdue=floor((asOfEnd-dueDate)/86400000), 0 when dueDate>=asOf; buckets notDue/d1_30/d31_60/d61_90/d90plus; summary{asOf,totalOutstanding,invoiceCount,subscriberCount(distinct Set),buckets{count,total}}; rows orderBy balanceAmount desc take 2000.
+  - lifecycle: from/to default last 30 days, areaId/planId filters; summary{totalSubscribers,statusCounts via groupBy,activations=activationDate-in-range count,disconnections=mapped DISCONNECTED among AuditLog rows in range,netGrowth}; byArea/byPlan via subscriber.groupBy + area/plan name findMany maps; events = latest 500 AuditLog(entity=Subscriber) rows, entityId resolved to subscriber code/name/area/plan via one findMany, details truncated 200ch; CSV exports events.
+- Scoped lint: bunx eslint src/app/api/reports → 0 errors/warnings (tsc/build/pm2 NOT run per doctrine).
+- Read-only smoke test of all 3 query shapes against live PG (inline bun -e, no repo files): register q-filter hits 2 invoices (MTD empty = seed data dated outside current month, not a query bug); ar-aging 6 rows top ₹3539 CRY00001; lifecycle groupBy status {ACTIVE:11,PENDING:1,TRIAL:1,DISCONNECTED:1,SUSPENDED:1}, activations 11, 5 area groups, 8 plan groups, 0 Subscriber audit rows (expected).
+
+Stage Summary:
+- Delivered GET /api/reports/invoice-register, /api/reports/ar-aging, /api/reports/lifecycle — all requireAuth'd, ?format=csv audited via auditExport and streamed through shared csvResponse (UTF-8 BOM), JSON envelope {success:true,data:{summary,rows|byArea/byPlan/events}}.
+- Key decisions: (1) lifecycle action→event mapping is a constant built from audit-service vocabulary since DB has no Subscriber audit rows yet — DELETE→DISCONNECTED justified by the delete-guard (ACTIVE subs cannot be deleted); STATUS_CHANGE/UPDATE refined by status transition inside details/previousValues JSON; (2) disconnection count computed over ≤2000-row audit scan (documented cap comment, not a DB aggregate); (3) summaries describe returned rows (register) / full open-invoice scan (aging); (4) no shared helper file created (3-file constraint) — small per-route helpers instead.
+- Next agent: report UI pages can consume these contracts directly; consider wiring into RPT-MAIN Phase 1 page build + registry/loaders.
+
+---
+Task ID: 2-b
+Agent: general-purpose (report pages)
+Task: Build Invoice Register, AR Aging, Subscriber Lifecycle Report pages
+
+Work Log:
+- Read worklog tail (~120 lines) for doctrine: frozen globals.css discipline, only pre-existing class vocabulary, no build/tsc/pm2/git ops, warm-start reminders.
+- Absorbed reference pages fully: gst-tax-page.tsx (StatCard/KPI chips, filter Card, table vocabulary, skeleton-wave, apiFetch), revenue-reports-page.tsx (header + date-input filter bar, Print-window export buttons, aging bucket riskCls cards, Progress bars, toISO/formatINR), invoices-page.tsx (filter grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4, Search pl-9, Select "ALL" convention, STATUS badge classes, apiFetch with filters in queryKey), multiwan-page.tsx (isError red card + Retry pattern), payments-page/leads-page/due-recovery (date inputs, stacked subscriber cell, max-w-[200px] truncate, daysOverdue badge colors).
+- Verified report-export.ts helpers (downloadCsv/printReport/fmtINRDisplay/ReportColumn) and ui inventory (Progress exists); confirmed grid-cols-5/lg:grid-cols-5 and sm:grid-cols-3 already appear in aaa-groups/alert-rules/backup/reports/subscribers pages; confirmed stat-gradient-* is NOT in any CSS (dead class) so used the revenue-reports icon-chip KPI card pattern instead.
+- Wrote 3 client pages (only files touched): invoice-register-page.tsx, ar-aging-page.tsx, subscriber-lifecycle-report-page.tsx.
+- Each page: "use client", react-query useQuery with apiFetch<{success,data}> envelope unwrap + filters in queryKey (auto-refetch), full-page skeleton-wave loading, multiwan-style red error card with Retry (refetch), empty state row "No data for the selected filters", Export CSV via downloadCsv + Print/PDF via printReport (landscape, meta/totals wired from summary) with sonner toasts.
+- Invoice Register: from/to (month-start default), status Select (ALL + 7 statuses), q search; 5 KPIs (Invoices/Total Billed/Collected/Outstanding/Cancelled-muted); 10-col table with stacked subscriber cell, right-aligned tabular-nums money, StatusBadge variants (PAID=green outline, PARTIALLY_PAID=secondary, OVERDUE=destructive, CANCELLED=muted outline, DRAFT/SENT/CREDIT_NOTE=outline tinted); print totals Total Billed/Collected/Outstanding.
+- AR Aging: asOf date filter (default today) + Today shortcut; 3 KPIs (Total Outstanding big red, Unpaid Invoices, Subscribers Owing); 5-card bucket strip (notDue/d1_30/d31_60/d61_90/d90plus) with escalating riskCls accents (green→yellow→orange→red); 8-col table with Days Overdue red >60, Bucket Badge, balance right; print totals = 5 buckets + Total Outstanding.
+- Subscriber Lifecycle: from/to filter; 5 KPIs (Activations emerald, Disconnections rose, Net Growth sign-colored card, Total Base, Active Now from statusCounts.ACTIVE); Status Snapshot badge strip; two-column By Area / By Plan lists with Progress bars (h-2, revenue-reports pattern); 7-col events table with EventBadge (ACTIVATED=green outline, DISCONNECTED=destructive, SUSPENDED=secondary, REACTIVATED=default, CREATED/UPDATED=outline), Details max-w-[200px] truncate; CSV/print export events (Action included in CSV only).
+- Ran bunx eslint on the 3 files → clean (0 errors, 0 warnings). No other files touched; no pm2/git/build/tsc commands.
+
+Stage Summary:
+- 3 report pages created: src/components/pages/{invoice-register-page,ar-aging-page,subscriber-lifecycle-report-page}.tsx (~330/~330/~350 lines).
+- UX: every page has loading skeletons, error+retry card, empty-state row, responsive grids copied verbatim from existing pages (grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 filter bars, grid-cols-2 lg:grid-cols-5 KPI rows, lg:grid-cols-2 breakdown), INR via fmtINRDisplay, en-IN dd MMM yyyy dates, BOM-safe CSV + styled print-to-PDF exports from the already-loaded JSON (no re-fetch).
+- Registration note: pages are NOT yet in nav-config/page-loaders/MODULES registry (modifications present in working tree belong to the coordinator/2-c agent; I did not touch them) — labels must match "Invoice Register", "AR Aging", "Subscriber Lifecycle Report" when registered for hash deep-links.
+- ESLint: clean pass on all three files.
+
+---
+Task ID: RPT-P1 (Tasks 2/2-a/2-b — Phase 1 build)
+Agent: Z.ai Code (coordinator) + 2 build agents
+Task: Build Reports section Phase 1 (user: "Yes build it but menu... should be end before setting")
+
+Work Log:
+- User placement order: REPORTS section sits at END of sidebar, BETWEEN partner-management and SETTINGS (not after Dashboard).
+- Coordinator wiring: wrote src/lib/report-export.ts (downloadCsv/printReport/downloadJson/fmtINRDisplay — unified export layer replacing 25x copy-paste; print-PDF = self-contained styled window, zero new deps); nav-config.ts re-homed 17 report pages into new REPORTS group + added Invoice Register/AR Aging/Subscriber Lifecycle Report items; page-loaders.ts + modules/registry.ts registered the 3 pages (20 section:"REPORTS" entries total). NOTE: MultiEdit tool applied edits NON-atomically (claimed abort, but 5 of 8 landed) — detected via grep, repaired with individual edits; future agents: verify after multi-edit.
+- Agent 2-a (backend): created /api/reports/{invoice-register,ar-aging,lifecycle}/route.ts — all requireAuth-first, force-dynamic, CANCELLED excluded from money totals, row cap 2000, BigInt→Number at edge, ?format=csv via csvResponse (BOM+Content-Disposition) + auditExport logging. Lifecycle agent live-queried DB: AuditLog has ZERO entity='Subscriber' rows — action mapping built from audit-service vocabulary (CREATE/UPDATE/STATUS_CHANGE/CHURN_ACTION/DELETE) with status-transition parsing of details/previousValues JSON.
+- Agent 2-b (frontend): created 3 pages with apiFetch envelope pattern, useQuery filter-keyed refetch, frozen-globals discipline (all classes copied from gst-tax/revenue-reports/invoices/multiwan/due-recovery pages), sonner toasts, skeletons/error-retry/empty states, Export CSV + Print/PDF wired to report-export.ts, printReport totals per report. Detected stat-gradient-* classes are dead (defined nowhere) — used icon-chip KPI pattern instead.
+- Verification: curl login→200; invoice-register MTD empty (seed invoices predate month; wide-range test → 3 rows ₹3,654 ✓); ar-aging → 6 invoices ₹19,818, all 5 buckets populated ✓; lifecycle → 15 subs, 11 active, +11 activations, byArea/byPlan ✓; CSV → proper BOM + Content-Disposition ✓. Browser: login → all 3 pages render with KPIs/bucket strip/status snapshot; breadcrumb REPORTS > <page> ✓; sidebar order DASHBOARD…PARTNER MANAGEMENT → REPORTS → SETTINGS ✓. Fixed cosmetic "-0" on disconnections KPI. Scoped eslint on 10 files: 0 errors/warnings. pm2 log clean.
+
+Stage Summary:
+- Phase 1 SHIPPED: unified REPORTS section (20 items, correctly placed before SETTINGS) + 3 new register reports (pages+APIs, authed/audited/CSV+PDF-exportable) + report-export.ts shared layer.
+- Known notes: invoice-register MTD default shows empty on seed data (use wider range); lifecycle disconnection count capped at 2000-row audit scan (documented in code); seed rows INV-CRY* have balanceAmount=0 despite paidAmount=0 (pre-existing seed inconsistency — data-quality pass later).
+- Phase 2 next: Statement of Account, Collection Register, Expiry & Renewal, Side Revenue, Plan & Area MIS + XLSX via unused xlsx dep + export-manager broken-cards fix.
