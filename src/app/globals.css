@@ -678,6 +678,39 @@
   .bottom-36 {
     bottom: calc(var(--spacing) * 36);
   }
+  .bottom-5 {
+    bottom: calc(var(--spacing) * 5);
+  }
+  .right-5 {
+    right: calc(var(--spacing) * 5);
+  }
+  .right-20 {
+    right: calc(var(--spacing) * 20);
+  }
+  .left-4 {
+    left: calc(var(--spacing) * 4);
+  }
+  .right-full {
+    right: 100%;
+  }
+  .bottom-\[4\.75rem\] {
+    bottom: 4.75rem;
+  }
+  .bottom-\[8\.25rem\] {
+    bottom: 8.25rem;
+  }
+  .bottom-\[12\.5rem\] {
+    bottom: 12.5rem;
+  }
+  .right-\[4\.75rem\] {
+    right: 4.75rem;
+  }
+  .max-w-\[calc\(100vw-5\.75rem\)\] {
+    max-width: calc(100vw - 5.75rem);
+  }
+  .max-h-\[calc\(100vh-2\.5rem\)\] {
+    max-height: calc(100vh - 2.5rem);
+  }
   .-left-6 {
     left: calc(var(--spacing) * -6);
   }
@@ -9894,6 +9927,27 @@
     .sm\:bottom-6 {
       bottom: calc(var(--spacing) * 6);
     }
+    .sm\:bottom-20 {
+      bottom: calc(var(--spacing) * 20);
+    }
+    .sm\:bottom-\[8\.75rem\] {
+      bottom: 8.75rem;
+    }
+    .sm\:right-20 {
+      right: calc(var(--spacing) * 20);
+    }
+    .sm\:left-auto {
+      left: auto;
+    }
+    .sm\:h-12 {
+      height: calc(var(--spacing) * 12);
+    }
+    .sm\:w-12 {
+      width: calc(var(--spacing) * 12);
+    }
+    .sm\:max-w-\[24rem\] {
+      max-width: 24rem;
+    }
     .sm\:bottom-24 {
       bottom: calc(var(--spacing) * 24);
     }
@@ -14403,4 +14457,148 @@ html:not(.dark):not(.light) body {
 .cryptsk-nav-item:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 50%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Custom Utility Animations & Scrollbars
+   (Previously referenced in ~600 component locations but never
+    defined — this section makes them real.)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Skeleton shimmer wave ── */
+@keyframes skeleton-wave-kf {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-wave {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-wave::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 100%
+  );
+  animation: skeleton-wave-kf 1.6s ease-in-out infinite;
+}
+.dark .skeleton-wave::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(148, 163, 184, 0.14) 50%,
+    transparent 100%
+  );
+}
+
+/* ── Card entrance: fade + rise ── */
+@keyframes card-enter-kf {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-card-enter {
+  animation: card-enter-kf 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Slide-up entrance ── */
+@keyframes slide-up-kf {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up-kf 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Count-up pop for animated numbers ── */
+@keyframes count-up-kf {
+  0%   { opacity: 0; transform: translateY(8px); }
+  60%  { opacity: 1; transform: translateY(-2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-count-up {
+  animation: count-up-kf 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Page enter transition ── */
+@keyframes page-enter-kf {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-page-enter {
+  animation: page-enter-kf 0.3s ease-out both;
+}
+
+/* ── Indeterminate progress sweep ── */
+@keyframes progress-sweep-kf {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+.animate-progress {
+  position: relative;
+  overflow: hidden;
+}
+.animate-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 32%;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0.55;
+  animation: progress-sweep-kf 1.3s ease-in-out infinite;
+}
+
+/* ── Flame pulse (hot/streak indicators) ── */
+@keyframes flame-pulse-kf {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(234, 88, 12, 0.45)); }
+  50%      { transform: scale(1.12); filter: drop-shadow(0 0 7px rgba(234, 88, 12, 0.8)); }
+}
+.animate-flame-pulse {
+  animation: flame-pulse-kf 1.4s ease-in-out infinite;
+}
+
+/* ── Badge attention pulse ── */
+@keyframes badge-pulse-kf {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.18); }
+}
+.animate-badge-pulse {
+  animation: badge-pulse-kf 1.6s ease-in-out infinite;
+}
+
+/* ── Nice scroll: refined overlay scrollbar for panels ── */
+.nice-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+.nice-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+.nice-scroll::-webkit-scrollbar-track { background: transparent; }
+.nice-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+.nice-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(220, 38, 38, 0.55);
+}
+.dark .nice-scroll::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.65);
+}
+
+/* ── Reduced motion: respect user preference ── */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-wave::after,
+  .animate-card-enter,
+  .animate-slide-up,
+  .animate-count-up,
+  .animate-page-enter,
+  .animate-progress::after,
+  .animate-flame-pulse,
+  .animate-badge-pulse {
+    animation: none !important;
+  }
 }

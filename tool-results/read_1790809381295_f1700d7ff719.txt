@@ -1,0 +1,761 @@
+     1→"use client";
+     2→
+     3→// ─── Automation Jobs ─────────────────────────────────────────────
+     4→// Admin control surface for the 9 billing-cron jobs (port 3004):
+     5→// run-now, enable/disable (in-memory), countdowns and run history.
+     6→// All API calls go through the Caddy gateway via ?XTransformPort=3004
+     7→// (established pattern — direct :3000 access 404s client-side).
+     8→// ─────────────────────────────────────────────────────────────────
+     9→
+    10→import { useEffect, useMemo, useRef, useState } from "react";
+    11→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+    12→import {
+    13→  CalendarClock,
+    14→  ReceiptText,
+    15→  FileWarning,
+    16→  BellRing,
+    17→  ShieldAlert,
+    18→  LifeBuoy,
+    19→  TimerReset,
+    20→  Archive,
+    21→  Wifi,
+    22→  Play,
+    23→  Loader2,
+    24→  RefreshCw,
+    25→  AlertTriangle,
+    26→  CheckCircle2,
+    27→  XCircle,
+    28→  ChevronDown,
+    29→  ChevronUp,
+    30→  PauseCircle,
+    31→  PlayCircle,
+    32→  Zap,
+    33→  ListChecks,
+    34→  Target,
+    35→} from "lucide-react";
+    36→import type { LucideIcon } from "lucide-react";
+    37→import { Card, CardContent } from "@/components/ui/card";
+    38→import { Button } from "@/components/ui/button";
+    39→import { Badge } from "@/components/ui/badge";
+    40→import { Skeleton } from "@/components/ui/skeleton";
+    41→import { Switch } from "@/components/ui/switch";
+    42→import { toast } from "sonner";
+    43→import { apiFetch, cn } from "@/lib/utils";
+    44→
+    45→// ─── Types ───────────────────────────────────────────────────────
+    46→
+    47→interface JobExecution {
+    48→  id: string;
+    49→  startedAt: string;
+    50→  completedAt?: string;
+    51→  durationMs?: number;
+    52→  status: "running" | "success" | "failed";
+    53→  result?: Record<string, unknown>;
+    54→  error?: string;
+    55→}
+    56→
+    57→interface CronJob {
+    58→  id: string;
+    59→  name: string;
+    60→  description: string;
+    61→  type: string;
+    62→  cron: string;
+    63→  enabled: boolean;
+    64→  lastRun?: string;
+    65→  nextRun: string;
+    66→  status: "idle" | "running";
+    67→  totalRuns: number;
+    68→  successCount: number;
+    69→  failCount: number;
+    70→  history: JobExecution[];
+    71→}
+    72→
+    73→interface JobsResponse {
+    74→  jobs: CronJob[];
+    75→  total: number;
+    76→  summary: {
+    77→    total: number;
+    78→    enabled: number;
+    79→    running: number;
+    80→    totalExecutions: number;
+    81→  };
+    82→}
+    83→
+    84→interface RunResponse {
+    85→  success: boolean;
+    86→  message: string;
+    87→  jobId: string;
+    88→  status: string;
+    89→  triggeredBy?: string;
+    90→  job?: {
+    91→    id: string;
+    92→    name: string;
+    93→    status: string;
+    94→    lastRun?: string | null;
+    95→    nextRun: string;
+    96→    totalRuns: number;
+    97→    successCount: number;
+    98→    failCount: number;
+    99→    history: JobExecution[];
+   100→  };
+   101→}
+   102→
+   103→type CardStatus = "idle" | "running" | "success" | "failed";
+   104→
+   105→// ─── Constants ───────────────────────────────────────────────────
+   106→
+   107→const JOBS_KEY = ["automation-jobs"] as const;
+   108→
+   109→// Per-job identity for the 9 known ids — icon + color-coded chip.
+   110→// Names/descriptions always come from the API; this map only styles.
+   111→const JOB_META: Record<string, { icon: LucideIcon; chip: string }> = {
+   112→  "job-001": { icon: ReceiptText, chip: "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400" },
+   113→  "job-002": { icon: FileWarning, chip: "bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400" },
+   114→  "job-003": { icon: BellRing, chip: "bg-violet-100 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400" },
+   115→  "job-004": { icon: ShieldAlert, chip: "bg-rose-100 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400" },
+   116→  "job-005": { icon: Wifi, chip: "bg-sky-100 text-sky-600 dark:bg-sky-950/50 dark:text-sky-400" },
+   117→  "job-006": { icon: CalendarClock, chip: "bg-orange-100 text-orange-600 dark:bg-orange-950/50 dark:text-orange-400" },
+   118→  "job-007": { icon: LifeBuoy, chip: "bg-indigo-100 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400" },
+   119→  "job-008": { icon: TimerReset, chip: "bg-teal-100 text-teal-600 dark:bg-teal-950/50 dark:text-teal-400" },
+   120→  "job-009": { icon: Archive, chip: "bg-lime-100 text-lime-700 dark:bg-lime-950/50 dark:text-lime-400" },
+   121→};
+   122→
+   123→const JOB_META_FALLBACK = {
+   124→  icon: CalendarClock,
+   125→  chip: "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-300",
+   126→};
+   127→
+   128→const STATUS_BADGE: Record<CardStatus, { label: string; className: string }> = {
+   129→  idle: {
+   130→    label: "Idle",
+   131→    className: "bg-muted text-muted-foreground border-transparent",
+   132→  },
+   133→  running: {
+   134→    label: "Running",
+   135→    className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-900",
+   136→  },
+   137→  success: {
+   138→    label: "Success",
+   139→    className: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-900",
+   140→  },
+   141→  failed: {
+   142→    label: "Failed",
+   143→    className: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-900",
+   144→  },
+   145→};
+   146→
+   147→// ─── Helpers ─────────────────────────────────────────────────────
+   148→
+   149→// Humanize the cron expressions used by the registry (minute hour dom month dow).
+   150→function describeCron(expr: string): string {
+   151→  const f = expr.trim().split(/\s+/);
+   152→  if (f.length !== 5) return expr;
+   153→  const [min, hour, dom, , dow] = f;
+   154→  if (min === "*" && hour === "*") return "Every hour";
+   155→  if (!/^\d+$/.test(hour) || !/^\d+$/.test(min)) return expr;
+   156→  const hhmm = `${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+   157→  if (dom === "*" && dow === "*") return `Daily at ${hhmm}`;
+   158→  if (dom === "*" && /^\d+$/.test(dow)) {
+   159→    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+   160→    const d = Number(dow) % 7;
+   161→    return `Weekly on ${days[d]} at ${hhmm}`;
+   162→  }
+   163→  if (/^\d+$/.test(dom) && dow === "*") {
+   164→    const d = Number(dom);
+   165→    if (d >= 1 && d <= 31) {
+   166→      const suffix =
+   167→        d === 1 || d === 21 || d === 31 ? "st" : d === 2 || d === 22 ? "nd" : d === 3 || d === 23 ? "rd" : "th";
+   168→      return `Monthly on the ${d}${suffix} at ${hhmm}`;
+   169→    }
+   170→  }
+   171→  return expr;
+   172→}
+   173→
+   174→// Relative countdown until nextRun ("2h 13m", "due now" when overdue).
+   175→function formatCountdown(nextRun: string, now: number): string {
+   176→  const diff = new Date(nextRun).getTime() - now;
+   177→  if (!Number.isFinite(diff)) return "—";
+   178→  if (diff <= 0) return "due now";
+   179→  const mins = Math.floor(diff / 60000);
+   180→  if (mins < 1) return "<1 min";
+   181→  const d = Math.floor(mins / 1440);
+   182→  const h = Math.floor((mins % 1440) / 60);
+   183→  const m = mins % 60;
+   184→  if (d > 0) return `${d}d ${h}h`;
+   185→  if (h > 0) return `${h}h ${m}m`;
+   186→  return `${m}m`;
+   187→}
+   188→
+   189→// Relative time for past timestamps ("just now", "5m ago", "3h ago", "2d ago").
+   190→function formatAgo(ts: string, now: number): string {
+   191→  const diff = now - new Date(ts).getTime();
+   192→  if (!Number.isFinite(diff) || diff < 0) return "just now";
+   193→  const mins = Math.floor(diff / 60000);
+   194→  if (mins < 1) return "just now";
+   195→  if (mins < 60) return `${mins}m ago`;
+   196→  const h = Math.floor(mins / 60);
+   197→  if (h < 24) return `${h}h ${mins % 60}m ago`;
+   198→  return `${Math.floor(h / 24)}d ago`;
+   199→}
+   200→
+   201→// 840 → "840ms", 1200 → "1.2s", 125000 → "2m 05s"
+   202→function formatDuration(ms?: number): string {
+   203→  if (ms == null) return "—";
+   204→  if (ms < 1000) return `${ms}ms`;
+   205→  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+   206→  const m = Math.floor(ms / 60000);
+   207→  const s = Math.round((ms % 60000) / 1000);
+   208→  return `${m}m ${String(s).padStart(2, "0")}s`;
+   209→}
+   210→
+   211→// "archivedAuditLogs" → "archived audit logs"
+   212→function prettifyKey(k: string): string {
+   213→  return k
+   214→    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+   215→    .replace(/_/g, " ")
+   216→    .toLowerCase();
+   217→}
+   218→
+   219→// Compact "key: value" chips (≤3) from a run-result object; nested
+   220→// objects/arrays (e.g. retention windows, details[]) are skipped.
+   221→function formatLastResult(result?: Record<string, unknown>): string[] {
+   222→  if (!result) return [];
+   223→  const out: string[] = [];
+   224→  for (const [k, v] of Object.entries(result)) {
+   225→    if (out.length >= 3) break;
+   226→    if (v == null || typeof v === "object") continue;
+   227→    const value = typeof v === "number" ? v.toLocaleString("en-IN") : String(v);
+   228→    out.push(`${prettifyKey(k)}: ${value}`);
+   229→  }
+   230→  return out;
+   231→}
+   232→
+   233→function cardStatus(job: CronJob): CardStatus {
+   234→  if (job.status === "running") return "running";
+   235→  const last = job.history?.[0];
+   236→  if (last && last.status !== "running") return last.status === "success" ? "success" : "failed";
+   237→  return "idle";
+   238→}
+   239→
+   240→// Jobs that SUSPEND subscribers get a two-step confirm before Run now.
+   241→function needsConfirm(job: CronJob): boolean {
+   242→  return /suspend|expir/i.test(`${job.type} ${job.description}`);
+   243→}
+   244→
+   245→// ─── Small building blocks ───────────────────────────────────────
+   246→
+   247→function SummaryChip({ icon: Icon, label, value, dotClass }: {
+   248→  icon: LucideIcon;
+   249→  label: string;
+   250→  value: string;
+   251→  dotClass?: string;
+   252→}) {
+   253→  return (
+   254→    <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-xs">
+   255→      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+   256→      <span className="sr-only sm:not-sr-only">{label}</span>
+   257→      <span className="text-foreground font-semibold">{value}</span>
+   258→      {dotClass && <span className={cn("h-2 w-2 rounded-full", dotClass)} aria-hidden="true" />}
+   259→    </span>
+   260→  );
+   261→}
+   262→
+   263→function StatusDot({ status }: { status: CardStatus }) {
+   264→  if (status === "running") {
+   265→    return <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse motion-reduce:animate-none" aria-hidden="true" />;
+   266→  }
+   267→  if (status === "success") return <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />;
+   268→  if (status === "failed") return <span className="h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />;
+   269→  return <span className="h-2 w-2 rounded-full bg-muted-foreground/40" aria-hidden="true" />;
+   270→}
+   271→
+   272→// ─── Job card ────────────────────────────────────────────────────
+   273→
+   274→function JobCard({ job, now }: { job: CronJob; now: number }) {
+   275→  const queryClient = useQueryClient();
+   276→  const meta = JOB_META[job.id] ?? JOB_META_FALLBACK;
+   277→  const Icon = meta.icon;
+   278→  const status = cardStatus(job);
+   279→  const badge = STATUS_BADGE[status];
+   280→  const lastEntry = job.history?.[0];
+   281→  const resultChips = useMemo(() => formatLastResult(lastEntry?.result), [lastEntry]);
+   282→  const countdown = formatCountdown(job.nextRun, now);
+   283→  const overdue = countdown === "due now";
+   284→  const confirmRequired = needsConfirm(job);
+   285→
+   286→  // Two-step confirm state (suspend/expire jobs)
+   287→  const [confirming, setConfirming] = useState(false);
+   288→  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+   289→  useEffect(() => () => {
+   290→    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+   291→  }, []);
+   292→
+   293→  // History panel state
+   294→  const [historyOpen, setHistoryOpen] = useState(false);
+   295→
+   296→  const runMutation = useMutation({
+   297→    mutationFn: (id: string) => apiFetch<RunResponse>(`/api/jobs/${id}/run?XTransformPort=3004`, { method: "POST" }),
+   298→    onSuccess: (res) => {
+   299→      toast.success(res.message || `Job "${job.name}" started`);
+   300→      // Server-side execution is async — poll a few times so the card
+   301→      // flips running → success/failed with fresh result + nextRun.
+   302→      [1500, 5000, 10000].forEach((d) =>
+   303→        setTimeout(() => queryClient.invalidateQueries({ queryKey: JOBS_KEY }), d)
+   304→      );
+   305→    },
+   306→    onError: (err: Error) => {
+   307→      if (err.message.includes("409")) {
+   308→        toast.warning(`"${job.name}" is already running`);
+   309→      } else if (err.message.includes("400")) {
+   310→        toast.warning(`"${job.name}" is disabled — enable it to run manually`);
+   311→      } else if (err.message.includes("401") || err.message.includes("403")) {
+   312→        toast.error("Session expired or insufficient role — please re-login as admin");
+   313→      } else {
+   314→        toast.error(`Failed to trigger "${job.name}": ${err.message}`);
+   315→      }
+   316→    },
+   317→  });
+   318→
+   319→  // Enable/disable — optimistic flip with rollback on failure. Nothing is
+   320→  // persisted server-side (in-memory flag in billing-cron), reverts on restart.
+   321→  const toggleMutation = useMutation({
+   322→    mutationFn: (enabled: boolean) =>
+   323→      apiFetch<{ success: boolean; job: { id: string; enabled: boolean } }>(
+   324→        `/api/jobs/${job.id}?XTransformPort=3004`,
+   325→        { method: "PATCH", body: JSON.stringify({ enabled }) }
+   326→      ),
+   327→    onMutate: async (enabled: boolean) => {
+   328→      await queryClient.cancelQueries({ queryKey: JOBS_KEY });
+   329→      const prev = queryClient.getQueryData<JobsResponse>(JOBS_KEY);
+   330→      if (prev) {
+   331→        queryClient.setQueryData<JobsResponse>(JOBS_KEY, {
+   332→          ...prev,
+   333→          jobs: prev.jobs.map((j) => (j.id === job.id ? { ...j, enabled } : j)),
+   334→          summary: {
+   335→            ...prev.summary,
+   336→            enabled: Math.max(0, Math.min(prev.summary.total, prev.summary.enabled + (enabled ? 1 : -1))),
+   337→          },
+   338→        });
+   339→      }
+   340→      return { prev };
+   341→    },
+   342→    onSuccess: (_res, enabled) => {
+   343→      toast.success(`${job.name} ${enabled ? "enabled" : "disabled"}`);
+   344→    },
+   345→    onError: (err: Error, _enabled, ctx) => {
+   346→      if (ctx?.prev) queryClient.setQueryData(JOBS_KEY, ctx.prev);
+   347→      if (err.message.includes("404")) toast.error("Job not found — was the service restarted?");
+   348→      else if (err.message.includes("401") || err.message.includes("403")) toast.error("Session expired — please re-login as admin");
+   349→      else toast.error(`Failed to update "${job.name}": ${err.message}`);
+   350→    },
+   351→    onSettled: () => queryClient.invalidateQueries({ queryKey: JOBS_KEY }),
+   352→  });
+   353→
+   354→  const running = status === "running";
+   355→  const history = (job.history ?? []).slice(0, 5);
+   356→
+   357→  const handleRunClick = () => {
+   358→    if (confirmRequired && !confirming) {
+   359→      setConfirming(true);
+   360→      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+   361→      confirmTimer.current = setTimeout(() => setConfirming(false), 3000);
+   362→      return;
+   363→    }
+   364→    setConfirming(false);
+   365→    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+   366→    runMutation.mutate(job.id);
+   367→  };
+   368→
+   369→  return (
+   370→    <Card className={cn("flex flex-col transition-shadow hover:shadow-md", !job.enabled && "opacity-80")}>
+   371→      <CardContent className="flex flex-1 flex-col gap-4 p-4 sm:p-5">
+   372→        {/* Top row: identity + status */}
+   373→        <div className="flex items-start gap-3">
+   374→          <div
+   375→            className={cn(
+   376→              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+   377→              meta.chip
+   378→            )}
+   379→            aria-hidden="true"
+   380→          >
+   381→            <Icon className="h-5 w-5" />
+   382→          </div>
+   383→          <div className="min-w-0 flex-1">
+   384→            <div className="flex items-center justify-between gap-2">
+   385→              <h3 className="truncate text-sm font-semibold text-foreground" title={job.name}>
+   386→                {job.id} · {job.name}
+   387→              </h3>
+   388→            </div>
+   389→            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground" title={job.description}>
+   390→              {job.description}
+   391→            </p>
+   392→          </div>
+   393→          <Badge variant="outline" className={cn("shrink-0 gap-1.5 font-medium", badge.className)}>
+   394→            <StatusDot status={status} />
+   395→            {badge.label}
+   396→            <span className="sr-only">— last status of {job.name}</span>
+   397→          </Badge>
+   398→        </div>
+   399→
+   400→        {/* Schedule row */}
+   401→        <div className="flex flex-wrap items-center gap-2 text-xs">
+   402→          <code className="rounded-md border bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+   403→            {job.cron}
+   404→          </code>
+   405→          <span className="text-muted-foreground">{describeCron(job.cron)}</span>
+   406→          <span className="text-muted-foreground/50" aria-hidden="true">·</span>
+   407→          <span
+   408→            className={cn(
+   409→              "inline-flex items-center gap-1 font-medium",
+   410→              overdue ? "text-amber-600 dark:text-amber-400" : "text-foreground"
+   411→            )}
+   412→            title={`Next run: ${new Date(job.nextRun).toLocaleString("en-IN")}${job.enabled ? "" : " (paused while disabled)"}`}
+   413→          >
+   414→            <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+   415→            Next run in {countdown}
+   416→          </span>
+   417→          {!job.enabled && (
+   418→            <Badge variant="outline" className="border-transparent bg-muted text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+   419→              Disabled
+   420→            </Badge>
+   421→          )}
+   422→        </div>
+   423→
+   424→        {/* Stats row: 3 mini tiles */}
+   425→        <div className="grid grid-cols-3 gap-2">
+   426→          <div className="rounded-lg border bg-muted/30 px-2.5 py-2 min-w-0">
+   427→            <p className="text-[11px] font-medium text-muted-foreground">Total runs</p>
+   428→            <p className="truncate text-sm font-semibold text-foreground">{job.totalRuns.toLocaleString("en-IN")}</p>
+   429→          </div>
+   430→          <div className="rounded-lg border bg-muted/30 px-2.5 py-2 min-w-0">
+   431→            <p className="text-[11px] font-medium text-muted-foreground">Success rate</p>
+   432→            {(() => {
+   433→              const rate = job.totalRuns === 0 ? null : Math.round((job.successCount / job.totalRuns) * 100);
+   434→              return (
+   435→                <p
+   436→                  className={cn(
+   437→                    "truncate text-sm font-semibold",
+   438→                    rate == null
+   439→                      ? "text-foreground"
+   440→                      : rate >= 90
+   441→                        ? "text-emerald-600 dark:text-emerald-400"
+   442→                        : rate >= 70
+   443→                          ? "text-amber-600 dark:text-amber-400"
+   444→                          : "text-red-600 dark:text-red-400"
+   445→                  )}
+   446→                  title={`${job.successCount} succeeded · ${job.failCount} failed`}
+   447→                >
+   448→                  {rate == null ? "—" : `${rate}%`}
+   449→                </p>
+   450→              );
+   451→            })()}
+   452→          </div>
+   453→          <div className="rounded-lg border bg-muted/30 px-2.5 py-2 min-w-0">
+   454→            <p className="text-[11px] font-medium text-muted-foreground">Last result</p>
+   455→            {resultChips.length > 0 ? (
+   456→              <p className="truncate text-xs font-medium text-foreground" title={resultChips.join(" · ")}>
+   457→                {resultChips[0]}
+   458→                {resultChips.length > 1 && <span className="text-muted-foreground"> +{resultChips.length - 1}</span>}
+   459→              </p>
+   460→            ) : (
+   461→              <p className="truncate text-xs text-muted-foreground">{running ? "running…" : "no runs yet"}</p>
+   462→            )}
+   463→          </div>
+   464→        </div>
+   465→        {resultChips.length > 1 && (
+   466→          <p className="-mt-2 truncate text-[11px] text-muted-foreground">{resultChips.slice(1).join(" · ")}</p>
+   467→        )}
+   468→
+   469→        {/* Expandable history */}
+   470→        {historyOpen && (
+   471→          <div className="rounded-lg border bg-muted/20">
+   472→            <p className="border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+   473→              Recent runs
+   474→            </p>
+   475→            {history.length === 0 ? (
+   476→              <p className="px-3 py-3 text-xs text-muted-foreground">No runs recorded yet.</p>
+   477→            ) : (
+   478→              <ul className="max-h-48 overflow-y-auto nice-scroll divide-y divide-border/60">
+   479→                {history.map((entry) => (
+   480→                  <li key={entry.id} className="flex items-start gap-2.5 px-3 py-2">
+   481→                    {entry.status === "success" ? (
+   482→                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden="true" />
+   483→                    ) : entry.status === "failed" ? (
+   484→                      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" aria-hidden="true" />
+   485→                    ) : (
+   486→                      <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-amber-500 motion-reduce:animate-none" aria-hidden="true" />
+   487→                    )}
+   488→                    <div className="min-w-0 flex-1">
+   489→                      <p className="flex flex-wrap items-center gap-x-1.5 text-xs">
+   490→                        <span
+   491→                          className="font-medium text-foreground"
+   492→                          title={new Date(entry.startedAt).toLocaleString("en-IN")}
+   493→                        >
+   494→                          {formatAgo(entry.startedAt, now)}
+   495→                        </span>
+   496→                        <span className="text-muted-foreground/50" aria-hidden="true">·</span>
+   497→                        <span className="text-muted-foreground">{formatDuration(entry.durationMs)}</span>
+   498→                        {formatLastResult(entry.result).length > 0 && (
+   499→                          <>
+   500→                            <span className="text-muted-foreground/50" aria-hidden="true">·</span>
+   501→                            <span className="truncate text-muted-foreground" title={formatLastResult(entry.result).join(" · ")}>
+   502→                              {formatLastResult(entry.result).join(" · ")}
+   503→                            </span>
+   504→                          </>
+   505→                        )}
+   506→                      </p>
+   507→                      {entry.error && (
+   508→                        <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400" title={entry.error}>
+   509→                          {entry.error}
+   510→                        </p>
+   511→                      )}
+   512→                    </div>
+   513→                  </li>
+   514→                ))}
+   515→              </ul>
+   516→            )}
+   517→          </div>
+   518→        )}
+   519→
+   520→        {/* Footer row: actions */}
+   521→        <div className="mt-auto flex items-center justify-between gap-3 border-t pt-3">
+   522→          <div className="flex items-center gap-2">
+   523→            <Button
+   524→              size="default"
+   525→              className={cn(
+   526→                "h-11 gap-2 px-4",
+   527→                confirming && "bg-destructive text-white hover:bg-destructive/90"
+   528→              )}
+   529→              onClick={handleRunClick}
+   530→              disabled={running || !job.enabled || toggleMutation.isPending}
+   531→              title={
+   532→                running
+   533→                  ? "Job is running"
+   534→                  : !job.enabled
+   535→                    ? "Enable the job first"
+   536→                    : confirmRequired
+   537→                      ? "Two-step confirm — this job can suspend subscribers"
+   538→                      : `Run ${job.name} now`
+   539→              }
+   540→              aria-label={
+   541→                confirming
+   542→                  ? `Confirm run of ${job.name}`
+   543→                  : `Run ${job.name} now`
+   544→              }
+   545→              aria-description={confirmRequired ? "This job can suspend subscribers — confirmation required" : undefined}
+   546→            >
+   547→              {runMutation.isPending ? (
+   548→                <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+   549→              ) : confirming ? (
+   550→                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+   551→              ) : (
+   552→                <Play className="h-4 w-4" aria-hidden="true" />
+   553→              )}
+   554→              {runMutation.isPending ? "Starting…" : confirming ? "Confirm run?" : "Run now"}
+   555→            </Button>
+   556→            {confirmRequired && !confirming && (
+   557→              <span className="hidden text-[11px] text-muted-foreground lg:inline">affects subscribers</span>
+   558→            )}
+   559→          </div>
+   560→
+   561→          <div className="flex items-center gap-1.5">
+   562→            <span className="p-1.5" title={job.enabled ? "Job is enabled — scheduled runs active" : "Job is disabled — scheduler skips it (in-memory, reverts on restart)"}>
+   563→              <Switch
+   564→                size="sm"
+   565→                checked={job.enabled}
+   566→                disabled={toggleMutation.isPending}
+   567→                onCheckedChange={(v: boolean) => toggleMutation.mutate(v)}
+   568→                aria-label={`${job.enabled ? "Disable" : "Enable"} ${job.name}`}
+   569→              />
+   570→            </span>
+   571→            <span
+   572→              className="inline-flex min-h-11 items-center gap-1 text-xs font-medium text-muted-foreground"
+   573→              aria-hidden="true"
+   574→            >
+   575→              {job.enabled ? (
+   576→                <PlayCircle className="h-4 w-4 text-emerald-500" />
+   577→              ) : (
+   578→                <PauseCircle className="h-4 w-4" />
+   579→              )}
+   580→              <span className="hidden md:inline">{job.enabled ? "Enabled" : "Disabled"}</span>
+   581→            </span>
+   582→            <Button
+   583→              variant="ghost"
+   584→              size="sm"
+   585→              className="h-11 w-11 p-0"
+   586→              onClick={() => setHistoryOpen((o) => !o)}
+   587→              aria-expanded={historyOpen}
+   588→              aria-controls={`${job.id}-history`}
+   589→              aria-label={`${historyOpen ? "Hide" : "Show"} run history for ${job.name}`}
+   590→            >
+   591→              {historyOpen ? (
+   592→                <ChevronUp className="h-4 w-4" aria-hidden="true" />
+   593→              ) : (
+   594→                <ChevronDown className="h-4 w-4" aria-hidden="true" />
+   595→              )}
+   596→            </Button>
+   597→          </div>
+   598→        </div>
+   599→        {historyOpen && <span id={`${job.id}-history`} className="sr-only">Run history for {job.name}</span>}
+   600→      </CardContent>
+   601→    </Card>
+   602→  );
+   603→}
+   604→
+   605→// ─── Page ────────────────────────────────────────────────────────
+   606→
+   607→export default function AutomationJobsPage() {
+   608→  const queryClient = useQueryClient();
+   609→
+   610→  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<JobsResponse>({
+   611→    queryKey: JOBS_KEY,
+   612→    queryFn: () => apiFetch<JobsResponse>("/api/jobs?XTransformPort=3004"),
+   613→    refetchInterval: 60_000,
+   614→    staleTime: 30_000,
+   615→  });
+   616→
+   617→  // Lightweight 30s ticker — re-renders countdowns/relative times without refetching.
+   618→  const [now, setNow] = useState(() => Date.now());
+   619→  useEffect(() => {
+   620→    const t = setInterval(() => setNow(Date.now()), 30_000);
+   621→    return () => clearInterval(t);
+   622→  }, []);
+   623→
+   624→  const summary = data?.summary;
+   625→  const jobs = data?.jobs ?? [];
+   626→  const totals = useMemo(() => {
+   627→    const runs = jobs.reduce((s, j) => s + j.totalRuns, 0);
+   628→    const ok = jobs.reduce((s, j) => s + j.successCount, 0);
+   629→    const rate = runs > 0 ? Math.round((ok / runs) * 100) : null;
+   630→    return { runs, ok, rate };
+   631→  }, [jobs]);
+   632→
+   633→  const rateDot = totals.rate == null ? "bg-muted-foreground/40" : totals.rate >= 90 ? "bg-emerald-500" : totals.rate >= 70 ? "bg-amber-500" : "bg-red-500";
+   634→
+   635→  return (
+   636→    <div className="animate-page-enter space-y-6 p-4 sm:p-6">
+   637→      {/* Header row */}
+   638→      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+   639→        <div className="flex items-center gap-3">
+   640→          <div
+   641→            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-md"
+   642→            aria-hidden="true"
+   643→          >
+   644→            <CalendarClock className="h-6 w-6" />
+   645→          </div>
+   646→          <div className="min-w-0">
+   647→            <h1 className="text-2xl font-bold tracking-tight text-foreground">Automation Jobs</h1>
+   648→            <p className="text-sm text-muted-foreground">
+   649→              Billing, SLA, expiry and retention automation — powered by billing-cron
+   650→            </p>
+   651→          </div>
+   652→        </div>
+   653→
+   654→        <div className="flex flex-wrap items-center gap-2">
+   655→          {summary ? (
+   656→            <>
+   657→              <SummaryChip icon={PlayCircle} label="Enabled" value={`${summary.enabled}/${summary.total}`} />
+   658→              <SummaryChip icon={ListChecks} label="Total runs" value={totals.runs.toLocaleString("en-IN")} />
+   659→              <SummaryChip
+   660→                icon={Target}
+   661→                label="Success rate"
+   662→                value={totals.rate == null ? "—" : `${totals.rate}%`}
+   663→                dotClass={rateDot}
+   664→              />
+   665→            </>
+   666→          ) : (
+   667→            <>
+   668→              <Skeleton className="h-8 w-24 rounded-full" />
+   669→              <Skeleton className="h-8 w-24 rounded-full" />
+   670→              <Skeleton className="h-8 w-24 rounded-full" />
+   671→            </>
+   672→          )}
+   673→          <Button
+   674→            variant="outline"
+   675→            className="h-11 gap-2"
+   676→            onClick={() => refetch()}
+   677→            disabled={isFetching}
+   678→            aria-label="Refresh automation jobs"
+   679→          >
+   680→            <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+   681→            <span className="hidden sm:inline">Refresh</span>
+   682→          </Button>
+   683→        </div>
+   684→      </div>
+   685→
+   686→      {/* Content */}
+   687→      {isLoading ? (
+   688→        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-busy="true">
+   689→          <span className="sr-only">Loading automation jobs…</span>
+   690→          {Array.from({ length: 6 }).map((_, i) => (
+   691→            <Card key={i}>
+   692→              <CardContent className="space-y-4 p-4 sm:p-5">
+   693→                <div className="flex items-start gap-3">
+   694→                  <Skeleton className="h-10 w-10 rounded-xl" />
+   695→                  <div className="flex-1 space-y-2">
+   696→                    <Skeleton className="h-4 w-2/3" />
+   697→                    <Skeleton className="h-3 w-full" />
+   698→                  </div>
+   699→                  <Skeleton className="h-5 w-16 rounded-full" />
+   700→                </div>
+   701→                <Skeleton className="h-5 w-3/4" />
+   702→                <div className="grid grid-cols-3 gap-2">
+   703→                  <Skeleton className="h-14 rounded-lg" />
+   704→                  <Skeleton className="h-14 rounded-lg" />
+   705→                  <Skeleton className="h-14 rounded-lg" />
+   706→                </div>
+   707→                <div className="flex items-center justify-between">
+   708→                  <Skeleton className="h-11 w-28 rounded-md" />
+   709→                  <Skeleton className="h-8 w-24" />
+   710→                </div>
+   711→              </CardContent>
+   712→            </Card>
+   713→          ))}
+   714→        </div>
+   715→      ) : isError ? (
+   716→        <Card>
+   717→          <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+   718→            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/50" aria-hidden="true">
+   719→              <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+   720→            </div>
+   721→            <div>
+   722→              <p className="font-semibold text-foreground">Could not load automation jobs</p>
+   723→              <p className="mt-1 text-sm text-muted-foreground">
+   724→                {error instanceof Error ? error.message : "The billing-cron service may be unreachable."}
+   725→              </p>
+   726→            </div>
+   727→            <Button variant="outline" onClick={() => refetch()} className="h-11 gap-2" aria-label="Retry loading automation jobs">
+   728→              <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+   729→              Retry
+   730→            </Button>
+   731→          </CardContent>
+   732→        </Card>
+   733→      ) : jobs.length === 0 ? (
+   734→        <Card>
+   735→          <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+   736→            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted" aria-hidden="true">
+   737→              <Zap className="h-6 w-6 text-muted-foreground" />
+   738→            </div>
+   739→            <p className="font-semibold text-foreground">No jobs registered</p>
+   740→            <p className="text-sm text-muted-foreground">
+   741→              The billing-cron service on port 3004 reported no scheduled jobs.
+   742→            </p>
+   743→          </CardContent>
+   744→        </Card>
+   745→      ) : (
+   746→        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+   747→          {jobs.map((job) => (
+   748→            <JobCard key={job.id} job={job} now={now} />
+   749→          ))}
+   750→        </div>
+   751→      )}
+   752→
+   753→      {/* Footer hint — sandbox clock is UTC and getNextRun() uses server-local Date ops,
+   754→          so the displayed schedules/next-run times are UTC-accurate. */}
+   755→      <p className="text-center text-xs text-muted-foreground">
+   756→        Jobs run inside the billing-cron service on port 3004 · schedules are UTC · enable/disable is in-memory and reverts on service restart
+   757→      </p>
+   758→    </div>
+   759→  );
+   760→}
+   761→

@@ -148,6 +148,18 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Partner Reports': () => import('@/components/pages/partner-reports-page'),
 
   // ══════════════════════════════════════════════════════════════
+  // REPORTS — Unified MIS suite (new register reports)
+  // ══════════════════════════════════════════════════════════════
+  'Invoice Register': () => import('@/components/pages/invoice-register-page'),
+  'AR Aging': () => import('@/components/pages/ar-aging-page'),
+  'Subscriber Lifecycle Report': () => import('@/components/pages/subscriber-lifecycle-report-page'),
+  'Statement of Account': () => import('@/components/pages/statement-of-account-page'),
+  'Collection Register': () => import('@/components/pages/collection-register-page'),
+  'Expiry & Renewal': () => import('@/components/pages/expiry-renewal-page'),
+  'Side Revenue': () => import('@/components/pages/side-revenue-page'),
+  'Plan & Area MIS': () => import('@/components/pages/plan-area-mis-page'),
+
+  // ══════════════════════════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════════════════════════
   'ISP Profile': () => import('@/components/pages/isp-profile-page'),
@@ -158,11 +170,25 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Notifications': () => import('@/components/pages/notifications-page'),
   'API Keys': () => import('@/components/pages/api-keys-page'),
   'Audit Log': () => import('@/components/pages/audit-log-page'),
+  'Automation Jobs': () => import('@/components/pages/automation-jobs-page'),
   'Backup': () => import('@/components/pages/backup-page'),
   'Integrations': () => import('@/components/pages/integrations-page'),
+  'Payment Gateways': () => import('@/components/pages/payment-gateways-page'),
+  'SMS Gateway': () => import('@/components/pages/sms-gateway-page'),
+  'Email Gateway': () => import('@/components/pages/email-gateway-page'),
+  'WhatsApp & Push': () => import('@/components/pages/whatsapp-push-page'),
+  'Webhooks': () => import('@/components/pages/webhooks-page'),
+  'Integration Logs': () => import('@/components/pages/integration-logs-page'),
+  'Alert Center': () => import('@/components/pages/alert-center-page'),
+  'Live Alerts': () => import('@/components/pages/network-alerts-page'),
+  'Alert Rules': () => import('@/components/pages/alert-rules-page'),
+  'Suppressions': () => import('@/components/pages/alert-suppressions-page'),
+  'Alert History': () => import('@/components/pages/alert-history-page'),
+  'Notification Rules': () => import('@/components/pages/notification-rules-page'),
   'Knowledge Base': () => import('@/components/pages/knowledge-base-page'),
   'Module Manager': () => import('@/components/pages/module-manager-page'),
   'System Health': () => import('@/components/pages/system-health-page'),
+  'VPP Gateway': () => import('@/components/pages/vpp-gateway-page'),
 
   // ══════════════════════════════════════════════════════════════
   // AUTH

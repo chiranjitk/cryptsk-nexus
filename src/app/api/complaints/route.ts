@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { fireEventAsync } from "@/lib/services/webhook-service";
 import { auditCreate } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 
 const PRIORITY_SLA: Record<string, number> = {
   P1_CRITICAL: 4,
@@ -167,8 +167,18 @@ export async function GET(req: NextRequest) {
     }
 
     // Mark complaints with repeat caller flag and add comment counts
+    // [AUDIT-FIX F-16] The GET-side auto-escalation sweep was REMOVED — side
+    // effects in a read path meant escalation depended on who happened to open
+    // the complaints page. job-007 (billing-cron SLA sweep, runs hourly) now
+    // owns escalation; this handler enriches rows with a read-only breach flag.
+    const nowMs = Date.now();
     const complaintsWithRepeat = complaints.map((c) => ({
       ...c,
+      isSlaBreached:
+        !c.isSlaPaused &&
+        !!c.slaDeadline &&
+        ["OPEN", "ASSIGNED", "IN_PROGRESS", "REOPENED"].includes(c.status) &&
+        nowMs > new Date(c.slaDeadline).getTime(),
       isRepeatCaller: c.subscriberId ? repeatCallerIds.has(c.subscriberId) : false,
       repeatCallerCount: c.subscriberId
         ? repeatCallers.find((r) => r.subscriberId === c.subscriberId)?._count.id || 0
@@ -176,8 +186,21 @@ export async function GET(req: NextRequest) {
       _commentCount: commentCountMap[c.id] || 0,
     }));
 
+    // Prisma relation keys are capitalized (Subscriber/Area/Technician) but the
+    // client contract is lowercase (subscriber/area/assignedTo) — remap per row
+    // and drop the capitalized keys (computed repeat-caller fields survive).
+    const mappedComplaints = complaintsWithRepeat.map((c) => {
+      const { Subscriber, Area, Technician, ...rest } = c;
+      return {
+        ...rest,
+        subscriber: Subscriber ?? null,
+        area: Area ?? null,
+        assignedTo: Technician ?? null,
+      };
+    });
+
     return NextResponse.json({
-      complaints: complaintsWithRepeat,
+      complaints: mappedComplaints,
       statusCounts,
       total,
       page,
@@ -195,6 +218,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const userId = await requireAuth(req);
+    // [AUDIT-FIX F-20] Ticket creation is staff+ workflow — CUSTOMER role excluded here
+    await permissionFor(userId, "complaints.create");
     const body = await req.json();
     const { subscriberId, walkInName, areaId, type, priority, description, slaHours } = body;
 

@@ -60,6 +60,7 @@ interface Complaint {
   status: string;
   slaHours: number;
   slaDeadline: string | null;
+  isSlaBreached?: boolean;
   walkInName: string;
   resolutionNotes: string;
   resolvedAt: string | null;
@@ -1094,9 +1095,9 @@ export default function ComplaintsPage() {
               </Button>
             </div>
           )}
-          <ScrollArea className="max-h-[500px]">
+          <div className="max-h-[500px] overflow-y-auto overflow-x-auto nice-scroll">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="bg-muted/50">
                   <TableHead className="text-xs font-semibold uppercase tracking-wider w-10">
                     <Checkbox
@@ -1177,6 +1178,16 @@ export default function ComplaintsPage() {
                                 Repeat
                               </Badge>
                             )}
+                            {c.isSlaBreached && (
+                              <Badge className="text-[9px] px-1 py-0 bg-red-100 text-red-700 border-red-300 shrink-0 animate-pulse">
+                                SLA Breach
+                              </Badge>
+                            )}
+                            {c.escalationLevel > 0 && (
+                              <Badge className={`text-[9px] px-1 py-0 shrink-0 ${c.escalationLevel >= 2 ? "bg-red-100 text-red-800 border-red-300" : "bg-amber-100 text-amber-800 border-amber-300"}`}>
+                                {c.escalationLevel >= 2 ? "L2 · Admin" : "L1 · Manager"}
+                              </Badge>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -1228,7 +1239,7 @@ export default function ComplaintsPage() {
                 )}
               </TableBody>
             </Table>
-          </ScrollArea>
+          </div>
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t gap-2">
@@ -1497,6 +1508,11 @@ export default function ComplaintsPage() {
                   {dc.isSlaPaused && (
                     <Badge variant="outline" className="text-[10px] bg-orange-100 text-orange-700 border-orange-300">
                       <Pause className="h-3 w-3 mr-0.5" /> SLA Paused
+                    </Badge>
+                  )}
+                  {dc.isSlaBreached && (
+                    <Badge variant="outline" className="text-[10px] bg-red-100 text-red-700 border-red-300 animate-pulse">
+                      <AlertTriangle className="h-3 w-3 mr-0.5" /> SLA Breached
                     </Badge>
                   )}
                   {dc.isRepeatCaller && (

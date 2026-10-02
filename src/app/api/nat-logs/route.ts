@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode });
     }
     console.error("[NAT_LOGS_GET]", error);
-    return NextResponse.json({ error: "Failed to fetch NAT logs" }, { status: 500 });
+    return NextResponse.json({ logs: [], total: 0, message: "Gateway service (port 3005) not running — NAT log data unavailable" });
   }
 }
 

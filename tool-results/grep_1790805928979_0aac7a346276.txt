@@ -1,0 +1,252 @@
+/home/z/my-project/src/components/pages/collection-page.tsx:217:      <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/collection-page.tsx:329:          <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Process Refund</DialogTitle></DialogHeader>
+/home/z/my-project/src/components/pages/collection-page.tsx:383:          <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Raise Dispute</DialogTitle></DialogHeader>
+/home/z/my-project/src/components/pages/collection-page.tsx:697:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1625:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1669:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1735:        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1806:        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:1913:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/interfaces-page.tsx:2008:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ipam-cgnat-tab.tsx:927:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ipam-cgnat-tab.tsx:1030:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1077:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1111:        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto" a11yTitle="Technician Details">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1477:        <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1512:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1528:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1553:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1580:        <DialogContent className="sm:max-w-sm">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1601:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1619:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1648:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1665:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/technicians-page.tsx:1689:        <DialogContent className="sm:max-w-sm">
+/home/z/my-project/src/components/pages/reseller-page.tsx:788:            <DialogContent>
+/home/z/my-project/src/components/pages/reseller-page.tsx:863:            <DialogContent>
+/home/z/my-project/src/components/pages/reseller-page.tsx:894:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/areas-page.tsx:771:        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/areas-page.tsx:883:        <DialogContent className="max-w-2xl">
+/home/z/my-project/src/components/pages/areas-page.tsx:954:        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/areas-page.tsx:1027:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/complaints-page.tsx:1416:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/complaints-page.tsx:1488:        <DialogContent className="sm:max-w-3xl max-h-[92vh] overflow-y-auto print:hidden" a11yTitle="Complaint Details">
+/home/z/my-project/src/components/pages/complaints-page.tsx:2017:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/complaints-page.tsx:2056:        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:598:        <DialogContent>
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:668:        <DialogContent>
+/home/z/my-project/src/components/pages/radius-attributes-page.tsx:708:        <DialogContent>
+/home/z/my-project/src/components/pages/partner-users-page.tsx:504:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/partner-users-page.tsx:638:        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:530:                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:641:              <DialogContent>
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:693:              <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:805:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:831:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/knowledge-base-page.tsx:861:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/integrations-page.tsx:652:              <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/integrations-page.tsx:730:              <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/integrations-page.tsx:799:                  <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/integrations-page.tsx:868:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/integrations-page.tsx:895:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/integrations-page.tsx:918:        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/integrations-page.tsx:968:        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1041:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1084:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/mikrotik-manager-page.tsx:1117:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/hotspot-page.tsx:531:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/hotspot-page.tsx:554:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/hotspot-page.tsx:584:            <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/hotspot-page.tsx:1318:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/equipment-page.tsx:988:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1019:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1147:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1163:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1179:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1202:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1218:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1246:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1278:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1320:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/equipment-page.tsx:1374:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/smart-collections-page.tsx:1145:          <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1033:        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1106:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1155:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1192:        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1229:        <DialogContent className="max-w-md max-h-[70vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/competitor-intel-page.tsx:1257:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/churn-prediction-page.tsx:763:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/churn-alerts-page.tsx:505:        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/churn-alerts-page.tsx:579:        <DialogContent>
+/home/z/my-project/src/components/pages/churn-alerts-page.tsx:596:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/churn-alerts-page.tsx:611:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/churn-alerts-page.tsx:646:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/wifi-offload-page.tsx:1252:              <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/wifi-offload-page.tsx:1393:              <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/wifi-offload-page.tsx:1435:              <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/wifi-offload-page.tsx:1562:              <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1273:          <DialogContent className="max-w-3xl max-h-[90vh]">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1411:          <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1445:          <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1468:          <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1492:          <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/captive-portal-page.tsx:1517:          <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:1861:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:1980:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2025:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2053:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2097:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2146:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/multiwan-page.tsx:2214:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ddos-protection-page.tsx:791:            <DialogContent className="sm:max-w-[750px] max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/agents-page.tsx:732:        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/agents-page.tsx:753:        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto" a11yTitle="Agent Details">
+/home/z/my-project/src/components/pages/agents-page.tsx:991:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/agents-page.tsx:1019:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/agents-page.tsx:1052:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/agents-page.tsx:1076:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/agents-page.tsx:1093:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/agents-page.tsx:1109:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/app-awareness-page.tsx:1282:            <DialogContent className="max-w-2xl">
+/home/z/my-project/src/components/pages/app-awareness-page.tsx:1623:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/notifications-page.tsx:641:        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/notifications-page.tsx:775:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/notifications-page.tsx:831:        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/api-keys-page.tsx:477:        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/api-keys-page.tsx:539:        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/api-keys-page.tsx:569:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/api-keys-page.tsx:610:        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/api-keys-page.tsx:657:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ai-diagnosis-page.tsx:861:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ai-diagnosis-page.tsx:896:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ai-diagnosis-page.tsx:914:        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:639:            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:820:            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:986:            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dhcpv6-page.tsx:1195:              <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:524:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:621:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/batch-provisioning-page.tsx:671:        <DialogContent>
+/home/z/my-project/src/components/pages/payments-page.tsx:845:        <DialogContent className="sm:max-w-[450px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:929:        <DialogContent className="sm:max-w-[450px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:967:        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/payments-page.tsx:1105:        <DialogContent className="sm:max-w-[400px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:1132:        <DialogContent className="sm:max-w-[450px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:1184:        <DialogContent className="sm:max-w-[400px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:1207:        <DialogContent className="sm:max-w-[400px]">
+/home/z/my-project/src/components/pages/payments-page.tsx:1237:        <DialogContent className="sm:max-w-[480px]">
+/home/z/my-project/src/components/pages/installations-page.tsx:1284:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/installations-page.tsx:1376:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/installations-page.tsx:1459:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/installations-page.tsx:1481:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/installations-page.tsx:1507:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/installations-page.tsx:1571:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/installations-page.tsx:1605:        <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/installations-page.tsx:1680:        <DialogContent className="sm:max-w-lg max-h-[80vh]">
+/home/z/my-project/src/components/pages/installations-page.tsx:1706:        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto" a11yTitle="Installation Details">
+/home/z/my-project/src/components/pages/ssh-device-manager-page.tsx:393:          <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/grafana-dashboards-page.tsx:217:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/grace-periods-page.tsx:496:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/grace-periods-page.tsx:570:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1525:          <DialogContent>
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1574:          <DialogContent>
+/home/z/my-project/src/components/pages/bandwidth-mgmt-page.tsx:1622:          <DialogContent>
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:1736:          <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:2798:      <DialogContent
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:3021:      <DialogContent
+/home/z/my-project/src/components/pages/vpp-gateway-page.tsx:5360:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/vpn-server-page.tsx:691:                      <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/vpn-server-page.tsx:897:                        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/loyalty-gamification-page.tsx:540:            <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/dns-page.tsx:610:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dns-page.tsx:1747:                    <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/dns-page.tsx:2002:        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/session-engine-page.tsx:1246:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/session-engine-page.tsx:1477:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/ipam-page.tsx:692:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ipam-page.tsx:994:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1029:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1410:                  <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1553:        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1674:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1766:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ipam-page.tsx:1830:        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1179:        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1263:        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1330:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1375:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1440:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1474:        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/aaa-radius-page.tsx:1601:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:728:            <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:753:            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:1411:        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:1583:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:1610:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/network-alerts-page.tsx:1631:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/sessions-page.tsx:1131:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/sessions-page.tsx:1362:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/sessions-page.tsx:1553:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/top-ups-page.tsx:465:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/promotions-page.tsx:439:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/promotions-page.tsx:505:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/ips-page.tsx:1041:            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/inventory-page.tsx:686:            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/inventory-page.tsx:1135:        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/inventory-page.tsx:1227:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/inventory-page.tsx:1250:        <DialogContent className="sm:max-w-sm">
+/home/z/my-project/src/components/pages/inventory-page.tsx:1282:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/gst-tax-page.tsx:506:              <DialogContent><DialogHeader><DialogTitle>Add TDS/TCS Entry</DialogTitle></DialogHeader>
+/home/z/my-project/src/components/pages/gst-tax-page.tsx:639:                <DialogContent><DialogHeader><DialogTitle>{editingHsn ? "Edit" : "Add"} HSN/SAC Code</DialogTitle></DialogHeader><div className="grid gap-4 py-4"><div><Label>HSN/SAC Code</Label><Input value={hsnForm.code} onChange={(e) => setHsnForm({ ...hsnForm, code: e.target.value })} placeholder="998311" className="mt-1" /></div><div><Label>Description</Label><Input value={hsnForm.description} onChange={(e) => setHsnForm({ ...hsnForm, description: e.target.value })} placeholder="Internet broadband services" className="mt-1" /></div><div><Label>Tax Rate (%)</Label><Input type="number" value={hsnForm.taxRate} onChange={(e) => setHsnForm({ ...hsnForm, taxRate: e.target.value })} className="mt-1" /></div></div><DialogFooter><Button variant="outline" onClick={() => { setHsnDialogOpen(false); setEditingHsn(null); }}>Cancel</Button><Button className="bg-[#DC2626] hover:bg-[#B91C1C] text-white" onClick={saveHsn} disabled={!hsnForm.code || !hsnForm.description || hsnMutation.isPending}>{hsnMutation.isPending ? "Saving..." : editingHsn ? "Update" : "Add Code"}</Button></DialogFooter></DialogContent>
+/home/z/my-project/src/components/pages/users-page.tsx:887:        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/users-page.tsx:948:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/users-page.tsx:1124:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/users-page.tsx:1139:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/users-page.tsx:1185:        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/users-page.tsx:1253:        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/audit-log-page.tsx:2127:        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/audit-log-page.tsx:2768:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/audit-log-page.tsx:2812:        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/audit-log-page.tsx:2997:        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/whatsapp-bot-page.tsx:1355:        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/whatsapp-bot-page.tsx:1415:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/whatsapp-bot-page.tsx:1478:        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/whatsapp-bot-page.tsx:1515:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/whatsapp-bot-page.tsx:1531:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:948:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1110:        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1608:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/aaa-users-page.tsx:1697:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/nas-clients-page.tsx:941:            <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/nat-logs-page.tsx:833:        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+/home/z/my-project/src/components/pages/nat-logs-page.tsx:1022:        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+/home/z/my-project/src/components/pages/nat-logs-page.tsx:1598:        <DialogContent className="max-w-lg max-h-[85vh] overflow-auto">
+/home/z/my-project/src/components/pages/firewall-page.tsx:614:            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/backup-page.tsx:876:            <DialogContent>
+/home/z/my-project/src/components/pages/backup-page.tsx:1825:        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/backup-page.tsx:1961:        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/backup-page.tsx:2000:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/backup-page.tsx:2080:        <DialogContent>
+/home/z/my-project/src/components/pages/backup-page.tsx:2148:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/time-access-page.tsx:460:        <DialogContent className="sm:max-w-lg">
+/home/z/my-project/src/components/pages/time-access-page.tsx:511:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/referral-page.tsx:430:          <Card className="border shadow-sm"><CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Shield className="h-4 w-4 text-purple-600" />Tier Configuration</CardTitle><Dialog open={tierConfigOpen} onOpenChange={setTierConfigOpen}><DialogTrigger asChild><Button variant="outline" size="sm"><Settings2 className="h-4 w-4 mr-1" />Configure</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Configure Tier Thresholds</DialogTitle></DialogHeader><div className="grid gap-3 py-4">{tiers.map((tier, i) => (<div key={i} className="flex items-center gap-3"><div className={`w-4 h-4 rounded-full ${tier.color === "orange" ? "bg-orange-100" : tier.color === "gray" ? "bg-gray-200" : tier.color === "amber" ? "bg-amber-100" : "bg-slate-700 text-white"}`} /><div className="flex-1"><Label className="text-xs font-medium">{tier.name}</Label><Input type="number" value={String(tier.minPoints)} onChange={(e) => setTiers((prev) => prev.map((t, idx) => idx === i ? { ...t, minPoints: parseInt(e.target.value) || 0 } : t))} className="h-8 text-xs" /><p className="text-[10px] text-muted-foreground">{tier.minPoints} pts min</p></div></div>))}</div><DialogFooter><Button variant="outline" onClick={() => setTierConfigOpen(false)}>Cancel</Button><Button className="bg-[#DC2626] hover:bg-[#B91C1C] text-white" onClick={() => saveTiersMutation.mutate({ action: "save_tiers", tiers })}>Save Tiers</Button></DialogFooter></DialogContent></Dialog></CardHeader></Card>
+/home/z/my-project/src/components/pages/referral-page.tsx:462:                  <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Create New Reward</DialogTitle></DialogHeader><div className="grid gap-4 py-2">
+/home/z/my-project/src/components/pages/referral-page.tsx:468:                <Dialog open={editRewardOpen} onOpenChange={setEditRewardOpen}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Edit Reward</DialogTitle></DialogHeader><div className="grid gap-4 py-2">
+/home/z/my-project/src/components/pages/referral-page.tsx:510:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/referral-page.tsx:528:        <DialogContent className="max-w-sm">
+/home/z/my-project/src/components/pages/tabs/qos-tab.tsx:209:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/tabs/throttling-tab.tsx:215:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/tabs/returns-tab.tsx:159:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/tabs/returns-tab.tsx:180:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/tabs/repairs-tab.tsx:158:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/tabs/repairs-tab.tsx:181:        <DialogContent className="max-w-lg">
+/home/z/my-project/src/components/pages/tabs/warehouses-tab.tsx:163:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/tabs/stock-tab.tsx:141:        <DialogContent className="max-w-md">
+/home/z/my-project/src/components/pages/tabs/thresholds-tab.tsx:189:        <DialogContent className="sm:max-w-md">
+/home/z/my-project/src/components/pages/enterprise-auth-page.tsx:1294:        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/enterprise-auth-page.tsx:1381:        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+/home/z/my-project/src/components/pages/dhcp-page.tsx:1312:          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+
+[Showing results with pagination = limit: 250]

@@ -1,16 +1,13 @@
 {
   "name": "cryptsk-vpp-adapter",
-  "version": "1.0.0",
-  "description": "CRYPTSK Nexus — VPP config generator + dataplane adapter (TypeScript/Bun dev implementation). Per spec 02_GATEWAY §90, ADR-008 (GoVPP binary API, never vppctl).",
+  "version": "2.0.0",
+  "description": "CRYPTSK Nexus — VPP Adapter (TypeScript/Bun). Hard boundary between Session Engine and VPP/DPDK dataplane. Per spec 02_GATEWAY §28-§42. Uses PrismaClient (SQLite in sandbox). Implements VPP policy objects + transactional subscriber programming + VPP restart recovery.",
   "type": "module",
   "scripts": {
     "dev": "bun --hot index.ts",
     "start": "bun index.ts"
   },
   "dependencies": {
-    "pg": "^8.13.0"
-  },
-  "devDependencies": {
-    "@types/pg": "^8.11.0"
+    "@prisma/client": "^6.0.0"
   }
 }

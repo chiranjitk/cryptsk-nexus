@@ -44,6 +44,13 @@ interface AppStore {
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
+
+  // Cross-page subscriber action handshake (e.g. Subscriber Quick View
+  // "Edit" → Subscribers page opens the edit dialog for that subscriber).
+  // The target page consumes it via consumePendingSubscriberAction() and
+  // MUST clear it afterwards so it doesn't re-trigger on remount.
+  pendingSubscriberAction: { id: string; action: "edit" | "view" } | null;
+  setPendingSubscriberAction: (action: { id: string; action: "edit" | "view" } | null) => void;
 }
 
 // ─── Zustand Store ────────────────────────────────────────────
@@ -86,6 +93,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // Command palette (shared between Ctrl+K shortcut and header search button)
   commandPaletteOpen: false,
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+
+  // Cross-page subscriber action handshake
+  pendingSubscriberAction: null,
+  setPendingSubscriberAction: (action) => set({ pendingSubscriberAction: action }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
 }));
 

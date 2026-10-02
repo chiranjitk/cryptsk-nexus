@@ -102,7 +102,7 @@ async function getRealBusinessData() {
   const planMap = new Map(planNames.map((p) => [p.id, p]));
   const planBreakdown = planDistribution.map((p) => {
     const plan = planMap.get(p.planId!);
-    return plan ? `${plan.name} (${p._count.id} subs, ₹${plan.priceMonthly}/mo, ${plan.downloadSpeed / 1000} Mbps)` : `${p._count.id} subs on unknown plan`;
+    return plan ? `${plan.name} (${p._count.id} subs, ₹${plan.priceMonthly}/mo, ${plan.downloadSpeed} Mbps)` : `${p._count.id} subs on unknown plan`; // plan speeds stored in Mbps
   });
 
   // Payment modes this month

@@ -1,6 +1,6 @@
-# CRYPTSKINTELLIGENT-ISP-PLATFORM — Fresh Sandbox Setup Guide
+# cryptsk-nexus — Fresh Sandbox Setup Guide
 
-You are setting up CRYPTSKINTELLIGENT-ISP-PLATFORM from scratch on a FRESH sandbox.
+You are setting up cryptsk-nexus from scratch on a FRESH sandbox.
 
 ---
 
@@ -9,7 +9,7 @@ You are setting up CRYPTSKINTELLIGENT-ISP-PLATFORM from scratch on a FRESH sandb
 ```bash
 cd /home/z/
 rm -rf my-project
-git clone https://github.com/chiranjitk/CRYPTSKINTELLIGENT-ISP-PLATFORM.git my-project
+git clone https://github.com/chiranjitk/cryptsk-nexus.git my-project
 cd my-project   # this is git root
 ```
 
@@ -48,8 +48,8 @@ pg_ctl -D /home/z/my-project/runtime-applications/pgsql/data start -o "-p 5432" 
 psql -h localhost -p 5432 -U postgres -c "ALTER USER postgres PASSWORD 'postgres';"
 
 # Create the application user and database
-psql -h localhost -p 5432 -U postgres -c "CREATE USER z WITH PASSWORD 'Cryptsk2026' SUPERUSER;"
-psql -h localhost -p 5432 -U postgres -c "CREATE DATABASE ispplatform OWNER z;"
+psql -h localhost -p 5432 -U postgres -c "CREATE USER z WITH PASSWORD 'CryptskNexus2026' SUPERUSER;"
+psql -h localhost -p 5432 -U postgres -c "CREATE DATABASE cryptsknexus OWNER z;"
 
 pg_ctl -D /home/z/my-project/runtime-applications/pgsql/data stop
 ```
@@ -74,8 +74,14 @@ pg_ctl -D /home/z/my-project/runtime-applications/pgsql/data restart -o "-p 5432
 
 ### 3e. Verify PostgreSQL
 
+Host:     127.0.0.1 (localhost on prod VM)
+Port:     5432
+Database: cryptsknexus
+Username: cryptsknexus
+Password: CryptskNexus2026
+
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "SELECT 1;"
+psql -h localhost -p 5432 -U z -d cryptsknexus -c "SELECT 1;"
 # Should return: 1
 ```
 
@@ -92,14 +98,14 @@ The production schema includes:
 - RADIUS group reply attributes for all 8 default plans
 
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -f /home/z/my-project/pgsql-production/complete-database.sql
+psql -h localhost -p 5432 -U z -d cryptsknexus -f /home/z/my-project/pgsql-production/complete-database.sql
 ```
 
 ### 3g. Push Prisma Schema (Application Tables)
 
 ```bash
 # IMPORTANT: Set DATABASE_URL to PostgreSQL before pushing
-export DATABASE_URL="postgresql://z:Cryptsk2026@127.0.0.1:5432/ispplatform"
+export DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus"
 npx prisma db push
 npx prisma generate
 ```
@@ -147,7 +153,7 @@ make install
 Check `runtime-applications/freeradius/etc/raddb/raddb/mods-enabled/sql`:
 - `dialect = "postgresql"` ✓
 - `driver = "rlm_sql_postgresql"` ✓
-- `radius_db = "host=127.0.0.1 port=5432 dbname=ispplatform user=z password=Cryptsk2026"` ✓
+- `radius_db = "host=127.0.0.1 port=5432 dbname=cryptsknexus user=cryptsknexus password=CryptskNexus2026"` ✓
 
 ### 4d. Test FreeRADIUS config
 
@@ -173,13 +179,13 @@ The seed script populates:
 - Sample invoices
 
 ```bash
-DATABASE_URL="postgresql://z:Cryptsk2026@127.0.0.1:5432/ispplatform" npx tsx prisma/seed.ts
+DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus" npx tsx prisma/seed.ts
 ```
 
 Verify:
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "SELECT count(*) as subscribers FROM \"Subscriber\";"
-psql -h localhost -p 5432 -U z -d ispplatform -c "SELECT count(*) as rad_users FROM radcheck;"
+psql -h localhost -p 5432 -U cryptsknexus -d cryptsknexus -c "SELECT count(*) as subscribers FROM \"Subscriber\";"
+psql -h localhost -p 5432 -U cryptsknexus -d cryptsknexus -c "SELECT count(*) as rad_users FROM radcheck;"
 ```
 
 ---
@@ -194,7 +200,7 @@ cat /home/z/my-project/.env
 
 Should contain:
 ```
-DATABASE_URL=postgresql://z:Cryptsk2026@localhost:5432/ispplatform
+DATABASE_URL=postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus
 SESSION_SECRET=cryptsk_session_secret_key_2026_isp_platform
 ```
 
@@ -249,7 +255,7 @@ Expected: 13/14 services online (cryptsk-diameter-service may show errored — t
 
 ### 8a. PostgreSQL
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "SELECT 1;"
+psql -h localhost -p 5432 -U z -d cryptsknexus -c "SELECT 1;"
 # Should return: 1
 ```
 
@@ -286,7 +292,7 @@ print(f'Suspended: {d[\"stats\"][\"suspendedCount\"]}')
 
 ### 8e. RADIUS tables
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "
+psql -h localhost -p 5432 -U z -d cryptsknexus -c "
 SELECT 'radcheck' as tbl, count(*) FROM radcheck
 UNION ALL SELECT 'radreply', count(*) FROM radreply
 UNION ALL SELECT 'radgroupcheck', count(*) FROM radgroupcheck
@@ -300,13 +306,13 @@ UNION ALL SELECT 'nas', count(*) FROM nas;
 
 ### 8f. Database views
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "\dv"
+psql -h localhost -p 5432 -U z -d cryptsknexus -c "\dv"
 # Should show: v_active_sessions, v_auth_summary_daily, v_nas_status, v_radius_user_status, v_subscriber_data_usage
 ```
 
 ### 8f. Database functions
 ```bash
-psql -h localhost -p 5432 -U z -d ispplatform -c "\df public.*"
+psql -h localhost -p 5432 -U z -d cryptsknexus -c "\df public.*"
 # Should show: fn_subscriber_total_usage_gb, fn_subscriber_active_sessions, fn_disconnect_subscriber, fn_refresh_daily_stats, etc.
 ```
 
@@ -332,14 +338,14 @@ psql -h localhost -p 5432 -U z -d ispplatform -c "\df public.*"
 
 ### Database Connection
 ```
-postgresql://z:Cryptsk2026@localhost:5432/ispplatform
+postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus
 ```
 
 ### Key Credentials
 | Service | Username | Password |
 |---------|----------|----------|
 | Admin Login | admin@cryptsk.com | Admin@2026 |
-| PostgreSQL (app) | z | Cryptsk2026 |
+| PostgreSQL (app) | cryptsknexus | CryptskNexus2026 |
 | PostgreSQL (superuser) | postgres | postgres |
 
 ---
@@ -407,7 +413,7 @@ pm2 stop all                        # Stop all PM2 services
 pm2 start ecosystem.config.cjs      # Start all services
 
 # Seed data (re-run anytime, idempotent)
-DATABASE_URL="postgresql://z:Cryptsk2026@127.0.0.1:5432/ispplatform" npx tsx prisma/seed.ts
+DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus" npx tsx prisma/seed.ts
 ```
 
 ---
@@ -423,19 +429,19 @@ export PATH="/home/z/my-project/runtime-applications/pgsql/bin:$PATH"
 pm2 stop all
 
 # Drop and recreate the database
-psql -h localhost -p 5432 -U postgres -c "DROP DATABASE ispplatform;"
-psql -h localhost -p 5432 -U postgres -c "CREATE DATABASE ispplatform OWNER z;"
+psql -h localhost -p 5432 -U postgres -c "DROP DATABASE cryptsknexus;"
+psql -h localhost -p 5432 -U postgres -c "CREATE DATABASE cryptsknexus OWNER cryptsknexus;"
 
 # Reload production schema (RADIUS tables, views, functions)
-psql -h localhost -p 5432 -U z -d ispplatform -f /home/z/my-project/pgsql-production/complete-database.sql
+psql -h localhost -p 5432 -U cryptsknexus -d cryptsknexus -f /home/z/my-project/pgsql-production/complete-database.sql
 
 # Push Prisma schema (application tables)
-export DATABASE_URL="postgresql://z:Cryptsk2026@127.0.0.1:5432/ispplatform"
+export DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus"
 npx prisma db push
 npx prisma generate
 
 # Run seed data
-DATABASE_URL="postgresql://z:Cryptsk2026@127.0.0.1:5432/ispplatform" npx tsx prisma/seed.ts
+DATABASE_URL="postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus" npx tsx prisma/seed.ts
 
 # Restart services
 pm2 start all
@@ -467,7 +473,7 @@ Only ONE port is exposed externally. For API requests to different ports, use `X
 
 ## GITHUB
 
-- **Repo**: https://github.com/chiranjitk/CRYPTSKINTELLIGENT-ISP-PLATFORM.git
+- **Repo**: https://github.com/chiranjitk/cryptsk-nexus.git
 - **Token**: ${GITHUB_TOKEN}
 - **Username**: chiranjitk
 - **Email**: chiranjitk@outlook.com

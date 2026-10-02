@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
 import {
-  RotateCcw, Search, RefreshCw, Gauge,
+  RotateCcw, Search, RefreshCw, Gauge, Plus,
   ArrowDown, ArrowUp, User,
 } from "lucide-react";
 import PageHeader from "@/components/page-header";
@@ -19,25 +19,29 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 
 // ─── Types ────────────────────────────────────────────────────────
 interface BillingMilestone {
   id: string;
+  name?: string;
   thresholdGb: number;
   speedDownKbps: number;
   speedUpKbps: number;
   priority: number;
-  description: string;
+  description?: string | null;
 }
 
 interface BillingCycle {
   id: string;
   subscriberId: string;
-  subscriberName: string;
-  subscriberCode: string;
-  planName: string;
+  subscriberName: string | null;
+  subscriberCode: string | null;
+  planName: string | null;
   cycleStart: string;
   cycleEnd: string;
   dataUsedGb: number;
@@ -68,14 +72,49 @@ export default function CyclicBillingPage() {
   const [subSearch, setSubSearch] = useState("");
   const [loadingCycles, setLoadingCycles] = useState(false);
 
+  // ─── Milestone creation ───
+  const [msDialog, setMsDialog] = useState(false);
+  const [msForm, setMsForm] = useState({ name: "", thresholdGb: "", speedDownMbps: "", speedUpMbps: "", priority: "0" });
+  const [savingMilestone, setSavingMilestone] = useState(false);
+
+  async function createMilestone() {
+    if (!selectedPlanId) { toast.error("Select a plan first"); return; }
+    if (!msForm.name.trim() || !msForm.thresholdGb) { toast.error("Milestone name and threshold are required"); return; }
+    setSavingMilestone(true);
+    try {
+      // UI speaks GB/Mbps — storage columns are Mb/Kbps (documented units)
+      await apiFetch("/api/cyclic-billing?action=create-milestone", {
+        method: "POST",
+        body: JSON.stringify({
+          planId: selectedPlanId,
+          name: msForm.name.trim(),
+          thresholdDataMb: Math.round(parseFloat(msForm.thresholdGb) * 1024),
+          speedDownKbps: Math.round(parseFloat(msForm.speedDownMbps || "0") * 1000),
+          speedUpKbps: Math.round(parseFloat(msForm.speedUpMbps || "0") * 1000),
+          priority: parseInt(msForm.priority || "0"),
+          enabled: true,
+        }),
+      });
+      toast.success(`Milestone "${msForm.name.trim()}" added`);
+      setMsDialog(false);
+      setMsForm({ name: "", thresholdGb: "", speedDownMbps: "", speedUpMbps: "", priority: "0" });
+      fetchMilestones(selectedPlanId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create milestone");
+    } finally {
+      setSavingMilestone(false);
+    }
+  }
+
   const [loadingPlans, setLoadingPlans] = useState(true);
 
   // ─── Fetch plans ───
   const fetchPlans = useCallback(async () => {
     setLoadingPlans(true);
     try {
-      const data = await apiFetch<{ plans: Plan[] }>("/api/plans?limit=100");
-      setPlans(data.plans || []);
+      // GET /api/plans returns { items, total, … } (not { plans })
+      const data = await apiFetch<{ items: Plan[] }>("/api/plans?limit=100");
+      setPlans(data.items || []);
     } catch {
       toast.error("Failed to load plans");
     } finally {
@@ -90,7 +129,9 @@ export default function CyclicBillingPage() {
     if (!planId) return;
     setLoadingMilestones(true);
     try {
-      const data = await apiFetch<{ milestones: BillingMilestone[] }>(`/api/cyclic-billing/milestones?planId=${planId}`);
+      // The API exposes actions on the single /api/cyclic-billing route
+      // (milestones/cycles subpaths 404) — query with ?action=list-milestones.
+      const data = await apiFetch<{ milestones: BillingMilestone[] }>(`/api/cyclic-billing?action=list-milestones&planId=${planId}`);
       setMilestones(data.milestones || []);
     } catch {
       toast.error("Failed to load billing milestones");
@@ -112,7 +153,7 @@ export default function CyclicBillingPage() {
     setLoadingCycles(true);
     try {
       const data = await apiFetch<{ cycles: BillingCycle[] }>(
-        `/api/cyclic-billing/cycles?search=${encodeURIComponent(subSearch)}`
+        `/api/cyclic-billing?action=list-cycles&search=${encodeURIComponent(subSearch)}`
       );
       setCycle(data.cycles || []);
     } catch {
@@ -124,10 +165,13 @@ export default function CyclicBillingPage() {
   }
 
   // ─── Helpers ───
+  // Milestone speeds are stored in Kbps (field name documents the unit).
   function formatSpeed(kbps: number): string {
     if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;
     return `${kbps} Kbps`;
   }
+  // Plan speeds are stored in Mbps since the unit migration — render directly.
+  const formatPlanSpeed = (mbps: number) => `${mbps} Mbps`;
 
   function cycleStatusBadge(status: string) {
     const map: Record<string, { label: string; cls: string }> = {
@@ -195,6 +239,9 @@ export default function CyclicBillingPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <Button variant="outline" size="sm" className="mt-4" disabled={!selectedPlanId} onClick={() => setMsDialog(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" />Add Milestone
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -210,7 +257,7 @@ export default function CyclicBillingPage() {
           ) : milestones.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground text-sm mb-3">No milestones configured for {selectedPlan?.name}.</p>
-              <Button className="bg-red-600 hover:bg-red-700 text-white" size="sm">
+              <Button className="bg-red-600 hover:bg-red-700 text-white" size="sm" onClick={() => setMsDialog(true)}>
                 <Gauge className="h-4 w-4 mr-2" />Add First Milestone
               </Button>
             </div>
@@ -220,7 +267,7 @@ export default function CyclicBillingPage() {
               {selectedPlan && (
                 <div className="flex flex-wrap items-center gap-4 p-3 rounded-lg bg-muted/30 border text-xs mb-2">
                   <span className="font-medium">{selectedPlan.name}</span>
-                  <span className="text-muted-foreground">Base: ↓{formatSpeed(selectedPlan.downloadSpeed)} / ↑{formatSpeed(selectedPlan.uploadSpeed)}</span>
+                  <span className="text-muted-foreground">Base: ↓{formatPlanSpeed(selectedPlan.downloadSpeed)} / ↑{formatPlanSpeed(selectedPlan.uploadSpeed)}</span>
                   {selectedPlan.dataLimitGb ? (
                     <Badge variant="outline" className="text-[10px]">{selectedPlan.dataLimitGb} GB / cycle</Badge>
                   ) : (
@@ -280,7 +327,7 @@ export default function CyclicBillingPage() {
                   {selectedPlan && (
                     <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-100 dark:bg-green-950/50 text-green-700 dark:text-green-300 text-[11px] font-medium">
                       <Gauge className="h-3 w-3" />
-                      0 GB — {formatSpeed(selectedPlan.downloadSpeed)}
+                      0 GB — {formatPlanSpeed(selectedPlan.downloadSpeed)}
                     </div>
                   )}
                   {milestones.sort((a, b) => a.thresholdGb - b.thresholdGb).map((ms, idx) => (
@@ -395,9 +442,15 @@ export default function CyclicBillingPage() {
                       <div className="space-y-0.5">
                         <span className="text-muted-foreground">Current Speed</span>
                         <div className="font-medium">
-                          <span className="text-green-600">↓{formatSpeed(cycle.currentSpeedDownKbps)}</span>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-teal-600">↑{formatSpeed(cycle.currentSpeedUpKbps)}</span>
+                          {cycle.currentSpeedDownKbps > 0 ? (
+                            <>
+                              <span className="text-green-600">↓{formatSpeed(cycle.currentSpeedDownKbps)}</span>
+                              <span className="text-muted-foreground"> / </span>
+                              <span className="text-teal-600">↑{formatSpeed(cycle.currentSpeedUpKbps)}</span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-0.5">
@@ -424,6 +477,55 @@ export default function CyclicBillingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ─── Add Milestone Dialog ─── */}
+      <Dialog open={msDialog} onOpenChange={setMsDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2"><Gauge className="h-4 w-4 text-amber-600" />Add Milestone</DialogTitle>
+            <DialogDescription className="text-xs">
+              When the subscriber crosses the data threshold in a cycle, their speed is throttled to the milestone values until the next reset.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3.5 py-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Milestone Name</Label>
+              <Input value={msForm.name} onChange={(e) => setMsForm({ ...msForm, name: e.target.value })} placeholder="e.g. Fair Usage Limit" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Data Threshold (GB)</Label>
+                <Input type="number" min="0" value={msForm.thresholdGb} onChange={(e) => setMsForm({ ...msForm, thresholdGb: e.target.value })} placeholder="100" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Priority</Label>
+                <Input type="number" min="0" value={msForm.priority} onChange={(e) => setMsForm({ ...msForm, priority: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs flex items-center gap-1"><ArrowDown className="h-3 w-3 text-green-600" />Throttle Down (Mbps)</Label>
+                <Input type="number" min="0" value={msForm.speedDownMbps} onChange={(e) => setMsForm({ ...msForm, speedDownMbps: e.target.value })} placeholder="5" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs flex items-center gap-1"><ArrowUp className="h-3 w-3 text-teal-600" />Throttle Up (Mbps)</Label>
+                <Input type="number" min="0" value={msForm.speedUpMbps} onChange={(e) => setMsForm({ ...msForm, speedUpMbps: e.target.value })} placeholder="2" />
+              </div>
+            </div>
+            {selectedPlan && (
+              <p className="text-[11px] text-muted-foreground">
+                Plan base speed: ↓{formatPlanSpeed(selectedPlan.downloadSpeed)} / ↑{formatPlanSpeed(selectedPlan.uploadSpeed)} — throttled values should be lower.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMsDialog(false)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={createMilestone} disabled={savingMilestone}>
+              {savingMilestone ? "Saving…" : "Add Milestone"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

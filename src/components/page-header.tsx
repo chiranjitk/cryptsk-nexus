@@ -90,9 +90,9 @@ export default function PageHeader({
           </div>
         </div>
 
-        {/* Action buttons — right-aligned */}
+        {/* Action buttons — right-aligned, wrap on narrow screens instead of overflowing */}
         {actions && (
-          <div className="flex items-center gap-2 shrink-0">{actions}</div>
+          <div className="flex flex-wrap items-center gap-2 min-w-0 sm:shrink-0">{actions}</div>
         )}
       </div>
     </div>

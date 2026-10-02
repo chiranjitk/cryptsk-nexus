@@ -3,10 +3,11 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, formatINR } from "@/lib/utils";
+import { useAppStore } from "@/store/app-store";
 import {
   Phone, Mail, MapPin, Calendar, Cable, Wifi, Plug, Server, Network,
   IndianRupee, FileText, AlertTriangle, Monitor, Pencil, Receipt,
-  MessageSquare, ChevronRight, Clock, BadgeCheck,
+  MessageSquare, ChevronRight, Clock, BadgeCheck, ArrowDown, ArrowUp,
 } from "lucide-react";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -36,6 +37,8 @@ interface SubscriberDetail {
   createdAt: string;
   activationDate: string | null;
   notes: string | null;
+  currentSpeedDown: number | null;
+  currentSpeedUp: number | null;
   area: { id: string; name: string } | null;
   plan: {
     id: string; name: string; priceMonthly: number;
@@ -224,6 +227,17 @@ export default function SubscriberQuickView({
     staleTime: 30_000,
   });
 
+  // ─── SPA navigation (the app routes via Zustand currentPage — NOT hash URLs) ───
+  const setCurrentPage = useAppStore((s) => s.setCurrentPage);
+  const setPendingSubscriberAction = useAppStore((s) => s.setPendingSubscriberAction);
+
+  /** Navigate to a page; for subscriber-scoped actions, hand the id to the target page first. */
+  const goTo = (page: string, section: string, pending?: { id: string; action: "edit" | "view" }) => {
+    onOpenChange(false);
+    if (pending) setPendingSubscriberAction(pending);
+    setCurrentPage(page, section);
+  };
+
   // Derived data
   const openComplaints = useMemo(() => {
     if (!subscriber?.complaints) return [];
@@ -348,14 +362,32 @@ export default function SubscriberQuickView({
                 </div>
               )}
 
-              {/* Speed (if available) */}
-              {subscriber.plan?.downloadSpeed != null && (
-                <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-                  <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    {Math.round(subscriber.plan.downloadSpeed / 1000)} Mbps Down
-                    {subscriber.plan.uploadSpeed != null && ` / ${Math.round(subscriber.plan.uploadSpeed / 1000)} Mbps Up`}
-                  </span>
+              {/* Speed chips — plan speeds are stored in Mbps (single source
+                  of truth since the unit migration); prefer the subscriber's
+                  provisioned currentSpeed when present, else plan speed. */}
+              {(subscriber.currentSpeedDown != null || subscriber.plan?.downloadSpeed != null) && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(() => {
+                    const down = subscriber.currentSpeedDown ?? subscriber.plan?.downloadSpeed;
+                    const up = subscriber.currentSpeedUp ?? subscriber.plan?.uploadSpeed;
+                    return (
+                      <>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 px-2 py-0.5 rounded-full">
+                          <ArrowDown className="h-3 w-3" />
+                          {down} Mbps
+                        </span>
+                        {up != null && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900 px-2 py-0.5 rounded-full">
+                            <ArrowUp className="h-3 w-3" />
+                            {up} Mbps
+                          </span>
+                        )}
+                        {subscriber.currentSpeedDown != null && subscriber.plan?.downloadSpeed != null && subscriber.currentSpeedDown !== subscriber.plan.downloadSpeed && (
+                          <span className="text-[10px] text-muted-foreground italic">provisioned · plan {subscriber.plan.downloadSpeed}</span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -445,11 +477,7 @@ export default function SubscriberQuickView({
               {/* Open Complaints */}
               <button
                 type="button"
-                onClick={() => {
-                  onOpenChange(false);
-                  // Navigate to complaints page filtered by this subscriber
-                  window.location.hash = `/complaints?subscriber=${subscriber.id}`;
-                }}
+                onClick={() => goTo("Complaints", "OPERATIONS")}
                 className="flex items-center gap-2.5 text-sm w-full text-left hover:bg-muted/50 rounded-md px-1 py-0.5 -mx-1 transition-colors group"
               >
                 <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -472,10 +500,7 @@ export default function SubscriberQuickView({
                   variant="outline"
                   size="sm"
                   className="text-xs h-9 justify-start gap-1.5"
-                  onClick={() => {
-                    onOpenChange(false);
-                    window.location.hash = `/subscribers?id=${subscriber.id}&action=edit`;
-                  }}
+                  onClick={() => goTo("Subscribers", "SUBSCRIBERS", { id: subscriber.id, action: "edit" })}
                 >
                   <Pencil className="h-3.5 w-3.5" />
                   Edit
@@ -484,10 +509,7 @@ export default function SubscriberQuickView({
                   variant="outline"
                   size="sm"
                   className="text-xs h-9 justify-start gap-1.5"
-                  onClick={() => {
-                    onOpenChange(false);
-                    window.location.hash = `/invoices?subscriber=${subscriber.id}`;
-                  }}
+                  onClick={() => goTo("Invoices", "OPERATIONS", { id: subscriber.id, action: "view" })}
                 >
                   <FileText className="h-3.5 w-3.5" />
                   View Invoices
@@ -496,10 +518,7 @@ export default function SubscriberQuickView({
                   variant="outline"
                   size="sm"
                   className="text-xs h-9 justify-start gap-1.5"
-                  onClick={() => {
-                    onOpenChange(false);
-                    window.location.hash = `/complaints?subscriberId=${subscriber.id}&action=new`;
-                  }}
+                  onClick={() => goTo("Complaints", "OPERATIONS")}
                 >
                   <MessageSquare className="h-3.5 w-3.5" />
                   Log Complaint
@@ -508,10 +527,7 @@ export default function SubscriberQuickView({
                   variant="outline"
                   size="sm"
                   className="text-xs h-9 justify-start gap-1.5"
-                  onClick={() => {
-                    onOpenChange(false);
-                    window.location.hash = `/devices?subscriber=${subscriber.id}`;
-                  }}
+                  onClick={() => goTo("Devices", "NETWORK")}
                 >
                   <Monitor className="h-3.5 w-3.5" />
                   View Devices

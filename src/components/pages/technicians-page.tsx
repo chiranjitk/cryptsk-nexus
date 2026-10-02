@@ -991,7 +991,20 @@ export default function TechniciansPage() {
               </TableHeader>
               <TableBody>
                 {technicians.length === 0 ? (
-                  <TableRow><TableCell colSpan={9} className="text-center py-12"><div className="flex flex-col items-center gap-2 text-muted-foreground"><div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center"><Wrench className="h-6 w-6 text-muted-foreground/50" /></div><p className="text-sm font-medium">No technicians found</p><p className="text-xs">Try adjusting your search or filters</p></div></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9}>
+                    <div className="py-12 text-center">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                        <Wrench className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <p className="text-sm font-semibold">No technicians found</p>
+                      <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">Add your first field technician to start assigning complaints and installations.</p>
+                      <div className="mt-4 flex justify-center">
+                        <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => { setForm(emptyForm); closeEdit(); setShowCreate(true); }}>
+                          <Plus className="h-4 w-4 mr-2" />Add Technician
+                        </Button>
+                      </div>
+                    </div>
+                  </TableCell></TableRow>
                 ) : (
                   technicians.map((t, idx) => {
                     const daysOff = parseDaysOff(t.daysOff);

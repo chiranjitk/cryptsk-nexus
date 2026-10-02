@@ -155,7 +155,7 @@ export default function RepairsTab() {
 
       {/* Report Damage Dialog */}
       <Dialog open={repairDialog} onOpenChange={setRepairDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /> Report Damage</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5"><Label className="text-xs">Equipment ID *</Label><Input value={repairEquipId} onChange={(e) => setRepairEquipId(e.target.value)} placeholder="Enter equipment ID" /></div>
@@ -178,7 +178,7 @@ export default function RepairsTab() {
 
       {/* Detail Dialog */}
       <Dialog open={!!detailId} onOpenChange={() => setDetailId(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent aria-describedby={undefined} className="max-w-lg">
           <DialogHeader><DialogTitle className="text-base">Repair Detail</DialogTitle></DialogHeader>
           {detail?.repair ? (
             <div className="space-y-4">

@@ -1,13 +1,29 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditUpdate, auditLog } from "@/lib/services/audit-service";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
+
+// [AUDIT-FIX F-23] Legal status-transition matrix for complaints.
+// Previously ANY status string was accepted (including invented ones),
+// OPEN→RESOLVED was possible without anyone being assigned, and resolvedAt
+// handling was inconsistent. REFUNDED-style terminal states prevent SLA gaming.
+const VALID_COMPLAINT_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED", "REOPENED"];
+
+const COMPLAINT_TRANSITIONS: Record<string, string[]> = {
+  OPEN: ["ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"],
+  ASSIGNED: ["IN_PROGRESS", "RESOLVED", "OPEN", "CLOSED"],
+  IN_PROGRESS: ["RESOLVED", "ASSIGNED", "OPEN", "CLOSED"],
+  RESOLVED: ["CLOSED", "REOPENED"],
+  CLOSED: ["REOPENED"],
+  REOPENED: ["ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"],
+};
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireAuth(req); // [AUDIT-FIX F-07] complaint detail leaks subscriber PII (phone/email/address)
     const { id } = await params;
 
     const complaint = await db.complaint.findUnique({
@@ -15,7 +31,7 @@ export async function GET(
       include: {
         Subscriber: { select: { id: true, name: true, phone: true, email: true, code: true, address: true, Area: { select: { name: true } } } },
         Area: { select: { id: true, name: true, code: true } },
-        assignedTo: { select: { id: true, name: true, phone: true, email: true, status: true, rating: true, skills: true } },
+        Technician: { select: { id: true, name: true, phone: true, email: true, status: true, rating: true, skills: true } },
       },
     });
 
@@ -48,19 +64,32 @@ export async function GET(
       effectiveDeadline = complaint.slaDeadline;
     }
 
-    // Auto-escalation check (runs on every GET of a complaint)
-    const escalated = await checkAndEscalate(complaint);
+    // [AUDIT-FIX F-16] SLA escalation no longer mutates state inside a GET read
+    // path (side effects in reads made metrics depend on who browsed the UI and
+    // are enforced by the scheduled job-007 SLA sweep in billing-cron instead).
+    const isSlaBreached =
+      !complaint.isSlaPaused &&
+      !!complaint.slaDeadline &&
+      ["OPEN", "ASSIGNED", "IN_PROGRESS", "REOPENED"].includes(complaint.status) &&
+      Date.now() > new Date(complaint.slaDeadline).getTime();
 
+    const { Technician: tech, ...rest } = complaint;
     return NextResponse.json({
       Complaint: {
-        ...Complaint,
+        ...rest,
+        // [BUGFIX] include was `assignedTo` — not a valid relation (schema relation
+        // is `Technician`); the invalid include made this endpoint 500 forever.
+        assignedTo: tech,
         isRepeatCaller,
         repeatCallerCount,
-        escalated,
+        isSlaBreached,
         _commentCount: await db.complaintComment.count({ where: { complaintId: id } }),
       },
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     console.error("Complaint GET by ID error:", error);
     return NextResponse.json({ error: "Failed to fetch complaint" }, { status: 500 });
   }
@@ -72,6 +101,8 @@ export async function PUT(
 ) {
   try {
     const userId = await requireAuth(req);
+    // [AUDIT-FIX F-20] Complaint workflow changes require complaints.update
+    await permissionFor(userId, "complaints.update");
     const { id } = await params;
     const body = await req.json();
 
@@ -81,7 +112,40 @@ export async function PUT(
     }
 
     const updateData: Record<string, unknown> = {};
-    if (body.status !== undefined) updateData.status = body.status;
+
+    // ── [AUDIT-FIX F-23] Status state machine ──
+    if (body.status !== undefined) {
+      const newStatus = String(body.status);
+      if (!VALID_COMPLAINT_STATUSES.includes(newStatus)) {
+        return NextResponse.json(
+          { error: `Invalid status "${newStatus}". Must be one of: ${VALID_COMPLAINT_STATUSES.join(", ")}` },
+          { status: 400 }
+        );
+      }
+      if (newStatus === existing.status) {
+        return NextResponse.json(
+          { error: `Complaint is already ${newStatus}. No transition performed.` },
+          { status: 409 }
+        );
+      }
+      if (!COMPLAINT_TRANSITIONS[existing.status]?.includes(newStatus)) {
+        return NextResponse.json(
+          { error: `Illegal transition ${existing.status} → ${newStatus}. Allowed: ${COMPLAINT_TRANSITIONS[existing.status]?.join(", ") || "none (terminal)"}` },
+          { status: 409 }
+        );
+      }
+      // A complaint cannot be resolved unless someone owns it — unowned
+      // resolutions destroy accountability and corrupt technician metrics.
+      const effectiveAssignee = body.assignedToId !== undefined ? body.assignedToId : existing.assignedToId;
+      if (newStatus === "RESOLVED" && !effectiveAssignee) {
+        return NextResponse.json(
+          { error: "Cannot resolve an unassigned complaint. Assign a technician first." },
+          { status: 400 }
+        );
+      }
+      updateData.status = newStatus;
+    }
+
     if (body.priority !== undefined) updateData.priority = body.priority;
     if (body.assignedToId !== undefined) updateData.assignedToId = body.assignedToId || null;
     if (body.description !== undefined) updateData.description = body.description;
@@ -147,33 +211,43 @@ export async function PUT(
       });
     }
 
-    // Auto-set resolvedAt when status changes to RESOLVED
-    if (body.status === "RESOLVED" && !existing.resolvedAt) {
+    // Auto-set resolvedAt when the transition lands on RESOLVED (once — the
+    // state machine above guarantees the transition is legal and non-repeat)
+    if (updateData.status === "RESOLVED" && !existing.resolvedAt) {
       updateData.resolvedAt = new Date();
     }
+    // Reopening clears resolution bookkeeping
+    if (updateData.status === "REOPENED") {
+      updateData.resolvedAt = null;
+    }
 
-    // Auto-set SLA deadline if assigning and SLA exists
-    if (body.status === "ASSIGNED" && !existing.slaDeadline && existing.slaHours) {
+    // Auto-set SLA deadline if assigning and SLA exists — ONLY on the first
+    // assignment. Re-emitting ASSIGNED must not restart the SLA clock
+    // (previously every ASSIGNED write reset the timer, gaming SLA metrics).
+    if (body.assignedToId !== undefined && body.assignedToId && !existing.assignedToId && !existing.slaDeadline && existing.slaHours) {
       updateData.slaDeadline = new Date(existing.createdAt.getTime() + existing.slaHours * 60 * 60 * 1000);
     }
 
-    // Update technician stats when complaint is resolved
-    if (body.status === "RESOLVED" && existing.assignedToId) {
+    // Update technician stats when the complaint legally transitions to RESOLVED
+    if (updateData.status === "RESOLVED" && existing.assignedToId) {
       await db.technician.update({
         where: { id: existing.assignedToId },
         data: { totalResolved: { increment: 1 } },
       });
     }
 
-    const complaint = await db.complaint.update({
+    const updated = await db.complaint.update({
       where: { id },
       data: updateData,
       include: {
         Subscriber: { select: { id: true, name: true, phone: true, code: true } },
         Area: { select: { id: true, name: true, code: true } },
-        assignedTo: { select: { id: true, name: true, phone: true, status: true } },
+        Technician: { select: { id: true, name: true, phone: true, status: true } },
       },
     });
+
+    const { Technician: tech2, ...rest2 } = updated;
+    const complaint = { ...rest2, assignedTo: tech2 };
 
     await auditUpdate(req, "Complaint", id, updateData, existing, { userId });
 
@@ -197,95 +271,6 @@ export async function PUT(
 }
 
 // ─── Auto-Escalation Helper ─────────────────────────────────
-
-const PRIORITY_ESCALATION_ORDER: Record<string, string> = {
-  P4_LOW: "P3_MEDIUM",
-  P3_MEDIUM: "P2_HIGH",
-  P2_HIGH: "P1_CRITICAL",
-};
-
-async function checkAndEscalate(Complaint: {
-  id: string;
-  ticketNumber: string;
-  status: string;
-  priority: string;
-  escalationLevel: number;
-  slaDeadline: Date | null;
-  isSlaPaused: boolean;
-  createdAt: Date;
-}): Promise<boolean> {
-  // Only check OPEN, ASSIGNED, IN_PROGRESS complaints
-  const eligibleStatuses = ["OPEN", "ASSIGNED", "IN_PROGRESS"];
-  if (!eligibleStatuses.includes(complaint.status)) return false;
-  if (complaint.isSlaPaused) return false;
-  if (!complaint.slaDeadline) return false;
-
-  // Get escalation settings
-  const settings = await db.ispSettings.findUnique({ where: { id: "default" } });
-  if (!settings?.complaintEscalationEnabled) return false;
-
-  const now = Date.now();
-  const deadline = new Date(complaint.slaDeadline).getTime();
-  const created = new Date(complaint.createdAt).getTime();
-  const totalSlaMs = Math.max(deadline - created, 1);
-  const elapsedMs = now - created;
-  const elapsedPercent = (elapsedMs / totalSlaMs) * 100;
-
-  let escalated = false;
-  let newLevel = complaint.escalationLevel;
-  let newPriority: string | null = null;
-
-  const level1Percent = settings.complaintEscalationLevel1Percent || 75;
-  const level2Percent = settings.complaintEscalationLevel2Percent || 100;
-
-  // Check if we need to escalate to Level 1 (Manager)
-  if (elapsedPercent >= level1Percent && complaint.escalationLevel < 1) {
-    newLevel = 1;
-    escalated = true;
-  }
-
-  // Check if we need to escalate to Level 2 (Admin)
-  if (elapsedPercent >= level2Percent && complaint.escalationLevel < 2) {
-    newLevel = 2;
-    escalated = true;
-  }
-
-  // Auto-change priority when SLA timer has breached (elapsedPercent >= 100)
-  if (elapsedPercent >= 100 && PRIORITY_ESCALATION_ORDER[complaint.priority]) {
-    newPriority = PRIORITY_ESCALATION_ORDER[complaint.priority];
-  }
-
-  if (escalated || newPriority) {
-    const updateData: Record<string, unknown> = { escalationLevel: newLevel };
-    if (newPriority) updateData.priority = newPriority;
-
-    await db.complaint.update({
-      where: { id: complaint.id },
-      data: updateData,
-    });
-
-    await db.auditLog.create({
-      data: {
-        action: "AUTO_ESCALATION",
-        entity: "Complaint",
-        entityId: complaint.id,
-        details: JSON.stringify({
-          ticketNumber: complaint.ticketNumber,
-          fromLevel: complaint.escalationLevel,
-          toLevel: newLevel,
-          fromPriority: complaint.priority,
-          toPriority: newPriority || complaint.priority,
-          toRole: newLevel === 1
-            ? (settings.complaintEscalationRole1 || "MANAGER")
-            : (settings.complaintEscalationRole2 || "ADMIN"),
-          elapsedPercent: Math.round(elapsedPercent * 10) / 10,
-          slaHoursRemaining: Math.max(0, (deadline - now) / 3600000).toFixed(1),
-          priorityAutoChanged: !!newPriority,
-        }),
-        userName: "System",
-      },
-    });
-  }
-
-  return escalated || !!newPriority;
-}
+// [AUDIT-FIX F-16] checkAndEscalate() was removed from the GET read path and
+// its logic now lives in the scheduled job-007 SLA sweep (billing-cron), so
+// escalation runs on the clock instead of whenever someone browsed the page.

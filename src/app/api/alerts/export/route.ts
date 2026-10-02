@@ -45,8 +45,8 @@ export async function GET(request: NextRequest) {
     const alerts = await db.networkAlert.findMany({
       where: Object.keys(where).length > 0 ? where : undefined,
       include: {
-        rule: { select: { name: true } },
-        assignedTo: { select: { name: true } },
+        AlertRule: { select: { name: true } },
+        User: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
       take: 10000,
@@ -80,14 +80,14 @@ export async function GET(request: NextRequest) {
     const rows = alerts.map((a) => {
       return [
         escapeCsv(a.id),
-        escapeCsv(a.rule?.name || "Manual"),
+        escapeCsv(a.AlertRule?.name || "Manual"),
         escapeCsv(SEVERITY_LABELS[a.severity] || a.severity),
         escapeCsv(a.title),
         escapeCsv(a.message),
         escapeCsv(a.source),
         escapeCsv(a.deviceId),
         escapeCsv(STATUS_LABELS[a.status] || a.status),
-        escapeCsv(a.assignedTo?.name || ""),
+        escapeCsv(a.User?.name || ""),
         String(a.escalationLevel),
         String(a.duplicateCount),
         escapeCsv(a.acknowledgedBy || ""),

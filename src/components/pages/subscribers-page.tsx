@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, formatINR, cn } from "@/lib/utils";
 import {
@@ -8,12 +8,13 @@ import {
   Phone, Mail, MapPin, Wifi, X, Download, ChevronLeft, ChevronRight,
   IndianRupee, ArrowUpDown, ArrowUp, ArrowDown, Unplug, Cable, Zap, Plug,
   Server, MessageSquare, Filter, CircleDot, Upload, UserPlus, Clock,
-  MoreVertical, Activity, UserCheck, UserX, Timer, AlertTriangle, TrendingUp,
+  MoreVertical, Activity, Timer, AlertTriangle, TrendingUp,
   Copy, EyeOff, RefreshCw, KeyRound, Shield, CreditCard, Lock,
   User, Router, Globe, Network, ServerCrash,
   FileText, Calendar, Receipt, ClipboardList,
-  UserSearch, UserCog, Power, UserMinus, WifiOff,
+  UserSearch, UserCog, Power, UserMinus, WifiOff, Repeat, Info, Wallet,
 } from "lucide-react";
+import { buildCsvString, generateExportFilename } from "@/lib/export-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,10 +42,11 @@ import { toast } from "sonner";
 import PageHeader from "@/components/page-header";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleStore } from "@/store/module-store";
+import { useAppStore } from "@/store/app-store";
 import SubscriberQuickView from "@/components/subscriber-quick-view";
 
 // ─── Types ──────────────────────────────────────────────
-interface PlanOption { id: string; name: string; priceMonthly: number; priceQuarterly?: number; priceHalfYearly?: number; priceYearly?: number; ipv6Enabled?: boolean; ipv6AssignmentMode?: string }
+interface PlanOption { id: string; name: string; priceMonthly: number; priceQuarterly?: number; priceHalfYearly?: number; priceYearly?: number; downloadSpeed?: number; uploadSpeed?: number; validityDays?: number; ipv6Enabled?: boolean; ipv6AssignmentMode?: string }
 interface AreaOption { id: string; name: string }
 interface SubnetOption { id: string; name: string; cidr: string; gateway: string; description: string; totalIps: number; freeIps: number; usedIps: number }
 interface IpOption { id: string; address: string; hostname: string }
@@ -87,9 +89,9 @@ interface SubscriberDetail extends Subscriber {
   lastAuthTimestamp?: string;
   lastAuthResult?: string;
   activeSessions?: number;
-  invoices: { id: string; invoiceNumber: string; grandTotal: number; status: string; paidAmount: number; createdAt: string }[];
-  payments: { id: string; receiptNumber: string; amount: number; status: string; paymentMode: string; createdAt: string }[];
-  complaints: { id: string; ticketNumber: string; type: string; priority?: string; status: string; createdAt: string }[];
+  invoices?: { id: string; invoiceNumber: string; grandTotal: number; status: string; paidAmount: number; createdAt: string }[];
+  payments?: { id: string; receiptNumber: string; amount: number; status: string; paymentMode: string; createdAt: string }[];
+  complaints?: { id: string; ticketNumber: string; type: string; priority?: string; status: string; createdAt: string }[];
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -271,6 +273,61 @@ function useBulkStatusMutation() {
   });
 }
 
+// ─── Bulk renew mutation ────────────────────────────────
+function useBulkRenewMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { ids: string[]; months: number; paymentMode: string; recordPayment: boolean; useWallet: boolean }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "renew", subscriberIds: vars.ids, months: vars.months, paymentMode: vars.paymentMode, recordPayment: vars.recordPayment, useWallet: vars.useWallet }) }),
+    onSuccess: (d: any) => {
+      if (d.error) { toast.error(d.error); return; }
+      const skipped = d.skipped > 0 ? ` · ${d.skipped} skipped (no plan or low wallet)` : "";
+      const reactivated = d.reactivated > 0 ? ` · ${d.reactivated} reactivated` : "";
+      const wallet = d.walletDebited > 0 ? ` · ${d.walletDebited} from wallet` : "";
+      if (d.renewed === 0) {
+        toast.error("No subscribers renewed — no plan assigned or wallet balance insufficient");
+      } else if (d.totalCollected > 0) {
+        toast.success(`Renewed ${d.renewed} subscriber(s) · ${formatINR(d.totalCollected)} collected${wallet}${reactivated}${skipped}`);
+      } else {
+        toast.success(`Renewed ${d.renewed} subscriber(s) — draft invoice(s) created${skipped}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["subscribers"] });
+      queryClient.invalidateQueries({ queryKey: ["subscriber-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["expiring"] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["payments"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Bulk renewal failed"),
+  });
+}
+
+// ─── Bulk change-plan mutation ──────────────────────────
+function useBulkPlanMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { ids: string[]; planId: string; prorate: boolean }) =>
+      apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "change-plan", subscriberIds: vars.ids, planId: vars.planId, prorate: vars.prorate }) }),
+    onSuccess: (d: any) => {
+      if (d.error) { toast.error(d.error); return; }
+      if (d.updated === 0) {
+        toast.info("All selected subscribers are already on this plan");
+      } else {
+        const p = d.proration;
+        const prorateMsg = p?.enabled
+          ? ` · proration: ${p.invoices > 0 ? `${p.invoices} invoice(s)` : ""}${p.invoices > 0 && p.creditNotes > 0 ? " + " : ""}${p.creditNotes > 0 ? `${p.creditNotes} credit note(s)` : ""}${p.invoices === 0 && p.creditNotes === 0 ? "no adjustments needed" : ""}`
+          : "";
+        toast.success(`Plan changed for ${d.updated} subscriber(s)${d.radiusSynced > 0 ? ` · RADIUS group synced: ${d.radiusSynced}` : ""}${prorateMsg}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["subscribers"] });
+      queryClient.invalidateQueries({ queryKey: ["subscriber-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Bulk plan change failed"),
+  });
+}
+
 const emptyForm = {
   name: "", phone: "", email: "", altPhone: "",
   areaId: "", planId: "", connectionType: "FTTH",
@@ -311,6 +368,7 @@ export default function SubscribersPage() {
   const [areaFilter, setAreaFilter] = useState("");
   const [planFilter, setPlanFilter] = useState("");
   const [connectionType, setConnectionType] = useState("");
+  const [expiringOnly, setExpiringOnly] = useState(false);
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
@@ -333,6 +391,17 @@ export default function SubscribersPage() {
   // Row selection state
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
+  // Bulk renew / change-plan dialog state
+  const [renewTargets, setRenewTargets] = useState<string[] | null>(null);
+  const [planTargets, setPlanTargets] = useState<string[] | null>(null);
+  const [renewMonths, setRenewMonths] = useState("1");
+  const [renewPaymentMode, setRenewPaymentMode] = useState("CASH");
+  const [renewRecordPayment, setRenewRecordPayment] = useState(true);
+  const [renewUseWallet, setRenewUseWallet] = useState(false);
+  const [bulkPlanId, setBulkPlanId] = useState("");
+  const [bulkProrate, setBulkProrate] = useState(true);
+  const [exportingSelected, setExportingSelected] = useState(false);
+
   // Form state
   const [form, setForm] = useState({ ...emptyForm });
   const [editForm, setEditForm] = useState({ ...emptyForm });
@@ -340,6 +409,8 @@ export default function SubscribersPage() {
 
   // Bulk status mutation
   const bulkStatusMutation = useBulkStatusMutation();
+  const bulkRenewMutation = useBulkRenewMutation();
+  const bulkPlanMutation = useBulkPlanMutation();
 
   // Row selection handlers
   const toggleRow = (id: string) => {
@@ -367,6 +438,57 @@ export default function SubscribersPage() {
     bulkStatusMutation.mutate({ ids: Array.from(selectedRows), status: "SUSPENDED" });
     clearSelection();
   };
+
+  // ─── Bulk renew / change-plan / export handlers ────────
+  const handleBulkRenew = () => {
+    if (selectedRows.size === 0) return;
+    setRenewMonths("1");
+    setRenewTargets(Array.from(selectedRows));
+  };
+  const handleBulkPlanChange = () => {
+    if (selectedRows.size === 0) return;
+    setBulkPlanId("");
+    setPlanTargets(Array.from(selectedRows));
+  };
+  const handleExportSelected = async () => {
+    if (selectedRows.size === 0 || exportingSelected) return;
+    setExportingSelected(true);
+    try {
+      const d = await apiFetch("/api/subscribers/bulk", { method: "POST", body: JSON.stringify({ action: "export", subscriberIds: Array.from(selectedRows) }) });
+      const rows = d?.data || [];
+      if (!rows.length) { toast.error("Nothing to export"); return; }
+      const headers = Object.keys(rows[0]);
+      const csv = buildCsvString(headers, rows.map((r: Record<string, unknown>) => headers.map((h) => r[h])));
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = generateExportFilename("subscribers-selected");
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} subscriber(s) to CSV`);
+    } catch {
+      toast.error("Export failed");
+    } finally {
+      setExportingSelected(false);
+    }
+  };
+
+  const confirmRenew = () => {
+    if (!renewTargets?.length) return;
+    bulkRenewMutation.mutate({ ids: renewTargets, months: parseInt(renewMonths, 10) || 1, paymentMode: renewPaymentMode, recordPayment: renewRecordPayment, useWallet: renewUseWallet });
+  };
+  const confirmBulkPlanChange = () => {
+    if (!planTargets?.length || !bulkPlanId) return;
+    bulkPlanMutation.mutate({ ids: planTargets, planId: bulkPlanId, prorate: bulkProrate });
+  };
+  // Close bulk dialogs on success (kept open while pending so buttons show progress)
+  useEffect(() => {
+    if (bulkRenewMutation.isSuccess) { setRenewTargets(null); clearSelection(); bulkRenewMutation.reset(); }
+  }, [bulkRenewMutation.isSuccess, bulkRenewMutation]);
+  useEffect(() => {
+    if (bulkPlanMutation.isSuccess) { setPlanTargets(null); setBulkPlanId(""); clearSelection(); bulkPlanMutation.reset(); }
+  }, [bulkPlanMutation.isSuccess, bulkPlanMutation]);
 
   // Open add dialog with auto-generated service credentials
   const openAddDialog = () => {
@@ -423,6 +545,22 @@ export default function SubscribersPage() {
     refetchInterval: 60_000,
   });
 
+  // [NEW] Expiring-soon watchlist — subscribers whose billing cycle ends within 7 days.
+  // Powers the "Expiring Soon" quick filter and the amber dot on the status pill.
+  const { data: expiringData } = useQuery<{ expiring: Array<{ id: string; code: string; name: string; planName: string; daysLeft: number; expiresAt: string }> }>({
+    queryKey: ["subscribers-expiring"],
+    queryFn: () => apiFetch("/api/subscribers/expiring?days=7"),
+    staleTime: 120_000,
+    refetchInterval: 300_000,
+  });
+  const expiringList = expiringData?.expiring ?? [];
+  const expiringSet = useMemo(() => new Set(expiringList.map((s) => s.id)), [expiringList]);
+  const expiringDaysById = useMemo(() => {
+    const m = new Map<string, number>();
+    expiringList.forEach((s) => m.set(s.id, s.daysLeft));
+    return m;
+  }, [expiringList]);
+
   // Build a Set of online subscriber IDs (mock: first onlineCount subscriber IDs from the list)
   const onlineSet = useMemo(() => {
     const subs = data?.subscribers ?? [];
@@ -439,7 +577,7 @@ export default function SubscribersPage() {
   // Fetch plans for filters/form
   const { data: plans } = useQuery<PlanOption[]>({
     queryKey: ["plans-list"],
-    queryFn: () => apiFetch("/api/plans?limit=100").then((d: any) => (Array.isArray(d) ? d : d.items || []).map((p: PlanOption & { priceMonthly: number }) => ({ id: p.id, name: p.name, priceMonthly: p.priceMonthly, ipv6Enabled: p.ipv6Enabled, ipv6AssignmentMode: p.ipv6AssignmentMode }))),
+    queryFn: () => apiFetch("/api/plans?limit=100").then((d: any) => (Array.isArray(d) ? d : d.items || []).map((p: PlanOption & { priceMonthly: number }) => ({ id: p.id, name: p.name, priceMonthly: p.priceMonthly, priceQuarterly: p.priceQuarterly, priceHalfYearly: p.priceHalfYearly, priceYearly: p.priceYearly, downloadSpeed: p.downloadSpeed, uploadSpeed: p.uploadSpeed, validityDays: p.validityDays, ipv6Enabled: p.ipv6Enabled, ipv6AssignmentMode: p.ipv6AssignmentMode }))),
   });
   // Fetch subnets for IP pool & login restriction
   const { data: subnets } = useQuery<SubnetOption[]>({
@@ -577,6 +715,25 @@ export default function SubscribersPage() {
 
   const openDetail = (id: string) => { setSelectedId(id); setDetailOpen(true); };
   const openDelete = (sub: Subscriber) => { setSelectedId(sub.id); setSelectedSub(sub); setDeleteOpen(true); };
+
+  // Open the edit dialog by subscriber id only — openEdit() fetches the
+  // full detail itself; the stub object only covers the failure fallback.
+  const openEditById = (id: string) => {
+    openEdit({ id, code: "", name: "", email: "", phone: "", address: "", status: "ACTIVE", connectionType: "FTTH", area: null, plan: null, balance: 0, createdAt: "", updatedAt: "" });
+  };
+
+  // ─── Cross-page handshake (Subscriber Quick View "Edit"/"View") ───
+  // QuickView navigates via setCurrentPage() and stores a pending action;
+  // consume + clear it here so it fires exactly once.
+  const pendingSubscriberAction = useAppStore((s) => s.pendingSubscriberAction);
+  const setPendingSubscriberAction = useAppStore((s) => s.setPendingSubscriberAction);
+  useEffect(() => {
+    if (!pendingSubscriberAction) return;
+    const { id, action } = pendingSubscriberAction;
+    setPendingSubscriberAction(null);
+    if (action === "edit") openEditById(id);
+    else if (action === "view") openDetail(id);
+  }, [pendingSubscriberAction]);
 
   const handleKickSession = async (sub: Subscriber) => {
     if (!sub.serviceUsername) {
@@ -727,10 +884,51 @@ export default function SubscribersPage() {
 
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const subscribers = data?.subscribers ?? [];
+  const subscribers = expiringOnly
+    ? (data?.subscribers ?? []).filter((s) => expiringSet.has(s.id))
+    : (data?.subscribers ?? []);
 
-  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType;
+  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType || expiringOnly;
   const selectedPlan = plans?.find((p) => p.id === form.planId);
+
+  // ─── Bulk renew / change-plan derived values (need subscribers + plans) ───
+  const renewEstimate = (() => {
+    const m = parseInt(renewMonths, 10) || 1;
+    let base = 0, withPlan = 0, withoutPlan = 0;
+    (renewTargets || []).forEach((id) => {
+      const sub = subscribers.find((s) => s.id === id);
+      if (!sub?.plan) { withoutPlan++; return; }
+      const p = sub.plan;
+      let price = (p.priceMonthly || 0) * m;
+      if (m === 3 && p.priceQuarterly) price = p.priceQuarterly;
+      else if (m === 6 && p.priceHalfYearly) price = p.priceHalfYearly;
+      else if (m === 12 && p.priceYearly) price = p.priceYearly;
+      base += price;
+      withPlan++;
+    });
+    return { base, withPlan, withoutPlan };
+  })();
+  // [F-13 UI] Wallet eligibility preview — how many selected targets can fully pay from their prepaid balance
+  const walletPreview = (() => {
+    const m = parseInt(renewMonths, 10) || 1;
+    let eligible = 0, totalBalance = 0;
+    (renewTargets || []).forEach((id) => {
+      const sub = subscribers.find((s) => s.id === id);
+      if (!sub?.plan) return;
+      const p = sub.plan;
+      let price = (p.priceMonthly || 0) * m;
+      if (m === 3 && p.priceQuarterly) price = p.priceQuarterly;
+      else if (m === 6 && p.priceHalfYearly) price = p.priceHalfYearly;
+      else if (m === 12 && p.priceYearly) price = p.priceYearly;
+      const gst = 1 + ((p as any).cgstPercent ?? 9) / 100 + ((p as any).sgstPercent ?? 9) / 100;
+      const total = Math.round(price * gst * 100) / 100;
+      totalBalance += sub.balance || 0;
+      if ((sub.balance || 0) >= total) eligible++;
+    });
+    return { eligible, totalBalance };
+  })();
+  const selectedPlanForBulk = plans?.find((p) => p.id === bulkPlanId);
+  const renewTargetSingle = renewTargets?.length === 1 ? subscribers.find((s) => s.id === renewTargets![0]) : null;
 
   return (
     <div className="space-y-6">
@@ -846,18 +1044,21 @@ export default function SubscribersPage() {
           </CardContent>
         </Card>
 
-        <Card className="stat-gradient-red border-0 shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 rounded-xl">
+        <Card className="stat-gradient-red border-0 shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 rounded-xl" title="Subscribers created this month">
           <CardContent className="p-3 sm:p-4">
             <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-1.5 sm:p-2 rounded-lg bg-white/20 backdrop-blur-sm shrink-0">
                 <UserPlus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </div>
               <div className="min-w-0">
-                <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">New</p>
+                <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">New This Month</p>
                 <p className="text-base sm:text-xl font-bold tabular-nums leading-tight mt-0.5">
                   {statsData?.newThisMonth?.toLocaleString("en-IN") ?? "—"}
                 </p>
-                {statsData && (statsData.growthPercent > 0 || statsData.growthPercent < 0) && (
+                {/* Honest trend only: the stats API hardcodes growthPercent = 100 when newLastMonth
+                    is 0 (nothing to compare against) — that fake +100% must never render. A real %
+                    shows only when last month had signups; otherwise a muted "vs 0 last month". */}
+                {statsData && statsData.newLastMonth > 0 && statsData.growthPercent !== 0 && (
                   <p className={`text-[9px] sm:text-[10px] mt-0.5 inline-flex items-center gap-0.5 ${statsData.growthPercent >= 0 ? "text-green-200" : "text-red-200"}`}>
                     {statsData.growthPercent >= 0 ? (
                       <TrendingUp className="h-2.5 w-2.5" />
@@ -866,6 +1067,9 @@ export default function SubscribersPage() {
                     )}
                     {statsData.growthPercent >= 0 ? "+" : ""}{statsData.growthPercent}%
                   </p>
+                )}
+                {statsData && statsData.newLastMonth === 0 && statsData.newThisMonth > 0 && (
+                  <p className="text-[9px] sm:text-[10px] mt-0.5 opacity-75">vs 0 last month</p>
                 )}
               </div>
             </div>
@@ -880,7 +1084,7 @@ export default function SubscribersPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">Revenue</p>
-                <p className="text-sm sm:text-lg font-bold tabular-nums leading-tight mt-0.5">
+                <p className="text-xs sm:text-lg font-bold tabular-nums leading-tight mt-0.5">
                   {statsData ? formatINR(statsData.totalMonthlyRevenue) : "—"}
                 </p>
               </div>
@@ -890,42 +1094,52 @@ export default function SubscribersPage() {
 
       </div>
 
-      {/* Quick Stats Summary Bar */}
-      <div className="hidden md:grid md:grid-cols-4 gap-3 animate-slide-up" style={{ animationDelay: "30ms" }}>
+      {/* Quick Stats Summary Bar — deliberately DIFFERENT metrics from the tile row above
+          (renewal watchlist / live sessions / revenue quality / onboarding pipeline).
+          Every value comes from an endpoint this page already fetches — no duplication, no invented data. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-slide-up" style={{ animationDelay: "30ms" }}>
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-amber-500 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/30 shrink-0">
+            <Clock className="h-4 w-4 text-amber-600" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground leading-none">Expiring in 7 Days</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers whose billing cycle ends within 7 days">
+              {expiringData ? expiringList.length.toLocaleString("en-IN") : "—"}
+            </p>
+          </div>
+        </div>
         <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-green-500 bg-white dark:bg-card p-3 shadow-sm">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-50 dark:bg-green-950/30 shrink-0">
-            <UserCheck className="h-4 w-4 text-green-600" />
+            <Activity className="h-4 w-4 text-green-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Total Active</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.activeCount ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Online Now</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers with an active RADIUS session right now">
+              {onlineCountData?.onlineCount?.toLocaleString("en-IN") ?? "—"}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-sky-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-50 dark:bg-sky-950/30 shrink-0">
-            <Timer className="h-4 w-4 text-sky-600" />
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-emerald-500 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/30 shrink-0">
+            <IndianRupee className="h-4 w-4 text-emerald-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">New This Month</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.newThisMonth ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Avg ARPU</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Average monthly revenue per active subscriber with a plan (MRR ÷ active)">
+              {statsData ? formatINR(statsData.avgMonthlyRevenue) : "—"}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-red-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-50 dark:bg-red-950/30 shrink-0">
-            <UserX className="h-4 w-4 text-red-600" />
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-slate-400 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-950/30 shrink-0">
+            <Timer className="h-4 w-4 text-slate-600 dark:text-slate-400" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Suspended</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.suspendedCount ?? "—"}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-teal-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 dark:bg-teal-950/30 shrink-0">
-            <Clock className="h-4 w-4 text-teal-600" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Trial</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.trialCount ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Pending Activation</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers created but not yet activated">
+              {statsData?.pending?.toLocaleString("en-IN") ?? "—"}
+            </p>
           </div>
         </div>
       </div>
@@ -933,8 +1147,8 @@ export default function SubscribersPage() {
       {/* Filters */}
       <Card className="border shadow-sm card-hover-lift animate-slide-up" style={{ animationDelay: "50ms" }}>
         <CardContent className="p-4">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative w-full sm:flex-1 sm:min-w-[200px] min-w-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
                 placeholder="Search by name, phone, email, code..."
@@ -952,43 +1166,62 @@ export default function SubscribersPage() {
                 </button>
               )}
             </div>
-            <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="ACTIVE">Active</SelectItem>
-                <SelectItem value="SUSPENDED">Suspended</SelectItem>
-                <SelectItem value="DISCONNECTED">Disconnected</SelectItem>
-                <SelectItem value="TRIAL">Trial</SelectItem>
-                <SelectItem value="PENDING_ACTIVATION">Pending</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={areaFilter || "all"} onValueChange={(v) => { setAreaFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[160px]"><SelectValue placeholder="Area" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Areas</SelectItem>
-                {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={planFilter || "all"} onValueChange={(v) => { setPlanFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[170px]"><SelectValue placeholder="Plan" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Plans</SelectItem>
-                {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={connectionType || "all"} onValueChange={(v) => { setConnectionType(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Connection" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="FTTH">FTTH</SelectItem>
-                <SelectItem value="WIRELESS">Wireless</SelectItem>
-                <SelectItem value="CABLE">Cable</SelectItem>
-                <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
-                <SelectItem value="ETHERNET">Ethernet</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
+            {/* Selects sit in a 2-per-row grid on mobile; sm:contents dissolves this wrapper so they
+                rejoin the flex row with ONE uniform width + min-w-0 — nothing clips at any breakpoint. */}
+            <div className="grid grid-cols-2 gap-3 w-full sm:contents">
+              <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectItem value="SUSPENDED">Suspended</SelectItem>
+                  <SelectItem value="DISCONNECTED">Disconnected</SelectItem>
+                  <SelectItem value="TRIAL">Trial</SelectItem>
+                  <SelectItem value="PENDING_ACTIVATION">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={areaFilter || "all"} onValueChange={(v) => { setAreaFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Area" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Areas</SelectItem>
+                  {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={planFilter || "all"} onValueChange={(v) => { setPlanFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Plan" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Plans</SelectItem>
+                  {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={connectionType || "all"} onValueChange={(v) => { setConnectionType(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Connection" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="FTTH">FTTH</SelectItem>
+                  <SelectItem value="WIRELESS">Wireless</SelectItem>
+                  <SelectItem value="CABLE">Cable</SelectItem>
+                  <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
+                  <SelectItem value="ETHERNET">Ethernet</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant={expiringOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => { setExpiringOnly(!expiringOnly); setPage(1); }}
+              className={expiringOnly ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600" : "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"}
+              title="Subscribers whose billing cycle ends within 7 days"
+            >
+              <Clock className="h-3 w-3 mr-1" />
+              Expiring Soon
+              {expiringSet.size > 0 && (
+                <span className={`ml-1 inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[10px] font-semibold ${expiringOnly ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"}`}>
+                  {expiringSet.size}
+                </span>
+              )}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setExpiringOnly(false); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
               <X className="h-3 w-3 mr-1" />Clear
             </Button>
           </div>
@@ -996,6 +1229,15 @@ export default function SubscribersPage() {
           {hasActiveFilters && (
             <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
               <span className="text-xs text-muted-foreground font-medium">Active filters:</span>
+              {expiringOnly && (
+                <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  <Clock className="h-3 w-3" />
+                  Expiring within 7 days
+                  <button onClick={() => { setExpiringOnly(false); setPage(1); }} className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 p-0.5 transition-colors" aria-label="Remove expiring filter">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
+              )}
               {search && (
                 <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default">
                   <Search className="h-3 w-3" />
@@ -1054,9 +1296,9 @@ export default function SubscribersPage() {
 
       {/* Quick Actions Bar */}
       {subscribers.length > 0 && (
-        <div className="flex items-center gap-3 animate-slide-up" style={{ animationDelay: "90ms" }}>
+        <div className="flex flex-wrap items-center gap-3 animate-slide-up" style={{ animationDelay: "90ms" }}>
           {selectedRows.size > 0 && (
-            <div className="flex items-center gap-2 animate-card-enter">
+            <div className="flex flex-wrap items-center gap-2 animate-card-enter">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <span className="text-xs font-semibold text-primary tabular-nums">{selectedRows.size}</span>
                 <span className="text-xs text-muted-foreground">selected</span>
@@ -1080,6 +1322,34 @@ export default function SubscribersPage() {
               >
                 <UserMinus className="h-3.5 w-3.5" />
                 Suspend Selected
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/5"
+                onClick={handleBulkRenew}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Renew
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-purple-200 text-purple-700 hover:bg-purple-50 dark:border-purple-800 dark:text-purple-400"
+                onClick={handleBulkPlanChange}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+                Change Plan
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+                onClick={handleExportSelected}
+                disabled={exportingSelected}
+              >
+                <Download className={cn("h-3.5 w-3.5", exportingSelected && "animate-pulse")} />
+                {exportingSelected ? "Exporting..." : "Export"}
               </Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearSelection}>
                 <X className="h-3 w-3 mr-1" />Clear
@@ -1106,6 +1376,7 @@ export default function SubscribersPage() {
                       checked={subscribers.length > 0 && selectedRows.size === subscribers.length}
                       onCheckedChange={toggleAllRows}
                       className="h-4 w-4"
+                      aria-label="Select all subscribers on this page"
                     />
                   </TableHead>
                   <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("code")}>
@@ -1185,6 +1456,7 @@ export default function SubscribersPage() {
                           checked={isSelected}
                           onCheckedChange={() => toggleRow(sub.id)}
                           className="h-4 w-4"
+                          aria-label={`Select ${sub.name || sub.code || "subscriber"}`}
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs font-medium">{sub.code}</TableCell>
@@ -1204,8 +1476,8 @@ export default function SubscribersPage() {
                             {sub.name.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.name}</p>
-                            {sub.email && <p className="text-xs text-muted-foreground hidden md:block truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.email}</p>}
+                            <p className="text-sm font-medium truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" title={sub.name} onClick={() => setQuickViewId(sub.id)}>{sub.name}</p>
+                            {sub.email && <p className="text-xs text-muted-foreground hidden md:block truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" title={sub.email} onClick={() => setQuickViewId(sub.id)}>{sub.email}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -1238,6 +1510,12 @@ export default function SubscribersPage() {
                             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_MAP[sub.status]?.dot || "bg-gray-400"}`} />
                             {STATUS_MAP[sub.status]?.label || sub.status}
                           </Badge>
+                          {expiringDaysById.has(sub.id) && sub.status === "ACTIVE" && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 rounded-full gap-1 inline-flex items-center border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400" title={`Plan expires in ${expiringDaysById.get(sub.id)} day(s)`}>
+                              <Clock className="h-2.5 w-2.5" />
+                              {expiringDaysById.get(sub.id) === 0 ? "expires today" : `${expiringDaysById.get(sub.id)}d left`}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs">
@@ -1299,10 +1577,13 @@ export default function SubscribersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity duration-150"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity duration-150" aria-label={`More actions for ${sub.name || sub.code || "subscriber"}`} title="More actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-48">
                             <DropdownMenuItem onClick={() => openDetail(sub.id)}><Eye className="h-4 w-4 mr-2" />View Details</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openEdit(sub)}><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => { setRenewMonths("1"); setRenewTargets([sub.id]); }}><RefreshCw className="h-4 w-4 mr-2" />Renew Plan</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => { setBulkPlanId(""); setPlanTargets([sub.id]); }}><Repeat className="h-4 w-4 mr-2" />Change Plan</DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {sub.status === "ACTIVE" && (
                               <DropdownMenuItem onClick={() => statusMutation.mutate({ id: sub.id, status: "SUSPENDED" })}><Ban className="h-4 w-4 mr-2" />Suspend</DropdownMenuItem>
@@ -1340,7 +1621,7 @@ export default function SubscribersPage() {
             Showing <span className="font-medium text-foreground">{((page - 1) * 15) + 1}–{Math.min(page * 15, total)}</span> of <span className="font-medium text-foreground">{total}</span>
           </p>
           <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-8 w-8 p-0 rounded-md">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-8 w-8 p-0 rounded-md" aria-label="Previous page">
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <div className="flex items-center gap-1">
@@ -1369,7 +1650,7 @@ export default function SubscribersPage() {
               })}
             </div>
             <span className="text-xs text-muted-foreground px-1">of {totalPages}</span>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="h-8 w-8 p-0 rounded-md">
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="h-8 w-8 p-0 rounded-md" aria-label="Next page">
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -1480,7 +1761,7 @@ export default function SubscribersPage() {
                           {form.profilePhotoPath ? (
                             <div className="relative group">
                               <img src={`/api/files?path=${encodeURIComponent(form.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
-                              <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setForm({ ...form, profilePhotoPath: "" })}>
+                              <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove profile photo" onClick={() => setForm({ ...form, profilePhotoPath: "" })}>
                                 <X className="h-2.5 w-2.5" />
                               </button>
                             </div>
@@ -1661,7 +1942,7 @@ export default function SubscribersPage() {
                         <Label className="text-xs">Service Username</Label>
                         <div className="flex gap-1.5">
                           <Input placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.serviceUsername} onChange={(e) => setForm({ ...form, serviceUsername: e.target.value })} />
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, serviceUsername: `service_${genId(6)}` })}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" aria-label="Regenerate service username" onClick={() => setForm({ ...form, serviceUsername: `service_${genId(6)}` })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -1670,10 +1951,10 @@ export default function SubscribersPage() {
                         <Label className="text-xs">Service Password</Label>
                         <div className="flex gap-1.5">
                           <Input type={showPassword ? "text" : "password"} placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.servicePassword} onChange={(e) => setForm({ ...form, servicePassword: e.target.value })} />
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title={showPassword ? "Hide" : "Show"} onClick={() => setShowPassword(!showPassword)}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title={showPassword ? "Hide" : "Show"} aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword(!showPassword)}>
                             {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                           </Button>
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, servicePassword: genId(10) })}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" aria-label="Regenerate service password" onClick={() => setForm({ ...form, servicePassword: genId(10) })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -2074,7 +2355,7 @@ export default function SubscribersPage() {
               <Label className="text-xs text-muted-foreground">Service Username</Label>
               <div className="flex gap-2">
                 <Input readOnly value={createdSub?.serviceUsername || createdSub?.generatedUsername || ""} className="font-mono text-sm bg-muted" />
-                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.serviceUsername || createdSub?.generatedUsername || "")}>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" aria-label="Copy service username" onClick={() => navigator.clipboard.writeText(createdSub?.serviceUsername || createdSub?.generatedUsername || "")}>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -2083,7 +2364,7 @@ export default function SubscribersPage() {
               <Label className="text-xs text-muted-foreground">Service Password</Label>
               <div className="flex gap-2">
                 <Input readOnly value={createdSub?.servicePassword || createdSub?.generatedPassword || ""} className="font-mono text-sm bg-muted" />
-                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.servicePassword || createdSub?.generatedPassword || "")}>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" aria-label="Copy service password" onClick={() => navigator.clipboard.writeText(createdSub?.servicePassword || createdSub?.generatedPassword || "")}>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -2164,7 +2445,7 @@ export default function SubscribersPage() {
                       {editForm.profilePhotoPath ? (
                         <div className="relative group">
                           <img src={`/api/files?path=${encodeURIComponent(editForm.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
-                          <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setEditForm({ ...editForm, profilePhotoPath: "" })}>
+                          <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove profile photo" onClick={() => setEditForm({ ...editForm, profilePhotoPath: "" })}>
                             <X className="h-2.5 w-2.5" />
                           </button>
                         </div>
@@ -2753,15 +3034,15 @@ export default function SubscribersPage() {
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Total Invoices</span>
-                          <span className="font-medium">{detail.invoices.length}</span>
+                          <span className="font-medium">{detail.invoices?.length ?? 0}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Total Payments</span>
-                          <span className="font-medium">{detail.payments.length}</span>
+                          <span className="font-medium">{detail.payments?.length ?? 0}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Open Complaints</span>
-                          <span className={`font-medium ${detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length > 0 ? "text-amber-600" : ""}`}>{detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length}</span>
+                          <span className={`font-medium ${(detail.complaints ?? []).filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length > 0 ? "text-amber-600" : ""}`}>{(detail.complaints ?? []).filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length}</span>
                         </div>
                       </CardContent>
                     </Card>
@@ -2777,17 +3058,17 @@ export default function SubscribersPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Total Outstanding</p>
                       <p className="text-xl font-bold">
-                        {formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal - inv.paidAmount, 0))}
+                        {formatINR((detail.invoices ?? []).reduce((sum, inv) => sum + inv.grandTotal - inv.paidAmount, 0))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{detail.invoices.length} Invoice{detail.invoices.length !== 1 ? "s" : ""}</p>
-                      <p className="text-sm font-medium">{formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal, 0))} total</p>
+                      <p className="text-xs text-muted-foreground">{detail.invoices?.length ?? 0} Invoice{(detail.invoices?.length ?? 0) !== 1 ? "s" : ""}</p>
+                      <p className="text-sm font-medium">{formatINR((detail.invoices ?? []).reduce((sum, inv) => sum + inv.grandTotal, 0))} total</p>
                     </div>
                   </div>
 
                   {/* Invoices Table */}
-                  {!detail.invoices.length ? (
+                  {!detail.invoices?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <FileText className="h-5 w-5 text-muted-foreground" />
@@ -2808,7 +3089,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.invoices.map((inv, idx) => (
+                          {(detail.invoices ?? []).map((inv, idx) => (
                             <TableRow key={inv.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{inv.invoiceNumber}</TableCell>
                               <TableCell className="text-xs text-right font-medium">{formatINR(inv.grandTotal)}</TableCell>
@@ -2836,17 +3117,17 @@ export default function SubscribersPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Total Collected</p>
                       <p className="text-xl font-bold text-green-600">
-                        {formatINR(detail.payments.reduce((sum, pay) => sum + pay.amount, 0))}
+                        {formatINR((detail.payments ?? []).reduce((sum, pay) => sum + pay.amount, 0))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{detail.payments.length} Payment{detail.payments.length !== 1 ? "s" : ""}</p>
-                      <p className="text-sm font-medium">{detail.payments.filter(p => p.status === "VERIFIED").length} verified</p>
+                      <p className="text-xs text-muted-foreground">{detail.payments?.length ?? 0} Payment{(detail.payments?.length ?? 0) !== 1 ? "s" : ""}</p>
+                      <p className="text-sm font-medium">{(detail.payments ?? []).filter(p => p.status === "VERIFIED").length} verified</p>
                     </div>
                   </div>
 
                   {/* Payments Table */}
-                  {!detail.payments.length ? (
+                  {!detail.payments?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <Receipt className="h-5 w-5 text-muted-foreground" />
@@ -2867,7 +3148,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.payments.map((pay, idx) => (
+                          {(detail.payments ?? []).map((pay, idx) => (
                             <TableRow key={pay.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{pay.receiptNumber || "—"}</TableCell>
                               <TableCell className="text-xs text-right font-medium">{formatINR(pay.amount)}</TableCell>
@@ -2897,21 +3178,21 @@ export default function SubscribersPage() {
                   {/* Complaints Summary */}
                   <div className="grid grid-cols-3 gap-3">
                     <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200 text-center">
-                      <p className="text-lg font-bold text-yellow-700">{detail.complaints.filter(c => c.status === "OPEN").length}</p>
+                      <p className="text-lg font-bold text-yellow-700">{(detail.complaints ?? []).filter(c => c.status === "OPEN").length}</p>
                       <p className="text-[11px] text-yellow-600 font-medium">Open</p>
                     </div>
                     <div className="p-3 rounded-lg bg-orange-50 border border-orange-200 text-center">
-                      <p className="text-lg font-bold text-orange-700">{detail.complaints.filter(c => c.status === "IN_PROGRESS").length}</p>
+                      <p className="text-lg font-bold text-orange-700">{(detail.complaints ?? []).filter(c => c.status === "IN_PROGRESS").length}</p>
                       <p className="text-[11px] text-orange-600 font-medium">In Progress</p>
                     </div>
                     <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-center">
-                      <p className="text-lg font-bold text-green-700">{detail.complaints.filter(c => c.status === "RESOLVED" || c.status === "CLOSED").length}</p>
+                      <p className="text-lg font-bold text-green-700">{(detail.complaints ?? []).filter(c => c.status === "RESOLVED" || c.status === "CLOSED").length}</p>
                       <p className="text-[11px] text-green-600 font-medium">Resolved</p>
                     </div>
                   </div>
 
                   {/* Complaints Table */}
-                  {!detail.complaints.length ? (
+                  {!detail.complaints?.length ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
                         <ClipboardList className="h-5 w-5 text-muted-foreground" />
@@ -2932,7 +3213,7 @@ export default function SubscribersPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {detail.complaints.map((c, idx) => (
+                          {(detail.complaints ?? []).map((c, idx) => (
                             <TableRow key={c.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
                               <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{c.ticketNumber}</TableCell>
                               <TableCell className="text-xs">{COMPLAINT_TYPE_LABELS[c.type] || c.type}</TableCell>
@@ -3085,6 +3366,166 @@ export default function SubscribersPage() {
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => selectedId && deleteMutation.mutate(selectedId)} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Bulk / Single Renew Dialog ─── */}
+      <Dialog open={!!renewTargets} onOpenChange={(open) => { if (!open) setRenewTargets(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center"><RefreshCw className="h-4 w-4 text-primary" /></span>
+              Renew Subscription
+            </DialogTitle>
+            <DialogDescription>
+              {renewTargetSingle
+                ? <>Renew <span className="font-medium text-foreground">{renewTargetSingle.name}</span> (<span>{renewTargetSingle.plan?.name || "no plan"}</span>) — extends from the current cycle end.</>
+                : <>Renew <span className="font-medium text-foreground">{renewTargets?.length || 0}</span> selected subscribers — each extends from its own current cycle end.</>}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Billing Cycle</Label>
+                <Select value={renewMonths} onValueChange={setRenewMonths}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Monthly · 1 month</SelectItem>
+                    <SelectItem value="3">Quarterly · 3 months</SelectItem>
+                    <SelectItem value="6">Half-Yearly · 6 months</SelectItem>
+                    <SelectItem value="12">Yearly · 12 months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Payment Mode</Label>
+                <Select value={renewPaymentMode} onValueChange={setRenewPaymentMode} disabled={!renewRecordPayment}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="UPI">UPI</SelectItem>
+                    <SelectItem value="ONLINE">Online</SelectItem>
+                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    <SelectItem value="WALLET">Wallet</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 rounded-lg border bg-muted/30 p-3">
+              <Checkbox id="renew-record-payment" checked={renewRecordPayment} onCheckedChange={(v) => setRenewRecordPayment(v === true)} />
+              <Label htmlFor="renew-record-payment" className="cursor-pointer text-xs leading-snug">
+                Record payment now &amp; mark invoice <span className="font-medium">PAID</span>
+                <span className="block text-muted-foreground font-normal">Uncheck to create a draft invoice without collecting payment</span>
+              </Label>
+            </div>
+            {renewRecordPayment && (
+              <div className={`flex items-center space-x-2 rounded-lg border p-3 transition-colors ${renewUseWallet ? "border-teal-500/50 bg-teal-50/50 dark:bg-teal-950/20" : "bg-muted/30"}`}>
+                <Checkbox id="renew-use-wallet" checked={renewUseWallet} onCheckedChange={(v) => setRenewUseWallet(v === true)} disabled={renewTargetSingle !== null && (renewTargetSingle.balance || 0) <= 0} />
+                <Label htmlFor="renew-use-wallet" className="cursor-pointer text-xs leading-snug">
+                  <span className="inline-flex items-center gap-1 font-medium"><Wallet className="h-3 w-3 text-teal-600" />Pay from prepaid wallet</span>
+                  <span className="block text-muted-foreground font-normal">
+                    {walletPreview.eligible > 0
+                      ? <>Debits the customer&apos;s balance instead of external collection — <span className="font-medium text-teal-700 dark:text-teal-400">{walletPreview.eligible} of {renewTargets?.length || 0} eligible</span> (combined balance {formatINR(walletPreview.totalBalance)})</>
+                      : <>No selected subscriber has sufficient wallet balance — they will be skipped</>}
+                  </span>
+                </Label>
+              </div>
+            )}
+            <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Base amount ({renewMonths} month{parseInt(renewMonths, 10) > 1 ? "s" : ""})</span>
+                <span className="font-semibold tabular-nums">{formatINR(renewEstimate.base)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>GST</span>
+                <span>As per plan ({renewEstimate.withPlan} with plan{renewEstimate.withoutPlan > 0 ? `, ${renewEstimate.withoutPlan} skipped` : ""})</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground border-t pt-1.5">
+                <Info className="h-3 w-3 inline mr-1 -mt-0.5" />
+                Invoices + receipts are generated per subscriber. Suspended / disconnected subscribers are reactivated automatically.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenewTargets(null)} disabled={bulkRenewMutation.isPending}>Cancel</Button>
+            <Button onClick={confirmRenew} disabled={bulkRenewMutation.isPending || renewEstimate.withPlan === 0}>
+              {bulkRenewMutation.isPending ? (
+                <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Renewing...</>
+              ) : (
+                <><Receipt className="h-4 w-4 mr-2" />Renew {renewTargets?.length || 0}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Bulk / Single Change Plan Dialog ─── */}
+      <Dialog open={!!planTargets} onOpenChange={(open) => { if (!open) setPlanTargets(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="h-8 w-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center"><Repeat className="h-4 w-4 text-purple-600 dark:text-purple-400" /></span>
+              Change Plan
+            </DialogTitle>
+            <DialogDescription>
+              Move <span className="font-medium text-foreground">{planTargets?.length || 0}</span> subscriber{(planTargets?.length || 0) > 1 ? "s" : ""} to a new plan. Speeds are updated and RADIUS rate-limit groups are re-synced automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">New Plan</Label>
+              <Select value={bulkPlanId} onValueChange={setBulkPlanId}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select a plan…" /></SelectTrigger>
+                <SelectContent className="max-h-64">
+                  {(plans || []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} · {formatINR(p.priceMonthly)}/mo · {p.downloadSpeed || "?"}/{p.uploadSpeed || "?"} Mbps
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedPlanForBulk && (
+              <div className="rounded-lg border bg-muted/40 p-3 grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Price</p>
+                  <p className="text-xs font-semibold mt-0.5">{formatINR(selectedPlanForBulk.priceMonthly)}<span className="text-muted-foreground font-normal">/mo</span></p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Speed</p>
+                  <p className="text-xs font-semibold mt-0.5">{selectedPlanForBulk.downloadSpeed || "?"}/{selectedPlanForBulk.uploadSpeed || "?"} Mbps</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Validity</p>
+                  <p className="text-xs font-semibold mt-0.5">{selectedPlanForBulk.validityDays || 30} days</p>
+                </div>
+              </div>
+            )}
+            <div className={`flex items-center space-x-2 rounded-lg border p-3 transition-colors ${bulkProrate ? "border-purple-500/50 bg-purple-50/50 dark:bg-purple-950/20" : "bg-muted/30"}`}>
+              <Checkbox id="bulk-prorate" checked={bulkProrate} onCheckedChange={(v) => setBulkProrate(v === true)} />
+              <Label htmlFor="bulk-prorate" className="cursor-pointer text-xs leading-snug">
+                <span className="font-medium">Prorate the current cycle</span>
+                <span className="block text-muted-foreground font-normal">
+                  Settles the unused days: upgrade → adjustment invoice for the difference; downgrade → credit note. Uncheck for an end-of-cycle switch (free change).
+                </span>
+              </Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" />
+              Subscribers already on this plan are skipped. Pending invoices are not affected — renew separately if needed.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPlanTargets(null)} disabled={bulkPlanMutation.isPending}>Cancel</Button>
+            <Button onClick={confirmBulkPlanChange} disabled={!bulkPlanId || bulkPlanMutation.isPending}>
+              {bulkPlanMutation.isPending ? (
+                <><Repeat className="h-4 w-4 mr-2 animate-spin" />Updating...</>
+              ) : (
+                <>Change Plan</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

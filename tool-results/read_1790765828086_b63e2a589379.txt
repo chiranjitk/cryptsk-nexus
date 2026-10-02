@@ -1,0 +1,2002 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import React, { useState, useMemo } from "react";
+     4→     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→     5→import { toast } from "sonner";
+     6→     6→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+     7→     7→import { Badge } from "@/components/ui/badge";
+     8→     8→import { Button } from "@/components/ui/button";
+     9→     9→import { Skeleton } from "@/components/ui/skeleton";
+    10→    10→import { Input } from "@/components/ui/input";
+    11→    11→import { Textarea } from "@/components/ui/textarea";
+    12→    12→import { Label } from "@/components/ui/label";
+    13→    13→import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+    14→    14→import {
+    15→    15→  Select,
+    16→    16→  SelectTrigger,
+    17→    17→  SelectValue,
+    18→    18→  SelectContent,
+    19→    19→  SelectItem,
+    20→    20→} from "@/components/ui/select";
+    21→    21→import {
+    22→    22→  Table,
+    23→    23→  TableHeader,
+    24→    24→  TableBody,
+    25→    25→  TableHead,
+    26→    26→  TableRow,
+    27→    27→  TableCell,
+    28→    28→} from "@/components/ui/table";
+    29→    29→import { EmptyState } from "@/components/ui/empty-state";
+    30→    30→import {
+    31→    31→  Activity,
+    32→    32→  Server,
+    33→    33→  Network,
+    34→    34→  Zap,
+    35→    35→  CheckCircle2,
+    36→    36→  XCircle,
+    37→    37→  RefreshCw,
+    38→    38→  Cpu,
+    39→    39→  Settings,
+    40→    40→  AlertTriangle,
+    41→    41→  Shield,
+    42→    42→  Database,
+    43→    43→  Layers,
+    44→    44→  Users,
+    45→    45→  Boxes,
+    46→    46→  Power,
+    47→    47→  Trash2,
+    48→    48→  Plus,
+    49→    49→  Download,
+    50→    50→  Search,
+    51→    51→  Gauge,
+    52→    52→  Clock,
+    53→    53→  Filter,
+    54→    54→  BarChart3,
+    55→    55→  Cpu as CpuIcon,
+    56→    56→  PlayCircle,
+    57→    57→} from "lucide-react";
+    58→    58→
+    59→    59→// ─────────────────────────────────────────────────────────────────
+    60→    60→// Shared types & helpers
+    61→    61→// ─────────────────────────────────────────────────────────────────
+    62→    62→type AnyRecord = Record<string, any>;
+    63→    63→
+    64→    64→function formatBytes(bytes: number | string | undefined | null): string {
+    65→    65→  if (bytes === undefined || bytes === null) return "—";
+    66→    66→  const n = typeof bytes === "string" ? parseInt(bytes, 10) : bytes;
+    67→    67→  if (isNaN(n) || n === 0) return "0 B";
+    68→    68→  const units = ["B", "KB", "MB", "GB", "TB"];
+    69→    69→  const i = Math.floor(Math.log(n) / Math.log(1024));
+    70→    70→  return `${(n / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+    71→    71→}
+    72→    72→
+    73→    73→function formatTime(iso: string | number | undefined | null): string {
+    74→    74→  if (!iso) return "—";
+    75→    75→  try {
+    76→    76→    const d = typeof iso === "number" ? new Date(iso) : new Date(iso);
+    77→    77→    if (isNaN(d.getTime())) return String(iso);
+    78→    78→    return d.toLocaleString(undefined, {
+    79→    79→      year: "numeric",
+    80→    80→      month: "short",
+    81→    81→      day: "2-digit",
+    82→    82→      hour: "2-digit",
+    83→    83→      minute: "2-digit",
+    84→    84→      second: "2-digit",
+    85→    85→    });
+    86→    86→  } catch {
+    87→    87→    return String(iso);
+    88→    88→  }
+    89→    89→}
+    90→    90→
+    91→    91→function formatDuration(ms: number | undefined | null): string {
+    92→    92→  if (ms === undefined || ms === null) return "—";
+    93→    93→  if (ms < 1000) return `${ms}ms`;
+    94→    94→  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    95→    95→  return `${(ms / 60000).toFixed(1)}m`;
+    96→    96→}
+    97→    97→
+    98→    98→function truncate(s: string | undefined | null, n = 12): string {
+    99→    99→  if (!s) return "—";
+   100→   100→  return s.length > n ? `${s.slice(0, n)}…` : s;
+   101→   101→}
+   102→   102→
+   103→   103→// Status badge colors (slate/emerald/amber/red — no indigo/blue)
+   104→   104→function statusBadgeVariant(
+   105→   105→  status: string | undefined | null
+   106→   106→): { className: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+   107→   107→  const s = (status || "").toUpperCase();
+   108→   108→  if (["UP", "ACTIVE", "OK", "CONNECTED", "HEALTHY", "VERIFIED", "FRESH", "PROGRAMMED"].includes(s)) {
+   109→   109→    return { className: "bg-emerald-100 text-emerald-800 border-emerald-200", variant: "outline" };
+   110→   110→  }
+   111→   111→  if (["DOWN", "ERROR", "FAILED", "STALE", "DISCONNECTED"].includes(s)) {
+   112→   112→    return { className: "bg-red-100 text-red-800 border-red-200", variant: "outline" };
+   113→   113→  }
+   114→   114→  if (["RECOVERING", "PENDING", "WARNING", "WARN"].includes(s)) {
+   115→   115→    return { className: "bg-amber-100 text-amber-800 border-amber-200", variant: "outline" };
+   116→   116→  }
+   117→   117→  return { className: "bg-slate-100 text-slate-700 border-slate-200", variant: "outline" };
+   118→   118→}
+   119→   119→
+   120→   120→function riskBadge(level: string | undefined | null): React.ReactNode {
+   121→   121→  const l = (level || "").toUpperCase();
+   122→   122→  if (l === "CRITICAL") {
+   123→   123→    return <Badge className="bg-red-600 text-white border-red-700 font-bold">CRITICAL</Badge>;
+   124→   124→  }
+   125→   125→  if (l === "HIGH") {
+   126→   126→    return <Badge className="bg-red-100 text-red-800 border-red-200">HIGH</Badge>;
+   127→   127→  }
+   128→   128→  if (l === "MEDIUM") {
+   129→   129→    return <Badge className="bg-amber-100 text-amber-800 border-amber-200">MEDIUM</Badge>;
+   130→   130→  }
+   131→   131→  if (l === "LOW") {
+   132→   132→    return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">LOW</Badge>;
+   133→   133→  }
+   134→   134→  return <Badge variant="secondary">{level || "UNKNOWN"}</Badge>;
+   135→   135→}
+   136→   136→
+   137→   137→// ─────────────────────────────────────────────────────────────────
+   138→   138→// Reusable error / loading / empty cards
+   139→   139→// ─────────────────────────────────────────────────────────────────
+   140→   140→function ServiceUnavailable({
+   141→   141→  message,
+   142→   142→  onRetry,
+   143→   143→}: {
+   144→   144→  message?: string;
+   145→   145→  onRetry?: () => void;
+   146→   146→}) {
+   147→   147→  return (
+   148→   148→    <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-4 flex items-start gap-3">
+   149→   149→      <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+   150→   150→      <div className="flex-1">
+   151→   151→        <div className="font-medium text-red-900 dark:text-red-200">
+   152→   152→          Service Unavailable
+   153→   153→        </div>
+   154→   154→        <div className="text-sm text-red-700/80 dark:text-red-300/80 mt-1">
+   155→   155→          {message ||
+   156→   156→            "Could not reach the VPP adapter, session-engine, or nat-logger service. The parallel subagent building this service may still be running."}
+   157→   157→        </div>
+   158→   158→        {onRetry && (
+   159→   159→          <Button
+   160→   160→            variant="outline"
+   161→   161→            size="sm"
+   162→   162→            className="mt-3 border-red-300 text-red-700 hover:bg-red-100"
+   163→   163→            onClick={onRetry}
+   164→   164→          >
+   165→   165→            <RefreshCw className="h-4 w-4 mr-1" />
+   166→   166→            Retry
+   167→   167→          </Button>
+   168→   168→        )}
+   169→   169→      </div>
+   170→   170→    </div>
+   171→   171→  );
+   172→   172→}
+   173→   173→
+   174→   174→function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: number }) {
+   175→   175→  return (
+   176→   176→    <div className="space-y-2 p-2">
+   177→   177→      {Array.from({ length: rows }).map((_, i) => (
+   178→   178→        <div key={i} className="flex gap-2">
+   179→   179→          {Array.from({ length: cols }).map((_, j) => (
+   180→   180→            <Skeleton key={j} className="h-8 flex-1" />
+   181→   181→          ))}
+   182→   182→        </div>
+   183→   183→      ))}
+   184→   184→    </div>
+   185→   185→  );
+   186→   186→}
+   187→   187→
+   188→   188→// ─────────────────────────────────────────────────────────────────
+   189→   189→// TAB 1: OVERVIEW
+   190→   190→// ─────────────────────────────────────────────────────────────────
+   191→   191→function StatCard({
+   192→   192→  icon: Icon,
+   193→   193→  label,
+   194→   194→  value,
+   195→   195→  color,
+   196→   196→  loading,
+   197→   197→  sub,
+   198→   198→}: {
+   199→   199→  icon: React.ElementType;
+   200→   200→  label: string;
+   201→   201→  value: React.ReactNode;
+   202→   202→  color: string;
+   203→   203→  loading?: boolean;
+   204→   204→  sub?: React.ReactNode;
+   205→   205→}) {
+   206→   206→  return (
+   207→   207→    <Card>
+   208→   208→      <CardHeader className="pb-2">
+   209→   209→        <CardTitle className="text-sm flex items-center gap-2 font-medium text-muted-foreground">
+   210→   210→          <Icon className={`h-4 w-4 ${color}`} />
+   211→   211→          {label}
+   212→   212→        </CardTitle>
+   213→   213→      </CardHeader>
+   214→   214→      <CardContent>
+   215→   215→        {loading ? (
+   216→   216→          <Skeleton className="h-8 w-24" />
+   217→   217→        ) : (
+   218→   218→          <div className="space-y-1">
+   219→   219→            <div className="text-2xl font-bold tracking-tight">{value}</div>
+   220→   220→            {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+   221→   221→          </div>
+   222→   222→        )}
+   223→   223→      </CardContent>
+   224→   224→    </Card>
+   225→   225→  );
+   226→   226→}
+   227→   227→
+   228→   228→function OverviewTab() {
+   229→   229→  const queryClient = useQueryClient();
+   230→   230→  const [autoRefresh, setAutoRefresh] = useState(true);
+   231→   231→
+   232→   232→  const healthQ = useQuery({
+   233→   233→    queryKey: ["vpp-health"],
+   234→   234→    queryFn: async () => {
+   235→   235→      const res = await fetch("/api/vpp?action=health");
+   236→   236→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   237→   237→      return res.json();
+   238→   238→    },
+   239→   239→    refetchInterval: autoRefresh ? 5000 : false,
+   240→   240→    retry: 1,
+   241→   241→  });
+   242→   242→
+   243→   243→  const stateQ = useQuery({
+   244→   244→    queryKey: ["vpp-state"],
+   245→   245→    queryFn: async () => {
+   246→   246→      const res = await fetch("/api/vpp?action=state");
+   247→   247→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   248→   248→      return res.json();
+   249→   249→    },
+   250→   250→    refetchInterval: autoRefresh ? 10000 : false,
+   251→   251→    retry: 1,
+   252→   252→  });
+   253→   253→
+   254→   254→  const interfacesQ = useQuery({
+   255→   255→    queryKey: ["vpp-interfaces"],
+   256→   256→    queryFn: async () => {
+   257→   257→      const res = await fetch("/api/vpp?action=interfaces");
+   258→   258→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   259→   259→      return res.json();
+   260→   260→    },
+   261→   261→    refetchInterval: autoRefresh ? 10000 : false,
+   262→   262→    retry: 1,
+   263→   263→  });
+   264→   264→
+   265→   265→  const configQ = useQuery({
+   266→   266→    queryKey: ["vpp-config"],
+   267→   267→    queryFn: async () => {
+   268→   268→      const res = await fetch("/api/vpp?action=config-generate");
+   269→   269→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   270→   270→      return res.json();
+   271→   271→    },
+   272→   272→    refetchInterval: false,
+   273→   273→    retry: 1,
+   274→   274→  });
+   275→   275→
+   276→   276→  const recoveryQ = useQuery({
+   277→   277→    queryKey: ["vpp-recovery-logs"],
+   278→   278→    queryFn: async () => {
+   279→   279→      const res = await fetch("/api/vpp?action=recovery-logs");
+   280→   280→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   281→   281→      return res.json();
+   282→   282→    },
+   283→   283→    refetchInterval: autoRefresh ? 10000 : false,
+   284→   284→    retry: 1,
+   285→   285→  });
+   286→   286→
+   287→   287→  const simulateRestartMut = useMutation({
+   288→   288→    mutationFn: async () => {
+   289→   289→      const res = await fetch("/api/vpp?action=simulate-restart", { method: "POST" });
+   290→   290→      const data = await res.json().catch(() => ({}));
+   291→   291→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   292→   292→      return data;
+   293→   293→    },
+   294→   294→    onSuccess: () => {
+   295→   295→      toast.success("VPP restart simulated — recovery should begin");
+   296→   296→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   297→   297→      queryClient.invalidateQueries({ queryKey: ["vpp-health"] });
+   298→   298→    },
+   299→   299→    onError: (err: Error) => toast.error(err.message || "Simulate restart failed"),
+   300→   300→  });
+   301→   301→
+   302→   302→  const triggerRecoveryMut = useMutation({
+   303→   303→    mutationFn: async () => {
+   304→   304→      const res = await fetch("/api/vpp?action=restart-recovery", { method: "POST" });
+   305→   305→      const data = await res.json().catch(() => ({}));
+   306→   306→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   307→   307→      return data;
+   308→   308→    },
+   309→   309→    onSuccess: () => {
+   310→   310→      toast.success("VPP recovery triggered");
+   311→   311→      queryClient.invalidateQueries({ queryKey: ["vpp-recovery-logs"] });
+   312→   312→      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+   313→   313→    },
+   314→   314→    onError: (err: Error) => toast.error(err.message || "Recovery trigger failed"),
+   315→   315→  });
+   316→   316→
+   317→   317→  const reconcileMut = useMutation({
+   318→   318→    mutationFn: async () => {
+   319→   319→      const res = await fetch("/api/vpp?action=reconcile", { method: "POST" });
+   320→   320→      const data = await res.json().catch(() => ({}));
+   321→   321→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+   322→   322→      return data;
+   323→   323→    },
+   324→   324→    onSuccess: () => {
+   325→   325→      toast.success("Dataplane reconciliation complete");
+   326→   326→      queryClient.invalidateQueries({ queryKey: ["vpp-config"] });
+   327→   327→      queryClient.invalidateQueries({ queryKey: ["vpp-state"] });
+   328→   328→    },
+   329→   329→    onError: (err: Error) => toast.error(err.message || "Reconcile failed"),
+   330→   330→  });
+   331→   331→
+   332→   332→  const downloadConfig = () => {
+   333→   333→    const txt =
+   334→   334→      configQ.data?.config || configQ.data?.configText || JSON.stringify(configQ.data || {}, null, 2);
+   335→   335→    const blob = new Blob([txt], { type: "text/plain" });
+   336→   336→    const url = URL.createObjectURL(blob);
+   337→   337→    const a = document.createElement("a");
+   338→   338→    a.href = url;
+   339→   339→    a.download = `vpp-config-${Date.now()}.conf`;
+   340→   340→    a.click();
+   341→   341→    URL.revokeObjectURL(url);
+   342→   342→    toast.success("Config downloaded");
+   343→   343→  };
+   344→   344→
+   345→   345→  const health: AnyRecord = healthQ.data || {};
+   346→   346→  const state: AnyRecord = stateQ.data || {};
+   347→   347→  const interfaces: AnyRecord[] = interfacesQ.data?.interfaces || interfacesQ.data?.items || [];
+   348→   348→  const recoveryLogs: AnyRecord[] = recoveryQ.data?.logs || recoveryQ.data?.items || recoveryQ.data?.data || [];
+   349→   349→  const stats: AnyRecord = health.stats || state.stats || state.policyObjects ? state : {};
+   350→   350→  const configText: string = configQ.data?.config || configQ.data?.configText || "";
+   351→   351→
+   352→   352→  const vppEpoch = state.epoch ?? health.epoch ?? state.vppEpoch ?? "—";
+   353→   353→  const policyObjectsRaw =
+   354→   354→    state.policyObjects ?? state.policyObjectsCount ?? health.policyObjects ?? 0;
+   355→   355→  // policyObjects may be either a number (count) OR an object {ACL:N, POLICER:N, ...}
+   356→   356→  const policyObjectsCount =
+   357→   357→    typeof policyObjectsRaw === "number"
+   358→   358→      ? policyObjectsRaw
+   359→   359→      : policyObjectsRaw && typeof policyObjectsRaw === "object"
+   360→   360→        ? Object.values(policyObjectsRaw).reduce(
+   361→   361→            (sum: number, v: unknown) => sum + (typeof v === "number" ? v : 0),
+   362→   362→            0
+   363→   363→          )
+   364→   364→        : 0;
+   365→   365→  const subscribersProgrammed =
+   366→   366→    state.subscribersProgrammed ?? state.activeSubscribers ?? health.subscribersProgrammed ?? 0;
+   367→   367→  const lastRestartAt = state.lastRestartAt ?? health.lastRestartAt;
+   368→   368→
+   369→   369→  const healthErr = healthQ.error;
+   370→   370→  const stateErr = stateQ.error;
+   371→   371→  const recoveryErr = recoveryQ.error;
+   372→   372→
+   373→   373→  return (
+   374→   374→    <div className="space-y-6">
+   375→   375→      <div className="flex flex-wrap items-center justify-between gap-3">
+   376→   376→        <div>
+   377→   377→          <h2 className="text-lg font-semibold flex items-center gap-2">
+   378→   378→            <Activity className="h-5 w-5 text-emerald-600" />
+   379→   379→            Dataplane Overview
+   380→   380→          </h2>
+   381→   381→          <p className="text-sm text-muted-foreground mt-0.5">
+   382→   382→            VPP v26.06 + DPDK live state, restart recovery, and reconciliation.
+   383→   383→          </p>
+   384→   384→        </div>
+   385→   385→        <Button
+   386→   386→          variant={autoRefresh ? "default" : "outline"}
+   387→   387→          size="sm"
+   388→   388→          onClick={() => setAutoRefresh(!autoRefresh)}
+   389→   389→        >
+   390→   390→          <RefreshCw className={`h-4 w-4 mr-1.5 ${autoRefresh ? "animate-spin" : ""}`} />
+   391→   391→          {autoRefresh ? "Auto ON (5s)" : "Auto OFF"}
+   392→   392→        </Button>
+   393→   393→      </div>
+   394→   394→
+   395→   395→      {/* Stats grid */}
+   396→   396→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+   397→   397→        <StatCard
+   398→   398→          icon={Zap}
+   399→   399→          label="VPP Epoch"
+   400→   400→          value={vppEpoch}
+   401→   401→          color="text-amber-600"
+   402→   402→          loading={stateQ.isLoading && !stateErr}
+   403→   403→          sub={stateErr ? undefined : "Rebuild counter"}
+   404→   404→        />
+   405→   405→        <StatCard
+   406→   406→          icon={Boxes}
+   407→   407→          label="Policy Objects"
+   408→   408→          value={policyObjectsCount}
+   409→   409→          color="text-emerald-600"
+   410→   410→          loading={stateQ.isLoading && !stateErr}
+   411→   411→          sub="ACL/Policer/QoS/NAT/VRF"
+   412→   412→        />
+   413→   413→        <StatCard
+   414→   414→          icon={Users}
+   415→   415→          label="Subscribers Programmed"
+   416→   416→          value={subscribersProgrammed}
+   417→   417→          color="text-slate-600"
+   418→   418→          loading={stateQ.isLoading && !stateErr}
+   419→   419→        />
+   420→   420→        <StatCard
+   421→   421→          icon={Clock}
+   422→   422→          label="Last Restart"
+   423→   423→          value={lastRestartAt ? formatTime(lastRestartAt) : "—"}
+   424→   424→          color="text-red-600"
+   425→   425→          loading={stateQ.isLoading && !stateErr}
+   426→   426→        />
+   427→   427→      </div>
+   428→   428→
+   429→   429→      {/* Health state + connection status */}
+   430→   430→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   431→   431→        <Card>
+   432→   432→          <CardHeader>
+   433→   433→            <CardTitle className="flex items-center gap-2">
+   434→   434→              <Server className="h-5 w-5 text-emerald-600" />
+   435→   435→              VPP Adapter Health
+   436→   436→            </CardTitle>
+   437→   437→            <CardDescription>
+   438→   438→              Live status from <code>/api/vpp?action=health</code>
+   439→   439→            </CardDescription>
+   440→   440→          </CardHeader>
+   441→   441→          <CardContent>
+   442→   442→            {healthErr ? (
+   443→   443→              <ServiceUnavailable
+   444→   444→                message={healthErr.message}
+   445→   445→                onRetry={() => healthQ.refetch()}
+   446→   446→              />
+   447→   447→            ) : healthQ.isLoading ? (
+   448→   448→              <div className="space-y-2">
+   449→   449→                <Skeleton className="h-6 w-48" />
+   450→   450→                <Skeleton className="h-4 w-full" />
+   451→   451→                <Skeleton className="h-4 w-3/4" />
+   452→   452→              </div>
+   453→   453→            ) : (
+   454→   454→              <div className="space-y-2 text-sm">
+   455→   455→                <div className="flex items-center justify-between">
+   456→   456→                  <span className="text-muted-foreground">Status</span>
+   457→   457→                  <Badge
+   458→   458→                    className={
+   459→   459→                      health.vppConnected
+   460→   460→                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+   461→   461→                        : "bg-red-100 text-red-800 border-red-200"
+   462→   462→                    }
+   463→   463→                  >
+   464→   464→                    {health.status || (health.vppConnected ? "OK" : "DOWN")}
+   465→   465→                  </Badge>
+   466→   466→                </div>
+   467→   467→                <div className="flex items-center justify-between">
+   468→   468→                  <span className="text-muted-foreground">VPP Connected</span>
+   469→   469→                  <span className="font-mono">
+   470→   470→                    {health.vppConnected ? "YES" : "NO"}
+   471→   471→                  </span>
+   472→   472→                </div>
+   473→   473→                <div className="flex items-center justify-between">
+   474→   474→                  <span className="text-muted-foreground">Uptime</span>
+   475→   475→                  <span className="font-mono">
+   476→   476→                    {typeof health.uptime === "number" ? `${health.uptime}s` : health.uptime || "—"}
+   477→   477→                  </span>
+   478→   478→                </div>
+   479→   479→                <div className="flex items-center justify-between">
+   480→   480→                  <span className="text-muted-foreground">Interfaces</span>
+   481→   481→                  <span className="font-mono">
+   482→   482→                    {health.interfaces ?? interfaces.length}
+   483→   483→                  </span>
+   484→   484→                </div>
+   485→   485→                {health.stats && (
+   486→   486→                  <div className="flex items-center justify-between">
+   487→   487→                    <span className="text-muted-foreground">Configs Generated</span>
+   488→   488→                    <span className="font-mono">
+   489→   489→                      {health.stats.configsGenerated ?? 0}
+   490→   490→                    </span>
+   491→   491→                  </div>
+   492→   492→                )}
+   493→   493→              </div>
+   494→   494→            )}
+   495→   495→          </CardContent>
+   496→   496→        </Card>
+   497→   497→
+   498→   498→        <Card>
+   499→   499→          <CardHeader>
+   500→   500→            <CardTitle className="flex items-center gap-2">
+   501→   501→              <Network className="h-5 w-5 text-emerald-600" />
+   502→   502→              VPP Interfaces
+   503→   503→            </CardTitle>
+   504→   504→            <CardDescription>
+   505→   505→              Dataplane interfaces registered with VPP
+   506→   506→            </CardDescription>
+   507→   507→          </CardHeader>
+   508→   508→          <CardContent>
+   509→   509→            {interfacesQ.isLoading ? (
+   510→   510→              <div className="space-y-2">
+   511→   511→                {Array.from({ length: 3 }).map((_, i) => (
+   512→   512→                  <Skeleton key={i} className="h-12 w-full" />
+   513→   513→                ))}
+   514→   514→              </div>
+   515→   515→            ) : interfacesQ.error ? (
+   516→   516→              <ServiceUnavailable
+   517→   517→                message={(interfacesQ.error as Error).message}
+   518→   518→                onRetry={() => interfacesQ.refetch()}
+   519→   519→              />
+   520→   520→            ) : interfaces.length === 0 ? (
+   521→   521→              <EmptyState
+   522→   522→                icon={Network}
+   523→   523→                title="No VPP interfaces"
+   524→   524→                description="VPP adapter may be in config-generation mode only."
+   525→   525→                size="sm"
+   526→   526→              />
+   527→   527→            ) : (
+   528→   528→              <div className="space-y-2 max-h-72 overflow-y-auto cryptsk-scrollbar">
+   529→   529→                {interfaces.map((iface, i) => (
+   530→   530→                  <div
+   531→   531→                    key={i}
+   532→   532→                    className="flex items-center justify-between border rounded-md p-3 bg-muted/30"
+   533→   533→                  >
+   534→   534→                    <div className="min-w-0">
+   535→   535→                      <div className="font-mono font-medium truncate">
+   536→   536→                        {iface.name || iface.dev_name || `iface-${i}`}
+   537→   537→                      </div>
+   538→   538→                      {iface.mac && (
+   539→   539→                        <div className="text-xs text-muted-foreground">{iface.mac}</div>
+   540→   540→                      )}
+   541→   541→                    </div>
+   542→   542→                    <div className="flex items-center gap-2 shrink-0">
+   543→   543→                      <Badge
+   544→   544→                        className={
+   545→   545→                          (iface.state === "up" || iface.link === "up")
+   546→   546→                            ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+   547→   547→                            : "bg-slate-100 text-slate-700 border-slate-200"
+   548→   548→                        }
+   549→   549→                      >
+   550→   550→                        {iface.state || iface.link || "?"}
+   551→   551→                      </Badge>
+   552→   552→                      {iface.speed && (
+   553→   553→                        <span className="text-xs text-muted-foreground">
+   554→   554→                          {iface.speed}
+   555→   555→                        </span>
+   556→   556→                      )}
+   557→   557→                    </div>
+   558→   558→                  </div>
+   559→   559→                ))}
+   560→   560→              </div>
+   561→   561→            )}
+   562→   562→          </CardContent>
+   563→   563→        </Card>
+   564→   564→      </div>
+   565→   565→
+   566→   566→      {/* VPP Restart Recovery */}
+   567→   567→      <Card>
+   568→   568→        <CardHeader>
+   569→   569→          <CardTitle className="flex items-center gap-2">
+   570→   570→            <Power className="h-5 w-5 text-amber-600" />
+   571→   571→            VPP Restart Recovery
+   572→   572→          </CardTitle>
+   573→   573→          <CardDescription>
+   574→   574→            Last 10 recovery events (§41). The session-engine detects VPP restart,
+   575→   575→            loads active session snapshots, rebuilds VPP policies, and verifies.
+   576→   576→          </CardDescription>
+   577→   577→        </CardHeader>
+   578→   578→        <CardContent>
+   579→   579→          <div className="flex flex-wrap gap-2 mb-4">
+   580→   580→            <Button
+   581→   581→              size="sm"
+   582→   582→              variant="outline"
+   583→   583→              onClick={() => simulateRestartMut.mutate()}
+   584→   584→              disabled={simulateRestartMut.isPending}
+   585→   585→            >
+   586→   586→              <Power className="h-4 w-4 mr-1.5" />
+   587→   587→              {simulateRestartMut.isPending ? "Simulating…" : "Simulate VPP Restart"}
+   588→   588→            </Button>
+   589→   589→            <Button
+   590→   590→              size="sm"
+   591→   591→              onClick={() => triggerRecoveryMut.mutate()}
+   592→   592→              disabled={triggerRecoveryMut.isPending}
+   593→   593→            >
+   594→   594→              <RefreshCw className="h-4 w-4 mr-1.5" />
+   595→   595→              {triggerRecoveryMut.isPending ? "Triggering…" : "Trigger Recovery"}
+   596→   596→            </Button>
+   597→   597→          </div>
+   598→   598→
+   599→   599→          {recoveryErr ? (
+   600→   600→            <ServiceUnavailable
+   601→   601→              message={(recoveryErr as Error).message}
+   602→   602→              onRetry={() => recoveryQ.refetch()}
+   603→   603→            />
+   604→   604→          ) : recoveryQ.isLoading ? (
+   605→   605→            <TableSkeleton rows={4} cols={6} />
+   606→   606→          ) : recoveryLogs.length === 0 ? (
+   607→   607→            <EmptyState
+   608→   608→              icon={Power}
+   609→   609→              title="No recovery events yet"
+   610→   610→              description="VPP restart recovery has not been triggered. Click 'Simulate VPP Restart' to test."
+   611→   611→              size="sm"
+   612→   612→            />
+   613→   613→          ) : (
+   614→   614→            <div className="max-h-96 overflow-y-auto cryptsk-scrollbar rounded-md border">
+   615→   615→              <Table>
+   616→   616→                <TableHeader>
+   617→   617→                  <TableRow>
+   618→   618→                    <TableHead>Event</TableHead>
+   619→   619→                    <TableHead>Epoch</TableHead>
+   620→   620→                    <TableHead>Sessions Affected</TableHead>
+   621→   621→                    <TableHead>Recovered / Failed</TableHead>
+   622→   622→                    <TableHead>Duration</TableHead>
+   623→   623→                    <TableHead>Time</TableHead>
+   624→   624→                  </TableRow>
+   625→   625→                </TableHeader>
+   626→   626→                <TableBody>
+   627→   627→                  {recoveryLogs.slice(0, 10).map((log, i) => {
+   628→   628→                    const prevEpoch = log.prevEpoch ?? log.previousEpoch;
+   629→   629→                    const newEpoch = log.newEpoch ?? log.currentEpoch;
+   630→   630→                    return (
+   631→   631→                      <TableRow key={i}>
+   632→   632→                        <TableCell>
+   633→   633→                          <Badge
+   634→   634→                            variant="outline"
+   635→   635→                            className={
+   636→   636→                              (log.event || "").includes("FAIL")
+   637→   637→                                ? "bg-red-100 text-red-800 border-red-200"
+   638→   638→                                : "bg-emerald-100 text-emerald-800 border-emerald-200"
+   639→   639→                            }
+   640→   640→                          >
+   641→   641→                            {log.event || log.eventType || "RECOVERY"}
+   642→   642→                          </Badge>
+   643→   643→                        </TableCell>
+   644→   644→                        <TableCell className="font-mono text-xs">
+   645→   645→                          {prevEpoch !== undefined ? `${prevEpoch} → ${newEpoch}` : newEpoch ?? "—"}
+   646→   646→                        </TableCell>
+   647→   647→                        <TableCell>{log.sessionsAffected ?? log.affected ?? "—"}</TableCell>
+   648→   648→                        <TableCell>
+   649→   649→                          <span className="text-emerald-700 font-medium">
+   650→   650→                            {log.sessionsRecovered ?? log.recovered ?? 0}
+   651→   651→                          </span>
+   652→   652→                          {" / "}
+   653→   653→                          <span className="text-red-700 font-medium">
+   654→   654→                            {log.sessionsFailed ?? log.failed ?? 0}
+   655→   655→                          </span>
+   656→   656→                        </TableCell>
+   657→   657→                        <TableCell>{formatDuration(log.durationMs ?? log.duration)}</TableCell>
+   658→   658→                        <TableCell className="text-xs text-muted-foreground">
+   659→   659→                          {formatTime(log.createdAt ?? log.timestamp)}
+   660→   660→                        </TableCell>
+   661→   661→                      </TableRow>
+   662→   662→                    );
+   663→   663→                  })}
+   664→   664→                </TableBody>
+   665→   665→              </Table>
+   666→   666→            </div>
+   667→   667→          )}
+   668→   668→        </CardContent>
+   669→   669→      </Card>
+   670→   670→
+   671→   671→      {/* Config + Reconcile */}
+   672→   672→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   673→   673→        <Card>
+   674→   674→          <CardHeader>
+   675→   675→            <CardTitle className="flex items-center gap-2">
+   676→   676→              <Settings className="h-5 w-5 text-slate-600" />
+   677→   677→              Generated VPP Config
+   678→   678→            </CardTitle>
+   679→   679→            <CardDescription>
+   680→   680→              Live-generated dataplane configuration
+   681→   681→            </CardDescription>
+   682→   682→          </CardHeader>
+   683→   683→          <CardContent>
+   684→   684→            {configQ.isLoading ? (
+   685→   685→              <Skeleton className="h-48 w-full" />
+   686→   686→            ) : configQ.error ? (
+   687→   687→              <ServiceUnavailable
+   688→   688→                message={(configQ.error as Error).message}
+   689→   689→                onRetry={() => configQ.refetch()}
+   690→   690→              />
+   691→   691→            ) : (
+   692→   692→              <>
+   693→   693→                <pre className="text-xs bg-muted/60 dark:bg-muted/30 p-3 rounded-md overflow-auto max-h-96 cryptsk-scrollbar whitespace-pre-wrap border">
+   694→   694→                  {configText || "No config generated"}
+   695→   695→                </pre>
+   696→   696→                <Button
+   697→   697→                  size="sm"
+   698→   698→                  variant="outline"
+   699→   699→                  className="mt-3"
+   700→   700→                  onClick={downloadConfig}
+   701→   701→                  disabled={!configText}
+   702→   702→                >
+   703→   703→                  <Download className="h-4 w-4 mr-1.5" />
+   704→   704→                  Download .conf
+   705→   705→                </Button>
+   706→   706→              </>
+   707→   707→            )}
+   708→   708→          </CardContent>
+   709→   709→        </Card>
+   710→   710→
+   711→   711→        <Card>
+   712→   712→          <CardHeader>
+   713→   713→            <CardTitle className="flex items-center gap-2">
+   714→   714→              <RefreshCw className="h-5 w-5 text-slate-600" />
+   715→   715→              Dataplane Reconciliation
+   716→   716→            </CardTitle>
+   717→   717→            <CardDescription>
+   718→   718→              Force VPP config regeneration from OSS/BSS state (subscribers, policies, NAS).
+   719→   719→            </CardDescription>
+   720→   720→          </CardHeader>
+   721→   721→          <CardContent>
+   722→   722→            <Button
+   723→   723→              onClick={() => reconcileMut.mutate()}
+   724→   724→              disabled={reconcileMut.isPending}
+   725→   725→            >
+   726→   726→              <RefreshCw
+   727→   727→                className={`h-4 w-4 mr-1.5 ${reconcileMut.isPending ? "animate-spin" : ""}`}
+   728→   728→              />
+   729→   729→              {reconcileMut.isPending ? "Reconciling…" : "Reconcile Now"}
+   730→   730→            </Button>
+   731→   731→            {reconcileMut.data && (
+   732→   732→              <pre className="mt-3 text-xs bg-muted/60 dark:bg-muted/30 p-2 rounded-md border max-h-48 overflow-auto cryptsk-scrollbar">
+   733→   733→                {JSON.stringify(reconcileMut.data, null, 2)}
+   734→   734→              </pre>
+   735→   735→            )}
+   736→   736→          </CardContent>
+   737→   737→        </Card>
+   738→   738→      </div>
+   739→   739→    </div>
+   740→   740→  );
+   741→   741→}
+   742→   742→
+   743→   743→// ─────────────────────────────────────────────────────────────────
+   744→   744→// TAB 2: POLICY OBJECTS
+   745→   745→// ─────────────────────────────────────────────────────────────────
+   746→   746→function PolicyObjectRow({
+   747→   747→  obj,
+   748→   748→  kind,
+   749→   749→  onDelete,
+   750→   750→}: {
+   751→   751→  obj: AnyRecord;
+   752→   752→  kind: "acl" | "nat" | "policy";
+   753→   753→  onDelete: (obj: AnyRecord) => void;
+   754→   754→}) {
+   755→   755→  const id = obj.id || obj._id || obj.name;
+   756→   756→  const name = obj.name || obj.profileName || "(unnamed)";
+   757→   757→  const desc = obj.description || obj.desc;
+   758→   758→  const isEnabled = obj.isEnabled ?? obj.enabled ?? true;
+   759→   759→  const type = obj.type || obj.policyType || obj.mode;
+   760→   760→  const created = obj.createdAt || obj.created;
+   761→   761→  const updated = obj.updatedAt || obj.updated;
+   762→   762→
+   763→   763→  return (
+   764→   764→    <TableRow>
+   765→   765→      <TableCell className="font-mono font-medium">{name}</TableCell>
+   766→   766→      {(kind === "policy" || kind === "acl") && (
+   767→   767→        <TableCell>
+   768→   768→          {type && <Badge variant="secondary">{type}</Badge>}
+   769→   769→        </TableCell>
+   770→   770→      )}
+   771→   771→      <TableCell className="text-muted-foreground text-xs max-w-xs truncate">
+   772→   772→        {desc || "—"}
+   773→   773→      </TableCell>
+   774→   774→      <TableCell>
+   775→   775→        <Badge
+   776→   776→          variant="outline"
+   777→   777→          className={
+   778→   778→            isEnabled
+   779→   779→              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+   780→   780→              : "bg-slate-100 text-slate-600 border-slate-200"
+   781→   781→          }
+   782→   782→        >
+   783→   783→          {isEnabled ? "ENABLED" : "DISABLED"}
+   784→   784→        </Badge>
+   785→   785→      </TableCell>
+   786→   786→      <TableCell className="text-xs text-muted-foreground">
+   787→   787→        {formatTime(created)}
+   788→   788→      </TableCell>
+   789→   789→      <TableCell className="text-right">
+   790→   790→        <Button
+   791→   791→          size="sm"
+   792→   792→          variant="ghost"
+   793→   793→          className="text-red-600 hover:bg-red-50"
+   794→   794→          onClick={() => onDelete(obj)}
+   795→   795→        >
+   796→   796→          <Trash2 className="h-4 w-4" />
+   797→   797→        </Button>
+   798→   798→      </TableCell>
+   799→   799→    </TableRow>
+   800→   800→  );
+   801→   801→}
+   802→   802→
+   803→   803→function CreatePolicyObjectForm({
+   804→   804→  kind,
+   805→   805→  onCreate,
+   806→   806→}: {
+   807→   807→  kind: "acl" | "nat" | "policy";
+   808→   808→  onCreate: (payload: AnyRecord) => void;
+   809→   809→}) {
+   810→   810→  // Local form state
+   811→   811→  const [name, setName] = useState("");
+   812→   812→  const [description, setDescription] = useState("");
+   813→   813→  const [defaultAction, setDefaultAction] = useState("PERMIT");
+   814→   814→  const [rulesJson, setRulesJson] = useState("[]");
+   815→   815→  const [publicIpStart, setPublicIpStart] = useState("");
+   816→   816→  const [publicIpEnd, setPublicIpEnd] = useState("");
+   817→   817→  const [portStart, setPortStart] = useState("1024");
+   818→   818→  const [portEnd, setPortEnd] = useState("65535");
+   819→   819→  const [natMode, setNatMode] = useState("NAT44");
+   820→   820→  const [policyType, setPolicyType] = useState("POLICER");
+   821→   821→  const [profileId, setProfileId] = useState("");
+   822→   822→  const [configJson, setConfigJson] = useState("{}");
+   823→   823→  const [error, setError] = useState<string | null>(null);
+   824→   824→
+   825→   825→  const submit = () => {
+   826→   826→    setError(null);
+   827→   827→    if (!name.trim()) {
+   828→   828→      setError("Name is required");
+   829→   829→      return;
+   830→   830→    }
+   831→   831→    let payload: AnyRecord = { name, description };
+   832→   832→    if (kind === "acl") {
+   833→   833→      payload.defaultAction = defaultAction;
+   834→   834→      try {
+   835→   835→        payload.rules = JSON.parse(rulesJson);
+   836→   836→      } catch {
+   837→   837→        setError("rulesJson must be valid JSON");
+   838→   838→        return;
+   839→   839→      }
+   840→   840→    } else if (kind === "nat") {
+   841→   841→      payload.publicIpStart = publicIpStart;
+   842→   842→      payload.publicIpEnd = publicIpEnd;
+   843→   843→      payload.portStart = parseInt(portStart, 10);
+   844→   844→      payload.portEnd = parseInt(portEnd, 10);
+   845→   845→      payload.mode = natMode;
+   846→   846→    } else if (kind === "policy") {
+   847→   847→      payload.type = policyType;
+   848→   848→      if (profileId) payload.profileId = profileId;
+   849→   849→      try {
+   850→   850→        payload.config = JSON.parse(configJson);
+   851→   851→      } catch {
+   852→   852→        setError("config must be valid JSON");
+   853→   853→        return;
+   854→   854→      }
+   855→   855→    }
+   856→   856→    onCreate(payload);
+   857→   857→    // Reset
+   858→   858→    setName("");
+   859→   859→    setDescription("");
+   860→   860→    setRulesJson("[]");
+   861→   861→    setConfigJson("{}");
+   862→   862→  };
+   863→   863→
+   864→   864→  return (
+   865→   865→    <div className="space-y-3 rounded-md border bg-muted/30 dark:bg-muted/20 p-4">
+   866→   866→      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+   867→   867→        <div>
+   868→   868→          <Label htmlFor={`name-${kind}`}>Name</Label>
+   869→   869→          <Input
+   870→   870→            id={`name-${kind}`}
+   871→   871→            value={name}
+   872→   872→            onChange={(e) => setName(e.target.value)}
+   873→   873→            placeholder="e.g. ACL-INTERNET-ONLY"
+   874→   874→          />
+   875→   875→        </div>
+   876→   876→        <div>
+   877→   877→          <Label htmlFor={`desc-${kind}`}>Description</Label>
+   878→   878→          <Input
+   879→   879→            id={`desc-${kind}`}
+   880→   880→            value={description}
+   881→   881→            onChange={(e) => setDescription(e.target.value)}
+   882→   882→            placeholder="Optional"
+   883→   883→          />
+   884→   884→        </div>
+   885→   885→      </div>
+   886→   886→
+   887→   887→      {kind === "acl" && (
+   888→   888→        <>
+   889→   889→          <div>
+   890→   890→            <Label>Default Action</Label>
+   891→   891→            <Select value={defaultAction} onValueChange={setDefaultAction}>
+   892→   892→              <SelectTrigger className="w-full">
+   893→   893→                <SelectValue placeholder="Action" />
+   894→   894→              </SelectTrigger>
+   895→   895→              <SelectContent>
+   896→   896→                <SelectItem value="PERMIT">PERMIT</SelectItem>
+   897→   897→                <SelectItem value="DENY">DENY</SelectItem>
+   898→   898→              </SelectContent>
+   899→   899→            </Select>
+   900→   900→          </div>
+   901→   901→          <div>
+   902→   902→            <Label htmlFor={`rules-${kind}`}>Rules (JSON array)</Label>
+   903→   903→            <Textarea
+   904→   904→              id={`rules-${kind}`}
+   905→   905→              value={rulesJson}
+   906→   906→              onChange={(e) => setRulesJson(e.target.value)}
+   907→   907→              className="font-mono text-xs"
+   908→   908→              rows={5}
+   909→   909→              placeholder='[{"action":"PERMIT","src":"10.0.0.0/8","dst":"any"}]'
+   910→   910→            />
+   911→   911→          </div>
+   912→   912→        </>
+   913→   913→      )}
+   914→   914→
+   915→   915→      {kind === "nat" && (
+   916→   916→        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   917→   917→          <div>
+   918→   918→            <Label>Public IP Start</Label>
+   919→   919→            <Input
+   920→   920→              value={publicIpStart}
+   921→   921→              onChange={(e) => setPublicIpStart(e.target.value)}
+   922→   922→              placeholder="203.0.113.10"
+   923→   923→            />
+   924→   924→          </div>
+   925→   925→          <div>
+   926→   926→            <Label>Public IP End</Label>
+   927→   927→            <Input
+   928→   928→              value={publicIpEnd}
+   929→   929→              onChange={(e) => setPublicIpEnd(e.target.value)}
+   930→   930→              placeholder="203.0.113.100"
+   931→   931→            />
+   932→   932→          </div>
+   933→   933→          <div>
+   934→   934→            <Label>Port Start</Label>
+   935→   935→            <Input
+   936→   936→              type="number"
+   937→   937→              value={portStart}
+   938→   938→              onChange={(e) => setPortStart(e.target.value)}
+   939→   939→            />
+   940→   940→          </div>
+   941→   941→          <div>
+   942→   942→            <Label>Port End</Label>
+   943→   943→            <Input
+   944→   944→              type="number"
+   945→   945→              value={portEnd}
+   946→   946→              onChange={(e) => setPortEnd(e.target.value)}
+   947→   947→            />
+   948→   948→          </div>
+   949→   949→          <div className="col-span-2 md:col-span-4">
+   950→   950→            <Label>NAT Mode</Label>
+   951→   951→            <Select value={natMode} onValueChange={setNatMode}>
+   952→   952→              <SelectTrigger className="w-full">
+   953→   953→                <SelectValue placeholder="Mode" />
+   954→   954→              </SelectTrigger>
+   955→   955→              <SelectContent>
+   956→   956→                <SelectItem value="NAT44">NAT44</SelectItem>
+   957→   957→                <SelectItem value="NAT66">NAT66</SelectItem>
+   958→   958→                <SelectItem value="CGNAT">CGNAT (carrier-grade)</SelectItem>
+   959→   959→              </SelectContent>
+   960→   960→            </Select>
+   961→   961→          </div>
+   962→   962→        </div>
+   963→   963→      )}
+   964→   964→
+   965→   965→      {kind === "policy" && (
+   966→   966→        <>
+   967→   967→          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+   968→   968→            <div>
+   969→   969→              <Label>Type</Label>
+   970→   970→              <Select value={policyType} onValueChange={setPolicyType}>
+   971→   971→                <SelectTrigger className="w-full">
+   972→   972→                  <SelectValue placeholder="Type" />
+   973→   973→                </SelectTrigger>
+   974→   974→                <SelectContent>
+   975→   975→                  <SelectItem value="POLICER">POLICER</SelectItem>
+   976→   976→                  <SelectItem value="ACL">ACL</SelectItem>
+   977→   977→                  <SelectItem value="NAT">NAT</SelectItem>
+   978→   978→                  <SelectItem value="VRF">VRF</SelectItem>
+   979→   979→                  <SelectItem value="QOS">QoS</SelectItem>
+   980→   980→                  <SelectItem value="CLASSIFICATION">CLASSIFICATION</SelectItem>
+   981→   981→                </SelectContent>
+   982→   982→              </Select>
+   983→   983→            </div>
+   984→   984→            <div>
+   985→   985→              <Label>Profile ID (optional)</Label>
+   986→   986→              <Input
+   987→   987→                value={profileId}
+   988→   988→                onChange={(e) => setProfileId(e.target.value)}
+   989→   989→                placeholder="Link to an ACL/NAT profile"
+   990→   990→              />
+   991→   991→            </div>
+   992→   992→          </div>
+   993→   993→          <div>
+   994→   994→            <Label htmlFor={`config-${kind}`}>Config (JSON)</Label>
+   995→   995→            <Textarea
+   996→   996→              id={`config-${kind}`}
+   997→   997→              value={configJson}
+   998→   998→              onChange={(e) => setConfigJson(e.target.value)}
+   999→   999→              className="font-mono text-xs"
+  1000→  1000→              rows={4}
+  1001→  1001→              placeholder='{"rate":100000000,"burst":1000000}'
+  1002→  1002→            />
+  1003→  1003→          </div>
+  1004→  1004→        </>
+  1005→  1005→      )}
+  1006→  1006→
+  1007→  1007→      {error && (
+  1008→  1008→        <div className="text-xs text-red-600 flex items-center gap-1.5">
+  1009→  1009→          <AlertTriangle className="h-3.5 w-3.5" />
+  1010→  1010→          {error}
+  1011→  1011→        </div>
+  1012→  1012→      )}
+  1013→  1013→
+  1014→  1014→      <Button size="sm" onClick={submit}>
+  1015→  1015→        <Plus className="h-4 w-4 mr-1.5" />
+  1016→  1016→        Create
+  1017→  1017→      </Button>
+  1018→  1018→    </div>
+  1019→  1019→  );
+  1020→  1020→}
+  1021→  1021→
+  1022→  1022→function PolicyObjectsTab() {
+  1023→  1023→  const queryClient = useQueryClient();
+  1024→  1024→  const [showAclForm, setShowAclForm] = useState(false);
+  1025→  1025→  const [showNatForm, setShowNatForm] = useState(false);
+  1026→  1026→  const [showPolicyForm, setShowPolicyForm] = useState(false);
+  1027→  1027→
+  1028→  1028→  const aclQ = useQuery({
+  1029→  1029→    queryKey: ["vpp-acl-profiles"],
+  1030→  1030→    queryFn: async () => {
+  1031→  1031→      const res = await fetch("/api/vpp?action=acl-profiles");
+  1032→  1032→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1033→  1033→      return res.json();
+  1034→  1034→    },
+  1035→  1035→    retry: 1,
+  1036→  1036→  });
+  1037→  1037→
+  1038→  1038→  const natQ = useQuery({
+  1039→  1039→    queryKey: ["vpp-nat-pools"],
+  1040→  1040→    queryFn: async () => {
+  1041→  1041→      const res = await fetch("/api/vpp?action=nat-pools");
+  1042→  1042→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1043→  1043→      return res.json();
+  1044→  1044→    },
+  1045→  1045→    retry: 1,
+  1046→  1046→  });
+  1047→  1047→
+  1048→  1048→  const policyQ = useQuery({
+  1049→  1049→    queryKey: ["vpp-policy-objects"],
+  1050→  1050→    queryFn: async () => {
+  1051→  1051→      const res = await fetch("/api/vpp?action=policy-objects");
+  1052→  1052→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1053→  1053→      return res.json();
+  1054→  1054→    },
+  1055→  1055→    retry: 1,
+  1056→  1056→  });
+  1057→  1057→
+  1058→  1058→  const aclProfiles: AnyRecord[] = aclQ.data?.profiles || aclQ.data?.items || aclQ.data?.data || [];
+  1059→  1059→  const natPools: AnyRecord[] = natQ.data?.pools || natQ.data?.items || natQ.data?.data || [];
+  1060→  1060→  const policyObjects: AnyRecord[] = policyQ.data?.objects || policyQ.data?.items || policyQ.data?.data || [];
+  1061→  1061→
+  1062→  1062→  const createMut = useMutation({
+  1063→  1063→    mutationFn: async ({ kind, payload }: { kind: "acl" | "nat" | "policy"; payload: AnyRecord }) => {
+  1064→  1064→      const action =
+  1065→  1065→        kind === "acl"
+  1066→  1066→          ? "acl-profiles-create"
+  1067→  1067→          : kind === "nat"
+  1068→  1068→          ? "nat-pools-create"
+  1069→  1069→          : "policy-objects-create";
+  1070→  1070→      const res = await fetch(`/api/vpp?action=${action}`, {
+  1071→  1071→        method: "POST",
+  1072→  1072→        headers: { "Content-Type": "application/json" },
+  1073→  1073→        body: JSON.stringify(payload),
+  1074→  1074→      });
+  1075→  1075→      const data = await res.json().catch(() => ({}));
+  1076→  1076→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1077→  1077→      return data;
+  1078→  1078→    },
+  1079→  1079→    onSuccess: (_data, vars) => {
+  1080→  1080→      const qk =
+  1081→  1081→        vars.kind === "acl"
+  1082→  1082→          ? "vpp-acl-profiles"
+  1083→  1083→          : vars.kind === "nat"
+  1084→  1084→          ? "vpp-nat-pools"
+  1085→  1085→          : "vpp-policy-objects";
+  1086→  1086→      queryClient.invalidateQueries({ queryKey: [qk] });
+  1087→  1087→      toast.success(`${vars.kind.toUpperCase()} object created`);
+  1088→  1088→    },
+  1089→  1089→    onError: (err: Error) => toast.error(err.message || "Create failed"),
+  1090→  1090→  });
+  1091→  1091→
+  1092→  1092→  const deleteMut = useMutation({
+  1093→  1093→    mutationFn: async ({ kind, id }: { kind: "acl" | "nat" | "policy"; id: string }) => {
+  1094→  1094→      const action =
+  1095→  1095→        kind === "acl"
+  1096→  1096→          ? "acl-profiles-delete"
+  1097→  1097→          : kind === "nat"
+  1098→  1098→          ? "nat-pools-delete"
+  1099→  1099→          : "policy-objects-delete";
+  1100→  1100→      const res = await fetch(`/api/vpp?action=${action}&id=${encodeURIComponent(id)}`, {
+  1101→  1101→        method: "DELETE",
+  1102→  1102→      });
+  1103→  1103→      const data = await res.json().catch(() => ({}));
+  1104→  1104→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1105→  1105→      return data;
+  1106→  1106→    },
+  1107→  1107→    onSuccess: (_data, vars) => {
+  1108→  1108→      const qk =
+  1109→  1109→        vars.kind === "acl"
+  1110→  1110→          ? "vpp-acl-profiles"
+  1111→  1111→          : vars.kind === "nat"
+  1112→  1112→          ? "vpp-nat-pools"
+  1113→  1113→          : "vpp-policy-objects";
+  1114→  1114→      queryClient.invalidateQueries({ queryKey: [qk] });
+  1115→  1115→      toast.success("Object deleted");
+  1116→  1116→    },
+  1117→  1117→    onError: (err: Error) => toast.error(err.message || "Delete failed"),
+  1118→  1118→  });
+  1119→  1119→
+  1120→  1120→  const onDelete = (kind: "acl" | "nat" | "policy") => (obj: AnyRecord) => {
+  1121→  1121→    const id = String(obj.id || obj._id || obj.name);
+  1122→  1122→    if (!id) {
+  1123→  1123→      toast.error("Cannot delete — object has no identifier");
+  1124→  1124→      return;
+  1125→  1125→    }
+  1126→  1126→    if (!window.confirm(`Delete ${obj.name || id}?`)) return;
+  1127→  1127→    deleteMut.mutate({ kind, id });
+  1128→  1128→  };
+  1129→  1129→
+  1130→  1130→  return (
+  1131→  1131→    <div className="space-y-6">
+  1132→  1132→      <div>
+  1133→  1133→        <h2 className="text-lg font-semibold flex items-center gap-2">
+  1134→  1134→          <Shield className="h-5 w-5 text-emerald-600" />
+  1135→  1135→          VPP Policy Objects
+  1136→  1136→        </h2>
+  1137→  1137→        <p className="text-sm text-muted-foreground mt-0.5">
+  1138→  1138→          Reusable dataplane objects: ACL profiles, NAT pools, and Policier/QoS/VRF objects (§29, §32, §33).
+  1139→  1139→        </p>
+  1140→  1140→      </div>
+  1141→  1141→
+  1142→  1142→      {/* ACL Profiles */}
+  1143→  1143→      <Card>
+  1144→  1144→        <CardHeader>
+  1145→  1145→          <CardTitle className="flex items-center gap-2 text-base">
+  1146→  1146→            <Layers className="h-5 w-5 text-slate-600" />
+  1147→  1147→            ACL Profiles
+  1148→  1148→            <Badge variant="secondary" className="ml-2">{aclProfiles.length}</Badge>
+  1149→  1149→          </CardTitle>
+  1150→  1150→          <CardDescription>
+  1151→  1151→            Reusable ACL profiles (ACL-GUEST, ACL-HOTEL, ACL-ISP-BASIC, etc.)
+  1152→  1152→          </CardDescription>
+  1153→  1153→        </CardHeader>
+  1154→  1154→        <CardContent>
+  1155→  1155→          <div className="mb-3">
+  1156→  1156→            <Button
+  1157→  1157→              size="sm"
+  1158→  1158→              variant={showAclForm ? "secondary" : "outline"}
+  1159→  1159→              onClick={() => setShowAclForm(!showAclForm)}
+  1160→  1160→            >
+  1161→  1161→              <Plus className="h-4 w-4 mr-1.5" />
+  1162→  1162→              {showAclForm ? "Cancel" : "New ACL Profile"}
+  1163→  1163→            </Button>
+  1164→  1164→          </div>
+  1165→  1165→          {showAclForm && (
+  1166→  1166→            <div className="mb-4">
+  1167→  1167→              <CreatePolicyObjectForm
+  1168→  1168→                kind="acl"
+  1169→  1169→                onCreate={(payload) => createMut.mutate({ kind: "acl", payload })}
+  1170→  1170→              />
+  1171→  1171→            </div>
+  1172→  1172→          )}
+  1173→  1173→          {aclQ.isLoading ? (
+  1174→  1174→            <TableSkeleton rows={3} cols={5} />
+  1175→  1175→          ) : aclQ.error ? (
+  1176→  1176→            <ServiceUnavailable
+  1177→  1177→              message={(aclQ.error as Error).message}
+  1178→  1178→              onRetry={() => aclQ.refetch()}
+  1179→  1179→            />
+  1180→  1180→          ) : aclProfiles.length === 0 ? (
+  1181→  1181→            <EmptyState
+  1182→  1182→              icon={Layers}
+  1183→  1183→              title="No ACL profiles"
+  1184→  1184→              description="Create an ACL profile to define reusable permit/deny rules."
+  1185→  1185→              size="sm"
+  1186→  1186→              action={{
+  1187→  1187→                label: "Create",
+  1188→  1188→                onClick: () => setShowAclForm(true),
+  1189→  1189→                icon: Plus,
+  1190→  1190→              }}
+  1191→  1191→            />
+  1192→  1192→          ) : (
+  1193→  1193→            <div className="rounded-md border max-h-96 overflow-y-auto cryptsk-scrollbar">
+  1194→  1194→              <Table>
+  1195→  1195→                <TableHeader>
+  1196→  1196→                  <TableRow>
+  1197→  1197→                    <TableHead>Name</TableHead>
+  1198→  1198→                    <TableHead>Type</TableHead>
+  1199→  1199→                    <TableHead>Description</TableHead>
+  1200→  1200→                    <TableHead>Enabled</TableHead>
+  1201→  1201→                    <TableHead>Created</TableHead>
+  1202→  1202→                    <TableHead className="text-right">Action</TableHead>
+  1203→  1203→                  </TableRow>
+  1204→  1204→                </TableHeader>
+  1205→  1205→                <TableBody>
+  1206→  1206→                  {aclProfiles.map((obj, i) => (
+  1207→  1207→                    <PolicyObjectRow key={i} obj={obj} kind="acl" onDelete={onDelete("acl")} />
+  1208→  1208→                  ))}
+  1209→  1209→                </TableBody>
+  1210→  1210→              </Table>
+  1211→  1211→            </div>
+  1212→  1212→          )}
+  1213→  1213→        </CardContent>
+  1214→  1214→      </Card>
+  1215→  1215→
+  1216→  1216→      {/* NAT Pools */}
+  1217→  1217→      <Card>
+  1218→  1218→        <CardHeader>
+  1219→  1219→          <CardTitle className="flex items-center gap-2 text-base">
+  1220→  1220→            <Network className="h-5 w-5 text-slate-600" />
+  1221→  1221→            NAT Pools
+  1222→  1222→            <Badge variant="secondary" className="ml-2">{natPools.length}</Badge>
+  1223→  1223→          </CardTitle>
+  1224→  1224→          <CardDescription>
+  1225→  1225→            VPP-managed NAT pools — translation state, port allocation, NAT processing
+  1226→  1226→          </CardDescription>
+  1227→  1227→        </CardHeader>
+  1228→  1228→        <CardContent>
+  1229→  1229→          <div className="mb-3">
+  1230→  1230→            <Button
+  1231→  1231→              size="sm"
+  1232→  1232→              variant={showNatForm ? "secondary" : "outline"}
+  1233→  1233→              onClick={() => setShowNatForm(!showNatForm)}
+  1234→  1234→            >
+  1235→  1235→              <Plus className="h-4 w-4 mr-1.5" />
+  1236→  1236→              {showNatForm ? "Cancel" : "New NAT Pool"}
+  1237→  1237→            </Button>
+  1238→  1238→          </div>
+  1239→  1239→          {showNatForm && (
+  1240→  1240→            <div className="mb-4">
+  1241→  1241→              <CreatePolicyObjectForm
+  1242→  1242→                kind="nat"
+  1243→  1243→                onCreate={(payload) => createMut.mutate({ kind: "nat", payload })}
+  1244→  1244→              />
+  1245→  1245→            </div>
+  1246→  1246→          )}
+  1247→  1247→          {natQ.isLoading ? (
+  1248→  1248→            <TableSkeleton rows={3} cols={5} />
+  1249→  1249→          ) : natQ.error ? (
+  1250→  1250→            <ServiceUnavailable
+  1251→  1251→              message={(natQ.error as Error).message}
+  1252→  1252→              onRetry={() => natQ.refetch()}
+  1253→  1253→            />
+  1254→  1254→          ) : natPools.length === 0 ? (
+  1255→  1255→            <EmptyState
+  1256→  1256→              icon={Network}
+  1257→  1257→              title="No NAT pools"
+  1258→  1258→              description="Create a NAT pool to define public IP/port ranges."
+  1259→  1259→              size="sm"
+  1260→  1260→              action={{
+  1261→  1261→                label: "Create",
+  1262→  1262→                onClick: () => setShowNatForm(true),
+  1263→  1263→                icon: Plus,
+  1264→  1264→              }}
+  1265→  1265→            />
+  1266→  1266→          ) : (
+  1267→  1267→            <div className="rounded-md border max-h-96 overflow-y-auto cryptsk-scrollbar">
+  1268→  1268→              <Table>
+  1269→  1269→                <TableHeader>
+  1270→  1270→                  <TableRow>
+  1271→  1271→                    <TableHead>Name</TableHead>
+  1272→  1272→                    <TableHead>Type</TableHead>
+  1273→  1273→                    <TableHead>Description</TableHead>
+  1274→  1274→                    <TableHead>Enabled</TableHead>
+  1275→  1275→                    <TableHead>Created</TableHead>
+  1276→  1276→                    <TableHead className="text-right">Action</TableHead>
+  1277→  1277→                  </TableRow>
+  1278→  1278→                </TableHeader>
+  1279→  1279→                <TableBody>
+  1280→  1280→                  {natPools.map((obj, i) => (
+  1281→  1281→                    <PolicyObjectRow key={i} obj={obj} kind="nat" onDelete={onDelete("nat")} />
+  1282→  1282→                  ))}
+  1283→  1283→                </TableBody>
+  1284→  1284→              </Table>
+  1285→  1285→            </div>
+  1286→  1286→          )}
+  1287→  1287→        </CardContent>
+  1288→  1288→      </Card>
+  1289→  1289→
+  1290→  1290→      {/* Policy Objects */}
+  1291→  1291→      <Card>
+  1292→  1292→        <CardHeader>
+  1293→  1293→          <CardTitle className="flex items-center gap-2 text-base">
+  1294→  1294→            <Boxes className="h-5 w-5 text-slate-600" />
+  1295→  1295→            Policy Objects
+  1296→  1296→            <Badge variant="secondary" className="ml-2">{policyObjects.length}</Badge>
+  1297→  1297→          </CardTitle>
+  1298→  1298→          <CardDescription>
+  1299→  1299→            Policer, QoS, VRF, Classification objects linked to subscribers
+  1300→  1300→          </CardDescription>
+  1301→  1301→        </CardHeader>
+  1302→  1302→        <CardContent>
+  1303→  1303→          <div className="mb-3">
+  1304→  1304→            <Button
+  1305→  1305→              size="sm"
+  1306→  1306→              variant={showPolicyForm ? "secondary" : "outline"}
+  1307→  1307→              onClick={() => setShowPolicyForm(!showPolicyForm)}
+  1308→  1308→            >
+  1309→  1309→              <Plus className="h-4 w-4 mr-1.5" />
+  1310→  1310→              {showPolicyForm ? "Cancel" : "New Policy Object"}
+  1311→  1311→            </Button>
+  1312→  1312→          </div>
+  1313→  1313→          {showPolicyForm && (
+  1314→  1314→            <div className="mb-4">
+  1315→  1315→              <CreatePolicyObjectForm
+  1316→  1316→                kind="policy"
+  1317→  1317→                onCreate={(payload) => createMut.mutate({ kind: "policy", payload })}
+  1318→  1318→              />
+  1319→  1319→            </div>
+  1320→  1320→          )}
+  1321→  1321→          {policyQ.isLoading ? (
+  1322→  1322→            <TableSkeleton rows={3} cols={5} />
+  1323→  1323→          ) : policyQ.error ? (
+  1324→  1324→            <ServiceUnavailable
+  1325→  1325→              message={(policyQ.error as Error).message}
+  1326→  1326→              onRetry={() => policyQ.refetch()}
+  1327→  1327→            />
+  1328→  1328→          ) : policyObjects.length === 0 ? (
+  1329→  1329→            <EmptyState
+  1330→  1330→              icon={Boxes}
+  1331→  1331→              title="No policy objects"
+  1332→  1332→              description="Create a Policer/QoS/VRF object to bind to subscriber sessions."
+  1333→  1333→              size="sm"
+  1334→  1334→              action={{
+  1335→  1335→                label: "Create",
+  1336→  1336→                onClick: () => setShowPolicyForm(true),
+  1337→  1337→                icon: Plus,
+  1338→  1338→              }}
+  1339→  1339→            />
+  1340→  1340→          ) : (
+  1341→  1341→            <div className="rounded-md border max-h-96 overflow-y-auto cryptsk-scrollbar">
+  1342→  1342→              <Table>
+  1343→  1343→                <TableHeader>
+  1344→  1344→                  <TableRow>
+  1345→  1345→                    <TableHead>Name</TableHead>
+  1346→  1346→                    <TableHead>Type</TableHead>
+  1347→  1347→                    <TableHead>Description</TableHead>
+  1348→  1348→                    <TableHead>Enabled</TableHead>
+  1349→  1349→                    <TableHead>Created</TableHead>
+  1350→  1350→                    <TableHead className="text-right">Action</TableHead>
+  1351→  1351→                  </TableRow>
+  1352→  1352→                </TableHeader>
+  1353→  1353→                <TableBody>
+  1354→  1354→                  {policyObjects.map((obj, i) => (
+  1355→  1355→                    <PolicyObjectRow key={i} obj={obj} kind="policy" onDelete={onDelete("policy")} />
+  1356→  1356→                  ))}
+  1357→  1357→                </TableBody>
+  1358→  1358→              </Table>
+  1359→  1359→            </div>
+  1360→  1360→          )}
+  1361→  1361→        </CardContent>
+  1362→  1362→      </Card>
+  1363→  1363→    </div>
+  1364→  1364→  );
+  1365→  1365→}
+  1366→  1366→
+  1367→  1367→// ─────────────────────────────────────────────────────────────────
+  1368→  1368→// TAB 3: SESSION SNAPSHOTS
+  1369→  1369→// ─────────────────────────────────────────────────────────────────
+  1370→  1370→const RECOVERY_STATES = [
+  1371→  1371→  "FRESH",
+  1372→  1372→  "PROGRAMMED",
+  1373→  1373→  "VERIFIED",
+  1374→  1374→  "RECOVERING",
+  1375→  1375→  "STALE",
+  1376→  1376→  "FAILED",
+  1377→  1377→] as const;
+  1378→  1378→
+  1379→  1379→function SnapshotsTab() {
+  1380→  1380→  const queryClient = useQueryClient();
+  1381→  1381→  const [filterState, setFilterState] = useState<string>("ALL");
+  1382→  1382→  const [search, setSearch] = useState("");
+  1383→  1383→  const [page, setPage] = useState(1);
+  1384→  1384→  const pageSize = 25;
+  1385→  1385→
+  1386→  1386→  const snapshotsQ = useQuery({
+  1387→  1387→    queryKey: ["vpp-snapshots", filterState, search, page],
+  1388→  1388→    queryFn: async () => {
+  1389→  1389→      const params = new URLSearchParams();
+  1390→  1390→      if (filterState !== "ALL") params.set("state", filterState);
+  1391→  1391→      if (search) params.set("search", search);
+  1392→  1392→      params.set("limit", String(pageSize));
+  1393→  1393→      params.set("offset", String((page - 1) * pageSize));
+  1394→  1394→      const res = await fetch(`/api/vpp?action=snapshots&${params.toString()}`);
+  1395→  1395→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1396→  1396→      return res.json();
+  1397→  1397→    },
+  1398→  1398→    refetchInterval: 10000,
+  1399→  1399→    retry: 1,
+  1400→  1400→  });
+  1401→  1401→
+  1402→  1402→  const rebuildMut = useMutation({
+  1403→  1403→    mutationFn: async (sessionId: string) => {
+  1404→  1404→      const res = await fetch(
+  1405→  1405→        `/api/vpp?action=rebuild-session&sessionId=${encodeURIComponent(sessionId)}`,
+  1406→  1406→        { method: "POST" }
+  1407→  1407→      );
+  1408→  1408→      const data = await res.json().catch(() => ({}));
+  1409→  1409→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1410→  1410→      return data;
+  1411→  1411→    },
+  1412→  1412→    onSuccess: (_data, sessionId) => {
+  1413→  1413→      toast.success(`VPP rebuild triggered for ${truncate(sessionId)}`);
+  1414→  1414→      queryClient.invalidateQueries({ queryKey: ["vpp-snapshots"] });
+  1415→  1415→    },
+  1416→  1416→    onError: (err: Error) => toast.error(err.message || "Rebuild failed"),
+  1417→  1417→  });
+  1418→  1418→
+  1419→  1419→  const snapshots: AnyRecord[] =
+  1420→  1420→    snapshotsQ.data?.snapshots || snapshotsQ.data?.items || snapshotsQ.data?.data || [];
+  1421→  1421→  const total: number = snapshotsQ.data?.total ?? snapshots.length;
+  1422→  1422→  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  1423→  1423→
+  1424→  1424→  return (
+  1425→  1425→    <div className="space-y-6">
+  1426→  1426→      <div>
+  1427→  1427→        <h2 className="text-lg font-semibold flex items-center gap-2">
+  1428→  1428→          <Database className="h-5 w-5 text-emerald-600" />
+  1429→  1429→          Session Snapshots
+  1430→  1430→        </h2>
+  1431→  1431→        <p className="text-sm text-muted-foreground mt-0.5">
+  1432→  1432→          Recoverable session state — used to rebuild VPP policies after VPP restart (§42).
+  1433→  1433→        </p>
+  1434→  1434→      </div>
+  1435→  1435→
+  1436→  1436→      <Card>
+  1437→  1437→        <CardHeader>
+  1438→  1438→          <CardTitle className="text-base flex items-center justify-between gap-2">
+  1439→  1439→            <span className="flex items-center gap-2">
+  1440→  1440→              <Database className="h-4 w-4 text-slate-600" />
+  1441→  1441→              Snapshots ({total})
+  1442→  1442→            </span>
+  1443→  1443→            <Button
+  1444→  1444→              size="sm"
+  1445→  1445→              variant="ghost"
+  1446→  1446→              onClick={() => snapshotsQ.refetch()}
+  1447→  1447→            >
+  1448→  1448→              <RefreshCw className="h-3.5 w-3.5" />
+  1449→  1449→            </Button>
+  1450→  1450→          </CardTitle>
+  1451→  1451→        </CardHeader>
+  1452→  1452→        <CardContent>
+  1453→  1453→          {/* Filters */}
+  1454→  1454→          <div className="flex flex-col md:flex-row gap-3 mb-4">
+  1455→  1455→            <div className="flex-1">
+  1456→  1456→              <Label className="mb-1.5 block">Search</Label>
+  1457→  1457→              <div className="relative">
+  1458→  1458→                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+  1459→  1459→                <Input
+  1460→  1460→                  className="pl-8"
+  1461→  1461→                  placeholder="Username or framed IP"
+  1462→  1462→                  value={search}
+  1463→  1463→                  onChange={(e) => {
+  1464→  1464→                    setSearch(e.target.value);
+  1465→  1465→                    setPage(1);
+  1466→  1466→                  }}
+  1467→  1467→                />
+  1468→  1468→              </div>
+  1469→  1469→            </div>
+  1470→  1470→            <div className="md:w-56">
+  1471→  1471→              <Label className="mb-1.5 block">Recovery State</Label>
+  1472→  1472→              <Select
+  1473→  1473→                value={filterState}
+  1474→  1474→                onValueChange={(v) => {
+  1475→  1475→                  setFilterState(v);
+  1476→  1476→                  setPage(1);
+  1477→  1477→                }}
+  1478→  1478→              >
+  1479→  1479→                <SelectTrigger className="w-full">
+  1480→  1480→                  <SelectValue placeholder="All states" />
+  1481→  1481→                </SelectTrigger>
+  1482→  1482→                <SelectContent>
+  1483→  1483→                  <SelectItem value="ALL">All states</SelectItem>
+  1484→  1484→                  {RECOVERY_STATES.map((s) => (
+  1485→  1485→                    <SelectItem key={s} value={s}>
+  1486→  1486→                      {s}
+  1487→  1487→                    </SelectItem>
+  1488→  1488→                  ))}
+  1489→  1489→                </SelectContent>
+  1490→  1490→              </Select>
+  1491→  1491→            </div>
+  1492→  1492→          </div>
+  1493→  1493→
+  1494→  1494→          {snapshotsQ.error ? (
+  1495→  1495→            <ServiceUnavailable
+  1496→  1496→              message={(snapshotsQ.error as Error).message}
+  1497→  1497→              onRetry={() => snapshotsQ.refetch()}
+  1498→  1498→            />
+  1499→  1499→          ) : snapshotsQ.isLoading ? (
+  1500→  1500→            <TableSkeleton rows={6} cols={8} />
+  1501→  1501→          ) : snapshots.length === 0 ? (
+  1502→  1502→            <EmptyState
+  1503→  1503→              icon={Database}
+  1504→  1504→              title="No session snapshots"
+  1505→  1505→              description="Snapshots are created when subscribers are programmed into VPP. Try the Overview tab and run Reconcile Now."
+  1506→  1506→              size="sm"
+  1507→  1507→              action={{
+  1508→  1508→                label: "Refresh",
+  1509→  1509→                onClick: () => snapshotsQ.refetch(),
+  1510→  1510→                icon: RefreshCw,
+  1511→  1511→              }}
+  1512→  1512→            />
+  1513→  1513→          ) : (
+  1514→  1514→            <>
+  1515→  1515→              <div className="rounded-md border max-h-[480px] overflow-y-auto cryptsk-scrollbar">
+  1516→  1516→                <Table>
+  1517→  1517→                  <TableHeader className="sticky top-0 bg-card">
+  1518→  1518→                    <TableRow>
+  1519→  1519→                      <TableHead>Session ID</TableHead>
+  1520→  1520→                      <TableHead>Username</TableHead>
+  1521→  1521→                      <TableHead>Framed IP</TableHead>
+  1522→  1522→                      <TableHead>MAC</TableHead>
+  1523→  1523→                      <TableHead>VLAN</TableHead>
+  1524→  1524→                      <TableHead>VRF</TableHead>
+  1525→  1525→                      <TableHead>Policy ID</TableHead>
+  1526→  1526→                      <TableHead>Epoch</TableHead>
+  1527→  1527→                      <TableHead>State</TableHead>
+  1528→  1528→                      <TableHead>Programmed At</TableHead>
+  1529→  1529→                      <TableHead className="text-right">Action</TableHead>
+  1530→  1530→                    </TableRow>
+  1531→  1531→                  </TableHeader>
+  1532→  1532→                  <TableBody>
+  1533→  1533→                    {snapshots.map((s, i) => {
+  1534→  1534→                      const st = s.vppRecoveryState || s.recoveryState || s.state;
+  1535→  1535→                      const sb = statusBadgeVariant(st);
+  1536→  1536→                      return (
+  1537→  1537→                        <TableRow key={i}>
+  1538→  1538→                          <TableCell className="font-mono text-xs">
+  1539→  1539→                            {truncate(s.sessionId || s.acctSessionId, 16)}
+  1540→  1540→                          </TableCell>
+  1541→  1541→                          <TableCell className="font-medium">
+  1542→  1542→                            {s.username || "—"}
+  1543→  1543→                          </TableCell>
+  1544→  1544→                          <TableCell className="font-mono text-xs">
+  1545→  1545→                            {s.framedIp || s.framedIpAddress || "—"}
+  1546→  1546→                          </TableCell>
+  1547→  1547→                          <TableCell className="font-mono text-xs">
+  1548→  1548→                            {truncate(s.mac || s.callingStationId, 16)}
+  1549→  1549→                          </TableCell>
+  1550→  1550→                          <TableCell>{s.vlanId || "—"}</TableCell>
+  1551→  1551→                          <TableCell className="font-mono text-xs">{s.vrf || "—"}</TableCell>
+  1552→  1552→                          <TableCell className="font-mono text-xs">{s.policyId || "—"}</TableCell>
+  1553→  1553→                          <TableCell className="font-mono text-xs">
+  1554→  1554→                            {s.vppEpoch ?? "—"}
+  1555→  1555→                          </TableCell>
+  1556→  1556→                          <TableCell>
+  1557→  1557→                            <Badge variant={sb.variant} className={sb.className}>
+  1558→  1558→                              {st || "UNKNOWN"}
+  1559→  1559→                            </Badge>
+  1560→  1560→                          </TableCell>
+  1561→  1561→                          <TableCell className="text-xs text-muted-foreground">
+  1562→  1562→                            {formatTime(s.vppProgrammedAt || s.programmedAt)}
+  1563→  1563→                          </TableCell>
+  1564→  1564→                          <TableCell className="text-right">
+  1565→  1565→                            <Button
+  1566→  1566→                              size="sm"
+  1567→  1567→                              variant="outline"
+  1568→  1568→                              onClick={() =>
+  1569→  1569→                                rebuildMut.mutate(
+  1570→  1570→                                  String(s.sessionId || s.acctSessionId || "")
+  1571→  1571→                                )
+  1572→  1572→                              }
+  1573→  1573→                              disabled={
+  1574→  1574→                                rebuildMut.isPending ||
+  1575→  1575→                                !(s.sessionId || s.acctSessionId)
+  1576→  1576→                              }
+  1577→  1577→                            >
+  1578→  1578→                              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+  1579→  1579→                              Rebuild VPP
+  1580→  1580→                            </Button>
+  1581→  1581→                          </TableCell>
+  1582→  1582→                        </TableRow>
+  1583→  1583→                      );
+  1584→  1584→                    })}
+  1585→  1585→                  </TableBody>
+  1586→  1586→                </Table>
+  1587→  1587→              </div>
+  1588→  1588→              {/* Pagination */}
+  1589→  1589→              <div className="flex items-center justify-between mt-3">
+  1590→  1590→                <div className="text-xs text-muted-foreground">
+  1591→  1591→                  Page {page} of {totalPages} • {total} total
+  1592→  1592→                </div>
+  1593→  1593→                <div className="flex gap-2">
+  1594→  1594→                  <Button
+  1595→  1595→                    size="sm"
+  1596→  1596→                    variant="outline"
+  1597→  1597→                    disabled={page <= 1}
+  1598→  1598→                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+  1599→  1599→                  >
+  1600→  1600→                    Prev
+  1601→  1601→                  </Button>
+  1602→  1602→                  <Button
+  1603→  1603→                    size="sm"
+  1604→  1604→                    variant="outline"
+  1605→  1605→                    disabled={page >= totalPages}
+  1606→  1606→                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+  1607→  1607→                  >
+  1608→  1608→                    Next
+  1609→  1609→                  </Button>
+  1610→  1610→                </div>
+  1611→  1611→              </div>
+  1612→  1612→            </>
+  1613→  1613→          )}
+  1614→  1614→        </CardContent>
+  1615→  1615→      </Card>
+  1616→  1616→    </div>
+  1617→  1617→  );
+  1618→  1618→}
+  1619→  1619→
+  1620→  1620→// ─────────────────────────────────────────────────────────────────
+  1621→  1621→// TAB 4: NAT EVENTS
+  1622→  1622→// ─────────────────────────────────────────────────────────────────
+  1623→  1623→function NatEventsTab() {
+  1624→  1624→  const queryClient = useQueryClient();
+  1625→  1625→  const [search, setSearch] = useState("");
+  1626→  1626→
+  1627→  1627→  const eventsQ = useQuery({
+  1628→  1628→    queryKey: ["nat-events-recent"],
+  1629→  1629→    queryFn: async () => {
+  1630→  1630→      const res = await fetch("/api/nat-logger?action=events-recent");
+  1631→  1631→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1632→  1632→      return res.json();
+  1633→  1633→    },
+  1634→  1634→    refetchInterval: 5000,
+  1635→  1635→    retry: 1,
+  1636→  1636→  });
+  1637→  1637→
+  1638→  1638→  const statsQ = useQuery({
+  1639→  1639→    queryKey: ["nat-stats"],
+  1640→  1640→    queryFn: async () => {
+  1641→  1641→      const res = await fetch("/api/nat-logger?action=stats");
+  1642→  1642→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1643→  1643→      return res.json();
+  1644→  1644→    },
+  1645→  1645→    refetchInterval: 10000,
+  1646→  1646→    retry: 1,
+  1647→  1647→  });
+  1648→  1648→
+  1649→  1649→  const bufferQ = useQuery({
+  1650→  1650→    queryKey: ["nat-buffer"],
+  1651→  1651→    queryFn: async () => {
+  1652→  1652→      const res = await fetch("/api/nat-logger?action=buffer");
+  1653→  1653→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1654→  1654→      return res.json();
+  1655→  1655→    },
+  1656→  1656→    refetchInterval: 5000,
+  1657→  1657→    retry: 1,
+  1658→  1658→  });
+  1659→  1659→
+  1660→  1660→  const flushMut = useMutation({
+  1661→  1661→    mutationFn: async () => {
+  1662→  1662→      const res = await fetch("/api/nat-logger?action=flush", { method: "POST" });
+  1663→  1663→      const data = await res.json().catch(() => ({}));
+  1664→  1664→      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  1665→  1665→      return data;
+  1666→  1666→    },
+  1667→  1667→    onSuccess: () => {
+  1668→  1668→      toast.success("NAT buffer flushed");
+  1669→  1669→      queryClient.invalidateQueries({ queryKey: ["nat-buffer"] });
+  1670→  1670→      queryClient.invalidateQueries({ queryKey: ["nat-events-recent"] });
+  1671→  1671→      queryClient.invalidateQueries({ queryKey: ["nat-stats"] });
+  1672→  1672→    },
+  1673→  1673→    onError: (err: Error) => toast.error(err.message || "Flush failed"),
+  1674→  1674→  });
+  1675→  1675→
+  1676→  1676→  const events: AnyRecord[] = eventsQ.data?.events || eventsQ.data?.items || eventsQ.data?.data || [];
+  1677→  1677→  const stats: AnyRecord = statsQ.data || {};
+  1678→  1678→  const buffer: AnyRecord = bufferQ.data || {};
+  1679→  1679→
+  1680→  1680→  const filteredEvents = useMemo(() => {
+  1681→  1681→    if (!search.trim()) return events;
+  1682→  1682→    const q = search.trim().toLowerCase();
+  1683→  1683→    return events.filter(
+  1684→  1684→      (e) =>
+  1685→  1685→        (e.dstDomain || "").toLowerCase().includes(q) ||
+  1686→  1686→        (e.subscriberIp || "").toLowerCase().includes(q)
+  1687→  1687→    );
+  1688→  1688→  }, [events, search]);
+  1689→  1689→
+  1690→  1690→  // Top 5 dst domains by bytes
+  1691→  1691→  const topDomains = useMemo(() => {
+  1692→  1692→    const map: Record<string, number> = {};
+  1693→  1693→    for (const e of events) {
+  1694→  1694→      const d = e.dstDomain || "—";
+  1695→  1695→      const b = (e.bytesSent || 0) + (e.bytesReceived || 0);
+  1696→  1696→      map[d] = (map[d] || 0) + b;
+  1697→  1697→    }
+  1698→  1698→    return Object.entries(map)
+  1699→  1699→      .sort((a, b) => b[1] - a[1])
+  1700→  1700→      .slice(0, 5);
+  1701→  1701→  }, [events]);
+  1702→  1702→  const maxBytes = topDomains.length > 0 ? topDomains[0][1] : 1;
+  1703→  1703→
+  1704→  1704→  return (
+  1705→  1705→    <div className="space-y-6">
+  1706→  1706→      <div className="flex flex-wrap items-center justify-between gap-3">
+  1707→  1707→        <div>
+  1708→  1708→          <h2 className="text-lg font-semibold flex items-center gap-2">
+  1709→  1709→            <Activity className="h-5 w-5 text-emerald-600" />
+  1710→  1710→            NAT Events
+  1711→  1711→          </h2>
+  1712→  1712→          <p className="text-sm text-muted-foreground mt-0.5">
+  1713→  1713→            Live NAT event stream from nat-logger (port 3016) — auto-refresh every 5s (§34).
+  1714→  1714→          </p>
+  1715→  1715→        </div>
+  1716→  1716→        <Button
+  1717→  1717→          size="sm"
+  1718→  1718→          variant="outline"
+  1719→  1719→          onClick={() => flushMut.mutate()}
+  1720→  1720→          disabled={flushMut.isPending}
+  1721→  1721→        >
+  1722→  1722→          <RefreshCw className={`h-4 w-4 mr-1.5 ${flushMut.isPending ? "animate-spin" : ""}`} />
+  1723→  1723→          {flushMut.isPending ? "Flushing…" : "Force Flush"}
+  1724→  1724→        </Button>
+  1725→  1725→      </div>
+  1726→  1726→
+  1727→  1727→      {/* Buffer status + stats */}
+  1728→  1728→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+  1729→  1729→        <StatCard
+  1730→  1730→          icon={Gauge}
+  1731→  1731→          label="Buffer Size"
+  1732→  1732→          value={buffer.size ?? buffer.bufferSize ?? 0}
+  1733→  1733→          color="text-amber-600"
+  1734→  1734→          loading={bufferQ.isLoading}
+  1735→  1735→          sub={`Capacity ${buffer.capacity ?? buffer.bufferCapacity ?? "?"}`}
+  1736→  1736→        />
+  1737→  1737→        <StatCard
+  1738→  1738→          icon={Clock}
+  1739→  1739→          label="Last Flush"
+  1740→  1740→          value={buffer.lastFlushAt ? formatTime(buffer.lastFlushAt) : "—"}
+  1741→  1741→          color="text-slate-600"
+  1742→  1742→          loading={bufferQ.isLoading}
+  1743→  1743→        />
+  1744→  1744→        <StatCard
+  1745→  1745→          icon={BarChart3}
+  1746→  1746→          label="Events (60m)"
+  1747→  1747→          value={stats.totalLast60Min ?? stats.eventsLast60Min ?? 0}
+  1748→  1748→          color="text-emerald-600"
+  1749→  1749→          loading={statsQ.isLoading}
+  1750→  1750→        />
+  1751→  1751→        <StatCard
+  1752→  1752→          icon={Activity}
+  1753→  1753→          label="Total Logged"
+  1754→  1754→          value={stats.totalEvents ?? stats.total ?? 0}
+  1755→  1755→          color="text-slate-600"
+  1756→  1756→          loading={statsQ.isLoading}
+  1757→  1757→        />
+  1758→  1758→      </div>
+  1759→  1759→
+  1760→  1760→      {/* Top domains bar chart */}
+  1761→  1761→      <Card>
+  1762→  1762→        <CardHeader>
+  1763→  1763→          <CardTitle className="flex items-center gap-2 text-base">
+  1764→  1764→            <BarChart3 className="h-5 w-5 text-slate-600" />
+  1765→  1765→            Top 5 Destination Domains
+  1766→  1766→          </CardTitle>
+  1767→  1767→          <CardDescription>By aggregated bytes from current event window</CardDescription>
+  1768→  1768→        </CardHeader>
+  1769→  1769→        <CardContent>
+  1770→  1770→          {topDomains.length === 0 ? (
+  1771→  1771→            <EmptyState
+  1772→  1772→              icon={BarChart3}
+  1773→  1773→              title="No domain data"
+  1774→  1774→              description="No NAT events yet — top domains will appear here once traffic flows."
+  1775→  1775→              size="sm"
+  1776→  1776→            />
+  1777→  1777→          ) : (
+  1778→  1778→            <div className="space-y-2">
+  1779→  1779→              {topDomains.map(([domain, bytes]) => (
+  1780→  1780→                <div key={domain} className="flex items-center gap-3">
+  1781→  1781→                  <div className="w-40 text-xs font-mono truncate shrink-0">{domain}</div>
+  1782→  1782→                  <div className="flex-1 h-5 bg-muted/60 dark:bg-muted/30 rounded overflow-hidden">
+  1783→  1783→                    <div
+  1784→  1784→                      className="h-full bg-emerald-500/70"
+  1785→  1785→                      style={{ width: `${Math.max(2, (bytes / maxBytes) * 100)}%` }}
+  1786→  1786→                    />
+  1787→  1787→                  </div>
+  1788→  1788→                  <div className="w-20 text-xs text-muted-foreground text-right">
+  1789→  1789→                    {formatBytes(bytes)}
+  1790→  1790→                  </div>
+  1791→  1791→                </div>
+  1792→  1792→              ))}
+  1793→  1793→            </div>
+  1794→  1794→          )}
+  1795→  1795→        </CardContent>
+  1796→  1796→      </Card>
+  1797→  1797→
+  1798→  1798→      {/* Events table */}
+  1799→  1799→      <Card>
+  1800→  1800→        <CardHeader>
+  1801→  1801→          <CardTitle className="text-base flex items-center justify-between gap-2">
+  1802→  1802→            <span className="flex items-center gap-2">
+  1803→  1803→              <Activity className="h-4 w-4 text-slate-600" />
+  1804→  1804→              Recent NAT Events
+  1805→  1805→              <Badge variant="secondary" className="ml-1">
+  1806→  1806→                {filteredEvents.length}
+  1807→  1807→              </Badge>
+  1808→  1808→            </span>
+  1809→  1809→            <Button
+  1810→  1810→              size="sm"
+  1811→  1811→              variant="ghost"
+  1812→  1812→              onClick={() => eventsQ.refetch()}
+  1813→  1813→            >
+  1814→  1814→              <RefreshCw className="h-3.5 w-3.5" />
+  1815→  1815→            </Button>
+  1816→  1816→          </CardTitle>
+  1817→  1817→        </CardHeader>
+  1818→  1818→        <CardContent>
+  1819→  1819→          <div className="mb-3">
+  1820→  1820→            <div className="relative">
+  1821→  1821→              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+  1822→  1822→              <Input
+  1823→  1823→                className="pl-8"
+  1824→  1824→                placeholder="Filter by dst domain or subscriber IP"
+  1825→  1825→                value={search}
+  1826→  1826→                onChange={(e) => setSearch(e.target.value)}
+  1827→  1827→              />
+  1828→  1828→            </div>
+  1829→  1829→          </div>
+  1830→  1830→
+  1831→  1831→          {eventsQ.error ? (
+  1832→  1832→            <ServiceUnavailable
+  1833→  1833→              message={(eventsQ.error as Error).message + " — nat-logger (port 3016) may not be running yet."}
+  1834→  1834→              onRetry={() => eventsQ.refetch()}
+  1835→  1835→            />
+  1836→  1836→          ) : eventsQ.isLoading ? (
+  1837→  1837→            <TableSkeleton rows={6} cols={7} />
+  1838→  1838→          ) : filteredEvents.length === 0 ? (
+  1839→  1839→            <EmptyState
+  1840→  1840→              icon={Activity}
+  1841→  1841→              title="No NAT events"
+  1842→  1842→              description="nat-logger is running but no events have been ingested yet. The VPP adapter will post events when NAT translation occurs."
+  1843→  1843→              size="sm"
+  1844→  1844→              action={{
+  1845→  1845→                label: "Refresh",
+  1846→  1846→                onClick: () => eventsQ.refetch(),
+  1847→  1847→                icon: RefreshCw,
+  1848→  1848→              }}
+  1849→  1849→            />
+  1850→  1850→          ) : (
+  1851→  1851→            <div className="rounded-md border max-h-[480px] overflow-y-auto cryptsk-scrollbar">
+  1852→  1852→              <Table>
+  1853→  1853→                <TableHeader className="sticky top-0 bg-card">
+  1854→  1854→                  <TableRow>
+  1855→  1855→                    <TableHead>Timestamp</TableHead>
+  1856→  1856→                    <TableHead>Subscriber IP</TableHead>
+  1857→  1857→                    <TableHead>Destination</TableHead>
+  1858→  1858→                    <TableHead>Country</TableHead>
+  1859→  1859→                    <TableHead>Proto</TableHead>
+  1860→  1860→                    <TableHead>Ports</TableHead>
+  1861→  1861→                    <TableHead>Bytes</TableHead>
+  1862→  1862→                    <TableHead>Action</TableHead>
+  1863→  1863→                  </TableRow>
+  1864→  1864→                </TableHeader>
+  1865→  1865→                <TableBody>
+  1866→  1866→                  {filteredEvents.slice(0, 200).map((e, i) => {
+  1867→  1867→                    const bytes = (e.bytesSent || 0) + (e.bytesReceived || 0);
+  1868→  1868→                    const natAct = e.natAction || e.action;
+  1869→  1869→                    return (
+  1870→  1870→                      <TableRow key={i}>
+  1871→  1871→                        <TableCell className="text-xs text-muted-foreground">
+  1872→  1872→                          {formatTime(e.timestamp || e.createdAt)}
+  1873→  1873→                        </TableCell>
+  1874→  1874→                        <TableCell className="font-mono text-xs">
+  1875→  1875→                          {e.subscriberIp || e.subscriberIpAddr || "—"}
+  1876→  1876→                        </TableCell>
+  1877→  1877→                        <TableCell className="font-mono text-xs">
+  1878→  1878→                          {e.dstDomain || e.destinationDomain || "—"}
+  1879→  1879→                        </TableCell>
+  1880→  1880→                        <TableCell className="text-xs">{e.dstCountry || "—"}</TableCell>
+  1881→  1881→                        <TableCell>
+  1882→  1882→                          <Badge variant="secondary">{e.protocol || "?"}</Badge>
+  1883→  1883→                        </TableCell>
+  1884→  1884→                        <TableCell className="font-mono text-xs">
+  1885→  1885→                          {e.srcPort || "?"} → {e.dstPort || "?"}
+  1886→  1886→                        </TableCell>
+  1887→  1887→                        <TableCell className="font-mono text-xs">
+  1888→  1888→                          {formatBytes(bytes)}
+  1889→  1889→                        </TableCell>
+  1890→  1890→                        <TableCell>
+  1891→  1891→                          <Badge
+  1892→  1892→                            variant="outline"
+  1893→  1893→                            className={
+  1894→  1894→                              (natAct || "").toUpperCase().includes("DENY") ||
+  1895→  1895→                              (natAct || "").toUpperCase().includes("DROP")
+  1896→  1896→                                ? "bg-red-100 text-red-800 border-red-200"
+  1897→  1897→                                : "bg-emerald-100 text-emerald-800 border-emerald-200"
+  1898→  1898→                            }
+  1899→  1899→                          >
+  1900→  1900→                            {natAct || "TRANSLATE"}
+  1901→  1901→                          </Badge>
+  1902→  1902→                        </TableCell>
+  1903→  1903→                      </TableRow>
+  1904→  1904→                    );
+  1905→  1905→                  })}
+  1906→  1906→                </TableBody>
+  1907→  1907→              </Table>
+  1908→  1908→            </div>
+  1909→  1909→          )}
+  1910→  1910→        </CardContent>
+  1911→  1911→      </Card>
+  1912→  1912→    </div>
+  1913→  1913→  );
+  1914→  1914→}
+  1915→  1915→
+  1916→  1916→// ─────────────────────────────────────────────────────────────────
+  1917→  1917→// TAB 5: DPI CLASSIFICATIONS
+  1918→  1918→// ─────────────────────────────────────────────────────────────────
+  1919→  1919→function DpiTab() {
+  1920→  1920→  const [riskFilter, setRiskFilter] = useState("ALL");
+  1921→  1921→  const [appFilter, setAppFilter] = useState("");
+  1922→  1922→  const [categoryFilter, setCategoryFilter] = useState("");
+  1923→  1923→
+  1924→  1924→  const dpiQ = useQuery({
+  1925→  1925→    queryKey: ["vpp-dpi", riskFilter, appFilter, categoryFilter],
+  1926→  1926→    queryFn: async () => {
+  1927→  1927→      const params = new URLSearchParams();
+  1928→  1928→      if (riskFilter !== "ALL") params.set("riskLevel", riskFilter);
+  1929→  1929→      if (appFilter) params.set("appName", appFilter);
+  1930→  1930→      if (categoryFilter) params.set("appCategory", categoryFilter);
+  1931→  1931→      const res = await fetch(`/api/vpp?action=dpi-classifications&${params.toString()}`);
+  1932→  1932→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  1933→  1933→      return res.json();
+  1934→  1934→    },
+  1935→  1935→    refetchInterval: 10000,
+  1936→  1936→    retry: 1,
+  1937→  1937→  });
+  1938→  1938→
+  1939→  1939→  const classifications: AnyRecord[] =
+  1940→  1940→    dpiQ.data?.classifications || dpiQ.data?.items || dpiQ.data?.data || [];
+  1941→  1941→
+  1942→  1942→  return (
+  1943→  1943→    <div className="space-y-6">
+  1944→  1944→      <div>
+  1945→  1945→        <h2 className="text-lg font-semibold flex items-center gap-2">
+  1946→  1946→          <CpuIcon className="h-5 w-5 text-emerald-600" />
+  1947→  1947→          DPI Classifications
+  1948→  1948→        </h2>
+  1949→  1949→        <p className="text-sm text-muted-foreground mt-0.5">
+  1950→  1950→          Application classification from nDPI / DPI engine — auto-refresh every 10s (§35).
+  1951→  1951→        </p>
+  1952→  1952→      </div>
+  1953→  1953→
+  1954→  1954→      <Card>
+  1955→  1955→        <CardHeader>
+  1956→  1956→          <CardTitle className="text-base flex items-center justify-between gap-2">
+  1957→  1957→            <span className="flex items-center gap-2">
+  1958→  1958→              <CpuIcon className="h-4 w-4 text-slate-600" />
+  1959→  1959→              Classifications ({classifications.length})
+  1960→  1960→            </span>
+  1961→  1961→            <Button
+  1962→  1962→              size="sm"
+  1963→  1963→              variant="ghost"
+  1964→  1964→              onClick={() => dpiQ.refetch()}
+  1965→  1965→            >
+  1966→  1966→              <RefreshCw className="h-3.5 w-3.5" />
+  1967→  1967→            </Button>
+  1968→  1968→          </CardTitle>
+  1969→  1969→        </CardHeader>
+  1970→  1970→        <CardContent>
+  1971→  1971→          {/* Filters */}
+  1972→  1972→          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+  1973→  1973→            <div>
+  1974→  1974→              <Label className="mb-1.5 block">Risk Level</Label>
+  1975→  1975→              <Select value={riskFilter} onValueChange={setRiskFilter}>
+  1976→  1976→                <SelectTrigger className="w-full">
+  1977→  1977→                  <SelectValue placeholder="All" />
+  1978→  1978→                </SelectTrigger>
+  1979→  1979→                <SelectContent>
+  1980→  1980→                  <SelectItem value="ALL">All</SelectItem>
+  1981→  1981→                  <SelectItem value="LOW">LOW</SelectItem>
+  1982→  1982→                  <SelectItem value="MEDIUM">MEDIUM</SelectItem>
+  1983→  1983→                  <SelectItem value="HIGH">HIGH</SelectItem>
+  1984→  1984→                  <SelectItem value="CRITICAL">CRITICAL</SelectItem>
+  1985→  1985→                </SelectContent>
+  1986→  1986→              </Select>
+  1987→  1987→            </div>
+  1988→  1988→            <div>
+  1989→  1989→              <Label className="mb-1.5 block">App Name</Label>
+  1990→  1990→              <Input
+  1991→  1991→                placeholder="e.g. YouTube"
+  1992→  1992→                value={appFilter}
+  1993→  1993→                onChange={(e) => setAppFilter(e.target.value)}
+  1994→  1994→              />
+  1995→  1995→            </div>
+  1996→  1996→            <div>
+  1997→  1997→              <Label className="mb-1.5 block">Category</Label>
+  1998→  1998→              <Input
+  1999→  1999→                placeholder="e.g. Streaming"
+  2000→  2000→                value={categoryFilter}
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]

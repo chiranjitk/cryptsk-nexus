@@ -1,0 +1,1045 @@
+     1→// ============================================================
+     2→// CRYPTSK Nexus — GoVPP Adapter — VPP Binary API Client
+     3→// Per: docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md §28
+     4→//
+     5→// Uses VPP Binary API ONLY (NEVER vppctl — ADR-008 hard boundary)
+     6→// Connects to VPP via GoVPP library (git.fd.io/govpp.git v0.5.0)
+     7→// ============================================================
+     8→
+     9→package main
+    10→
+    11→import (
+    12→        "fmt"
+    13→        "log"
+    14→        "net"
+    15→        "strconv"
+    16→        "strings"
+    17→        "sync"
+    18→        "time"
+    19→
+    20→        govpp "git.fd.io/govpp.git"
+    21→        "git.fd.io/govpp.git/api"
+    22→        core "git.fd.io/govpp.git/core"
+    23→        "git.fd.io/govpp.git/binapi/acl"
+    24→        acl_types "git.fd.io/govpp.git/binapi/acl_types"
+    25→        "git.fd.io/govpp.git/binapi/classify"
+    26→        interfaces "git.fd.io/govpp.git/binapi/interface"
+    27→        interface_types "git.fd.io/govpp.git/binapi/interface_types"
+    28→        ip_binapi "git.fd.io/govpp.git/binapi/ip"
+    29→        ip_types "git.fd.io/govpp.git/binapi/ip_types"
+    30→        "git.fd.io/govpp.git/binapi/nat44_ed"
+    31→        nat_types "git.fd.io/govpp.git/binapi/nat_types"
+    32→        "git.fd.io/govpp.git/binapi/policer"
+    33→        policer_types "git.fd.io/govpp.git/binapi/policer_types"
+    34→        "git.fd.io/govpp.git/binapi/pppoe"
+    35→        "github.com/google/uuid"
+    36→)
+    37→
+    38→// ─── IP Helper Functions ─────────────────────────────────────
+    39→
+    40→// parseIPWithPrefix parses "10.10.10.1/24" into (net.IP, prefixLen, error).
+    41→// Used for fallback handling when ip_types.ParseAddressWithPrefix is not viable.
+    42→func parseIPWithPrefix(ipWithPrefix string) (net.IP, uint8, error) {
+    43→        parts := strings.Split(ipWithPrefix, "/")
+    44→        if len(parts) != 2 {
+    45→                return nil, 0, fmt.Errorf("invalid IP/prefix: %s", ipWithPrefix)
+    46→        }
+    47→        ipAddr, err := parseIP(parts[0])
+    48→        if err != nil {
+    49→                return nil, 0, err
+    50→        }
+    51→        prefixLen, err := strconv.Atoi(parts[1])
+    52→        if err != nil {
+    53→                return nil, 0, fmt.Errorf("invalid prefix: %s", parts[1])
+    54→        }
+    55→        return ipAddr, uint8(prefixLen), nil
+    56→}
+    57→
+    58→// parseIP parses a single IPv4/IPv6 address string.
+    59→func parseIP(ipStr string) (net.IP, error) {
+    60→        ipAddr := net.ParseIP(ipStr)
+    61→        if ipAddr == nil {
+    62→                return nil, fmt.Errorf("invalid IP: %s", ipStr)
+    63→        }
+    64→        return ipAddr, nil
+    65→}
+    66→
+    67→// ─── Client ──────────────────────────────────────────────────
+    68→
+    69→type VPPLiveClient struct {
+    70→        mu        sync.Mutex
+    71→        conn      *core.Connection
+    72→        ch        api.Channel
+    73→        connected bool
+    74→        startTime time.Time
+    75→
+    76→        // In-memory subscriber state: subscriberIP → policer metadata
+    77→        // Used by ChangeSubscriberBandwidth / DisconnectSubscriber
+    78→        subscriberPolicers sync.Map // map[string]*subscriberPolicerEntry
+    79→}
+    80→
+    81→type subscriberPolicerEntry struct {
+    82→        SubscriberIP  string
+    83→        PolicerName   string
+    84→        PolicerIndex  uint32
+    85→        DownloadKbps  uint64
+    86→        UploadKbps    uint64
+    87→        ExternalIP    string
+    88→        CreatedAt     time.Time
+    89→}
+    90→
+    91→func NewVPPLiveClient() *VPPLiveClient {
+    92→        return &VPPLiveClient{startTime: time.Now()}
+    93→}
+    94→
+    95→func (c *VPPLiveClient) Connect() error {
+    96→        c.mu.Lock()
+    97→        defer c.mu.Unlock()
+    98→
+    99→        conn, err := govpp.Connect(VPPAPISock)
+   100→        if err != nil {
+   101→                return fmt.Errorf("failed to connect to VPP at %s: %w", VPPAPISock, err)
+   102→        }
+   103→
+   104→        ch, err := conn.NewAPIChannel()
+   105→        if err != nil {
+   106→                conn.Disconnect()
+   107→                return fmt.Errorf("failed to create API channel: %w", err)
+   108→        }
+   109→
+   110→        // Set reply timeout to 5 seconds
+   111→        ch.SetReplyTimeout(5 * time.Second)
+   112→
+   113→        c.conn = conn
+   114→        c.ch = ch
+   115→        c.connected = true
+   116→        log.Printf("[vpp] Connected to VPP binary API at %s", VPPAPISock)
+   117→        return nil
+   118→}
+   119→
+   120→func (c *VPPLiveClient) Disconnect() {
+   121→        c.mu.Lock()
+   122→        defer c.mu.Unlock()
+   123→        if c.ch != nil {
+   124→                c.ch.Close()
+   125→        }
+   126→        if c.conn != nil {
+   127→                c.conn.Disconnect()
+   128→        }
+   129→        c.connected = false
+   130→        log.Println("[vpp] Disconnected from VPP binary API")
+   131→}
+   132→
+   133→func (c *VPPLiveClient) IsConnected() bool {
+   134→        c.mu.Lock()
+   135→        defer c.mu.Unlock()
+   136→        return c.connected
+   137→}
+   138→
+   139→// ─── Interface Management ────────────────────────────────────
+   140→
+   141→// GetInterfaceList returns all VPP interfaces via sw_interface_dump (binary API)
+   142→func (c *VPPLiveClient) GetInterfaceList() ([]VPPInterface, error) {
+   143→        if !c.IsConnected() {
+   144→                return nil, fmt.Errorf("VPP not connected")
+   145→        }
+   146→
+   147→        // sw_interface_dump is a multi-reply request
+   148→        req := &interfaces.SwInterfaceDump{
+   149→                SwIfIndex:       interface_types.InterfaceIndex(0xFFFFFFFF), // all interfaces
+   150→                NameFilterValid: false,
+   151→        }
+   152→
+   153→        multiCtx := c.ch.SendMultiRequest(req)
+   154→
+   155→        var ifaces []VPPInterface
+   156→        for {
+   157→                details := &interfaces.SwInterfaceDetails{}
+   158→                lastReply, err := multiCtx.ReceiveReply(details)
+   159→                if err != nil {
+   160→                        return ifaces, fmt.Errorf("sw_interface_dump failed: %w", err)
+   161→                }
+   162→                if lastReply {
+   163→                        break
+   164→                }
+   165→
+   166→                // Build VPPInterface from details
+   167→                iface := VPPInterface{
+   168→                        Index:      uint32(details.SwIfIndex),
+   169→                        Name:       string(details.InterfaceName[:]), // fixed-size array → string
+   170→                        State:      "down",
+   171→                        MacAddress: fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+   172→                                details.L2Address[0], details.L2Address[1], details.L2Address[2],
+   173→                                details.L2Address[3], details.L2Address[4], details.L2Address[5]),
+   174→                }
+   175→                if details.Flags&interface_types.IF_STATUS_API_FLAG_ADMIN_UP != 0 {
+   176→                        iface.State = "up"
+   177→                }
+   178→                ifaces = append(ifaces, iface)
+   179→        }
+   180→
+   181→        log.Printf("[vpp] GetInterfaceList: %d interfaces", len(ifaces))
+   182→        return ifaces, nil
+   183→}
+   184→
+   185→// SetInterfaceState brings a VPP interface up or down via sw_interface_set_flags
+   186→func (c *VPPLiveClient) SetInterfaceState(swIfIndex uint32, up bool) error {
+   187→        if !c.IsConnected() {
+   188→                return fmt.Errorf("VPP not connected")
+   189→        }
+   190→
+   191→        var flags interface_types.IfStatusFlags
+   192→        if up {
+   193→                flags = interface_types.IF_STATUS_API_FLAG_ADMIN_UP // = 1
+   194→        }
+   195→
+   196→        req := &interfaces.SwInterfaceSetFlags{
+   197→                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+   198→                Flags:     flags,
+   199→        }
+   200→        reply := &interfaces.SwInterfaceSetFlagsReply{}
+   201→
+   202→        err := c.ch.SendRequest(req).ReceiveReply(reply)
+   203→        if err != nil {
+   204→                return fmt.Errorf("sw_interface_set_flags failed: %w", err)
+   205→        }
+   206→
+   207→        stateStr := "down"
+   208→        if up {
+   209→                stateStr = "up"
+   210→        }
+   211→        log.Printf("[vpp] Set interface %d state %s (via binary API)", swIfIndex, stateStr)
+   212→        return nil
+   213→}
+   214→
+   215→// SetInterfaceIP assigns an IP address to a VPP interface via sw_interface_add_del_address
+   216→func (c *VPPLiveClient) SetInterfaceIP(swIfIndex uint32, ipWithPrefix string) error {
+   217→        if !c.IsConnected() {
+   218→                return fmt.Errorf("VPP not connected")
+   219→        }
+   220→
+   221→        // Parse "10.10.10.1/24" into AddressWithPrefix
+   222→        addr, err := ip_types.ParseAddressWithPrefix(ipWithPrefix)
+   223→        if err != nil {
+   224→                return fmt.Errorf("invalid IP/prefix '%s': %w", ipWithPrefix, err)
+   225→        }
+   226→
+   227→        req := &interfaces.SwInterfaceAddDelAddress{
+   228→                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+   229→                IsAdd:     true, // add address
+   230→                Prefix:    ip_types.AddressWithPrefix(addr),
+   231→        }
+   232→        reply := &interfaces.SwInterfaceAddDelAddressReply{}
+   233→
+   234→        err = c.ch.SendRequest(req).ReceiveReply(reply)
+   235→        if err != nil {
+   236→                return fmt.Errorf("sw_interface_add_del_address failed: %w", err)
+   237→        }
+   238→
+   239→        log.Printf("[vpp] Set interface %d IP %s (via binary API)", swIfIndex, ipWithPrefix)
+   240→        return nil
+   241→}
+   242→
+   243→// CreateInterface creates a loopback interface via create_loopback
+   244→func (c *VPPLiveClient) CreateInterface(name string, mtu uint32) (uint32, error) {
+   245→        if !c.IsConnected() {
+   246→                return 0, fmt.Errorf("VPP not connected")
+   247→        }
+   248→
+   249→        // CreateLoopback only has MacAddress field in GoVPP v0.5.0 (no MTU)
+   250→        req := &interfaces.CreateLoopback{}
+   251→        reply := &interfaces.CreateLoopbackReply{}
+   252→
+   253→        err := c.ch.SendRequest(req).ReceiveReply(reply)
+   254→        if err != nil {
+   255→                return 0, fmt.Errorf("create_loopback failed: %w", err)
+   256→        }
+   257→
+   258→        log.Printf("[vpp] Created loopback interface (swIfIndex=%d) via binary API", reply.SwIfIndex)
+   259→        return uint32(reply.SwIfIndex), nil
+   260→}
+   261→
+   262→// ─── VRF Management ─────────────────────────────────────────
+   263→
+   264→// CreateVRF creates an IP table (VRF) via ip_table_add_del
+   265→func (c *VPPLiveClient) CreateVRF(tableID uint32) error {
+   266→        if !c.IsConnected() {
+   267→                return fmt.Errorf("VPP not connected")
+   268→        }
+   269→        // ip_table_add_del: creates an IPv4 table (IsIP6=false) with the given TableID
+   270→        name := fmt.Sprintf("vrf-%d", tableID)
+   271→        req := &ip_binapi.IPTableAddDel{
+   272→                IsAdd: true,
+   273→                Table: ip_binapi.IPTable{
+   274→                        TableID: tableID,
+   275→                        IsIP6:   false, // IPv4 VRF
+   276→                        Name:    name,
+   277→                },
+   278→        }
+   279→        reply := &ip_binapi.IPTableAddDelReply{}
+   280→
+   281→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   282→                return fmt.Errorf("ip_table_add_del failed: %w", err)
+   283→        }
+   284→        if reply.Retval != 0 {
+   285→                return fmt.Errorf("ip_table_add_del returned non-zero retval=%d", reply.Retval)
+   286→        }
+   287→        log.Printf("[vpp] Created VRF table_id=%d (name=%s) via binary API", tableID, name)
+   288→        return nil
+   289→}
+   290→
+   291→// ─── ACL Management ────────────────────────────────────────
+   292→
+   293→// CreateACL creates an ACL via acl_add_replace. Returns aclIndex.
+   294→// rules: list of ACLRule (SrcIP, DstIP, SrcPort, DstPort, Proto, Action).
+   295→func (c *VPPLiveClient) CreateACL(name string, rules []ACLRule) (uint32, error) {
+   296→        if !c.IsConnected() {
+   297→                return 0, fmt.Errorf("VPP not connected")
+   298→        }
+   299→
+   300→        // Convert ACLRule → acl_types.ACLRule
+   301→        binRules := make([]acl_types.ACLRule, 0, len(rules))
+   302→        for i, r := range rules {
+   303→                binRule, err := convertACLRule(r)
+   304→                if err != nil {
+   305→                        return 0, fmt.Errorf("rule %d invalid: %w", i, err)
+   306→                }
+   307→                binRules = append(binRules, binRule)
+   308→        }
+   309→
+   310→        // acl_add_replace with acl_index=0xFFFFFFFF → create new ACL
+   311→        req := &acl.ACLAddReplace{
+   312→                ACLIndex: 0xFFFFFFFF, // 0xFFFFFFFF = create new (auto-assign index)
+   313→                Tag:      name,
+   314→                R:        binRules,
+   315→        }
+   316→        reply := &acl.ACLAddReplaceReply{}
+   317→
+   318→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   319→                return 0, fmt.Errorf("acl_add_replace failed: %w", err)
+   320→        }
+   321→        if reply.Retval != 0 {
+   322→                return 0, fmt.Errorf("acl_add_replace returned non-zero retval=%d", reply.Retval)
+   323→        }
+   324→
+   325→        log.Printf("[vpp] Created ACL %s (aclIndex=%d, rules=%d) via binary API", name, reply.ACLIndex, len(rules))
+   326→        return reply.ACLIndex, nil
+   327→}
+   328→
+   329→// convertACLRule converts an HTTP API ACLRule to a GoVPP acl_types.ACLRule.
+   330→// Action: "permit" or "deny" (default "deny"). Ports can be "80" or "8080-9000".
+   331→func convertACLRule(r ACLRule) (acl_types.ACLRule, error) {
+   332→        // Action
+   333→        var action acl_types.ACLAction
+   334→        switch strings.ToLower(r.Action) {
+   335→        case "permit", "allow":
+   336→                action = acl_types.ACL_ACTION_API_PERMIT
+   337→        case "permit_reflect":
+   338→                action = acl_types.ACL_ACTION_API_PERMIT_REFLECT
+   339→        case "deny", "drop", "block", "":
+   340→                action = acl_types.ACL_ACTION_API_DENY
+   341→        default:
+   342→                return acl_types.ACLRule{}, fmt.Errorf("invalid action '%s'", r.Action)
+   343→        }
+   344→
+   345→        // Src prefix
+   346→        srcPrefix, err := parsePrefixOrDefault(r.SrcIP, "0.0.0.0/0")
+   347→        if err != nil {
+   348→                return acl_types.ACLRule{}, fmt.Errorf("invalid src IP: %w", err)
+   349→        }
+   350→        // Dst prefix
+   351→        dstPrefix, err := parsePrefixOrDefault(r.DstIP, "0.0.0.0/0")
+   352→        if err != nil {
+   353→                return acl_types.ACLRule{}, fmt.Errorf("invalid dst IP: %w", err)
+   354→        }
+   355→
+   356→        // Proto
+   357→        var proto ip_types.IPProto = ip_types.IP_API_PROTO_RESERVED // 255 = any
+   358→        switch strings.ToLower(r.Proto) {
+   359→        case "tcp":
+   360→                proto = ip_types.IP_API_PROTO_TCP
+   361→        case "udp":
+   362→                proto = ip_types.IP_API_PROTO_UDP
+   363→        case "icmp":
+   364→                proto = ip_types.IP_API_PROTO_ICMP
+   365→        case "", "any", "ip":
+   366→                // leave as RESERVED (any)
+   367→        }
+   368→
+   369→        // Ports (parse "80" → first=last=80; "8080-9000" → first=8080,last=9000)
+   370→        srcFirst, srcLast, _ := parsePortRange(r.SrcPort)
+   371→        dstFirst, dstLast, _ := parsePortRange(r.DstPort)
+   372→
+   373→        return acl_types.ACLRule{
+   374→                IsPermit:               action,
+   375→                SrcPrefix:              srcPrefix,
+   376→                DstPrefix:              dstPrefix,
+   377→                Proto:                  proto,
+   378→                SrcportOrIcmptypeFirst: srcFirst,
+   379→                SrcportOrIcmptypeLast:  srcLast,
+   380→                DstportOrIcmpcodeFirst: dstFirst,
+   381→                DstportOrIcmpcodeLast:  dstLast,
+   382→                TCPFlagsMask:           0,
+   383→                TCPFlagsValue:          0,
+   384→        }, nil
+   385→}
+   386→
+   387→// parsePrefixOrDefault parses "10.0.0.0/24" or returns default if input is empty.
+   388→func parsePrefixOrDefault(ipStr, defaultStr string) (ip_types.Prefix, error) {
+   389→        if ipStr == "" {
+   390→                ipStr = defaultStr
+   391→        }
+   392→        return ip_types.ParsePrefix(ipStr)
+   393→}
+   394→
+   395→// parsePortRange parses "80" → (80, 80) or "8080-9000" → (8080, 9000).
+   396→// Returns (0, 0, false) if input is empty.
+   397→func parsePortRange(portStr string) (first, last uint16, ok bool) {
+   398→        portStr = strings.TrimSpace(portStr)
+   399→        if portStr == "" {
+   400→                return 0, 0, false
+   401→        }
+   402→        if strings.Contains(portStr, "-") {
+   403→                parts := strings.SplitN(portStr, "-", 2)
+   404→                f, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+   405→                l, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+   406→                if err1 != nil || err2 != nil || f < 0 || f > 65535 || l < 0 || l > 65535 || f > l {
+   407→                        return 0, 0, false
+   408→                }
+   409→                return uint16(f), uint16(l), true
+   410→        }
+   411→        p, err := strconv.Atoi(portStr)
+   412→        if err != nil || p < 0 || p > 65535 {
+   413→                return 0, 0, false
+   414→        }
+   415→        return uint16(p), uint16(p), true
+   416→}
+   417→
+   418→// ApplyACLToInterface binds an ACL to an interface via acl_interface_set_acl_list.
+   419→func (c *VPPLiveClient) ApplyACLToInterface(swIfIndex uint32, aclIndex uint32) error {
+   420→        if !c.IsConnected() {
+   421→                return fmt.Errorf("VPP not connected")
+   422→        }
+   423→        req := &acl.ACLInterfaceSetACLList{
+   424→                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+   425→                Count:     1,
+   426→                NInput:    0, // apply to all (input + output)
+   427→                Acls:      []uint32{aclIndex},
+   428→        }
+   429→        reply := &acl.ACLInterfaceSetACLListReply{}
+   430→
+   431→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   432→                return fmt.Errorf("acl_interface_set_acl_list failed: %w", err)
+   433→        }
+   434→        if reply.Retval != 0 {
+   435→                return fmt.Errorf("acl_interface_set_acl_list returned non-zero retval=%d", reply.Retval)
+   436→        }
+   437→        log.Printf("[vpp] Applied ACL %d to interface %d via binary API", aclIndex, swIfIndex)
+   438→        return nil
+   439→}
+   440→
+   441→// ─── QoS / Policer Management ───────────────────────────────
+   442→
+   443→// CreatePolicer creates a VPP policer via policer_add_del.
+   444→// cirBps/eirBps are in bits/sec; we convert to kbps (rate_type=KBPS).
+   445→// Returns policerIndex.
+   446→//
+   447→// NOTE on 1R2C validation: VPP rejects 1R2C policers with Eb > 0
+   448→// ("Policer parameter validation failed -- 1R2C / Unable to compute hw param").
+   449→// For 1R2C: Eir=0, Eb=0 (no excess bucket). Use 1R3C_RFC_2697 if you need Eb > 0.
+   450→func (c *VPPLiveClient) CreatePolicer(name string, cirBps, eirBps uint64) (uint32, error) {
+   451→        if !c.IsConnected() {
+   452→                return 0, fmt.Errorf("VPP not connected")
+   453→        }
+   454→
+   455→        // Convert bits/sec → kbps (rate_type = SSE2_QOS_RATE_API_KBPS)
+   456→        cirKbps := uint32(cirBps / 1000)
+   457→        if cirKbps == 0 {
+   458→                cirKbps = 1 // avoid zero rate
+   459→        }
+   460→
+   461→        // For 1R2C: only committed bucket matters. Cb = 1 second of cir in bytes.
+   462→        // (Cb is in bytes for KBPS rate type per VPP convention)
+   463→        cb := uint64(cirKbps) * 1000 // 1s burst in bytes
+   464→        if cb == 0 {
+   465→                cb = 4000 // fallback: 4KB burst
+   466→        }
+   467→
+   468→        req := &policer.PolicerAddDel{
+   469→                IsAdd:      true,
+   470→                Name:       name,
+   471→                Cir:        cirKbps,
+   472→                Eir:        0, // 1R2C: no excess rate
+   473→                Cb:         cb,
+   474→                Eb:         0, // 1R2C: no excess burst (VPP validation requires this)
+   475→                RateType:   policer_types.SSE2_QOS_RATE_API_KBPS,
+   476→                RoundType:  policer_types.SSE2_QOS_ROUND_API_TO_CLOSEST,
+   477→                Type:       policer_types.SSE2_QOS_POLICER_TYPE_API_1R2C,
+   478→                ColorAware: false,
+   479→                ConformAction: policer_types.Sse2QosAction{
+   480→                        Type: policer_types.SSE2_QOS_ACTION_API_TRANSMIT,
+   481→                },
+   482→                ExceedAction: policer_types.Sse2QosAction{
+   483→                        Type: policer_types.SSE2_QOS_ACTION_API_DROP,
+   484→                },
+   485→                ViolateAction: policer_types.Sse2QosAction{
+   486→                        Type: policer_types.SSE2_QOS_ACTION_API_DROP,
+   487→                },
+   488→        }
+   489→        reply := &policer.PolicerAddDelReply{}
+   490→
+   491→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   492→                return 0, fmt.Errorf("policer_add_del failed: %w", err)
+   493→        }
+   494→        if reply.PolicerIndex == 0xFFFFFFFF {
+   495→                return 0, fmt.Errorf("policer_add_del returned invalid index 0xFFFFFFFF (likely failure)")
+   496→        }
+   497→        log.Printf("[vpp] Created policer %s (index=%d, cir=%d kbps) via binapi",
+   498→                name, reply.PolicerIndex, cirKbps)
+   499→        return reply.PolicerIndex, nil
+   500→}
+   501→
+   502→// ApplyPolicerToInterface binds a policer to an interface so that every
+   503→// packet on that interface is policed. VPP uses classify tables for this:
+   504→//   1. Create a classify table whose Mask is all-zero (matches everything
+   505→//      in the masked-key space → every packet produces the same key, 0).
+   506→//   2. Add a ClassifyAddDelSession with HitNextIndex = policerIndex. When
+   507→//      a packet matches (which it always will, because the masked key is 0
+   508→//      and the session Match is 0), VPP redirects to the policer_classify
+   509→//      graph node and applies the policer at that index.
+   510→//   3. Bind the classify table to the interface via policer_classify_set_interface
+   511→//      so the IP4 input feature invokes the table for every IP4 packet.
+   512→//
+   513→// If any step fails the function returns an error — callers should treat it
+   514→// as non-fatal (the policer still exists in VPP's pool, it just isn't
+   515→// attached to a traffic flow).
+   516→func (c *VPPLiveClient) ApplyPolicerToInterface(swIfIndex uint32, policerIndex uint32) error {
+   517→        if !c.IsConnected() {
+   518→                return fmt.Errorf("VPP not connected")
+   519→        }
+   520→
+   521→        // Step 1: create a wildcard classify table for IP4 input.
+   522→        // Mask = all zeros (16 bytes) → masked-key is 0 for every packet →
+   523→        // any session with Match=zeros hits every packet.
+   524→        // MatchNVectors=1 → examine first 16 bytes (IP4 src + dst + proto + ports).
+   525→        tableReq := &classify.ClassifyAddDelTable{
+   526→                IsAdd:         true,
+   527→                TableIndex:    0xFFFFFFFF, // auto-assign
+   528→                Nbuckets:      2,
+   529→                MemorySize:    1048576, // 1MB
+   530→                SkipNVectors:  0,
+   531→                MatchNVectors: 1, // match on first 16 bytes (IP4 src+dst+proto+ports)
+   532→                NextTableIndex: 0xFFFFFFFF,
+   533→                MissNextIndex:  0xFFFFFFFF,
+   534→                MaskLen:        16,
+   535→                Mask: []byte{
+   536→                        0x00, 0x00, 0x00, 0x00,
+   537→                        0x00, 0x00, 0x00, 0x00,
+   538→                        0x00, 0x00, 0x00, 0x00,
+   539→                        0x00, 0x00, 0x00, 0x00,
+   540→                },
+   541→        }
+   542→        tableReply := &classify.ClassifyAddDelTableReply{}
+   543→        if err := c.ch.SendRequest(tableReq).ReceiveReply(tableReply); err != nil {
+   544→                return fmt.Errorf("classify_add_del_table failed: %w", err)
+   545→        }
+   546→        if tableReply.Retval != 0 {
+   547→                return fmt.Errorf("classify_add_del_table retval=%d", tableReply.Retval)
+   548→        }
+   549→        tableIndex := tableReply.NewTableIndex
+   550→
+   551→        // Step 2: add a wildcard classify session that hits the policer.
+   552→        // HitNextIndex = policerIndex: VPP's policer_classify graph node uses
+   553→        // this to look up the actual policer in the pool and apply it.
+   554→        // Match = all zeros → matches every packet given the all-zero table mask.
+   555→        // Action = SET_METADATA (lowest-impact action; the metadata field is
+   556→        // unused here — the policer itself is the real action).
+   557→        sessionReq := &classify.ClassifyAddDelSession{
+   558→                IsAdd:        true,
+   559→                TableIndex:   tableIndex,
+   560→                HitNextIndex: policerIndex, // <-- the key wiring to the policer
+   561→                OpaqueIndex:  0xFFFFFFFF,  // ~0 = unused
+   562→                Advance:      0,
+   563→                Action:       classify.CLASSIFY_API_ACTION_SET_METADATA,
+   564→                Metadata:     0,
+   565→                MatchLen:     16,
+   566→                Match: []byte{
+   567→                        0x00, 0x00, 0x00, 0x00,
+   568→                        0x00, 0x00, 0x00, 0x00,
+   569→                        0x00, 0x00, 0x00, 0x00,
+   570→                        0x00, 0x00, 0x00, 0x00,
+   571→                },
+   572→        }
+   573→        sessionReply := &classify.ClassifyAddDelSessionReply{}
+   574→        if err := c.ch.SendRequest(sessionReq).ReceiveReply(sessionReply); err != nil {
+   575→                return fmt.Errorf("classify_add_del_session failed: %w", err)
+   576→        }
+   577→        if sessionReply.Retval != 0 {
+   578→                return fmt.Errorf("classify_add_del_session retval=%d", sessionReply.Retval)
+   579→        }
+   580→
+   581→        // Step 3: bind the classify table to the interface as the IP4 policer-classify
+   582→        // table. This makes the IP4 input feature invoke our table for every IP4
+   583→        // packet on this interface.
+   584→        bindReq := &classify.PolicerClassifySetInterface{
+   585→                SwIfIndex:     interface_types.InterfaceIndex(swIfIndex),
+   586→                IP4TableIndex: tableIndex,
+   587→                IP6TableIndex: 0xFFFFFFFF, // not used
+   588→                L2TableIndex:  0xFFFFFFFF, // not used
+   589→                IsAdd:         true,
+   590→        }
+   591→        bindReply := &classify.PolicerClassifySetInterfaceReply{}
+   592→        if err := c.ch.SendRequest(bindReq).ReceiveReply(bindReply); err != nil {
+   593→                return fmt.Errorf("policer_classify_set_interface failed: %w", err)
+   594→        }
+   595→        if bindReply.Retval != 0 {
+   596→                return fmt.Errorf("policer_classify_set_interface retval=%d", bindReply.Retval)
+   597→        }
+   598→
+   599→        log.Printf("[vpp] Applied policer %d to interface %d via classify table %d + wildcard session (hit_next=%d) via binapi",
+   600→                policerIndex, swIfIndex, tableIndex, policerIndex)
+   601→        return nil
+   602→}
+   603→
+   604→// ─── NAT Management ────────────────────────────────────────
+   605→
+   606→// AddNatAddress adds an IP address range to the NAT44 pool.
+   607→// Uses nat44_add_del_address_range.
+   608→func (c *VPPLiveClient) AddNatAddress(startIP, endIP string) error {
+   609→        if !c.IsConnected() {
+   610→                return fmt.Errorf("VPP not connected")
+   611→        }
+   612→        firstIP, err := ip_types.ParseIP4Address(startIP)
+   613→        if err != nil {
+   614→                return fmt.Errorf("invalid start IP '%s': %w", startIP, err)
+   615→        }
+   616→        lastIP, err := ip_types.ParseIP4Address(endIP)
+   617→        if err != nil {
+   618→                return fmt.Errorf("invalid end IP '%s': %w", endIP, err)
+   619→        }
+   620→
+   621→        req := &nat44_ed.Nat44AddDelAddressRange{
+   622→                FirstIPAddress: firstIP,
+   623→                LastIPAddress:  lastIP,
+   624→                VrfID:          0, // default VRF
+   625→                IsAdd:          true,
+   626→                Flags:          0,
+   627→        }
+   628→        reply := &nat44_ed.Nat44AddDelAddressRangeReply{}
+   629→
+   630→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   631→                return fmt.Errorf("nat44_add_del_address_range failed: %w", err)
+   632→        }
+   633→        if reply.Retval != 0 {
+   634→                return fmt.Errorf("nat44_add_del_address_range retval=%d", reply.Retval)
+   635→        }
+   636→        log.Printf("[vpp] Added NAT pool address range %s..%s via binary API", startIP, endIP)
+   637→        return nil
+   638→}
+   639→
+   640→// AddStaticNat creates a 1:1 static NAT mapping (internalIP → externalIP).
+   641→// Tries nat44_add_del_static_mapping_v2 first; if that message is unsupported
+   642→// on the VPP build (error contains "Unsupported" or "-126"), falls back to
+   643→// the V1 nat44_add_del_static_mapping message (same fields minus V2-only
+   644→// MatchPool/PoolIPAddress).
+   645→func (c *VPPLiveClient) AddStaticNat(internalIP, externalIP string) error {
+   646→        if !c.IsConnected() {
+   647→                return fmt.Errorf("VPP not connected")
+   648→        }
+   649→        localIP, err := ip_types.ParseIP4Address(internalIP)
+   650→        if err != nil {
+   651→                return fmt.Errorf("invalid internal IP '%s': %w", internalIP, err)
+   652→        }
+   653→        extIP, err := ip_types.ParseIP4Address(externalIP)
+   654→        if err != nil {
+   655→                return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
+   656→        }
+   657→        tag := fmt.Sprintf("static-%s->%s", internalIP, externalIP)
+   658→
+   659→        // --- Step 1: try V2 message (nat44_add_del_static_mapping_v2) ---
+   660→        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
+   661→                IsAdd:             true,
+   662→                MatchPool:         false,
+   663→                Flags:             nat_types.NAT_IS_STATIC, // 1:1 static mapping
+   664→                PoolIPAddress:     ip_types.IP4Address{0, 0, 0, 0}, // unused for static
+   665→                LocalIPAddress:    localIP,
+   666→                ExternalIPAddress: extIP,
+   667→                Protocol:          0, // 0 = all protocols (identity mapping)
+   668→                LocalPort:         0,
+   669→                ExternalPort:      0,
+   670→                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF), // ~0 = use specific external IP
+   671→                VrfID:             0,
+   672→                Tag:               tag,
+   673→        }
+   674→        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
+   675→        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
+   676→                if replyV2.Retval == 0 {
+   677→                        log.Printf("[vpp] Added static NAT V2 %s -> %s via binary API", internalIP, externalIP)
+   678→                        return nil
+   679→                }
+   680→                // V2 message accepted but retval != 0 — fall through to V1
+   681→                log.Printf("[vpp] AddStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
+   682→        } else {
+   683→                // V2 message error — fall back to V1 only if it's the "Unsupported (-126)" case
+   684→                errMsg := errV2.Error()
+   685→                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
+   686→                        log.Printf("[vpp] AddStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
+   687→                } else {
+   688→                        return fmt.Errorf("nat44_add_del_static_mapping_v2 failed: %w", errV2)
+   689→                }
+   690→        }
+   691→
+   692→        // --- Step 2: fall back to V1 message (nat44_add_del_static_mapping) ---
+   693→        // V1 struct has the same LocalIPAddress/ExternalIPAddress/Flags/Protocol/
+   694→        // LocalPort/ExternalPort/ExternalSwIfIndex/VrfID/Tag fields as V2 — it just
+   695→        // lacks V2's MatchPool/PoolIPAddress pair (no pool-assigned static mapping
+   696→        // support, which we don't use anyway).
+   697→        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
+   698→                IsAdd:             true,
+   699→                Flags:             nat_types.NAT_IS_STATIC,
+   700→                LocalIPAddress:    localIP,
+   701→                ExternalIPAddress: extIP,
+   702→                Protocol:          0, // identity mapping (all protocols)
+   703→                LocalPort:         0,
+   704→                ExternalPort:      0,
+   705→                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
+   706→                VrfID:             0,
+   707→                Tag:               tag,
+   708→        }
+   709→        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
+   710→        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
+   711→                return fmt.Errorf("nat44_add_del_static_mapping V1 also failed: %w", errV1)
+   712→        }
+   713→        if replyV1.Retval != 0 {
+   714→                return fmt.Errorf("nat44_add_del_static_mapping V1 retval=%d", replyV1.Retval)
+   715→        }
+   716→        log.Printf("[vpp] Added static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
+   717→        return nil
+   718→}
+   719→
+   720→// EnableNatOnInterface enables NAT44 on an interface (inside or outside).
+   721→// Uses nat44_interface_add_del_feature with NAT_IS_INSIDE or NAT_IS_OUTSIDE.
+   722→func (c *VPPLiveClient) EnableNatOnInterface(swIfIndex uint32, inside bool) error {
+   723→        if !c.IsConnected() {
+   724→                return fmt.Errorf("VPP not connected")
+   725→        }
+   726→        var flags nat_types.NatConfigFlags
+   727→        if inside {
+   728→                flags = nat_types.NAT_IS_INSIDE
+   729→        } else {
+   730→                flags = nat_types.NAT_IS_OUTSIDE
+   731→        }
+   732→        req := &nat44_ed.Nat44InterfaceAddDelFeature{
+   733→                IsAdd:     true,
+   734→                Flags:     flags,
+   735→                SwIfIndex: interface_types.InterfaceIndex(swIfIndex),
+   736→        }
+   737→        reply := &nat44_ed.Nat44InterfaceAddDelFeatureReply{}
+   738→
+   739→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   740→                return fmt.Errorf("nat44_interface_add_del_feature failed: %w", err)
+   741→        }
+   742→        if reply.Retval != 0 {
+   743→                return fmt.Errorf("nat44_interface_add_del_feature retval=%d", reply.Retval)
+   744→        }
+   745→        sideStr := "outside"
+   746→        if inside {
+   747→                sideStr = "inside"
+   748→        }
+   749→        log.Printf("[vpp] Enabled NAT44 %s on interface %d via binary API", sideStr, swIfIndex)
+   750→        return nil
+   751→}
+   752→
+   753→// ListNatAddresses returns the list of NAT44 pool addresses via nat44_address_dump.
+   754→func (c *VPPLiveClient) ListNatAddresses() ([]nat44_ed.Nat44AddressDetails, error) {
+   755→        if !c.IsConnected() {
+   756→                return nil, fmt.Errorf("VPP not connected")
+   757→        }
+   758→        req := &nat44_ed.Nat44AddressDump{}
+   759→        multiCtx := c.ch.SendMultiRequest(req)
+   760→
+   761→        var out []nat44_ed.Nat44AddressDetails
+   762→        for {
+   763→                details := &nat44_ed.Nat44AddressDetails{}
+   764→                last, err := multiCtx.ReceiveReply(details)
+   765→                if err != nil {
+   766→                        return out, fmt.Errorf("nat44_address_dump failed: %w", err)
+   767→                }
+   768→                if last {
+   769→                        break
+   770→                }
+   771→                out = append(out, *details)
+   772→        }
+   773→        return out, nil
+   774→}
+   775→
+   776→// ListPolicers returns all policers via policer_dump.
+   777→func (c *VPPLiveClient) ListPolicers() ([]policer.PolicerDetails, error) {
+   778→        if !c.IsConnected() {
+   779→                return nil, fmt.Errorf("VPP not connected")
+   780→        }
+   781→        req := &policer.PolicerDump{
+   782→                MatchNameValid: false,
+   783→        }
+   784→        multiCtx := c.ch.SendMultiRequest(req)
+   785→
+   786→        var out []policer.PolicerDetails
+   787→        for {
+   788→                details := &policer.PolicerDetails{}
+   789→                last, err := multiCtx.ReceiveReply(details)
+   790→                if err != nil {
+   791→                        return out, fmt.Errorf("policer_dump failed: %w", err)
+   792→                }
+   793→                if last {
+   794→                        break
+   795→                }
+   796→                out = append(out, *details)
+   797→        }
+   798→        return out, nil
+   799→}
+   800→
+   801→// DeletePolicer removes a policer by name. Best-effort.
+   802→func (c *VPPLiveClient) DeletePolicer(name string) error {
+   803→        if !c.IsConnected() {
+   804→                return fmt.Errorf("VPP not connected")
+   805→        }
+   806→        req := &policer.PolicerAddDel{
+   807→                IsAdd: false,
+   808→                Name:  name,
+   809→        }
+   810→        reply := &policer.PolicerAddDelReply{}
+   811→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   812→                return fmt.Errorf("policer_add_del (delete) failed: %w", err)
+   813→        }
+   814→        log.Printf("[vpp] Deleted policer %s via binary API", name)
+   815→        return nil
+   816→}
+   817→
+   818→// DeleteStaticNat removes a 1:1 static NAT mapping. Mirrors AddStaticNat:
+   819→// tries V2 first, falls back to V1 if V2 is unsupported on this VPP build.
+   820→func (c *VPPLiveClient) DeleteStaticNat(internalIP, externalIP string) error {
+   821→        if !c.IsConnected() {
+   822→                return fmt.Errorf("VPP not connected")
+   823→        }
+   824→        localIP, err := ip_types.ParseIP4Address(internalIP)
+   825→        if err != nil {
+   826→                return fmt.Errorf("invalid internal IP '%s': %w", internalIP, err)
+   827→        }
+   828→        extIP, err := ip_types.ParseIP4Address(externalIP)
+   829→        if err != nil {
+   830→                return fmt.Errorf("invalid external IP '%s': %w", externalIP, err)
+   831→        }
+   832→
+   833→        // --- Step 1: try V2 delete ---
+   834→        reqV2 := &nat44_ed.Nat44AddDelStaticMappingV2{
+   835→                IsAdd:             false,
+   836→                Flags:             nat_types.NAT_IS_STATIC,
+   837→                LocalIPAddress:   localIP,
+   838→                ExternalIPAddress: extIP,
+   839→                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
+   840→                VrfID:             0,
+   841→        }
+   842→        replyV2 := &nat44_ed.Nat44AddDelStaticMappingV2Reply{}
+   843→        if errV2 := c.ch.SendRequest(reqV2).ReceiveReply(replyV2); errV2 == nil {
+   844→                if replyV2.Retval == 0 {
+   845→                        log.Printf("[vpp] Deleted static NAT V2 %s -> %s via binary API", internalIP, externalIP)
+   846→                        return nil
+   847→                }
+   848→                log.Printf("[vpp] DeleteStaticNat V2 retval=%d, trying V1...", replyV2.Retval)
+   849→        } else {
+   850→                errMsg := errV2.Error()
+   851→                if strings.Contains(errMsg, "Unsupported") || strings.Contains(errMsg, "-126") {
+   852→                        log.Printf("[vpp] DeleteStaticNat V2 unsupported on this VPP build, falling back to V1: %v", errV2)
+   853→                } else {
+   854→                        return fmt.Errorf("nat44_add_del_static_mapping_v2 (delete) failed: %w", errV2)
+   855→                }
+   856→        }
+   857→
+   858→        // --- Step 2: fall back to V1 delete ---
+   859→        reqV1 := &nat44_ed.Nat44AddDelStaticMapping{
+   860→                IsAdd:             false,
+   861→                Flags:             nat_types.NAT_IS_STATIC,
+   862→                LocalIPAddress:   localIP,
+   863→                ExternalIPAddress: extIP,
+   864→                ExternalSwIfIndex: interface_types.InterfaceIndex(0xFFFFFFFF),
+   865→                VrfID:             0,
+   866→        }
+   867→        replyV1 := &nat44_ed.Nat44AddDelStaticMappingReply{}
+   868→        if errV1 := c.ch.SendRequest(reqV1).ReceiveReply(replyV1); errV1 != nil {
+   869→                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) failed: %w", errV1)
+   870→        }
+   871→        if replyV1.Retval != 0 {
+   872→                return fmt.Errorf("nat44_add_del_static_mapping V1 (delete) retval=%d", replyV1.Retval)
+   873→        }
+   874→        log.Printf("[vpp] Deleted static NAT V1 %s -> %s via binary API (V2 fallback)", internalIP, externalIP)
+   875→        return nil
+   876→}
+   877→
+   878→// ─── PPPoE Management ───────────────────────────────────────
+   879→
+   880→// CreatePPPoESession creates a PPPoE session via pppoe_add_del_session.
+   881→// Returns the sw_if_index of the created PPPoE interface.
+   882→//
+   883→// NOTE: username/password are NOT part of the binapi message — VPP's PPPoE
+   884→// code is purely encapsulation. RADIUS-driven authentication happens elsewhere
+   885→// (the RADIUS server + session-engine). We log username/password for audit
+   886→// but only program the encap session.
+   887→func (c *VPPLiveClient) CreatePPPoESession(username, password, sessionID string) error {
+   888→        if !c.IsConnected() {
+   889→                return fmt.Errorf("VPP not connected")
+   890→        }
+   891→
+   892→        sid, err := strconv.ParseUint(sessionID, 10, 16)
+   893→        if err != nil {
+   894→                return fmt.Errorf("invalid sessionID '%s' (must be 0-65535): %w", sessionID, err)
+   895→        }
+   896→
+   897→        // ClientIP left as zero-value (unspecified) — VPP will learn via LCP
+   898→        // ClientMac left as zero — VPP will learn from the first packet
+   899→        req := &pppoe.PppoeAddDelSession{
+   900→                IsAdd:     true,
+   901→                SessionID: uint16(sid),
+   902→                DecapVrfID: 0,
+   903→        }
+   904→        reply := &pppoe.PppoeAddDelSessionReply{}
+   905→        if err := c.ch.SendRequest(req).ReceiveReply(reply); err != nil {
+   906→                return fmt.Errorf("pppoe_add_del_session failed: %w", err)
+   907→        }
+   908→        if reply.Retval != 0 {
+   909→                return fmt.Errorf("pppoe_add_del_session retval=%d", reply.Retval)
+   910→        }
+   911→        log.Printf("[vpp] Created PPPoE session id=%s (username=%s) → swIfIndex=%d via binapi",
+   912→                sessionID, username, uint32(reply.SwIfIndex))
+   913→        _ = password // not sent to VPP; logged for audit only
+   914→        return nil
+   915→}
+   916→
+   917→// ─── Subscriber Operations ──────────────────────────────────
+   918→
+   919→// ChangeSubscriberBandwidth updates the policer for a subscriber.
+   920→// Best-effort: deletes the existing policer (by name) and creates a new one
+   921→// with the new rates. The policer name convention is "pol-<subscriberIP>".
+   922→//
+   923→// NOTE: This does NOT re-bind to the interface — see ApplyPolicerToInterface for
+   924→// the limitation of the current binding model.
+   925→func (c *VPPLiveClient) ChangeSubscriberBandwidth(subscriberIP string, newDownloadKbps, newUploadKbps uint64) error {
+   926→        if !c.IsConnected() {
+   927→                return fmt.Errorf("VPP not connected")
+   928→        }
+   929→
+   930→        policerName := fmt.Sprintf("pol-%s", subscriberIP)
+   931→        policerName = sanitizePolicerName(policerName)
+   932→
+   933→        // Look up existing entry (if any) so we can preserve external IP for re-binding
+   934→        var existing *subscriberPolicerEntry
+   935→        if v, ok := c.subscriberPolicers.Load(subscriberIP); ok {
+   936→                existing = v.(*subscriberPolicerEntry)
+   937→                // Best-effort delete the old policer (ignore error — may not exist)
+   938→                _ = c.DeletePolicer(existing.PolicerName)
+   939→        }
+   940→
+   941→        // Convert kbps → bps (CreatePolicer expects bps)
+   942→        dlBps := newDownloadKbps * 1000
+   943→        ulBps := newUploadKbps * 1000
+   944→        // Use the larger of upload/download as CIR (VPP policers are single-direction per flow).
+   945→        // For symmetric policers, EIR = the other direction.
+   946→        cirBps := dlBps
+   947→        eirBps := ulBps
+   948→        if ulBps > dlBps {
+   949→                cirBps = ulBps
+   950→                eirBps = dlBps
+   951→        }
+   952→
+   953→        policerIdx, err := c.CreatePolicer(policerName, cirBps, eirBps)
+   954→        if err != nil {
+   955→                return fmt.Errorf("CreatePolicer for %s failed: %w", policerName, err)
+   956→        }
+   957→
+   958→        // Store in-memory state
+   959→        entry := &subscriberPolicerEntry{
+   960→                SubscriberIP:  subscriberIP,
+   961→                PolicerName:   policerName,
+   962→                PolicerIndex:  policerIdx,
+   963→                DownloadKbps:  newDownloadKbps,
+   964→                UploadKbps:    newUploadKbps,
+   965→                CreatedAt:     time.Now(),
+   966→        }
+   967→        if existing != nil {
+   968→                entry.ExternalIP = existing.ExternalIP
+   969→        }
+   970→        c.subscriberPolicers.Store(subscriberIP, entry)
+   971→
+   972→        log.Printf("[vpp] ChangeSubscriberBandwidth(ip=%s, dl=%d kbps, ul=%d kbps) → policerIndex=%d via binapi",
+   973→                subscriberIP, newDownloadKbps, newUploadKbps, policerIdx)
+   974→        return nil
+   975→}
+   976→
+   977→// DisconnectSubscriber tears down all dataplane state for a subscriber:
+   978→// deletes the policer and the static NAT mapping.
+   979→func (c *VPPLiveClient) DisconnectSubscriber(subscriberIP string) error {
+   980→        if !c.IsConnected() {
+   981→                return fmt.Errorf("VPP not connected")
+   982→        }
+   983→
+   984→        var errs []string
+   985→
+   986→        // 1. Delete the policer (if we tracked one)
+   987→        if v, ok := c.subscriberPolicers.Load(subscriberIP); ok {
+   988→                entry := v.(*subscriberPolicerEntry)
+   989→                if err := c.DeletePolicer(entry.PolicerName); err != nil {
+   990→                        errs = append(errs, fmt.Sprintf("delete_policer(%s): %v", entry.PolicerName, err))
+   991→                }
+   992→                // 2. Delete the static NAT mapping (if we tracked an external IP)
+   993→                if entry.ExternalIP != "" {
+   994→                        if err := c.DeleteStaticNat(subscriberIP, entry.ExternalIP); err != nil {
+   995→                                errs = append(errs, fmt.Sprintf("delete_static_nat(%s->%s): %v", subscriberIP, entry.ExternalIP, err))
+   996→                        }
+   997→                }
+   998→                c.subscriberPolicers.Delete(subscriberIP)
+   999→        }
+  1000→
+  1001→        if len(errs) > 0 {
+  1002→                return fmt.Errorf("DisconnectSubscriber partial failure: %s", strings.Join(errs, "; "))
+  1003→        }
+  1004→        log.Printf("[vpp] Disconnected subscriber %s (policer + NAT removed) via binapi", subscriberIP)
+  1005→        return nil
+  1006→}
+  1007→
+  1008→// sanitizePolicerName ensures the name is ≤64 chars and contains only safe bytes
+  1009→// (VPP policer name field is a fixed 64-byte string).
+  1010→func sanitizePolicerName(name string) string {
+  1011→        // Replace dots/dashes with underscores for safety
+  1012→        out := strings.Map(func(r rune) rune {
+  1013→                if r >= 'a' && r <= 'z' {
+  1014→                        return r
+  1015→                }
+  1016→                if r >= 'A' && r <= 'Z' {
+  1017→                        return r
+  1018→                }
+  1019→                if r >= '0' && r <= '9' {
+  1020→                        return r
+  1021→                }
+  1022→                return '_'
+  1023→        }, name)
+  1024→        if len(out) > 60 {
+  1025→                out = out[:60]
+  1026→        }
+  1027→        return out
+  1028→}
+  1029→
+  1030→// ─── Telemetry ──────────────────────────────────────────────
+  1031→
+  1032→// GetInterfaceStats returns per-interface counters. Best-effort: VPP's
+  1033→// per-interface stats are accessible via the stats API (separate from binapi),
+  1034→// so we return zeros for now.
+  1035→func (c *VPPLiveClient) GetInterfaceStats(swIfIndex uint32) (rxPackets, txPackets, rxBytes, txBytes uint64, err error) {
+  1036→        if !c.IsConnected() {
+  1037→                return 0, 0, 0, 0, fmt.Errorf("VPP not connected")
+  1038→        }
+  1039→        log.Printf("[vpp] GetInterfaceStats(swIfIndex=%d) — TODO: requires stats API (not binapi)", swIfIndex)
+  1040→        return 0, 0, 0, 0, fmt.Errorf("GetInterfaceStats not implemented (requires stats API client, separate from binapi)")
+  1041→}
+  1042→
+  1043→// ─── Ensure uuid import is used (placeholder if unused) ──────
+  1044→var _ = uuid.New
+  1045→

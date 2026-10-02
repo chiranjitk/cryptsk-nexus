@@ -1,7 +1,9 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { auditLog } from "@/lib/services/audit-service";
+import { newReceiptNumber } from "@/lib/services/receipt";
+import { blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
 
 export async function GET(request: NextRequest) {
   try {
@@ -333,9 +335,30 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const now = new Date();
   try {
-    await requireAuth(request);
+    const userId = await requireAuth(request);
     const body = await request.json();
     const { action, invoiceIds, method, subscriberId, amount, note } = body;
+
+    // [AUDIT-FIX F-20] Per-action RBAC — money movements need payments.*, state
+    // changes need subscribers.update. AGENT was previously able to refund/collect.
+    const ACTION_PERMISSIONS: Record<string, string> = {
+      "record-payment": "payments.create",
+      "pay-installment": "payments.create",
+      "send-reminder": "subscribers.update",
+      "suspend": "subscribers.update",
+      "assign-agent": "subscribers.update",
+      "add-promise": "subscribers.update",
+      "create-payment-plan": "invoices.update",
+      "default-plan": "invoices.update",
+      "escalate": "subscribers.update",
+      "save-legal-notice": "subscribers.update",
+      "raise-dispute": "complaints.create",
+      "resolve-dispute": "complaints.update",
+    };
+    const requiredPermission = ACTION_PERMISSIONS[action || ""];
+    if (requiredPermission) {
+      await permissionFor(userId, requiredPermission);
+    }
 
     if (action === "send-reminder") {
       const invoices = await db.invoice.findMany({
@@ -349,7 +372,7 @@ export async function POST(request: NextRequest) {
             type: method === "whatsapp" ? "WHATSAPP" : method === "sms" ? "SMS" : "IN_APP",
             category: "BILL_DUE",
             title: "Payment Reminder",
-            message: `Dear ${inv.subscriber.name}, your invoice ${inv.invoiceNumber} of ₹${Math.round(inv.balanceAmount || 0)} is overdue since ${new Date(inv.dueDate).toLocaleDateString("en-IN")}. Please pay immediately to avoid service suspension.`,
+            message: `Dear ${inv.Subscriber.name}, your invoice ${inv.invoiceNumber} of ₹${Math.round(inv.balanceAmount || 0)} is overdue since ${new Date(inv.dueDate).toLocaleDateString("en-IN")}. Please pay immediately to avoid service suspension.`,
             status: "SENT",
             sentAt: new Date(),
           },
@@ -367,28 +390,62 @@ export async function POST(request: NextRequest) {
       const invoice = await db.invoice.findUnique({ where: { id: invoiceIds?.[0] } });
       if (!invoice) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
 
+      // [AUDIT-FIX F-06] Overpay guard — this path previously accepted any amount and wrote
+      // a negative balanceAmount (reproduced live: ₹99,999 on a ₹706.82 invoice → -₹99,492.18).
+      const outstanding = Math.max(0, (invoice.grandTotal || 0) - (invoice.paidAmount || 0));
+      const payAmount = amount || invoice.balanceAmount;
+      if (payAmount > outstanding) {
+        return NextResponse.json(
+          { error: `Payment amount (₹${payAmount}) exceeds outstanding balance (₹${outstanding}). For overpayments, issue a credit note or an advance-adjustment invoice instead.` },
+          { status: 400 }
+        );
+      }
+
       const payment = await db.payment.create({
         data: {
           subscriberId: invoice.subscriberId,
           invoiceId: invoice.id,
-          amount: amount || invoice.balanceAmount,
+          amount: payAmount,
           paymentMode: body.paymentMode || "CASH",
           status: "VERIFIED",
+          receiptNumber: `DR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
           notes: note || "Recorded from Due Recovery",
         },
       });
 
-      const newPaid = invoice.paidAmount + (amount || invoice.balanceAmount);
+      const newPaid = invoice.paidAmount + payAmount;
       const newBalance = invoice.grandTotal - newPaid;
       await db.invoice.update({
         where: { id: invoice.id },
         data: {
           paidAmount: newPaid,
-          balanceAmount: newBalance,
+          balanceAmount: Math.max(0, newBalance),
           status: newBalance <= 0 ? "PAID" : "PARTIALLY_PAID",
           paidAt: newBalance <= 0 ? new Date() : invoice.paidAt,
         },
       });
+
+      // [AUDIT-FIX F-05 companion] Reactivating on full settlement: a subscriber cut off
+      // for non-payment who clears the invoice is restored to ACTIVE and unblocked in
+      // RADIUS — previously they stayed SUSPENDED (and offline) until manual intervention.
+      let reactivated = false;
+      if (newBalance <= 0) {
+        const sub = await db.subscriber.findUnique({
+          where: { id: invoice.subscriberId },
+          select: { id: true, status: true, serviceUsername: true, radiusEnabled: true },
+        });
+        if (sub && (sub.status === "SUSPENDED" || sub.status === "DISCONNECTED")) {
+          await db.subscriber.update({ where: { id: sub.id }, data: { status: "ACTIVE" } });
+          if (sub.radiusEnabled && sub.serviceUsername) {
+            try {
+              await unblockUserInFreeRADIUS(sub.serviceUsername);
+            } catch (e) {
+              console.error("[DueRecovery] RADIUS unblock failed for", sub.serviceUsername, e);
+            }
+          }
+          reactivated = true;
+        }
+      }
 
       // Update SLA if resolved
       if (newBalance <= 0) {
@@ -399,7 +456,7 @@ export async function POST(request: NextRequest) {
       }
 
       await auditLog(request, "CREATE", "DueRecovery", payment.id, { invoiceId: invoice.id, amount });
-      return NextResponse.json({ success: true, payment });
+      return NextResponse.json({ success: true, payment, invoiceSettled: newBalance <= 0, subscriberReactivated: reactivated });
     }
 
     if (action === "suspend") {
@@ -410,10 +467,23 @@ export async function POST(request: NextRequest) {
             where: { id: invoice.subscriberId },
             data: { status: "SUSPENDED" },
           });
+          // [AUDIT-FIX F-04] Cut the subscriber off at the data plane — the DB-only suspend
+          // left the customer fully online (confirmed by audit exploit test).
+          const sub = await db.subscriber.findUnique({
+            where: { id: invoice.subscriberId },
+            select: { serviceUsername: true, radiusEnabled: true },
+          });
+          if (sub?.radiusEnabled && sub.serviceUsername) {
+            try {
+              await blockUserInFreeRADIUS(sub.serviceUsername);
+            } catch (e) {
+              console.error("[DueRecovery] RADIUS block failed for", sub.serviceUsername, e);
+            }
+          }
         }
       }
       await auditLog(request, "UPDATE", "DueRecovery", "bulk", { count: invoiceIds?.length || 0 });
-      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended` });
+      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended (RADIUS blocked)` });
     }
 
     if (action === "assign-agent") {
@@ -464,7 +534,7 @@ export async function POST(request: NextRequest) {
                 category: "BILL_DUE",
                 type: "IN_APP",
                 title: "Payment Promise Recorded",
-                message: `${inv.subscriber.name || subscriberName || "Subscriber"} promised to pay ${promiseText}. Invoice: ${inv.invoiceNumber}.`,
+                message: `${inv.Subscriber.name || subscriberName || "Subscriber"} promised to pay ${promiseText}. Invoice: ${inv.invoiceNumber}.`,
                 status: "SENT",
                 sentAt: new Date(),
               },
@@ -520,8 +590,13 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Record Installment Payment ──
+    // [PAYMENTS-NOLEAK] Recording an installment used to update the installment
+    // row ONLY — no Payment row, no Invoice.paidAmount movement. The collected
+    // EMI money was invisible to the payments ledger, receipts and collector
+    // stats. Now each installment payment materializes as a VERIFIED Payment
+    // (with receipt) and settles the linked invoice, atomically.
     if (action === "pay-installment") {
-      const { installmentId, paymentMode: instPaymentMode } = body;
+      const { installmentId, paymentMode: instPaymentMode, transactionRef: instRef, notes: instNotes } = body;
       if (!installmentId) return NextResponse.json({ error: "Installment ID required" }, { status: 400 });
 
       const installment = await db.paymentPlanInstallment.findUnique({
@@ -531,26 +606,65 @@ export async function POST(request: NextRequest) {
       if (!installment) return NextResponse.json({ error: "Installment not found" }, { status: 404 });
       if (installment.status === "paid") return NextResponse.json({ error: "Already paid" }, { status: 400 });
 
-      await db.paymentPlanInstallment.update({
-        where: { id: installmentId },
-        data: { status: "paid", paidAmount: installment.amount, paidAt: new Date() },
+      const result = await db.$transaction(async (tx) => {
+        await tx.paymentPlanInstallment.update({
+          where: { id: installmentId },
+          data: { status: "paid", paidAmount: installment.amount, paidAt: new Date() },
+        });
+
+        const allInstallments = await tx.paymentPlanInstallment.findMany({
+          where: { paymentPlanId: installment.PaymentPlan.id },
+        });
+        const paidCount = allInstallments.filter((i) => i.status === "paid").length;
+
+        await tx.paymentPlan.update({
+          where: { id: installment.PaymentPlan.id },
+          data: {
+            paidInstallments: paidCount,
+            status: paidCount >= installment.PaymentPlan.emiCount ? "completed" : "active",
+          },
+        });
+
+        const receiptNumber = newReceiptNumber();
+        const payment = await tx.payment.create({
+          data: {
+            subscriberId: installment.PaymentPlan.subscriberId,
+            invoiceId: installment.PaymentPlan.invoiceId,
+            amount: installment.amount,
+            paymentMode: (instPaymentMode || "CASH") as never,
+            transactionRef: instRef || "",
+            status: "VERIFIED",
+            receiptNumber,
+            collectedById: userId,
+            verifiedById: userId,
+            notes: `${instNotes || ""} EMI #${installment.installmentNumber}/${installment.PaymentPlan.emiCount} (auto-verified)`.trim(),
+          },
+        });
+
+        if (installment.PaymentPlan.invoiceId) {
+          const inv = await tx.invoice.findUnique({ where: { id: installment.PaymentPlan.invoiceId } });
+          if (inv) {
+            const newPaid = Math.round((inv.paidAmount + installment.amount) * 100) / 100;
+            const newBalance = Math.round((inv.grandTotal - newPaid) * 100) / 100;
+            await tx.invoice.update({
+              where: { id: inv.id },
+              data: {
+                paidAmount: newPaid,
+                balanceAmount: Math.max(0, newBalance),
+                status: newBalance <= 0.01 ? "PAID" : "PARTIALLY_PAID",
+                paidAt: newBalance <= 0.01 ? new Date() : inv.paidAt,
+              },
+            });
+          }
+        }
+
+        return { payment, paidCount };
       });
 
-      const allInstallments = await db.paymentPlanInstallment.findMany({
-        where: { paymentPlanId: installment.paymentPlan.id },
+      await auditLog(request, "UPDATE", "PaymentPlanInstallment", installmentId, {
+        amount: installment.amount, paymentId: result.payment.id, receipt: result.payment.receiptNumber,
       });
-      const paidCount = allInstallments.filter((i) => i.status === "paid").length;
-
-      await db.paymentPlan.update({
-        where: { id: installment.paymentPlan.id },
-        data: {
-          paidInstallments: paidCount,
-          status: paidCount >= installment.paymentPlan.emiCount ? "completed" : "active",
-        },
-      });
-
-      await auditLog(request, "UPDATE", "PaymentPlanInstallment", installmentId, { amount: installment.amount });
-      return NextResponse.json({ success: true, message: "Installment payment recorded" });
+      return NextResponse.json({ success: true, message: "Installment payment recorded", paymentId: result.payment.id, receiptNumber: result.payment.receiptNumber });
     }
 
     // ── Default Payment Plan ──

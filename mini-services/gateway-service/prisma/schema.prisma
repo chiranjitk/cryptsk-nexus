@@ -9,8 +9,3 @@ generator client {
 
 // Minimal schema for client generation - models are in the main project
 // This service uses the shared database
-model _PrismaMigrate {
-  id        String  @id @default(cuid())
-  migration String
-  finished  Boolean @default(false)
-}

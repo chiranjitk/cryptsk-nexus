@@ -1669,13 +1669,18 @@ model IntegrationTransaction {
   status            String             @default("")
   externalRef       String             @default("")
   retryCount        Int                @default(0)
+  /// [PAYMENTS-NOLEAK] Reconciliation link — gateway transaction matched to a
+  /// local Payment row. NULL = unmatched (revenue-leak suspect until linked).
+  paymentId         String?
   createdAt         DateTime           @default(now())
   IntegrationConfig IntegrationConfig? @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  Payment           Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([gatewayType])
   @@index([integrationId])
   @@index([status])
+  @@index([paymentId])
 }
 
 model Invoice {
@@ -2294,6 +2299,25 @@ model NasSession {
   location          String         @default("")
   coaCount          Int            @default(0)
   lastCoaAt         DateTime?
+  // ── §37 Session Identity / §4 Session Engine — extended fields for VPP rebuild
+  vlanId            String         @default("")
+  vrf               String         @default("")
+  circuitId         String         @default("")
+  remoteId          String         @default("")
+  pppoeSessionId    String         @default("")
+  dhcpClientId      String         @default("")
+  // ── §29/§30 Policy mapping
+  vppPolicyId       String         @default("")
+  vppAclProfileId   String         @default("")
+  vppQosProfileId   String         @default("")
+  vppNatProfileId   String         @default("")
+  vppIpPool         String         @default("")
+  // ── §41/§42 VPP Restart Recovery + Snapshot
+  vppEpoch          Int            @default(0)
+  vppProgrammedAt   DateTime?
+  vppVerifiedAt     DateTime?
+  vppRecoveryState  String         @default("FRESH") // FRESH | PROGRAMMED | VERIFIED | RECOVERING | STALE | FAILED
+  snapshotId        String?        @default("") // links to SessionSnapshot.id
   createdAt         DateTime       @default(now())
   updatedAt DateTime @updatedAt
   Subscriber        Subscriber     @relation(fields: [subscriberId], references: [id])
@@ -2309,6 +2333,8 @@ model NasSession {
   @@index([stopTime])
   @@index([subscriberId])
   @@index([username])
+  @@index([vppEpoch])
+  @@index([vppRecoveryState])
 }
 
 model NatLog {
@@ -2609,6 +2635,7 @@ model Payment {
   Subscriber                       Subscriber    @relation(fields: [subscriberId], references: [id])
   User_Payment_verifiedByIdToUser  User?         @relation("Payment_verifiedByIdToUser", fields: [verifiedById], references: [id])
   Refund                           Refund[]
+  IntegrationTransaction           IntegrationTransaction[]
 
   @@index([createdAt])
   @@index([invoiceId])
@@ -3749,6 +3776,188 @@ model SessionEvent {
   @@index([username])
 }
 
+// ─────────────────────────────────────────────────────────────
+// §42 SESSION SNAPSHOT — recoverable dataplane state per session
+// Used by §41 VPP Restart Recovery to rebuild VPP state.
+// ─────────────────────────────────────────────────────────────
+model SessionSnapshot {
+  id                String   @id @default(uuid())
+  sessionId         String   @unique
+  subscriberId      String   @default("")
+  username          String   @default("")
+  nasIp             String   @default("")
+  nasPort           String   @default("")
+  framedIp          String   @default("")
+  framedIpv6        String   @default("")
+  mac               String   @default("")
+  vlan              String   @default("")
+  vrf               String   @default("")
+  policyId          String   @default("")
+  aclProfileId      String   @default("")
+  qosProfileId      String   @default("")
+  natProfileId      String   @default("")
+  ipPool            String   @default("")
+  circuitId         String   @default("")
+  remoteId          String   @default("")
+  pppoeSessionId    String   @default("")
+  dhcpClientId      String   @default("")
+  speedDownKbps     Int      @default(0)
+  speedUpKbps       Int      @default(0)
+  startTime         DateTime @default(now())
+  timeoutSec        Int      @default(0)
+  vppEpoch          Int      @default(0)
+  vppProgrammedAt   DateTime?
+  vppRecoveryState  String   @default("FRESH") // FRESH | PROGRAMMED | RECOVERING | VERIFIED | STALE
+  configJson        String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([framedIp])
+  @@index([mac])
+  @@index([policyId])
+  @@index([subscriberId])
+  @@index([username])
+  @@index([vppRecoveryState])
+  @@index([vppEpoch])
+}
+
+// ─────────────────────────────────────────────────────────────
+// §29 VPP POLICY OBJECTS — reusable ACL/Policer/QoS/NAT/VRF objects
+// Cataloged so the vpp-adapter can resolve policy_id → concrete objects.
+// ─────────────────────────────────────────────────────────────
+model VppPolicyObject {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  type        String   @default("POLICER") // POLICER | ACL | NAT | VRF | QoS | CLASSIFICATION
+  profileId   String   @default("") // links to VppAclProfile / VppNatPool by type
+  configJson  String   @default("{}")
+  description String   @default("")
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isEnabled])
+  @@index([profileId])
+  @@index([type])
+}
+
+// §32 VPP ACL PROFILES — reusable firewall profiles (ACL-GUEST, ACL-HOTEL, ACL-ISP-BASIC, etc.)
+model VppAclProfile {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String   @default("")
+  rulesJson   String   @default("[]") // array of {action, src, dst, proto, port}
+  defaultAction String @default("PERMIT") // PERMIT | DENY
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isEnabled])
+}
+
+// §33 VPP NAT POOLS — public IP pools for subscriber SNAT
+model VppNatPool {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String   @default("")
+  publicIpStart   String
+  publicIpEnd     String
+  portStart       Int      @default(1024)
+  portEnd         Int      @default(65535)
+  mode            String   @default("NAT44") // NAT44 | NAT66 | CGNAT
+  isEnabled       Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isEnabled])
+  @@index([mode])
+}
+
+// §34 NAT EVENT BUFFERING — counts of buffered NAT events (actual events go to NatLog)
+model NatEventBuffer {
+  id           String   @id @default(uuid())
+  bufferSize   Int      @default(0)
+  flushedAt    DateTime?
+  totalFlushed Int      @default(0)
+  lastEventAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// §41 VPP RESTART RECOVERY LOG — every VPP restart event + recovery outcome
+model VppRecoveryLog {
+  id              String   @id @default(uuid())
+  event           String   @default("RESTART_DETECTED") // RESTART_DETECTED | SNAPSHOT_LOADED | REBUILT_POLICIES | REBUILT_NAT | REBUILT_ACL | VERIFIED | FAILED
+  prevEpoch       Int      @default(0)
+  newEpoch        Int      @default(0)
+  sessionsAffected Int     @default(0)
+  sessionsRecovered Int    @default(0)
+  sessionsFailed  Int      @default(0)
+  durationMs      Int      @default(0)
+  detailsJson     String   @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([event])
+  @@index([prevEpoch])
+  @@index([createdAt])
+}
+
+// §38 DUPLICATE LOGIN POLICY — Simultaneous-Use handling per group/plan
+model DuplicateLoginPolicy {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String   @default("")
+  mode            String   @default("DENY_NEW") // ALLOW_MULTIPLE | DENY_NEW | DISCONNECT_OLD | LIMIT_N
+  maxSessions     Int      @default(1)
+  scope           String   @default("USERNAME") // USERNAME | MAC | BOTH
+  isEnabled       Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isEnabled])
+  @@index([mode])
+}
+
+// §35 DPI CLASSIFICATION RESULT — per-subscriber app classification from nDPI
+model DpiClassification {
+  id            String   @id @default(uuid())
+  subscriberIp  String   @default("")
+  subscriberId  String   @default("")
+  appName       String   @default("")
+  appCategory   String   @default("")
+  protocol      String   @default("")
+  bytesIn       BigInt   @default(0)
+  bytesOut      BigInt   @default(0)
+  flows         Int      @default(0)
+  riskLevel     String   @default("LOW")
+  detectedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([appName])
+  @@index([subscriberId])
+  @@index([subscriberIp])
+  @@index([detectedAt])
+  @@unique([subscriberIp, appName, detectedAt])
+}
+
+// §40 SESSION RECONCILIATION LOG — startup reconciliation outcomes
+model ReconciliationLog {
+  id              String   @id @default(uuid())
+  scope           String   @default("STARTUP") // STARTUP | VPP_RESTART | NAS_RESTART | SCHEDULED
+  totalDb         Int      @default(0)
+  totalVpp        Int      @default(0)
+  totalActive     Int      @default(0)
+  totalStale      Int      @default(0)
+  totalRecovered  Int      @default(0)
+  totalRemoved    Int      @default(0)
+  durationMs      Int      @default(0)
+  detailsJson     String   @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([scope])
+  @@index([createdAt])
+}
+
 model SmtpProfile {
   id         String   @id @default(uuid())
   name       String
@@ -4438,6 +4647,7 @@ model UserRadiusAttribute {
 model UserSession {
   id        String    @id @default(uuid())
   userId    String
+  tokenHash String    @unique // [AUDIT-FIX F-19] SHA-256 of the session token — enables server-side revocation
   ipAddress String    @default("")
   userAgent String    @default("")
   device    String    @default("")
@@ -4829,7 +5039,7 @@ model radusergroup {
   @@index([username], map: "radusergroup_username")
 }
 
-model wifi_offload_events {
+model WifiOffloadEvent {
   id            String   @id @default(uuid())
   sessionId     String   @default("")
   eventType     String   @default("")
@@ -4846,7 +5056,7 @@ model wifi_offload_events {
   @@index([sessionId])
 }
 
-model wifi_offload_peers {
+model WifiOffloadPeer {
   id          String    @id @default(uuid())
   peerName    String
   peerType    String    @default("PCRF")
@@ -4869,7 +5079,7 @@ model wifi_offload_peers {
   @@index([status])
 }
 
-model wifi_offload_policies {
+model WifiOffloadPolicy {
   id                   String   @id @default(uuid())
   name                 String
   description          String   @default("")
@@ -4891,7 +5101,7 @@ model wifi_offload_policies {
   @@index([isActive])
 }
 
-model wifi_offload_sessions {
+model WifiOffloadSession {
   id               String   @id @default(uuid())
   sessionId        String   @unique
   imsi             String   @default("")

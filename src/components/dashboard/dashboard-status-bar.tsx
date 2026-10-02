@@ -32,13 +32,17 @@ interface DashboardStatsData {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function getDotColor(status: "healthy" | "degraded" | "critical" | "connected" | "error" | undefined): string {
+type DotStatus = "healthy" | "degraded" | "critical" | "connected" | "error" | "checking" | undefined;
+
+function getDotColor(status: DotStatus): string {
+  if (status === "checking") return "bg-slate-500";
   if (!status || status === "error" || status === "critical") return "bg-red-500";
   if (status === "degraded") return "bg-amber-500";
   return "bg-emerald-500";
 }
 
-function getDotLabel(status: "healthy" | "degraded" | "critical" | "connected" | "error" | undefined): string {
+function getDotLabel(status: DotStatus): string {
+  if (status === "checking") return "Checking…";
   if (!status || status === "error" || status === "critical") return "Critical";
   if (status === "degraded") return "Warning";
   return "Healthy";
@@ -49,6 +53,7 @@ function formatTime(date: Date): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
+    timeZone: "Asia/Kolkata",
   });
 }
 
@@ -90,8 +95,14 @@ export default function DashboardStatusBar() {
   }, [health, stats, updateTimestamp]);
 
   // ── Derived values ──
-  const dbStatus = health?.database?.status ?? "error";
-  const overallStatus = health?.status ?? "critical";
+  // [QA-FIX] While the health query is loading, show a neutral "checking" state
+  // instead of defaulting to error/critical (prevented false "DB Error" flash).
+  const dbStatus: "connected" | "error" | "checking" = isLoadingHealth
+    ? "checking"
+    : (health?.database?.status ?? "error");
+  const overallStatus: "healthy" | "degraded" | "critical" | "checking" = isLoadingHealth
+    ? "checking"
+    : (health?.status ?? "critical");
   const uptimePct = stats?.networkUptime ?? 0;
   const totalSubscribers = stats ? stats.onlineDevices + (stats.totalDevices - stats.onlineDevices) : 0;
 
@@ -126,7 +137,12 @@ export default function DashboardStatusBar() {
             />
             <span className="text-slate-400 truncate">
               <Database className="inline h-3 w-3 mr-0.5 -mt-px opacity-60" />
-              DB <span className="text-slate-300">{dbStatus === "connected" ? "Online" : "Error"}</span>
+              DB{" "}
+              {dbStatus === "checking" ? (
+                <span className="text-slate-500 animate-pulse">Checking…</span>
+              ) : (
+                <span className="text-slate-300">{dbStatus === "connected" ? "Online" : "Error"}</span>
+              )}
             </span>
           </div>
 

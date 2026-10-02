@@ -612,7 +612,7 @@ export default function AiAdvisorPage() {
 
       {/* Conversation History Dialog */}
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-red-600" />

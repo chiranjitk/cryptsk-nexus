@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditCreate } from "@/lib/services/audit-service";
 import { requireAuth, AuthError } from "@/lib/api-auth";
+import { newReceiptNumber, AUTO_VERIFIED_MARKER } from "@/lib/services/receipt";
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,6 +10,7 @@ export async function GET(req: NextRequest) {
       await requireAuth(req as unknown as import("next/server").NextRequest);
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      throw error; // [SECURITY-FIX] non-auth errors must not bypass authentication
     }
     const { searchParams } = req.nextUrl;
     const page = parseInt(searchParams.get("page") || "1");
@@ -76,10 +78,12 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    let userId: string;
     try {
-      await requireAuth(req as unknown as import("next/server").NextRequest);
+      userId = await requireAuth(req as unknown as import("next/server").NextRequest);
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      throw error; // [SECURITY-FIX] non-auth errors must not bypass authentication
     }
     const body = await req.json();
     const { subscriberId, invoiceId, amount, paymentMode, transactionRef, bankName, chequeNumber, notes, collectedById } = body;
@@ -97,50 +101,98 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
-    // Generate receipt number
-    const count = await db.payment.count();
-    const receiptNumber = `RCT-${String(count + 1).padStart(5, "0")}`;
+    const payAmount = parseFloat(amount);
 
-    const payment = await db.payment.create({
-      data: {
-        subscriberId,
-        invoiceId: invoiceId || null,
-        amount: parseFloat(amount),
-        paymentMode,
-        transactionRef: transactionRef || "",
-        bankName: bankName || "",
-        chequeNumber: chequeNumber || "",
-        status: "VERIFIED",
-        receiptNumber,
-        notes: notes || "",
-        collectedById: collectedById || null,
-        verifiedById: collectedById || null,
-      },
-      include: {
-        Subscriber: { select: { id: true, name: true, code: true, phone: true } },
-        Invoice: { select: { id: true, invoiceNumber: true } },
-        User_Payment_collectedByIdToUser: { select: { id: true, name: true } },
-      },
-    });
-
-    // Update invoice paid amount if linked
+    // [PAYMENTS-NOLEAK] Overpay guard — agent consoles were the one path that
+    // could book more money against an invoice than the invoice is worth.
     if (invoiceId) {
-      const invoice = await db.invoice.findUnique({ where: { id: invoiceId } });
-      if (invoice) {
-        const newPaid = Math.round((invoice.paidAmount + parseFloat(amount)) * 100) / 100;
-        const newBalance = Math.round((invoice.grandTotal - newPaid) * 100) / 100;
-
-        await db.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            paidAmount: newPaid,
-            balanceAmount: Math.max(0, newBalance),
-            paidAt: newBalance <= 0 ? new Date() : invoice.paidAt,
-            status: newBalance <= 0 ? "PAID" : "PARTIALLY_PAID",
-          },
-        });
+      const targetInvoice = await db.invoice.findUnique({ where: { id: invoiceId } });
+      if (!targetInvoice) {
+        return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+      }
+      const balance = (targetInvoice.grandTotal || 0) - (targetInvoice.paidAmount || 0);
+      if (payAmount > balance + 0.01) {
+        return NextResponse.json(
+          { error: `Payment amount (₹${payAmount}) exceeds outstanding balance (₹${Math.max(0, balance).toFixed(2)})` },
+          { status: 400 }
+        );
       }
     }
+
+    // [PAYMENTS-NOLEAK] Duplicate UTR guard — same guard as /api/payments.
+    if (transactionRef && String(transactionRef).trim() !== "") {
+      const duplicate = await db.payment.findFirst({
+        where: { transactionRef: String(transactionRef).trim(), status: { not: "FAILED" } },
+        select: { id: true, receiptNumber: true, amount: true },
+      });
+      if (duplicate) {
+        return NextResponse.json(
+          { error: `Duplicate transaction reference "${transactionRef}" — already recorded as ${duplicate.receiptNumber || duplicate.id} (₹${duplicate.amount}).`, duplicateOf: duplicate.id },
+          { status: 409 }
+        );
+      }
+    }
+
+    // [PAYMENTS-NOLEAK] Collision-proof receipt (was count-based RCT-00001 —
+    // two concurrent agent collections shared a receipt) + single atomic
+    // transaction for payment + invoice update + agent counter bumps.
+    const receiptNumber = newReceiptNumber();
+    const payment = await db.$transaction(async (tx) => {
+      const created = await tx.payment.create({
+        data: {
+          subscriberId,
+          invoiceId: invoiceId || null,
+          amount: payAmount,
+          paymentMode,
+          transactionRef: transactionRef || "",
+          bankName: bankName || "",
+          chequeNumber: chequeNumber || "",
+          status: "VERIFIED",
+          receiptNumber,
+          notes: notes ? `${notes} ${AUTO_VERIFIED_MARKER}` : AUTO_VERIFIED_MARKER,
+          collectedById: collectedById || userId,
+          verifiedById: collectedById || userId,
+        },
+        include: {
+          Subscriber: { select: { id: true, name: true, code: true, phone: true } },
+          Invoice: { select: { id: true, invoiceNumber: true } },
+          User_Payment_collectedByIdToUser: { select: { id: true, name: true } },
+        },
+      });
+
+      if (invoiceId) {
+        const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+        if (invoice) {
+          const newPaid = Math.round((invoice.paidAmount + payAmount) * 100) / 100;
+          const newBalance = Math.round((invoice.grandTotal - newPaid) * 100) / 100;
+          await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              paidAmount: newPaid,
+              balanceAmount: Math.max(0, newBalance),
+              paidAt: newBalance <= 0 ? new Date() : invoice.paidAt,
+              status: newBalance <= 0 ? "PAID" : "PARTIALLY_PAID",
+            },
+          });
+        }
+      }
+
+      // Keep the denormalized CollectionAgent counters alive (were never
+      // updated by any route — dashboards drifted from reality).
+      const agentId = collectedById || userId;
+      if (agentId) {
+        await tx.collectionAgent.upsert({
+          where: { userId: agentId },
+          create: { userId: agentId, name: created.User_Payment_collectedByIdToUser?.name || "Agent", totalCollectedToday: payAmount, totalCollectedMonth: payAmount },
+          update: {
+            totalCollectedToday: { increment: payAmount },
+            totalCollectedMonth: { increment: payAmount },
+          },
+        }).catch(() => { /* agent row optional */ });
+      }
+
+      return created;
+    });
 
     await auditCreate(req, "Payment", payment.id, { amount: parseFloat(amount), paymentMode, subscriberId, collectedById, source: "collection" });
     return NextResponse.json({ payment }, { status: 201 });

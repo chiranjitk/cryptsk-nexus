@@ -11,7 +11,7 @@ interface SystemAlert {
   title: string;
   description: string;
   timestamp: string;
-  source: "Complaint" | "Payment" | "Device" | "Invoice" | "Subscriber";
+  source: "Complaint" | "Payment" | "Device" | "Invoice" | "Subscriber" | "Security";
 }
 
 interface AlertsSummaryResponse {
@@ -31,6 +31,12 @@ interface AlertsSummaryResponse {
   overdueSummary: {
     count: number;
     totalAmount: number;
+  };
+  security: {
+    failedLogins24h: number;
+    failedLogins7d: number;
+    lockedAccounts: number;
+    activeSessions: number;
   };
   timestamp: string;
 }
@@ -304,6 +310,67 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // ── 5b. Security posture alerts (failed logins / locked accounts) ──
+    const [failedLogins7d, failedLogins24h, lockedAccounts, activeSessions] =
+      await Promise.all([
+        db.auditLog.count({
+          where: { action: "LOGIN_FAILED", timestamp: { gte: sevenDaysAgo } },
+        }),
+        db.auditLog.count({
+          where: { action: "LOGIN_FAILED", timestamp: { gte: twentyFourHoursAgo } },
+        }),
+        db.user.count({ where: { status: "LOCKED" } }),
+        db.userSession.count({ where: { status: "active" } }),
+      ]);
+
+    if (lockedAccounts > 0) {
+      alerts.push({
+        id: "security-locked-accounts",
+        type: "SECURITY_LOCKED_ACCOUNTS",
+        severity: "HIGH",
+        title: `${lockedAccounts} Locked Staff Account${lockedAccounts > 1 ? "s" : ""}`,
+        description:
+          "One or more staff accounts are locked (repeated failures or admin action). Review and unlock from Admin Users.",
+        timestamp: now.toISOString(),
+        source: "Security",
+      });
+    }
+
+    if (failedLogins24h >= 10) {
+      alerts.push({
+        id: "security-failed-login-spike",
+        type: "SECURITY_FAILED_LOGIN_SPIKE",
+        severity: "CRITICAL",
+        title: `Failed Login Spike — ${failedLogins24h} in 24h`,
+        description: `${failedLogins24h} failed sign-in attempts in the last 24 hours (7-day total: ${failedLogins7d}). Possible credential-stuffing or brute-force attempt.`,
+        timestamp: now.toISOString(),
+        source: "Security",
+      });
+    } else if (failedLogins24h > 0) {
+      alerts.push({
+        id: "security-failed-logins",
+        type: "SECURITY_FAILED_LOGINS",
+        severity: "WARNING",
+        title: `${failedLogins24h} Failed Login${failedLogins24h > 1 ? "s" : ""} (24h)`,
+        description: `Failed sign-in attempts recorded in the last 24 hours. 7-day total: ${failedLogins7d}.`,
+        timestamp: now.toISOString(),
+        source: "Security",
+      });
+    }
+
+    if (activeSessions > 50) {
+      alerts.push({
+        id: "security-session-count",
+        type: "SECURITY_SESSION_COUNT",
+        severity: "INFO",
+        title: `${activeSessions} Active Sessions`,
+        description:
+          "Unusually high number of active staff sessions. Verify no credential sharing.",
+        timestamp: now.toISOString(),
+        source: "Security",
+      });
+    }
+
     // ── 6. Sort alerts: CRITICAL first, then HIGH, WARNING, INFO; then by timestamp desc ──
     const severityOrder: Record<string, number> = {
       CRITICAL: 0,
@@ -337,6 +404,12 @@ export async function GET(request: NextRequest) {
       overdueSummary: {
         count: overdueCount,
         totalAmount: overdueTotalAmount,
+      },
+      security: {
+        failedLogins24h,
+        failedLogins7d,
+        lockedAccounts,
+        activeSessions,
       },
       timestamp: new Date().toISOString(),
     };

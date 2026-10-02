@@ -21,10 +21,16 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const milestones = await db.billingMilestone.findMany({
+      const rows = await db.billingMilestone.findMany({
         where: { planId },
         orderBy: { priority: "asc" },
       });
+
+      // Map storage units → UI shape (thresholdDataMb → thresholdGb)
+      const milestones = rows.map((m) => ({
+        ...m,
+        thresholdGb: Math.round(((m.thresholdDataMb || 0) / 1024) * 100) / 100,
+      }));
 
       return NextResponse.json({ milestones });
     }
@@ -32,9 +38,11 @@ export async function GET(req: NextRequest) {
     // ── List billing cycles for a subscriber ──
     if (action === "list-cycles") {
       const subscriberId = searchParams.get("subscriberId");
-      if (!subscriberId) {
+      const search = (searchParams.get("search") || "").trim(); // subscriber code or name
+
+      if (!subscriberId && !search) {
         return NextResponse.json(
-          { error: "Missing required query param: subscriberId" },
+          { error: "Missing required query param: subscriberId or search" },
           { status: 400 }
         );
       }
@@ -43,20 +51,49 @@ export async function GET(req: NextRequest) {
       const limit = parseInt(searchParams.get("limit") || "25");
       const status = searchParams.get("status");
 
-      const where: Record<string, unknown> = { subscriberId };
+      const where: Record<string, unknown> = {};
+      if (subscriberId) {
+        where.subscriberId = subscriberId;
+      } else if (search) {
+        where.Subscriber = {
+          OR: [
+            { code: { contains: search, mode: "insensitive" as const } },
+            { name: { contains: search, mode: "insensitive" as const } },
+          ],
+        };
+      }
       if (status) {
         where.status = status;
       }
 
-      const [cycles, total] = await Promise.all([
+      const [rows, total] = await Promise.all([
         db.userBillingCycle.findMany({
           where,
+          include: { Subscriber: { select: { id: true, code: true, name: true } } },
           orderBy: { cycleStartDate: "desc" },
           skip: (page - 1) * limit,
           take: limit,
         }),
         db.userBillingCycle.count({ where }),
       ]);
+
+      // Map storage units → the shape the UI renders (Mb → GB, ISO dates)
+      const cycles = rows.map(({ Subscriber, ...c }) => ({
+        id: c.id,
+        subscriberId: c.subscriberId,
+        subscriberCode: Subscriber?.code ?? null,
+        subscriberName: Subscriber?.name ?? null,
+        planName: null,
+        cycleStart: c.cycleStartDate,
+        cycleEnd: c.cycleEndDate,
+        dataUsedGb: Math.round(((c.usedTotalMb || 0) / 1024) * 100) / 100,
+        dataAllottedGb: Math.round(((c.allottedTotalMb || 0) / 1024) * 100) / 100,
+        currentSpeedDownKbps: 0,
+        currentSpeedUpKbps: 0,
+        currentMilestone: c.currentMilestoneId,
+        status: (c.status || "active").toUpperCase(),
+        nextResetAt: c.cycleEndDate,
+      }));
 
       return NextResponse.json({ cycles, total, page, limit });
     }

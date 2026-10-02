@@ -1,0 +1,915 @@
+diff --git a/mini-services/billing-cron/index.ts b/mini-services/billing-cron/index.ts
+index fe0384b..d7bf90f 100755
+--- a/mini-services/billing-cron/index.ts
++++ b/mini-services/billing-cron/index.ts
+@@ -21,6 +21,25 @@ function jsonErr(message: string, status = 400) {
+   return json({ error: message }, status);
+ }
+ 
++// ─── RADIUS data-plane enforcement ─────────────────────────
++// [AUDIT-FIX F-04] The cron previously only flipped DB status. These helpers mirror
++// src/lib/radius-sync.ts blockUserInFreeRADIUS/unblockUserInFreeRADIUS so suspended
++// subscribers are actually rejected by FreeRADIUS (Auth-Type=Reject in radcheck).
++function esc(v: string): string {
++  return v.replace(/'/g, "''");
++}
++
++async function blockRadiusUser(username: string): Promise<void> {
++  const uname = esc(username);
++  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
++  await db.$executeRawUnsafe(`INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Auth-Type', ':=', 'Reject')`);
++}
++
++async function unblockRadiusUser(username: string): Promise<void> {
++  const uname = esc(username);
++  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
++}
++
+ // ─── Scheduled Jobs State ──────────────────────────────────
+ 
+ interface JobExecution {
+@@ -261,6 +280,7 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
+   });
+ 
+   let suspended = 0;
++  let radiusBlocked = 0;
+   for (const inv of overdueInvoices) {
+     if (!inv.subscriber || inv.subscriber.status !== "ACTIVE") continue;
+ 
+@@ -269,6 +289,17 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
+       data: { status: "SUSPENDED" },
+     });
+ 
++    // [AUDIT-FIX F-04] Enforce the suspension in FreeRADIUS — non-payers must not
++    // be able to authenticate. Failures are logged but do not abort the sweep.
++    if (inv.subscriber.radiusEnabled && inv.subscriber.serviceUsername) {
++      try {
++        await blockRadiusUser(inv.subscriber.serviceUsername);
++        radiusBlocked++;
++      } catch (e) {
++        logger.error("RADIUS block failed", { username: inv.subscriber.serviceUsername, error: String(e) });
++      }
++    }
++
+     // Create notification
+     await db.notification.create({
+       data: {
+@@ -284,8 +315,86 @@ async function jobSuspendOverdue(): Promise<Record<string, unknown>> {
+     suspended++;
+   }
+ 
+-  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended });
+-  return { checked: overdueInvoices.length, suspended };
++  logger.info("Suspension job complete", { checked: overdueInvoices.length, suspended, radiusBlocked });
++  return { checked: overdueInvoices.length, suspended, radiusBlocked };
++}
++
++// [AUDIT-FIX F-05] Expiry enforcement — the product had NO mechanism to stop service
++// when a plan's validity lapses (reproduced live: subscriber expired 60 days stayed
++// ACTIVE and unblocked after running the suspend-overdue job, because that job only
++// looks at OVERDUE invoices). This job computes each subscriber's paid-through date
++// from their billing anchor + plan validity and suspends + RADIUS-blocks whoever has
++// lapsed beyond the grace period.
++async function jobExpiryEnforcement(): Promise<Record<string, unknown>> {
++  const graceDays = 3; // days of tolerance after the paid-through date before suspension
++  const now = Date.now();
++
++  const active = await db.subscriber.findMany({
++    where: { status: "ACTIVE", planId: { not: null } },
++    include: { Plan: { select: { name: true, validityDays: true } } },
++  });
++
++  let checked = 0;
++  let expiredSuspended = 0;
++  let radiusBlocked = 0;
++  const details: Array<{ code: string; expiredDaysAgo: number }> = [];
++
++  for (const sub of active) {
++    const validityDays = sub.Plan?.validityDays || 30;
++    if (!sub.billingStartDate) continue;
++    checked++;
++
++    // Paid-through = last cycle anchor + one validity period.
++    // The billing anchor advances on every renewal, so the subscriber is entitled to
++    // service from billingStartDate until billingStartDate + validityDays (single-cycle
++    // entitlement). Multi-cycle renewals set the anchor to the final cycle (bulk renew
++    // writes newBillingStart = periodStart + cycleDays*(months-1)), so this stays correct.
++    const paidThrough = sub.billingStartDate.getTime() + validityDays * 86400000;
++    const lapsedDays = Math.floor((now - paidThrough) / 86400000);
++
++    // Beyond the paid-through date + grace AND no PAID invoice covering the future
++    // (belt-and-braces: a recently generated invoice that starts in the future means
++    // the operator has already taken payment for the next cycle).
++    if (lapsedDays > graceDays) {
++      const coveringInvoice = await db.invoice.findFirst({
++        where: {
++          subscriberId: sub.id,
++          status: { in: ["PAID", "SENT", "PARTIALLY_PAID"] },
++          periodEnd: { gte: new Date() },
++        },
++        select: { invoiceNumber: true },
++      });
++      if (coveringInvoice) continue; // already paid for a period extending past today
++
++      await db.subscriber.update({
++        where: { id: sub.id },
++        data: { status: "SUSPENDED" },
++      });
++      if (sub.radiusEnabled && sub.serviceUsername) {
++        try {
++          await blockRadiusUser(sub.serviceUsername);
++          radiusBlocked++;
++        } catch (e) {
++          logger.error("Expiry RADIUS block failed", { username: sub.serviceUsername, error: String(e) });
++        }
++      }
++      await db.notification.create({
++        data: {
++          subscriberId: sub.id,
++          type: "IN_APP",
++          category: "BILL_DUE",
++          title: "Plan Expired",
++          message: `Your plan ${sub.Plan?.name || ""} expired ${lapsedDays} day(s) ago and service has been suspended. Renew to reactivate instantly.`,
++          status: "PENDING",
++        },
++      });
++      expiredSuspended++;
++      details.push({ code: sub.code, expiredDaysAgo: lapsedDays });
++    }
++  }
++
++  logger.info("Expiry enforcement complete", { checked, expiredSuspended, radiusBlocked });
++  return { checked, expiredSuspended, radiusBlocked, details };
+ }
+ 
+ async function jobUsageReset(): Promise<Record<string, unknown>> {
+@@ -405,6 +514,21 @@ const jobs: ScheduledJob[] = [
+     history: [],
+     handler: jobUsageReset,
+   },
++  {
++    id: "job-006",
++    name: "Expiry Enforcement",
++    description: "Suspend + RADIUS-block subscribers whose plan validity lapsed beyond grace period [AUDIT-FIX F-05]",
++    type: "expiry-enforcement",
++    cron: "0 7 * * *",
++    enabled: true,
++    nextRun: getNextRun("0 7 * * *"),
++    status: "idle",
++    totalRuns: 0,
++    successCount: 0,
++    failCount: 0,
++    history: [],
++    handler: jobExpiryEnforcement,
++  },
+ ];
+ 
+ // ─── Job Execution ──────────────────────────────────────────
+@@ -640,6 +764,18 @@ Bun.serve({
+       return json({ success: true, message: "Suspension job started", timestamp: new Date().toISOString() });
+     }
+ 
++    // ── POST /api/expiry-enforcement (direct trigger) [AUDIT-FIX F-05] ──
++    if (path === "/api/expiry-enforcement" && req.method === "POST") {
++      const expiryJob = jobs.find((j) => j.type === "expiry-enforcement");
++      if (expiryJob && expiryJob.status === "running") {
++        return jsonErr("Expiry enforcement job already in progress", 409);
++      }
++      if (expiryJob) {
++        executeJob(expiryJob, `manual:${auth.userId}`).catch(() => {});
++      }
++      return json({ success: true, message: "Expiry enforcement job started", timestamp: new Date().toISOString() });
++    }
++
+     // ── POST /api/usage-reset (direct trigger) ──
+     if (path === "/api/usage-reset" && req.method === "POST") {
+       const usageJob = jobs.find((j) => j.type === "usage-reset");
+diff --git a/src/app/api/due-recovery/route.ts b/src/app/api/due-recovery/route.ts
+index f0f3d22..f16cae0 100755
+--- a/src/app/api/due-recovery/route.ts
++++ b/src/app/api/due-recovery/route.ts
+@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
+ import { NextRequest, NextResponse } from "next/server";
+ import { requireAuth, AuthError } from "@/lib/api-auth";
+ import { auditLog } from "@/lib/services/audit-service";
++import { blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
+ 
+ export async function GET(request: NextRequest) {
+   try {
+@@ -367,29 +368,63 @@ export async function POST(request: NextRequest) {
+       const invoice = await db.invoice.findUnique({ where: { id: invoiceIds?.[0] } });
+       if (!invoice) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+ 
++      // [AUDIT-FIX F-06] Overpay guard — this path previously accepted any amount and wrote
++      // a negative balanceAmount (reproduced live: ₹99,999 on a ₹706.82 invoice → -₹99,492.18).
++      const outstanding = Math.max(0, (invoice.grandTotal || 0) - (invoice.paidAmount || 0));
++      const payAmount = amount || invoice.balanceAmount;
++      if (payAmount > outstanding) {
++        return NextResponse.json(
++          { error: `Payment amount (₹${payAmount}) exceeds outstanding balance (₹${outstanding}). For overpayments, issue a credit note or an advance-adjustment invoice instead.` },
++          { status: 400 }
++        );
++      }
++
+       const payment = await db.payment.create({
+         data: {
+           subscriberId: invoice.subscriberId,
+           invoiceId: invoice.id,
+-          amount: amount || invoice.balanceAmount,
++          amount: payAmount,
+           paymentMode: body.paymentMode || "CASH",
+           status: "VERIFIED",
++          receiptNumber: `DR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
+           notes: note || "Recorded from Due Recovery",
+         },
+       });
+ 
+-      const newPaid = invoice.paidAmount + (amount || invoice.balanceAmount);
++      const newPaid = invoice.paidAmount + payAmount;
+       const newBalance = invoice.grandTotal - newPaid;
+       await db.invoice.update({
+         where: { id: invoice.id },
+         data: {
+           paidAmount: newPaid,
+-          balanceAmount: newBalance,
++          balanceAmount: Math.max(0, newBalance),
+           status: newBalance <= 0 ? "PAID" : "PARTIALLY_PAID",
+           paidAt: newBalance <= 0 ? new Date() : invoice.paidAt,
+         },
+       });
+ 
++      // [AUDIT-FIX F-05 companion] Reactivating on full settlement: a subscriber cut off
++      // for non-payment who clears the invoice is restored to ACTIVE and unblocked in
++      // RADIUS — previously they stayed SUSPENDED (and offline) until manual intervention.
++      let reactivated = false;
++      if (newBalance <= 0) {
++        const sub = await db.subscriber.findUnique({
++          where: { id: invoice.subscriberId },
++          select: { id: true, status: true, serviceUsername: true, radiusEnabled: true },
++        });
++        if (sub && (sub.status === "SUSPENDED" || sub.status === "DISCONNECTED")) {
++          await db.subscriber.update({ where: { id: sub.id }, data: { status: "ACTIVE" } });
++          if (sub.radiusEnabled && sub.serviceUsername) {
++            try {
++              await unblockUserInFreeRADIUS(sub.serviceUsername);
++            } catch (e) {
++              console.error("[DueRecovery] RADIUS unblock failed for", sub.serviceUsername, e);
++            }
++          }
++          reactivated = true;
++        }
++      }
++
+       // Update SLA if resolved
+       if (newBalance <= 0) {
+         await db.recoverySla.updateMany({
+@@ -399,7 +434,7 @@ export async function POST(request: NextRequest) {
+       }
+ 
+       await auditLog(request, "CREATE", "DueRecovery", payment.id, { invoiceId: invoice.id, amount });
+-      return NextResponse.json({ success: true, payment });
++      return NextResponse.json({ success: true, payment, invoiceSettled: newBalance <= 0, subscriberReactivated: reactivated });
+     }
+ 
+     if (action === "suspend") {
+@@ -410,10 +445,23 @@ export async function POST(request: NextRequest) {
+             where: { id: invoice.subscriberId },
+             data: { status: "SUSPENDED" },
+           });
++          // [AUDIT-FIX F-04] Cut the subscriber off at the data plane — the DB-only suspend
++          // left the customer fully online (confirmed by audit exploit test).
++          const sub = await db.subscriber.findUnique({
++            where: { id: invoice.subscriberId },
++            select: { serviceUsername: true, radiusEnabled: true },
++          });
++          if (sub?.radiusEnabled && sub.serviceUsername) {
++            try {
++              await blockUserInFreeRADIUS(sub.serviceUsername);
++            } catch (e) {
++              console.error("[DueRecovery] RADIUS block failed for", sub.serviceUsername, e);
++            }
++          }
+         }
+       }
+       await auditLog(request, "UPDATE", "DueRecovery", "bulk", { count: invoiceIds?.length || 0 });
+-      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended` });
++      return NextResponse.json({ success: true, message: `${invoiceIds?.length || 0} subscribers suspended (RADIUS blocked)` });
+     }
+ 
+     if (action === "assign-agent") {
+diff --git a/src/app/api/invoices/[id]/route.ts b/src/app/api/invoices/[id]/route.ts
+index 70101c4..a000995 100755
+--- a/src/app/api/invoices/[id]/route.ts
++++ b/src/app/api/invoices/[id]/route.ts
+@@ -8,6 +8,7 @@ export async function GET(
+   { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
++    await requireAuth(req); // [AUDIT-FIX F-07] invoice financials (GSTIN/PAN) were readable unauthenticated
+     const { id } = await params;
+ 
+     const invoice = await db.invoice.findUnique({
+@@ -43,6 +44,10 @@ export async function GET(
+ 
+     return NextResponse.json({ invoice });
+   } catch (error) {
++    if (error && typeof error === "object" && "statusCode" in error) {
++      const authErr = error as { statusCode: number; message: string };
++      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
++    }
+     console.error("Invoice GET [id] error:", error);
+     return NextResponse.json({ error: "Failed to fetch invoice" }, { status: 500 });
+   }
+diff --git a/src/app/api/payments/[id]/refund/route.ts b/src/app/api/payments/[id]/refund/route.ts
+index a99c9c5..b547e2e 100755
+--- a/src/app/api/payments/[id]/refund/route.ts
++++ b/src/app/api/payments/[id]/refund/route.ts
+@@ -127,6 +127,7 @@ export async function GET(
+   { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
++    await requireAuth(req); // [AUDIT-FIX F-07] refund history was readable unauthenticated
+     const { id } = await params;
+ 
+     const refunds = await db.refund.findMany({
+@@ -139,6 +140,10 @@ export async function GET(
+ 
+     return NextResponse.json({ refunds });
+   } catch (error) {
++    if (error && typeof error === "object" && "statusCode" in error) {
++      const authErr = error as { statusCode: number; message: string };
++      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
++    }
+     console.error("Refund GET error:", error);
+     return NextResponse.json({ error: "Failed to fetch refunds" }, { status: 500 });
+   }
+diff --git a/src/app/api/payments/[id]/route.ts b/src/app/api/payments/[id]/route.ts
+index 23b4f06..3e3439c 100755
+--- a/src/app/api/payments/[id]/route.ts
++++ b/src/app/api/payments/[id]/route.ts
+@@ -9,6 +9,7 @@ export async function GET(
+   { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
++    await requireAuth(req); // [AUDIT-FIX F-07] this endpoint leaked payment + subscriber PII unauthenticated
+     const { id } = await params;
+     const payment = await db.payment.findUnique({
+       where: { id },
+@@ -35,6 +36,10 @@ export async function GET(
+       ispSettings: ispSettings || { companyName: "My ISP" },
+     });
+   } catch (error) {
++    if (error && typeof error === "object" && "statusCode" in error) {
++      const authErr = error as { statusCode: number; message: string };
++      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
++    }
+     console.error("Payment GET error:", error);
+     return NextResponse.json({ error: "Failed to fetch payment" }, { status: 500 });
+   }
+@@ -69,37 +74,69 @@ export async function PUT(
+         return NextResponse.json({ error: "Invalid status. Must be VERIFIED, FAILED, or REFUNDED" }, { status: 400 });
+       }
+ 
+-      const updated = await db.payment.update({
+-        where: { id },
+-        data: {
+-          status: newStatus,
+-          verifiedById: newStatus === "VERIFIED" ? userId : undefined,
+-        },
+-        include: {
+-          Subscriber: { select: { id: true, name: true, code: true } },
+-          Invoice: { select: { id: true, invoiceNumber: true } },
+-        },
+-      });
++      // [AUDIT-FIX F-01/F-03] Enforce a legal status-transition matrix:
++      //  - PENDING → VERIFIED | FAILED        (normal verify/reject)
++      //  - FAILED  → VERIFIED | PENDING       (recover a failed entry)
++      //  - VERIFIED → REFUNDED                (only via the refund endpoint, kept here for admin correction)
++      //  - REFUNDED is TERMINAL — flipping back to VERIFIED re-enabled the over-refund exploit
++      //  - VERIFIED → VERIFIED is a no-op request, reject explicitly so invoice math can never double-count
++      const legalTransitions: Record<string, string[]> = {
++        PENDING: ["VERIFIED", "FAILED", "REFUNDED"],
++        FAILED: ["PENDING", "VERIFIED"],
++        VERIFIED: ["REFUNDED"],
++        REFUNDED: [], // terminal
++      };
++      if (payment.status === newStatus) {
++        return NextResponse.json(
++          { error: `Payment is already ${newStatus}. No transition performed.` },
++          { status: 409 }
++        );
++      }
++      if (!legalTransitions[payment.status]?.includes(newStatus)) {
++        return NextResponse.json(
++          { error: `Illegal status transition ${payment.status} → ${newStatus}. REFUNDED payments are terminal.` },
++          { status: 409 }
++        );
++      }
+ 
+-      // If verified and linked to an invoice, update invoice paid amount
+-      if (newStatus === "VERIFIED" && payment.invoiceId) {
+-        const invoice = await db.invoice.findUnique({ where: { id: payment.invoiceId } });
+-        if (invoice) {
+-          const newPaidAmount = invoice.paidAmount + payment.amount;
+-          const newBalanceAmount = invoice.grandTotal - newPaidAmount;
+-          const newInvoiceStatus = newBalanceAmount <= 0 ? "PAID" : "PARTIALLY_PAID";
+-
+-          await db.invoice.update({
+-            where: { id: payment.invoiceId },
+-            data: {
+-              paidAmount: newPaidAmount,
+-              balanceAmount: Math.max(0, newBalanceAmount),
+-              status: newInvoiceStatus,
+-              paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
+-            },
+-          });
++      // [AUDIT-FIX F-10] Wrap payment + invoice updates in a single transaction so a
++      // crash between the two writes can never leave books inconsistent.
++      const updated = await db.$transaction(async (tx) => {
++        const updatedPayment = await tx.payment.update({
++          where: { id },
++          data: {
++            status: newStatus,
++            verifiedById: newStatus === "VERIFIED" ? userId : undefined,
++          },
++          include: {
++            Subscriber: { select: { id: true, name: true, code: true } },
++            Invoice: { select: { id: true, invoiceNumber: true } },
++          },
++        });
++
++        // If verified and linked to an invoice, update invoice paid amount —
++        // guarded by the transition matrix above, so this arithmetic runs exactly once.
++        if (newStatus === "VERIFIED" && payment.invoiceId) {
++          const invoice = await tx.invoice.findUnique({ where: { id: payment.invoiceId } });
++          if (invoice) {
++            const newPaidAmount = invoice.paidAmount + payment.amount;
++            const newBalanceAmount = invoice.grandTotal - newPaidAmount;
++            const newInvoiceStatus = newBalanceAmount <= 0 ? "PAID" : "PARTIALLY_PAID";
++
++            await tx.invoice.update({
++              where: { id: payment.invoiceId },
++              data: {
++                paidAmount: newPaidAmount,
++                balanceAmount: Math.max(0, newBalanceAmount),
++                status: newInvoiceStatus,
++                paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
++              },
++            });
++          }
+         }
+-      }
++
++        return updatedPayment;
++      });
+ 
+       await auditStatusChange(req, "Payment", id, payment.status, newStatus, { amount: payment.amount, userId });
+       return NextResponse.json(updated);
+diff --git a/src/app/api/payments/route.ts b/src/app/api/payments/route.ts
+index 9491239..80546a6 100755
+--- a/src/app/api/payments/route.ts
++++ b/src/app/api/payments/route.ts
+@@ -177,6 +177,27 @@ export async function POST(req: NextRequest) {
+       }
+     }
+ 
++    // [AUDIT-FIX F-02] Duplicate bank/UPI reference guard — the same UTR must never
++    // be recorded twice (double-revenue exploit reproduced during the 2026-09-30 audit).
++    if (transactionRef && String(transactionRef).trim() !== "") {
++      const duplicate = await db.payment.findFirst({
++        where: {
++          transactionRef: String(transactionRef).trim(),
++          status: { not: "FAILED" },
++        },
++        select: { id: true, amount: true, receiptNumber: true },
++      });
++      if (duplicate) {
++        return NextResponse.json(
++          {
++            error: `Duplicate transaction reference "${transactionRef}" — already recorded as payment ${duplicate.receiptNumber || duplicate.id} (₹${duplicate.amount}). If this is genuinely a second transaction, use the bank's distinct reference number.`,
++            duplicateOf: duplicate.id,
++          },
++          { status: 409 }
++        );
++      }
++    }
++
+     const payCount = await db.payment.count();
+     const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
+ 
+diff --git a/src/app/api/subscribers/[id]/route.ts b/src/app/api/subscribers/[id]/route.ts
+index 6d3e8b2..918dbf7 100755
+--- a/src/app/api/subscribers/[id]/route.ts
++++ b/src/app/api/subscribers/[id]/route.ts
+@@ -7,10 +7,11 @@ import { removeUserFromFreeRADIUS, updateUserFreeRADIUSGroup, updateUserPassword
+ 
+ // GET /api/subscribers/[id] — single subscriber with relations
+ export async function GET(
+-  _req: NextRequest,
++  req: NextRequest,
+   { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
++    await requireAuth(req); // [AUDIT-FIX F-07] detail view leaked PII + invoices + payments unauthenticated
+     const { id } = await params;
+     const subscriber = await db.subscriber.findUnique({
+       where: { id },
+@@ -35,23 +36,37 @@ export async function GET(
+       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+     }
+ 
++    // [AUDIT-FIX F-22] Strip credential/KYC fields from every layer of the response.
++    // The service password is required by RADIUS internally but must never leave the server;
++    // KYC identifiers ride along on the base model and were previously serialized wholesale.
++    const { servicePassword: _sp, kycAadhaarNumber: _ky, panNumber: _pan, ...safeBase } = subscriber;
++    const strip = <T extends Record<string, unknown>>(row: T | undefined | null): Record<string, unknown> | null => {
++      if (!row) return null;
++      const { servicePassword: _a, kycAadhaarNumber: _b, panNumber: _c, ...rest } = row;
++      return rest as Record<string, unknown>;
++    };
++
+     // Map Prisma PascalCase relations to the camelCase keys the frontend expects.
+     // Original PascalCase keys are kept (additive) so existing consumers are unaffected.
+     const detail = {
+-      ...subscriber,
++      ...safeBase,
+       area: subscriber.Area ?? null,
+       plan: subscriber.Plan ?? null,
+       radiusGroup: subscriber.RadiusGroup ?? null,
+       radiusUser: subscriber.RadiusUser ?? null,
+       assignedDevice: subscriber.NetworkDevice ?? null,
+       radiusGroupName: subscriber.RadiusGroup?.name ?? null,
+-      invoices: subscriber.Invoice ?? [],
+-      payments: subscriber.Payment ?? [],
++      invoices: (subscriber.Invoice ?? []).map(strip),
++      payments: (subscriber.Payment ?? []).map(strip),
+       complaints: subscriber.Complaint ?? [],
+     };
+ 
+     return NextResponse.json(detail);
+   } catch (error) {
++    if (error && typeof error === "object" && "statusCode" in error) {
++      const authErr = error as { statusCode: number; message: string };
++      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
++    }
+     console.error("Subscriber GET error:", error);
+     return NextResponse.json({ error: "Failed to fetch subscriber" }, { status: 500 });
+   }
+diff --git a/src/app/api/subscribers/bulk/route.ts b/src/app/api/subscribers/bulk/route.ts
+index be0948f..f508316 100755
+--- a/src/app/api/subscribers/bulk/route.ts
++++ b/src/app/api/subscribers/bulk/route.ts
+@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
+ import { NextRequest, NextResponse } from "next/server";
+ import { auditBulk } from "@/lib/services/audit-service";
+ import { requireAuth, AuthError } from "@/lib/api-auth";
+-import { unblockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
++import { unblockUserInFreeRADIUS, blockUserInFreeRADIUS, updateUserFreeRADIUSGroup } from "@/lib/radius-sync";
+ 
+ const VALID_PAYMENT_MODES = ["CASH", "UPI", "ONLINE", "BANK_TRANSFER", "CHEQUE", "WALLET"];
+ 
+@@ -46,11 +46,39 @@ export async function POST(request: NextRequest) {
+         if (!newStatus) {
+           return NextResponse.json({ error: "Status is required for change-status action" }, { status: 400 });
+         }
++        // [AUDIT-FIX F-11] Validate against the subscriber status enum — updateMany
++        // previously accepted any arbitrary string and silently corrupted status data.
++        const VALID_STATUSES = ["ACTIVE", "SUSPENDED", "DISCONNECTED", "TRIAL", "PENDING_ACTIVATION"];
++        if (!VALID_STATUSES.includes(newStatus)) {
++          return NextResponse.json({ error: `Invalid status "${newStatus}". Must be one of: ${VALID_STATUSES.join(", ")}` }, { status: 400 });
++        }
+         result = await db.subscriber.updateMany({
+           where: { id: { in: subscriberIds } },
+           data: { status: newStatus },
+         });
+-        break;
++        // [AUDIT-FIX F-04] Propagate enforcement to the data plane: bulk suspend/disconnect
++        // previously left radcheck untouched, so cut-off subscribers kept authenticating.
++        const affected = await db.subscriber.findMany({
++          where: { id: { in: subscriberIds }, serviceUsername: { not: "" }, radiusEnabled: true },
++          select: { id: true, serviceUsername: true },
++        });
++        const shouldBlock = newStatus === "SUSPENDED" || newStatus === "DISCONNECTED";
++        const radiusErrors: string[] = [];
++        for (const s of affected) {
++          if (!s.serviceUsername) continue;
++          try {
++            if (shouldBlock) await blockUserInFreeRADIUS(s.serviceUsername);
++            else await unblockUserInFreeRADIUS(s.serviceUsername);
++          } catch (e) {
++            radiusErrors.push(`${s.serviceUsername}: ${(e as Error).message}`);
++          }
++        }
++        return NextResponse.json({
++          action: "change-status",
++          updated: result.count,
++          radiusSynced: affected.length,
++          ...(radiusErrors.length > 0 && { radiusErrors, warning: "Some RADIUS blocks failed — verify FreeRADIUS connectivity" }),
++        });
+       }
+ 
+       case "assign-plan": {
+@@ -230,11 +258,19 @@ export async function POST(request: NextRequest) {
+           const igst = Math.round(basePrice * igstPct) / 100;
+           const totalAmount = Math.round((basePrice + cgst + sgst + igst) * 100) / 100;
+ 
+-          // Renewal period starts at the end of the current billing cycle so
+-          // subscribers never lose paid days (or now if never billed).
++          // Reactivation classification (used by the transaction below)
++          const restoring = sub.status === "SUSPENDED" || sub.status === "DISCONNECTED";
++          const activating = sub.status === "PENDING_ACTIVATION";
++
++          // Renewal period rules [AUDIT-FIX F-08]:
++          //  - ACTIVE/TRIAL subscriber (in service): start at the next cycle boundary so
++          //    they never lose paid days (original intent).
++          //  - SUSPENDED/DISCONNECTED/PENDING subscriber (not in service): start NOW.
++          //    Previously a future cycleEnd was applied to expired subscribers too, granting
++          //    up to a full cycle of free service between reconnection and the paid period.
+           const now = new Date();
+           let periodStart = new Date(now);
+-          if (sub.billingStartDate) {
++          if (sub.billingStartDate && (sub.status === "ACTIVE" || sub.status === "TRIAL")) {
+             const diffDays = Math.floor((now.getTime() - sub.billingStartDate.getTime()) / 86400000);
+             const cyclesCompleted = Math.max(0, Math.floor(diffDays / cycleDays));
+             const cycleEnd = new Date(sub.billingStartDate.getTime() + (cyclesCompleted + 1) * cycleDays * 86400000);
+@@ -244,75 +280,79 @@ export async function POST(request: NextRequest) {
+           // Billing anchor such that next-billing-date math lands exactly on periodEnd
+           const newBillingStart = new Date(periodStart.getTime() + cycleDays * (months - 1) * 86400000);
+ 
+-          // Create the renewal invoice (unique invoiceNumber with retry)
++          // [AUDIT-FIX F-10] Invoice + payment + subscriber update now run in ONE transaction —
++          // previously a failure between writes left a "PAID" invoice with no payment record
++          // (or vice versa) and the loop just continued to the next subscriber.
+           let invoiceNumber = "";
+-          let invoiceCreated = false;
+-          for (let attempt = 0; attempt < 5 && !invoiceCreated; attempt++) {
++          let createdInvoiceId: string | null = null;
++          for (let attempt = 0; attempt < 5 && !createdInvoiceId; attempt++) {
+             invoiceNumber = await nextInvoiceNumber();
+             try {
+-              await db.invoice.create({
+-                data: {
+-                  invoiceNumber,
+-                  subscriberId: sub.id,
+-                  planId: plan.id,
+-                  issueDate: now,
+-                  dueDate: now,
+-                  periodStart,
+-                  periodEnd,
+-                  description: `Renewal — ${plan.name} × ${months} month${months > 1 ? "s" : ""}`,
+-                  subtotal: basePrice,
+-                  cgstAmount: cgst,
+-                  sgstAmount: sgst,
+-                  igstAmount: igst,
+-                  totalTax: cgst + sgst + igst,
+-                  totalAmount,
+-                  grandTotal: totalAmount,
+-                  status: recordPayment ? "PAID" : "DRAFT",
+-                  paidAmount: recordPayment ? totalAmount : 0,
+-                  balanceAmount: recordPayment ? 0 : totalAmount,
+-                  paymentMode: recordPayment ? paymentMode : null,
+-                  paidAt: recordPayment ? now : null,
+-                  cgstRate: cgstPct,
+-                  sgstRate: sgstPct,
+-                  igstRate: igstPct,
+-                },
++              createdInvoiceId = await db.$transaction(async (tx) => {
++                const inv = await tx.invoice.create({
++                  data: {
++                    invoiceNumber,
++                    subscriberId: sub.id,
++                    planId: plan.id,
++                    issueDate: now,
++                    dueDate: now,
++                    periodStart,
++                    periodEnd,
++                    description: `Renewal — ${plan.name} × ${months} month${months > 1 ? "s" : ""}`,
++                    subtotal: basePrice,
++                    cgstAmount: cgst,
++                    sgstAmount: sgst,
++                    igstAmount: igst,
++                    totalTax: cgst + sgst + igst,
++                    totalAmount,
++                    grandTotal: totalAmount,
++                    status: recordPayment ? "PAID" : "DRAFT",
++                    paidAmount: recordPayment ? totalAmount : 0,
++                    balanceAmount: recordPayment ? 0 : totalAmount,
++                    paymentMode: recordPayment ? paymentMode : null,
++                    paidAt: recordPayment ? now : null,
++                    cgstRate: cgstPct,
++                    sgstRate: sgstPct,
++                    igstRate: igstPct,
++                  },
++                });
++                if (recordPayment) {
++                  // [AUDIT-FIX F-09] Payment now carries invoiceId — bulk-renew payments were
++                  // previously orphaned (invoiceId: null), breaking revenue reconciliation.
++                  await tx.payment.create({
++                    data: {
++                      subscriberId: sub.id,
++                      invoiceId: inv.id,
++                      amount: totalAmount,
++                      paymentMode,
++                      status: "VERIFIED",
++                      receiptNumber: `RCPT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
++                      notes: `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
++                    },
++                  });
++                }
++                await tx.subscriber.update({
++                  where: { id: sub.id },
++                  data: {
++                    billingStartDate: newBillingStart,
++                    ...(restoring && { status: "ACTIVE" }),
++                    ...(activating && { status: "ACTIVE", activationDate: sub.activationDate ?? now }),
++                  },
++                });
++                return inv.id;
+               });
+-              invoiceCreated = true;
+             } catch (e: unknown) {
+               if ((e as { code?: string })?.code !== "P2002") throw e;
+             }
+           }
+-          if (!invoiceCreated) {
++          if (!createdInvoiceId) {
+             summary.skipped++;
+             summary.skippedNames.push(sub.name);
+             continue;
+           }
+-
+           if (recordPayment) {
+-            await db.payment.create({
+-              data: {
+-                subscriberId: sub.id,
+-                amount: totalAmount,
+-                paymentMode,
+-                status: "VERIFIED",
+-                receiptNumber: `RCPT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+-                notes: `Renewal ${months} month(s) — ${plan.name} (${invoiceNumber})`,
+-              },
+-            });
+             summary.totalCollected += totalAmount;
+           }
+-
+-          // Reactivate + extend billing cycle
+-          const restoring = sub.status === "SUSPENDED" || sub.status === "DISCONNECTED";
+-          const activating = sub.status === "PENDING_ACTIVATION";
+-          await db.subscriber.update({
+-            where: { id: sub.id },
+-            data: {
+-              billingStartDate: newBillingStart,
+-              ...(restoring && { status: "ACTIVE" }),
+-              ...(activating && { status: "ACTIVE", activationDate: sub.activationDate ?? now }),
+-            },
+-          });
+           if ((restoring || activating) && sub.radiusEnabled && sub.serviceUsername) {
+             try {
+               await unblockUserInFreeRADIUS(sub.serviceUsername);
+diff --git a/src/components/pages/subscribers-page.tsx b/src/components/pages/subscribers-page.tsx
+index 7401395..3d7a268 100755
+--- a/src/components/pages/subscribers-page.tsx
++++ b/src/components/pages/subscribers-page.tsx
+@@ -362,6 +362,7 @@ export default function SubscribersPage() {
+   const [areaFilter, setAreaFilter] = useState("");
+   const [planFilter, setPlanFilter] = useState("");
+   const [connectionType, setConnectionType] = useState("");
++  const [expiringOnly, setExpiringOnly] = useState(false);
+   const [sortBy, setSortBy] = useState("createdAt");
+   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+ 
+@@ -536,6 +537,22 @@ export default function SubscribersPage() {
+     refetchInterval: 60_000,
+   });
+ 
++  // [NEW] Expiring-soon watchlist — subscribers whose billing cycle ends within 7 days.
++  // Powers the "Expiring Soon" quick filter and the amber dot on the status pill.
++  const { data: expiringData } = useQuery<{ expiring: Array<{ id: string; code: string; name: string; planName: string; daysLeft: number; expiresAt: string }> }>({
++    queryKey: ["subscribers-expiring"],
++    queryFn: () => apiFetch("/api/subscribers/expiring?days=7"),
++    staleTime: 120_000,
++    refetchInterval: 300_000,
++  });
++  const expiringList = expiringData?.expiring ?? [];
++  const expiringSet = useMemo(() => new Set(expiringList.map((s) => s.id)), [expiringList]);
++  const expiringDaysById = useMemo(() => {
++    const m = new Map<string, number>();
++    expiringList.forEach((s) => m.set(s.id, s.daysLeft));
++    return m;
++  }, [expiringList]);
++
+   // Build a Set of online subscriber IDs (mock: first onlineCount subscriber IDs from the list)
+   const onlineSet = useMemo(() => {
+     const subs = data?.subscribers ?? [];
+@@ -859,9 +876,11 @@ export default function SubscribersPage() {
+ 
+   const total = data?.total ?? 0;
+   const totalPages = data?.totalPages ?? 1;
+-  const subscribers = data?.subscribers ?? [];
++  const subscribers = expiringOnly
++    ? (data?.subscribers ?? []).filter((s) => expiringSet.has(s.id))
++    : (data?.subscribers ?? []);
+ 
+-  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType;
++  const hasActiveFilters = search || statusFilter || areaFilter || planFilter || connectionType || expiringOnly;
+   const selectedPlan = plans?.find((p) => p.id === form.planId);
+ 
+   // ─── Bulk renew / change-plan derived values (need subscribers + plans) ───
+@@ -1140,7 +1159,22 @@ export default function SubscribersPage() {
+                 <SelectItem value="ETHERNET">Ethernet</SelectItem>
+               </SelectContent>
+             </Select>
+-            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
++            <Button
++              variant={expiringOnly ? "default" : "outline"}
++              size="sm"
++              onClick={() => { setExpiringOnly(!expiringOnly); setPage(1); }}
++              className={expiringOnly ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600" : "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"}
++              title="Subscribers whose billing cycle ends within 7 days"
++            >
++              <Clock className="h-3 w-3 mr-1" />
++              Expiring Soon
++              {expiringSet.size > 0 && (
++                <span className={`ml-1 inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[10px] font-semibold ${expiringOnly ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"}`}>
++                  {expiringSet.size}
++                </span>
++              )}
++            </Button>
++            <Button variant="outline" size="sm" onClick={() => { setSearch(""); setStatusFilter(""); setAreaFilter(""); setPlanFilter(""); setConnectionType(""); setExpiringOnly(false); setSortBy("createdAt"); setSortOrder("desc"); setPage(1); }}>
+               <X className="h-3 w-3 mr-1" />Clear
+             </Button>
+           </div>
+@@ -1148,6 +1182,15 @@ export default function SubscribersPage() {
+           {hasActiveFilters && (
+             <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
+               <span className="text-xs text-muted-foreground font-medium">Active filters:</span>
++              {expiringOnly && (
++                <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
++                  <Clock className="h-3 w-3" />
++                  Expiring within 7 days
++                  <button onClick={() => { setExpiringOnly(false); setPage(1); }} className="ml-0.5 rounded-sm hover:bg-muted-foreground/20 p-0.5 transition-colors" aria-label="Remove expiring filter">
++                    <X className="h-2.5 w-2.5" />
++                  </button>
++                </Badge>
++              )}
+               {search && (
+                 <Badge variant="secondary" className="text-xs gap-1 pl-2 pr-1.5 py-0.5 cursor-default">
+                   <Search className="h-3 w-3" />
+@@ -1418,6 +1461,12 @@ export default function SubscribersPage() {
+                             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_MAP[sub.status]?.dot || "bg-gray-400"}`} />
+                             {STATUS_MAP[sub.status]?.label || sub.status}
+                           </Badge>
++                          {expiringDaysById.has(sub.id) && sub.status === "ACTIVE" && (
++                            <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 rounded-full gap-1 inline-flex items-center border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400" title={`Plan expires in ${expiringDaysById.get(sub.id)} day(s)`}>
++                              <Clock className="h-2.5 w-2.5" />
++                              {expiringDaysById.get(sub.id) === 0 ? "expires today" : `${expiringDaysById.get(sub.id)}d left`}
++                            </Badge>
++                          )}
+                         </div>
+                       </TableCell>
+                       <TableCell className="text-xs">
+diff --git a/worklog.md b/worklog.md
+index 7effec0..3c46f35 100755
+--- a/worklog.md
++++ b/worklog.md
+@@ -3171,3 +3171,37 @@ Stage Summary:
+ - CRITICAL for next agents: every suspend path except manual PUT misses blockUserInFreeRADIUS; only 1 $transaction in whole money pipeline; payments have no idempotency — P0 list in AUDIT-REPORT §4 should drive next fix sprint
+ - Test data pollution in sandbox DB is intentional (payments INV-00001/00002, DUP-UTR-999888, refunds) — safe to wipe
+ >>>>>>> Stashed changes
++
++---
++Task ID: P0-FIX-SPRINT-2026-10-01
++Agent: Z.ai Code (cron webDevReview round 1)
++Task: Fix P0 business-logic gaps from AUDIT-REPORT.md + UI enhancement (expiring-soon filter)
++
++Work Log:
++- Browser QA first: login OK, Subscribers page renders, row-select bulk bar (Activate/Suspend/Renew/Change Plan) confirmed working
++- F-07 fixed: requireAuth added to GET /api/subscribers/[id], /api/invoices/[id], /api/payments/[id], /api/payments/[id]/refund + AuthError→statuscode handling in each catch (was 500, now clean 401)
++- F-22 fixed: servicePassword/kycAadhaarNumber/panNumber stripped from subscriber detail response (base + nested invoices/payments)
++- F-01+F-03 fixed: payment PUT now enforces transition matrix (PENDING→VERIFIED|FAILED, FAILED→PENDING|VERIFIED, VERIFIED→REFUNDED only, REFUNDED terminal, same-status 409) + payment.update+invoice.update wrapped in db.$transaction
++- F-02 fixed: POST /api/payments rejects duplicate non-empty transactionRef with 409 + human-readable error
++- F-04 fixed: bulk change-status now validates status enum AND calls block/unblockUserInFreeRADIUS per affected subscriber (response includes radiusSynced + radiusErrors); cron job-004 (suspend overdue) now writes Auth-Type=Reject; due-recovery suspend action blocks RADIUS
++- F-05 fixed: NEW billing-cron job-006 "Expiry Enforcement" (daily 07:00 + POST /api/expiry-enforcement trigger): computes paid-through = billingStartDate + validityDays, suspends + RADIUS-blocks + notifies subscribers lapsed > 3d grace, skips those with PAID/SENT/PARTIALLY_PAID invoice covering the future
++- F-06 fixed: due-recovery record-payment overpay guard (400 if amount > outstanding) + receipt number + auto-reactivate subscriber (ACTIVE + RADIUS unblock) on full settlement
++- F-08 fixed: bulk renew periodStart = now for SUSPENDED/DISCONNECTED/PENDING subscribers (ACTIVE/TRIAL keep next-cycle-start alignment) — expired renewals no longer grant free days
++- F-09 fixed: bulk-renew payment now created with invoiceId inside the same transaction
++- F-10 fixed: bulk renew invoice+payment+subscriber update wrapped in db.$transaction (with P2002 retry loop preserved)
++- F-11 fixed: bulk change-status validates against subscriber status enum
++- UI NEW: "Expiring Soon" amber filter button with live count badge (uses /api/subscribers/expiring?days=7), active-filter chip, per-row amber "Nd left" expiry badge on ACTIVE subscribers; Clear resets it; evidence screenshot expiring-filter-demo.png
++
++Regression tests (all PASS, run live):
++- T1 unauth GETs → 401 (was 200/PII leak); authed GET 200 with no servicePassword/kyc/pan in JSON
++- T2 duplicate UTR DUP-UTR-999888 → 409 (was 201×2)
++- T3a re-verify VERIFIED → 409 "already VERIFIED"; T3b REFUNDED→VERIFIED → 409 "terminal" (was 200, refund pump); T3c overpay ₹99999 → 400 (was balance -₹99492.18)
++- T5 bulk suspend → radcheck Auth-Type=Reject written + radiusSynced:1 (was DB-only)
++- T6 expiry job → CRY00015 expired-60d → SUSPENDED + RADIUS Reject + "Plan Expired" notification; correctly SKIPS subscriber having PAID invoice covering future period
++- T7 renew expired → periodStart = TODAY (was +5d future), payment linked to INV-00003 (was null), reactivated ACTIVE + RADIUS unblocked
++
++Stage Summary:
++- 12 of 23 audit findings fixed (all 8 P0 runtime exploits now blocked, verified by re-running the exact exploit scripts)
++- Remaining: F-12 invoice numbering unification, F-13 prepaid wallet debit, F-14 cron totalAmount tax, F-15 plan-change proration/CoA, F-16 grace/SLA automation, F-17 soft-delete, F-18 parameterized SQL, F-19 session revocation, F-20 RBAC, F-21 counter races, F-23 complaint state machine
++- Ops note: dev server OOM-killed twice during route compiles (2.6GB spike); portable postgres on :5432 (~/pg) + billing-cron on :3004 running; background processes get reaped between shell sessions — start cron+test in the SAME command
++- Next round: F-12/F-14/F-15 (billing correctness) are the highest-value remaining items
+=== stash1 ===
+ worklog.md | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)

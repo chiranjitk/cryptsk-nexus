@@ -17,6 +17,9 @@ import {
   ChevronRight,
   RefreshCw,
   Shield,
+  ShieldAlert,
+  KeyRound,
+  Users,
   Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +36,7 @@ interface SystemAlert {
   title: string;
   description: string;
   timestamp: string;
-  source: "Complaint" | "Payment" | "Device" | "Invoice" | "Subscriber";
+  source: "Complaint" | "Payment" | "Device" | "Invoice" | "Subscriber" | "Security";
 }
 
 interface AlertsSummaryResponse {
@@ -53,6 +56,12 @@ interface AlertsSummaryResponse {
   overdueSummary: {
     count: number;
     totalAmount: number;
+  };
+  security: {
+    failedLogins24h: number;
+    failedLogins7d: number;
+    lockedAccounts: number;
+    activeSessions: number;
   };
   timestamp: string;
 }
@@ -117,6 +126,7 @@ const SOURCE_ICONS: Record<string, React.ElementType> = {
   Device: Server,
   Invoice: Clock,
   Subscriber: Wifi,
+  Security: ShieldAlert,
 };
 
 function getSourceIcon(source: string): React.ElementType {
@@ -255,6 +265,46 @@ function DeviceStatusIndicator({
   );
 }
 
+// ─── Security Stat Tile ────────────────────────────────────────
+
+function SecurityStatTile({
+  icon: Icon,
+  label,
+  value,
+  tone,
+  tooltip,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: number;
+  tone: "danger" | "warn" | "ok";
+  tooltip: string;
+}) {
+  const tones = {
+    danger:
+      "bg-red-50 dark:bg-red-950/30 border-red-200/60 dark:border-red-900/40 text-red-700 dark:text-red-400",
+    warn:
+      "bg-amber-50 dark:bg-amber-950/30 border-amber-200/60 dark:border-amber-900/40 text-amber-700 dark:text-amber-400",
+    ok: "bg-teal-50 dark:bg-teal-950/30 border-teal-200/60 dark:border-teal-900/40 text-teal-700 dark:text-teal-400",
+  } as const;
+  return (
+    <div
+      title={tooltip}
+      className={cn(
+        "flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-all duration-200",
+        "hover:-translate-y-0.5 hover:shadow-sm cursor-default",
+        tones[tone]
+      )}
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-none tabular-nums">{value}</p>
+        <p className="text-[9px] uppercase tracking-wide opacity-75 mt-0.5 whitespace-nowrap">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Mini Progress Bar ─────────────────────────────────────────
 
 function MiniProgressBar({
@@ -367,6 +417,16 @@ function LoadingSkeleton() {
           ))}
         </div>
         <Skeleton className="h-1.5 w-full rounded-full" />
+      </div>
+
+      {/* Security strip */}
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-20" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-11 rounded-lg" />
+          ))}
+        </div>
       </div>
 
       {/* Alert timeline */}
@@ -570,6 +630,48 @@ export function SystemAlertsWidget() {
               />
             </div>
 
+            {/* ── Section 2b: Security Posture ── */}
+            <div className="space-y-2.5 p-3 rounded-lg bg-muted/30 border border-border/40">
+              <div className="flex items-center gap-1.5">
+                <ShieldAlert className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Security
+                </span>
+                <span className="ml-auto text-[10px] font-bold tabular-nums text-muted-foreground">
+                  {data.security.activeSessions} session{data.security.activeSessions === 1 ? "" : "s"} live
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <SecurityStatTile
+                  icon={KeyRound}
+                  label="Failed 24h"
+                  value={data.security.failedLogins24h}
+                  tone={
+                    data.security.failedLogins24h >= 10
+                      ? "danger"
+                      : data.security.failedLogins24h > 0
+                        ? "warn"
+                        : "ok"
+                  }
+                  tooltip={`Failed sign-in attempts in the last 24 hours — 7-day total: ${data.security.failedLogins7d}`}
+                />
+                <SecurityStatTile
+                  icon={ShieldAlert}
+                  label="Locked"
+                  value={data.security.lockedAccounts}
+                  tone={data.security.lockedAccounts > 0 ? "danger" : "ok"}
+                  tooltip="Staff accounts currently locked"
+                />
+                <SecurityStatTile
+                  icon={Users}
+                  label="Sessions"
+                  value={data.security.activeSessions}
+                  tone={data.security.activeSessions > 50 ? "warn" : "ok"}
+                  tooltip="Live staff sessions (7-day cookie window)"
+                />
+              </div>
+            </div>
+
             {/* ── Section 3: Alert Timeline ── */}
             {data.alerts.length > 0 ? (
               <div className="space-y-2">
@@ -639,6 +741,16 @@ export function SystemAlertsWidget() {
                 >
                   <WifiOff className="h-3 w-3" />
                   Device Health
+                  <ChevronRight className="h-3 w-3 text-muted-foreground/50" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 text-foreground hover:text-teal-600 dark:hover:text-teal-400 hover:border-teal-200 dark:hover:border-teal-800 hover:bg-teal-50 dark:hover:bg-teal-950/20 transition-all"
+                  onClick={() => setCurrentPage("Admin Users", "SETTINGS")}
+                >
+                  <Shield className="h-3 w-3" />
+                  Admin Users
                   <ChevronRight className="h-3 w-3 text-muted-foreground/50" />
                 </Button>
               </div>

@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
         subscriberId: n.subscriberId,
         subscriberName: n.Subscriber?.name || null,
         subscriberCode: n.Subscriber?.code || null,
+        userId: n.userId,
         type: n.type,
         category: n.category,
         title: n.title,

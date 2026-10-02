@@ -1251,3 +1251,7 @@ export function ResellerAnalyticsPage() {
     </div>
   );
 }
+
+// Default export required by page-loaders' dynamic imports and the
+// all-pages/extended-pages default imports.
+export default ResellerAnalyticsPage;

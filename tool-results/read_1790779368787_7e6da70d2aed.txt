@@ -1,0 +1,996 @@
+     1→// ============================================================
+     2→// CRYPTSK Nexus — GoVPP Adapter
+     3→// Per: docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md §28
+     4→//
+     5→// This is the Go binary API client that talks to VPP via
+     6→// the GoVPP binary API (NEVER vppctl shell — ADR-008).
+     7→//
+     8→// It provides a REST API for the OSS/BSS plane to:
+     9→//   - Get interface list from VPP (binary API)
+    10→//   - Set interface state UP/DOWN (binary API)
+    11→//   - Set interface IP address (binary API)
+    12→//   - Apply/remove subscriber dataplane objects (NAT, ACL, QoS)
+    13→//   - Generate + apply VPP config from policies
+    14→//   - Health check VPP
+    15→//
+    16→// Build:
+    17→//   cd gateway/vpp/govpp-adapter
+    18→//   go mod tidy
+    19→//   go build -o cryptsk-govpp-adapter
+    20→//   ./cryptsk-govpp-adapter
+    21→//
+    22→// Port: 3016 (GoVPP adapter — separate from TS adapter on 3015)
+    23→// ============================================================
+    24→
+    25→package main
+    26→
+    27→import (
+    28→        "encoding/json"
+    29→        "fmt"
+    30→        "log"
+    31→        "net/http"
+    32→        "os"
+    33→        "strings"
+    34→        "sync"
+    35→        "time"
+    36→
+    37→        "github.com/google/uuid"
+    38→)
+    39→
+    40→// ─── Configuration ────────────────────────────────────────────
+    41→
+    42→const (
+    43→        Port         = 3016
+    44→        VPPCLISock   = "/run/vpp/cli.sock"
+    45→        VPPAPISock   = "/run/vpp/api.sock"
+    46→        VPPStatsSock = "/run/vpp/stats.sock"
+    47→        DBURL        = "postgresql://cryptsknexus:CryptskNexus2026@localhost:5432/cryptsknexus"
+    48→)
+    49→
+    50→// ─── Types ────────────────────────────────────────────────────
+    51→
+    52→type VPPInterface struct {
+    53→        Index      uint32 `json:"index"`
+    54→        Name       string `json:"name"`
+    55→        Type       string `json:"type"`
+    56→        State      string `json:"state"`
+    57→        IP4Address string `json:"ip4Address,omitempty"`
+    58→        MacAddress string `json:"macAddress,omitempty"`
+    59→        RxPackets  uint64 `json:"rxPackets"`
+    60→        TxPackets  uint64 `json:"txPackets"`
+    61→        RxBytes    uint64 `json:"rxBytes"`
+    62→        TxBytes    uint64 `json:"txBytes"`
+    63→}
+    64→
+    65→type VPPStatus struct {
+    66→        Connected  bool   `json:"connected"`
+    67→        Version    string `json:"version"`
+    68→        Uptime     int64  `json:"uptime"`
+    69→        Interfaces int    `json:"interfaces"`
+    70→        LastError  string `json:"lastError,omitempty"`
+    71→}
+    72→
+    73→type ACLRule struct {
+    74→        SrcIP   string `json:"srcIp"`
+    75→        DstIP   string `json:"dstIp"`
+    76→        SrcPort string `json:"srcPort,omitempty"`
+    77→        DstPort string `json:"dstPort,omitempty"`
+    78→        Proto   string `json:"proto,omitempty"`
+    79→        Action  string `json:"action"`
+    80→}
+    81→
+    82→type DataplaneObject struct {
+    83→        Type       string                 `json:"type"`
+    84→        Subscriber string                 `json:"subscriber"`
+    85→        IP         string                 `json:"ip"`
+    86→        Config     map[string]interface{} `json:"config"`
+    87→}
+    88→
+    89→// ─── Global VPP Client (REAL GoVPP binary API) ───────────────
+    90→
+    91→var vppClient = NewVPPLiveClient()
+    92→
+    93→// ─── In-memory session policy state ───────────────────────────
+    94→//
+    95→// sessionPolicies: sessionId → *SessionPolicy
+    96→//
+    97→// Stored whenever /subscriber/program succeeds; used by
+    98→// /subscriber/verify, /subscriber/remove, /subscriber/state, /coa.
+    99→var sessionPolicies sync.Map
+   100→
+   101→// SessionPolicy is the in-memory state for a programmed subscriber.
+   102→type SessionPolicy struct {
+   103→        SessionID         string    `json:"sessionId"`
+   104→        SubscriberID     string    `json:"subscriberId"`
+   105→        Username         string    `json:"username"`
+   106→        FramedIP         string    `json:"framedIp"`
+   107→        MAC              string    `json:"mac"`
+   108→        NasIP            string    `json:"nasIp"`
+   109→        VlanID           string    `json:"vlanId,omitempty"`
+   110→        VRF              string    `json:"vrf,omitempty"`
+   111→        PolicyID         string    `json:"policyId,omitempty"`
+   112→        ACLProfileID     string    `json:"aclProfileId,omitempty"`
+   113→        QoSProfileID     string    `json:"qosProfileId,omitempty"`
+   114→        NATProfileID     string    `json:"natProfileId,omitempty"`
+   115→        IPPool           string    `json:"ipPool,omitempty"`
+   116→        SpeedDownKbps    uint64    `json:"speedDownKbps"`
+   117→        SpeedUpKbps      uint64    `json:"speedUpKbps"`
+   118→        TimeoutSec       int       `json:"timeoutSec,omitempty"`
+   119→        CircuitID        string    `json:"circuitId,omitempty"`
+   120→        RemoteID         string    `json:"remoteId,omitempty"`
+   121→        PPPoESessionID   string    `json:"pppoeSessionId,omitempty"`
+   122→        DHCPClientID     string    `json:"dhcpClientId,omitempty"`
+   123→
+   124→        // VPP dataplane state (returned from binapi calls)
+   125→        PolicerIndex     uint32    `json:"policerIndex"`
+   126→        ACLIndex         uint32    `json:"aclIndex"`
+   127→        ExternalIP       string    `json:"externalIp,omitempty"`
+   128→        NatMappingExists bool      `json:"natMappingExists"`
+   129→
+   130→        CreatedAt        time.Time `json:"createdAt"`
+   131→        ProgrammedAt     time.Time `json:"programmedAt"`
+   132→        VerifiedAt       time.Time `json:"verifiedAt,omitempty"`
+   133→}
+   134→
+   135→// ─── Main ────────────────────────────────────────────────────
+   136→
+   137→func main() {
+   138→        // Try to connect to VPP via binary API
+   139→        if err := vppClient.Connect(); err != nil {
+   140→                log.Printf("[warn] VPP not connected: %v", err)
+   141→                log.Printf("[info] GoVPP adapter will retry connection every 10s")
+   142→        }
+   143→
+   144→        // Start connection retry loop
+   145→        go func() {
+   146→                for {
+   147→                        time.Sleep(10 * time.Second)
+   148→                        if !vppClient.IsConnected() {
+   149→                                if err := vppClient.Connect(); err == nil {
+   150→                                        log.Printf("[vpp] Reconnected to VPP binary API")
+   151→                                }
+   152→                        }
+   153→                }
+   154→        }()
+   155→
+   156→        // REST API — original endpoints
+   157→        http.HandleFunc("/health", healthHandler)
+   158→        http.HandleFunc("/status", statusHandler)
+   159→        http.HandleFunc("/interfaces", interfacesHandler)
+   160→        http.HandleFunc("/interface/state", interfaceStateHandler)
+   161→        http.HandleFunc("/interface/ip", interfaceIPHandler)
+   162→        http.HandleFunc("/apply", applyHandler)
+   163→        http.HandleFunc("/config/generate", configGenerateHandler)
+   164→
+   165→        // REST API — new subscriber programming endpoints (Task P-GOVPP-REAL-BINAPI)
+   166→        http.HandleFunc("/subscriber/program", subscriberProgramHandler)
+   167→        http.HandleFunc("/subscriber/verify", subscriberVerifyHandler)
+   168→        http.HandleFunc("/subscriber/remove", subscriberRemoveHandler)
+   169→        http.HandleFunc("/subscriber/state", subscriberStateHandler)
+   170→        http.HandleFunc("/coa", coaHandler)
+   171→        http.HandleFunc("/nat44/add-address", natAddAddressHandler)
+   172→        http.HandleFunc("/nat44/enable", natEnableHandler)
+   173→        http.HandleFunc("/nat44/addresses", natAddressesHandler)
+   174→        http.HandleFunc("/policers", policersHandler)
+   175→        http.HandleFunc("/vpp/restart-recovery", restartRecoveryHandler)
+   176→
+   177→        log.Printf("╔══════════════════════════════════════════╗")
+   178→        log.Printf("║  CRYPTSK GoVPP Adapter — Port %d          ║", Port)
+   179→        log.Printf("║  VPP API: %s           ║", VPPAPISock)
+   180→        log.Printf("║  Connected: %v                           ║", vppClient.IsConnected())
+   181→        log.Printf("║  Mode: REAL binary API (GoVPP v0.5.0)   ║")
+   182→        log.Printf("╚══════════════════════════════════════════╝")
+   183→
+   184→        log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", Port), nil))
+   185→}
+   186→
+   187→// ─── CORS / OPTIONS helper ────────────────────────────────────
+   188→
+   189→// setCORS sets Access-Control-Allow-Origin: * on all responses so the
+   190→// OSS/BSS front-end can call this adapter directly.
+   191→func setCORS(w http.ResponseWriter) {
+   192→        w.Header().Set("Access-Control-Allow-Origin", "*")
+   193→        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+   194→        w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+   195→}
+   196→
+   197→// handleOptions returns true if the request was an OPTIONS preflight that
+   198→// has already been answered (caller should return immediately).
+   199→func handleOptions(w http.ResponseWriter, r *http.Request) bool {
+   200→        if r.Method == http.MethodOptions {
+   201→                setCORS(w)
+   202→                w.WriteHeader(http.StatusNoContent)
+   203→                return true
+   204→        }
+   205→        return false
+   206→}
+   207→
+   208→// writeJSON writes the given value as JSON with CORS headers.
+   209→func writeJSON(w http.ResponseWriter, v interface{}) {
+   210→        setCORS(w)
+   211→        w.Header().Set("Content-Type", "application/json")
+   212→        json.NewEncoder(w).Encode(v)
+   213→}
+   214→
+   215→// writeError writes a JSON error envelope with CORS headers.
+   216→func writeError(w http.ResponseWriter, code int, msg string) {
+   217→        setCORS(w)
+   218→        w.Header().Set("Content-Type", "application/json")
+   219→        w.WriteHeader(code)
+   220→        json.NewEncoder(w).Encode(map[string]interface{}{
+   221→                "success": false,
+   222→                "error":   msg,
+   223→        })
+   224→}
+   225→
+   226→// ─── Original Handlers ────────────────────────────────────────
+   227→
+   228→func healthHandler(w http.ResponseWriter, r *http.Request) {
+   229→        if handleOptions(w, r) {
+   230→                return
+   231→        }
+   232→        writeJSON(w, map[string]interface{}{
+   233→                "status":       "ok",
+   234→                "port":         Port,
+   235→                "vppConnected": vppClient.IsConnected(),
+   236→                "vppSocket":    VPPAPISock,
+   237→                "mode":         "binary-api",
+   238→                "govppVersion": "v0.5.0",
+   239→                "uptime":       time.Since(vppClient.startTime).Seconds(),
+   240→        })
+   241→}
+   242→
+   243→func statusHandler(w http.ResponseWriter, r *http.Request) {
+   244→        if handleOptions(w, r) {
+   245→                return
+   246→        }
+   247→        status := VPPStatus{
+   248→                Connected:  vppClient.IsConnected(),
+   249→                Version:    "VPP v26.06 (binary API connected)",
+   250→                Uptime:     int64(time.Since(vppClient.startTime).Seconds()),
+   251→                Interfaces: 0,
+   252→        }
+   253→        if vppClient.IsConnected() {
+   254→                if ifaces, err := vppClient.GetInterfaceList(); err == nil {
+   255→                        status.Interfaces = len(ifaces)
+   256→                }
+   257→        }
+   258→        writeJSON(w, status)
+   259→}
+   260→
+   261→func interfacesHandler(w http.ResponseWriter, r *http.Request) {
+   262→        if handleOptions(w, r) {
+   263→                return
+   264→        }
+   265→        if !vppClient.IsConnected() {
+   266→                writeJSON(w, map[string]interface{}{
+   267→                        "interfaces": []VPPInterface{},
+   268→                        "error":     "VPP not connected",
+   269→                })
+   270→                return
+   271→        }
+   272→        ifaces, err := vppClient.GetInterfaceList()
+   273→        if err != nil {
+   274→                writeJSON(w, map[string]interface{}{
+   275→                        "interfaces": []VPPInterface{},
+   276→                        "error":      err.Error(),
+   277→                })
+   278→                return
+   279→        }
+   280→        writeJSON(w, map[string]interface{}{
+   281→                "interfaces": ifaces,
+   282→                "total":      len(ifaces),
+   283→        })
+   284→}
+   285→
+   286→func interfaceStateHandler(w http.ResponseWriter, r *http.Request) {
+   287→        if handleOptions(w, r) {
+   288→                return
+   289→        }
+   290→        if r.Method != "POST" {
+   291→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   292→                return
+   293→        }
+   294→        var req struct {
+   295→                SwIfIndex uint32 `json:"swIfIndex"`
+   296→                Up        bool   `json:"up"`
+   297→        }
+   298→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   299→                writeError(w, http.StatusBadRequest, err.Error())
+   300→                return
+   301→        }
+   302→        if err := vppClient.SetInterfaceState(req.SwIfIndex, req.Up); err != nil {
+   303→                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   304→                return
+   305→        }
+   306→        writeJSON(w, map[string]interface{}{
+   307→                "success":   true,
+   308→                "swIfIndex": req.SwIfIndex,
+   309→                "state":     map[bool]string{true: "up", false: "down"}[req.Up],
+   310→        })
+   311→}
+   312→
+   313→func interfaceIPHandler(w http.ResponseWriter, r *http.Request) {
+   314→        if handleOptions(w, r) {
+   315→                return
+   316→        }
+   317→        if r.Method != "POST" {
+   318→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   319→                return
+   320→        }
+   321→        var req struct {
+   322→                SwIfIndex    uint32 `json:"swIfIndex"`
+   323→                IPWithPrefix string `json:"ipWithPrefix"`
+   324→        }
+   325→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   326→                writeError(w, http.StatusBadRequest, err.Error())
+   327→                return
+   328→        }
+   329→        if err := vppClient.SetInterfaceIP(req.SwIfIndex, req.IPWithPrefix); err != nil {
+   330→                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   331→                return
+   332→        }
+   333→        writeJSON(w, map[string]interface{}{
+   334→                "success":   true,
+   335→                "swIfIndex": req.SwIfIndex,
+   336→                "ip":        req.IPWithPrefix,
+   337→        })
+   338→}
+   339→
+   340→func applyHandler(w http.ResponseWriter, r *http.Request) {
+   341→        if handleOptions(w, r) {
+   342→                return
+   343→        }
+   344→        if r.Method != "POST" {
+   345→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   346→                return
+   347→        }
+   348→        var obj DataplaneObject
+   349→        if err := json.NewDecoder(r.Body).Decode(&obj); err != nil {
+   350→                writeError(w, http.StatusBadRequest, err.Error())
+   351→                return
+   352→        }
+   353→
+   354→        // Route to appropriate VPP operation based on type
+   355→        switch obj.Type {
+   356→        case "nat":
+   357→                if internal, ok := obj.Config["internalIP"].(string); ok {
+   358→                        if external, ok := obj.Config["externalIP"].(string); ok {
+   359→                                if err := vppClient.AddStaticNat(internal, external); err != nil {
+   360→                                        writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   361→                                        return
+   362→                                }
+   363→                        }
+   364→                }
+   365→        case "acl":
+   366→                rulesJSON, _ := json.Marshal(obj.Config["rules"])
+   367→                var rules []ACLRule
+   368→                json.Unmarshal(rulesJSON, &rules)
+   369→                aclIdx, err := vppClient.CreateACL(obj.Subscriber, rules)
+   370→                if err != nil {
+   371→                        writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   372→                        return
+   373→                }
+   374→                _ = aclIdx
+   375→        case "qos":
+   376→                if cir, ok := obj.Config["cirBps"].(float64); ok {
+   377→                        policerIdx, err := vppClient.CreatePolicer(obj.Subscriber, uint64(cir), 0)
+   378→                        if err != nil {
+   379→                                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   380→                                return
+   381→                        }
+   382→                        _ = policerIdx
+   383→                }
+   384→        case "disconnect":
+   385→                if err := vppClient.DisconnectSubscriber(obj.IP); err != nil {
+   386→                        writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   387→                        return
+   388→                }
+   389→        case "bandwidth":
+   390→                if down, ok := obj.Config["downloadKbps"].(float64); ok {
+   391→                        if up, ok := obj.Config["uploadKbps"].(float64); ok {
+   392→                                if err := vppClient.ChangeSubscriberBandwidth(obj.IP, uint64(down), uint64(up)); err != nil {
+   393→                                        writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   394→                                        return
+   395→                                }
+   396→                        }
+   397→                }
+   398→        }
+   399→
+   400→        log.Printf("[govpp] Applied %s for subscriber %s (IP: %s)", obj.Type, obj.Subscriber, obj.IP)
+   401→        writeJSON(w, map[string]interface{}{
+   402→                "success": true,
+   403→                "message": fmt.Sprintf("Dataplane object %s applied for %s via binary API", obj.Type, obj.Subscriber),
+   404→        })
+   405→}
+   406→
+   407→func configGenerateHandler(w http.ResponseWriter, r *http.Request) {
+   408→        if handleOptions(w, r) {
+   409→                return
+   410→        }
+   411→        writeJSON(w, map[string]interface{}{
+   412→                "config": "# GoVPP adapter — config applied via binary API (not CLI)\n# Use /apply endpoint to push individual objects",
+   413→                "mode":   "binary-api",
+   414→                "status": "real",
+   415→        })
+   416→}
+   417→
+   418→// ─── New: Subscriber Programming Endpoints ─────────────────────
+   419→
+   420→// subscriberProgramHandler — POST /subscriber/program
+   421→//
+   422→// Programs a full subscriber dataplane state on VPP:
+   423→//   1. CreatePolicer (with speedDownKbps/speedUpKbps)
+   424→//   2. AddStaticNat (framedIp → externalIp if provided)
+   425→//   3. CreateACL (if aclProfileId or rules array provided)
+   426→//
+   427→// Body: { sessionId, subscriberId, username, framedIp, mac, nasIp,
+   428→//         vlanId?, vrf?, policyId?, aclProfileId?, qosProfileId?,
+   429→//         natProfileId?, ipPool?, speedDownKbps, speedUpKbps,
+   430→//         timeoutSec?, circuitId?, remoteId?, pppoeSessionId?,
+   431→//         dhcpClientId?, externalIp?, aclRules? }
+   432→func subscriberProgramHandler(w http.ResponseWriter, r *http.Request) {
+   433→        if handleOptions(w, r) {
+   434→                return
+   435→        }
+   436→        if r.Method != "POST" {
+   437→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   438→                return
+   439→        }
+   440→        var req struct {
+   441→                SessionID       string `json:"sessionId"`
+   442→                SubscriberID    string `json:"subscriberId"`
+   443→                Username        string `json:"username"`
+   444→                FramedIP        string `json:"framedIp"`
+   445→                MAC             string `json:"mac"`
+   446→                NasIP           string `json:"nasIp"`
+   447→                VlanID          string `json:"vlanId"`
+   448→                VRF             string `json:"vrf"`
+   449→                PolicyID        string `json:"policyId"`
+   450→                ACLProfileID    string `json:"aclProfileId"`
+   451→                QoSProfileID    string `json:"qosProfileId"`
+   452→                NATProfileID    string `json:"natProfileId"`
+   453→                IPPool          string `json:"ipPool"`
+   454→                SpeedDownKbps   uint64 `json:"speedDownKbps"`
+   455→                SpeedUpKbps     uint64 `json:"speedUpKbps"`
+   456→                TimeoutSec      int    `json:"timeoutSec"`
+   457→                CircuitID       string `json:"circuitId"`
+   458→                RemoteID        string `json:"remoteId"`
+   459→                PPPoESessionID  string `json:"pppoeSessionId"`
+   460→                DHCPClientID    string `json:"dhcpClientId"`
+   461→                ExternalIP      string `json:"externalIp"`
+   462→                ACLRules        []ACLRule `json:"aclRules"`
+   463→        }
+   464→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   465→                writeError(w, http.StatusBadRequest, err.Error())
+   466→                return
+   467→        }
+   468→        if req.SessionID == "" {
+   469→                // Auto-generate a session ID if none provided
+   470→                req.SessionID = uuid.New().String()
+   471→        }
+   472→        if req.FramedIP == "" {
+   473→                writeError(w, http.StatusBadRequest, "framedIp is required")
+   474→                return
+   475→        }
+   476→
+   477→        policy := &SessionPolicy{
+   478→                SessionID:      req.SessionID,
+   479→                SubscriberID:   req.SubscriberID,
+   480→                Username:      req.Username,
+   481→                FramedIP:       req.FramedIP,
+   482→                MAC:            req.MAC,
+   483→                NasIP:          req.NasIP,
+   484→                VlanID:         req.VlanID,
+   485→                VRF:            req.VRF,
+   486→                PolicyID:       req.PolicyID,
+   487→                ACLProfileID:   req.ACLProfileID,
+   488→                QoSProfileID:   req.QoSProfileID,
+   489→                NATProfileID:   req.NATProfileID,
+   490→                IPPool:         req.IPPool,
+   491→                SpeedDownKbps:  req.SpeedDownKbps,
+   492→                SpeedUpKbps:    req.SpeedUpKbps,
+   493→                TimeoutSec:     req.TimeoutSec,
+   494→                CircuitID:      req.CircuitID,
+   495→                RemoteID:       req.RemoteID,
+   496→                PPPoESessionID: req.PPPoESessionID,
+   497→                DHCPClientID:   req.DHCPClientID,
+   498→                ExternalIP:     req.ExternalIP,
+   499→                CreatedAt:      time.Now(),
+   500→                ProgrammedAt:   time.Now(),
+   501→        }
+   502→
+   503→        stepErrors := []string{}
+   504→
+   505→        // Step 1: Create the policer for the subscriber (bandwidth shaping)
+   506→        // Convert kbps → bps (CreatePolicer expects bps)
+   507→        if req.SpeedDownKbps > 0 || req.SpeedUpKbps > 0 {
+   508→                cirBps := req.SpeedDownKbps * 1000
+   509→                eirBps := req.SpeedUpKbps * 1000
+   510→                policerName := sanitizePolicerName(fmt.Sprintf("pol-%s", req.FramedIP))
+   511→                policerIdx, err := vppClient.CreatePolicer(policerName, cirBps, eirBps)
+   512→                if err != nil {
+   513→                        stepErrors = append(stepErrors, fmt.Sprintf("CreatePolicer: %v", err))
+   514→                        log.Printf("[govpp] /subscriber/program: CreatePolicer failed for %s: %v", req.FramedIP, err)
+   515→                } else {
+   516→                        policy.PolicerIndex = policerIdx
+   517→                        // Track in the VPP client's in-memory subscriber map for CoA / disconnect
+   518→                        vppClient.subscriberPolicers.Store(req.FramedIP, &subscriberPolicerEntry{
+   519→                                SubscriberIP: req.FramedIP,
+   520→                                PolicerName:  policerName,
+   521→                                PolicerIndex: policerIdx,
+   522→                                DownloadKbps: req.SpeedDownKbps,
+   523→                                UploadKbps:   req.SpeedUpKbps,
+   524→                                ExternalIP:   req.ExternalIP,
+   525→                                CreatedAt:    time.Now(),
+   526→                        })
+   527→                }
+   528→        }
+   529→
+   530→        // Step 2: Create static NAT mapping (if externalIp provided)
+   531→        // NOTE: NAT failures are NON-FATAL — the policer is the primary
+   532→        // bandwidth enforcement mechanism, and NAT plugin may not be
+   533→        // enabled in all VPP builds. Log as a warning, don't append to stepErrors.
+   534→        if req.ExternalIP != "" {
+   535→                if err := vppClient.AddStaticNat(req.FramedIP, req.ExternalIP); err != nil {
+   536→                        log.Printf("[govpp] /subscriber/program: AddStaticNat WARNING for %s→%s: %v (NAT may not be configured — session proceeds with policer only)",
+   537→                                req.FramedIP, req.ExternalIP, err)
+   538→                        policy.NatMappingExists = false
+   539→                } else {
+   540→                        policy.NatMappingExists = true
+   541→                }
+   542→        }
+   543→
+   544→        // Step 3: Create ACL (if rules provided)
+   545→        if len(req.ACLRules) > 0 {
+   546→                aclName := fmt.Sprintf("acl-%s", req.SessionID)
+   547→                aclIdx, err := vppClient.CreateACL(aclName, req.ACLRules)
+   548→                if err != nil {
+   549→                        stepErrors = append(stepErrors, fmt.Sprintf("CreateACL: %v", err))
+   550→                        log.Printf("[govpp] /subscriber/program: CreateACL failed for %s: %v", req.SessionID, err)
+   551→                } else {
+   552→                        policy.ACLIndex = aclIdx
+   553→                }
+   554→        }
+   555→
+   556→        // Store in-memory session policy
+   557→        sessionPolicies.Store(req.SessionID, policy)
+   558→
+   559→        log.Printf("[govpp] /subscriber/program: session=%s subscriber=%s ip=%s policer=%d acl=%d nat=%v errors=%d",
+   560→                req.SessionID, req.SubscriberID, req.FramedIP,
+   561→                policy.PolicerIndex, policy.ACLIndex, policy.NatMappingExists, len(stepErrors))
+   562→
+   563→        writeJSON(w, map[string]interface{}{
+   564→                "success":         len(stepErrors) == 0,
+   565→                "sessionId":       req.SessionID,
+   566→                "policerIndex":    policy.PolicerIndex,
+   567→                "aclIndex":        policy.ACLIndex,
+   568→                "natMappingExists": policy.NatMappingExists,
+   569→                "warnings":        stepErrors,
+   570→                "programmedAt":    policy.ProgrammedAt,
+   571→        })
+   572→}
+   573→
+   574→// subscriberVerifyHandler — POST /subscriber/verify
+   575→// Body: { sessionId }
+   576→// Returns: { verified, checks: {policerExists, aclExists, natMappingExists} }
+   577→func subscriberVerifyHandler(w http.ResponseWriter, r *http.Request) {
+   578→        if handleOptions(w, r) {
+   579→                return
+   580→        }
+   581→        if r.Method != "POST" {
+   582→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   583→                return
+   584→        }
+   585→        var req struct {
+   586→                SessionID string `json:"sessionId"`
+   587→        }
+   588→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   589→                writeError(w, http.StatusBadRequest, err.Error())
+   590→                return
+   591→        }
+   592→        if req.SessionID == "" {
+   593→                writeError(w, http.StatusBadRequest, "sessionId is required")
+   594→                return
+   595→        }
+   596→
+   597→        v, ok := sessionPolicies.Load(req.SessionID)
+   598→        if !ok {
+   599→                writeJSON(w, map[string]interface{}{
+   600→                        "verified":  false,
+   601→                        "sessionId": req.SessionID,
+   602→                        "error":     "session not found in in-memory map",
+   603→                })
+   604→                return
+   605→        }
+   606→        policy := v.(*SessionPolicy)
+   607→
+   608→        // Best-effort live checks via VPP binapi (may fail if VPP not connected)
+   609→        policerExists := policy.PolicerIndex != 0
+   610→        aclExists := policy.ACLIndex != 0
+   611→        natMappingExists := policy.NatMappingExists
+   612→
+   613→        // Try live verification via dump endpoints (best-effort — ignore errors)
+   614→        if vppClient.IsConnected() {
+   615→                // Check NAT pool for the external IP
+   616→                if addrs, err := vppClient.ListNatAddresses(); err == nil {
+   617→                        for _, a := range addrs {
+   618→                                ipStr := ""
+   619→                                // IP4Address is [4]uint8 — format as dotted quad
+   620→                                if len(a.IPAddress) == 4 {
+   621→                                        ipStr = fmt.Sprintf("%d.%d.%d.%d", a.IPAddress[0], a.IPAddress[1], a.IPAddress[2], a.IPAddress[3])
+   622→                                }
+   623→                                if ipStr == policy.ExternalIP {
+   624→                                        natMappingExists = true
+   625→                                        break
+   626→                                }
+   627→                        }
+   628→                }
+   629→                // Check policer list
+   630→                if pols, err := vppClient.ListPolicers(); err == nil {
+   631→                        for _, p := range pols {
+   632→                                _ = p // we'd compare by index but PolicerDetails doesn't carry an index field
+   633→                        }
+   634→                }
+   635→        }
+   636→
+   637→        verified := policerExists || aclExists || natMappingExists
+   638→        policy.VerifiedAt = time.Now()
+   639→
+   640→        writeJSON(w, map[string]interface{}{
+   641→                "verified":  verified,
+   642→                "sessionId": req.SessionID,
+   643→                "checks": map[string]bool{
+   644→                        "policerExists":     policerExists,
+   645→                        "aclExists":         aclExists,
+   646→                        "natMappingExists":  natMappingExists,
+   647→                },
+   648→                "policy":   policy,
+   649→                "checkedAt": policy.VerifiedAt,
+   650→        })
+   651→}
+   652→
+   653→// subscriberRemoveHandler — POST /subscriber/remove
+   654→// Body: { sessionId }. Removes policer + NAT + ACL from VPP.
+   655→func subscriberRemoveHandler(w http.ResponseWriter, r *http.Request) {
+   656→        if handleOptions(w, r) {
+   657→                return
+   658→        }
+   659→        if r.Method != "POST" {
+   660→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   661→                return
+   662→        }
+   663→        var req struct {
+   664→                SessionID string `json:"sessionId"`
+   665→        }
+   666→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   667→                writeError(w, http.StatusBadRequest, err.Error())
+   668→                return
+   669→        }
+   670→        if req.SessionID == "" {
+   671→                writeError(w, http.StatusBadRequest, "sessionId is required")
+   672→                return
+   673→        }
+   674→
+   675→        v, ok := sessionPolicies.Load(req.SessionID)
+   676→        if !ok {
+   677→                writeJSON(w, map[string]interface{}{
+   678→                        "success":   false,
+   679→                        "sessionId": req.SessionID,
+   680→                        "error":     "session not found in in-memory map",
+   681→                })
+   682→                return
+   683→        }
+   684→        policy := v.(*SessionPolicy)
+   685→
+   686→        var errs []string
+   687→
+   688→        // 1. DisconnectSubscriber (deletes policer + static NAT, uses VPP client's
+   689→        //    in-memory subscriberPolicers map).
+   690→        if err := vppClient.DisconnectSubscriber(policy.FramedIP); err != nil {
+   691→                errs = append(errs, fmt.Sprintf("DisconnectSubscriber: %v", err))
+   692→        }
+   693→
+   694→        // 2. ACL removal — there is no per-ACL delete in our adapter; we leave the
+   695→        //    ACL object in VPP (it's a no-op until bound to an interface). Log it.
+   696→        if policy.ACLIndex != 0 {
+   697→                log.Printf("[govpp] /subscriber/remove: ACL %d left in VPP (no ACLDel binapi call implemented)", policy.ACLIndex)
+   698→        }
+   699→
+   700→        sessionPolicies.Delete(req.SessionID)
+   701→
+   702→        if len(errs) > 0 {
+   703→                writeJSON(w, map[string]interface{}{
+   704→                        "success":   false,
+   705→                        "sessionId": req.SessionID,
+   706→                        "errors":    errs,
+   707→                })
+   708→                return
+   709→        }
+   710→        writeJSON(w, map[string]interface{}{
+   711→                "success":   true,
+   712→                "sessionId": req.SessionID,
+   713→                "removedAt": time.Now(),
+   714→        })
+   715→}
+   716→
+   717→// subscriberStateHandler — GET /subscriber/state?sessionId=...
+   718→// Returns the in-memory session policy.
+   719→func subscriberStateHandler(w http.ResponseWriter, r *http.Request) {
+   720→        if handleOptions(w, r) {
+   721→                return
+   722→        }
+   723→        if r.Method != "GET" {
+   724→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   725→                return
+   726→        }
+   727→        sessionID := r.URL.Query().Get("sessionId")
+   728→        if sessionID == "" {
+   729→                // List all sessions if no sessionId
+   730→                var all []map[string]interface{}
+   731→                sessionPolicies.Range(func(key, value interface{}) bool {
+   732→                        p := value.(*SessionPolicy)
+   733→                        all = append(all, map[string]interface{}{
+   734→                                "sessionId":      p.SessionID,
+   735→                                "subscriberId":   p.SubscriberID,
+   736→                                "framedIp":       p.FramedIP,
+   737→                                "policerIndex":   p.PolicerIndex,
+   738→                                "aclIndex":       p.ACLIndex,
+   739→                                "programmedAt":  p.ProgrammedAt,
+   740→                        })
+   741→                        return true
+   742→                })
+   743→                writeJSON(w, map[string]interface{}{
+   744→                        "sessions": all,
+   745→                        "total":    len(all),
+   746→                })
+   747→                return
+   748→        }
+   749→        v, ok := sessionPolicies.Load(sessionID)
+   750→        if !ok {
+   751→                writeError(w, http.StatusNotFound, "session not found")
+   752→                return
+   753→        }
+   754→        writeJSON(w, v.(*SessionPolicy))
+   755→}
+   756→
+   757→// coaHandler — POST /coa
+   758→// Body: { sessionId, subscriberIP, downloadKbps, uploadKbps }.
+   759→// Updates the policer for an in-flight session.
+   760→func coaHandler(w http.ResponseWriter, r *http.Request) {
+   761→        if handleOptions(w, r) {
+   762→                return
+   763→        }
+   764→        if r.Method != "POST" {
+   765→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   766→                return
+   767→        }
+   768→        var req struct {
+   769→                SessionID     string `json:"sessionId"`
+   770→                SubscriberIP  string `json:"subscriberIP"`
+   771→                DownloadKbps  uint64 `json:"downloadKbps"`
+   772→                UploadKbps    uint64 `json:"uploadKbps"`
+   773→        }
+   774→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   775→                writeError(w, http.StatusBadRequest, err.Error())
+   776→                return
+   777→        }
+   778→
+   779→        // Determine the subscriber IP: prefer the request's subscriberIP,
+   780→        // otherwise look up from sessionPolicies.
+   781→        subscriberIP := req.SubscriberIP
+   782→        if subscriberIP == "" && req.SessionID != "" {
+   783→                if v, ok := sessionPolicies.Load(req.SessionID); ok {
+   784→                        subscriberIP = v.(*SessionPolicy).FramedIP
+   785→                }
+   786→        }
+   787→        if subscriberIP == "" {
+   788→                writeError(w, http.StatusBadRequest, "either subscriberIP or a valid sessionId is required")
+   789→                return
+   790→        }
+   791→
+   792→        if err := vppClient.ChangeSubscriberBandwidth(subscriberIP, req.DownloadKbps, req.UploadKbps); err != nil {
+   793→                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   794→                return
+   795→        }
+   796→
+   797→        // Update the in-memory SessionPolicy with new rates (and possibly a new policer index)
+   798→        if req.SessionID != "" {
+   799→                if v, ok := sessionPolicies.Load(req.SessionID); ok {
+   800→                        p := v.(*SessionPolicy)
+   801→                        p.SpeedDownKbps = req.DownloadKbps
+   802→                        p.SpeedUpKbps = req.UploadKbps
+   803→                        // Refresh policer index from the VPP client's subscriber map
+   804→                        if pv, ok2 := vppClient.subscriberPolicers.Load(subscriberIP); ok2 {
+   805→                                p.PolicerIndex = pv.(*subscriberPolicerEntry).PolicerIndex
+   806→                        }
+   807→                }
+   808→        }
+   809→
+   810→        log.Printf("[govpp] /coa: session=%s ip=%s down=%d up=%d → policer updated",
+   811→                req.SessionID, subscriberIP, req.DownloadKbps, req.UploadKbps)
+   812→        writeJSON(w, map[string]interface{}{
+   813→                "success":      true,
+   814→                "sessionId":    req.SessionID,
+   815→                "subscriberIP": subscriberIP,
+   816→                "downloadKbps": req.DownloadKbps,
+   817→                "uploadKbps":   req.UploadKbps,
+   818→                "changedAt":    time.Now(),
+   819→        })
+   820→}
+   821→
+   822→// natAddAddressHandler — POST /nat44/add-address
+   823→// Body: { startIP, endIP }
+   824→func natAddAddressHandler(w http.ResponseWriter, r *http.Request) {
+   825→        if handleOptions(w, r) {
+   826→                return
+   827→        }
+   828→        if r.Method != "POST" {
+   829→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   830→                return
+   831→        }
+   832→        var req struct {
+   833→                StartIP string `json:"startIP"`
+   834→                EndIP   string `json:"endIP"`
+   835→        }
+   836→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   837→                writeError(w, http.StatusBadRequest, err.Error())
+   838→                return
+   839→        }
+   840→        if req.StartIP == "" || req.EndIP == "" {
+   841→                writeError(w, http.StatusBadRequest, "startIP and endIP are required")
+   842→                return
+   843→        }
+   844→        if err := vppClient.AddNatAddress(req.StartIP, req.EndIP); err != nil {
+   845→                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   846→                return
+   847→        }
+   848→        writeJSON(w, map[string]interface{}{
+   849→                "success": true,
+   850→                "startIP": req.StartIP,
+   851→                "endIP":   req.EndIP,
+   852→        })
+   853→}
+   854→
+   855→// natEnableHandler — POST /nat44/enable
+   856→// Body: { swIfIndex, inside }
+   857→func natEnableHandler(w http.ResponseWriter, r *http.Request) {
+   858→        if handleOptions(w, r) {
+   859→                return
+   860→        }
+   861→        if r.Method != "POST" {
+   862→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   863→                return
+   864→        }
+   865→        var req struct {
+   866→                SwIfIndex uint32 `json:"swIfIndex"`
+   867→                Inside    bool   `json:"inside"`
+   868→        }
+   869→        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+   870→                writeError(w, http.StatusBadRequest, err.Error())
+   871→                return
+   872→        }
+   873→        if err := vppClient.EnableNatOnInterface(req.SwIfIndex, req.Inside); err != nil {
+   874→                writeJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
+   875→                return
+   876→        }
+   877→        writeJSON(w, map[string]interface{}{
+   878→                "success":   true,
+   879→                "swIfIndex": req.SwIfIndex,
+   880→                "side":      map[bool]string{true: "inside", false: "outside"}[req.Inside],
+   881→        })
+   882→}
+   883→
+   884→// natAddressesHandler — GET /nat44/addresses
+   885→// Lists NAT pool addresses via nat44_address_dump.
+   886→func natAddressesHandler(w http.ResponseWriter, r *http.Request) {
+   887→        if handleOptions(w, r) {
+   888→                return
+   889→        }
+   890→        if !vppClient.IsConnected() {
+   891→                writeJSON(w, map[string]interface{}{
+   892→                        "addresses": []string{},
+   893→                        "error":     "VPP not connected",
+   894→                })
+   895→                return
+   896→        }
+   897→        addrs, err := vppClient.ListNatAddresses()
+   898→        if err != nil {
+   899→                writeJSON(w, map[string]interface{}{
+   900→                        "addresses": []string{},
+   901→                        "error":     err.Error(),
+   902→                })
+   903→                return
+   904→        }
+   905→        out := make([]map[string]interface{}, 0, len(addrs))
+   906→        for _, a := range addrs {
+   907→                ipStr := ""
+   908→                if len(a.IPAddress) == 4 {
+   909→                        ipStr = fmt.Sprintf("%d.%d.%d.%d", a.IPAddress[0], a.IPAddress[1], a.IPAddress[2], a.IPAddress[3])
+   910→                }
+   911→                out = append(out, map[string]interface{}{
+   912→                        "ipAddress": ipStr,
+   913→                        "vrfId":     a.VrfID,
+   914→                        "flags":     uint8(a.Flags),
+   915→                })
+   916→        }
+   917→        writeJSON(w, map[string]interface{}{
+   918→                "addresses": out,
+   919→                "total":     len(out),
+   920→        })
+   921→}
+   922→
+   923→// policersHandler — GET /policers
+   924→// Lists all VPP policers via policer_dump.
+   925→func policersHandler(w http.ResponseWriter, r *http.Request) {
+   926→        if handleOptions(w, r) {
+   927→                return
+   928→        }
+   929→        if !vppClient.IsConnected() {
+   930→                writeJSON(w, map[string]interface{}{
+   931→                        "policers": []interface{}{},
+   932→                        "error":    "VPP not connected",
+   933→                })
+   934→                return
+   935→        }
+   936→        pols, err := vppClient.ListPolicers()
+   937→        if err != nil {
+   938→                writeJSON(w, map[string]interface{}{
+   939→                        "policers": []interface{}{},
+   940→                        "error":    err.Error(),
+   941→                })
+   942→                return
+   943→        }
+   944→        out := make([]map[string]interface{}, 0, len(pols))
+   945→        for _, p := range pols {
+   946→                out = append(out, map[string]interface{}{
+   947→                        "name":            strings.TrimRight(p.Name, "\x00"),
+   948→                        "cir":             p.Cir,
+   949→                        "eir":             p.Eir,
+   950→                        "cb":              p.Cb,
+   951→                        "eb":              p.Eb,
+   952→                        "currentLimit":    p.CurrentLimit,
+   953→                        "currentBucket":   p.CurrentBucket,
+   954→                })
+   955→        }
+   956→        writeJSON(w, map[string]interface{}{
+   957→                "policers": out,
+   958→                "total":    len(out),
+   959→        })
+   960→}
+   961→
+   962→// restartRecoveryHandler — POST /vpp/restart-recovery
+   963→// Simulates VPP restart by clearing the in-memory sessionPolicies map.
+   964→// The real VPP restart recovery logic lives in session-engine; this
+   965→// endpoint is a hook for testing the adapter's empty-state behaviour.
+   966→func restartRecoveryHandler(w http.ResponseWriter, r *http.Request) {
+   967→        if handleOptions(w, r) {
+   968→                return
+   969→        }
+   970→        if r.Method != "POST" {
+   971→                writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+   972→                return
+   973→        }
+   974→        count := 0
+   975→        sessionPolicies.Range(func(k, v interface{}) bool {
+   976→                sessionPolicies.Delete(k)
+   977→                count++
+   978→                return true
+   979→        })
+   980→        // Also clear the VPP client's in-memory subscriber policer map
+   981→        vppClient.subscriberPolicers.Range(func(k, v interface{}) bool {
+   982→                vppClient.subscriberPolicers.Delete(k)
+   983→                return true
+   984→        })
+   985→        log.Printf("[govpp] /vpp/restart-recovery: cleared %d in-memory session policies", count)
+   986→        writeJSON(w, map[string]interface{}{
+   987→                "success":       true,
+   988→                "clearedCount":  count,
+   989→                "vppConnected":  vppClient.IsConnected(),
+   990→                "recoveredAt":   time.Now(),
+   991→        })
+   992→}
+   993→
+   994→// Ensure os import is used
+   995→var _ = os.Stat
+   996→

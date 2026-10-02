@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
+import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { newReceiptNumber, AUTO_VERIFIED_MARKER } from "@/lib/services/receipt";
 
 // GET /api/billing — list invoices with filters + total status counts
 export async function GET(req: NextRequest) {
@@ -85,9 +87,12 @@ export async function GET(req: NextRequest) {
 // POST /api/billing — generate invoices, send, record payment, bulk send
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
+    const userId = await requireAuth(req);
     const body = await req.json();
     const { subscriberId, action } = body;
+
+    // [AUDIT-FIX F-20] Generating/sending invoices is a billing action
+    await permissionFor(userId, "invoices.create");
 
     // Action: bulk send invoices
     if (action === "bulk_send") {
@@ -169,6 +174,12 @@ export async function POST(req: NextRequest) {
             paymentMode: paymentMode || "CASH",
             transactionRef: transactionRef || "",
             status: "VERIFIED",
+            // [PAYMENTS-NOLEAK] Receipt was never generated here — counter
+            // collections were untraceable in the receipts ledger.
+            receiptNumber: newReceiptNumber(),
+            collectedById: userId,
+            verifiedById: userId,
+            notes: AUTO_VERIFIED_MARKER,
           },
         }),
         db.invoice.update({
@@ -210,7 +221,6 @@ export async function POST(req: NextRequest) {
     const issueDate = new Date(periodStart);
     const dueDate = reqDueDate ? new Date(reqDueDate) : new Date(periodStart.getFullYear(), periodStart.getMonth(), 10);
 
-    const invCount = await db.invoice.count();
     const created = [] as Array<Awaited<ReturnType<typeof db.invoice.create>>>;
 
     for (const sub of activeSubscribers) {
@@ -227,7 +237,9 @@ export async function POST(req: NextRequest) {
 
       if (existing) continue;
 
-      const invoiceNum = `INV${String(invCount + created.length + 1).padStart(6, "0")}`;
+      // [AUDIT-FIX F-12] Shared allocator — was `INV<count+offset>` (count-based, race-prone,
+      // format incompatible with the rest of the platform).
+      const invoiceNum = await nextInvoiceNumber();
       const subtotal = sub.Plan.priceMonthly;
       const cgst = Math.round(subtotal * sub.Plan.cgstPercent) / 100;
       const sgst = Math.round(subtotal * sub.Plan.sgstPercent) / 100;

@@ -300,8 +300,10 @@ function FloatingHelpButton({
       onClick={handleClick}
       aria-label="Open keyboard shortcuts"
       className={cn(
-        // Positioning & sizing
-        "fixed bottom-6 right-6 z-40",
+        // Positioning & sizing — top slot of the unified bottom-right FAB
+        // stack (above Quick Actions at bottom-[8.25rem]/sm:[8.75rem]).
+        // Desktop-only button; aligned right-5 like the rest of the column.
+        "fixed bottom-[12.5rem] right-5 z-40",
         "flex items-center justify-center size-10 rounded-full",
         // Glass-morphism background
         "border border-border/40 bg-background/60 backdrop-blur-xl",

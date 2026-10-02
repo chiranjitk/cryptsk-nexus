@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditCreate } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
+import { nextInvoiceNumber } from "@/lib/invoice-number";
 
 export async function GET(req: NextRequest) {
   try {
@@ -152,6 +153,8 @@ export async function POST(req: NextRequest) {
       throw e;
     }
     if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    // [AUDIT-FIX F-20] Creating invoices is a billing action — viewers/agents cannot
+    await permissionFor(userId, 'invoices.create');
     const body = await req.json();
     const { subscriberId, planId, issueDate, dueDate, periodStart, periodEnd, billingPeriodStart, billingPeriodEnd, description, discountType, discountValue, lateFee, advanceAdjustment, notes, status: requestedStatus, isProRata, lineItems, items, cgstRate: cgstRateOverride, sgstRate: sgstRateOverride, igstRate: igstRateOverride, reverseCharge } = body;
 
@@ -226,17 +229,9 @@ export async function POST(req: NextRequest) {
     let invoice: any = null;
     const MAX_RETRIES = 5;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      // Use MAX of numeric part from existing invoiceNumbers + 1 to avoid collisions after deletions
-      const maxInv = await db.invoice.findFirst({
-        orderBy: { createdAt: 'desc' },
-        select: { invoiceNumber: true },
-      });
-      let nextNum = 1;
-      if (maxInv?.invoiceNumber) {
-        const match = maxInv.invoiceNumber.match(/INV-(\d+)/);
-        if (match) nextNum = parseInt(match[1], 10) + 1;
-      }
-      invoiceNumber = `INV-${String(nextNum).padStart(5, "0")}`;
+      // [AUDIT-FIX F-12] Shared allocator — scans ALL historic INV-<digits> numbers
+      // (previously only the latest row was inspected, which missed older formats).
+      invoiceNumber = await nextInvoiceNumber();
       try {
         invoice = await db.invoice.create({
           data: {

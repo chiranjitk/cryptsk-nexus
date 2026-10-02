@@ -132,11 +132,15 @@ export function QuickActionsWidget() {
   if (!isAuthenticated) return null;
 
   return (
-    <div ref={containerRef} className="fixed bottom-32 right-6 z-50">
-      {/* Expanded action items */}
+    // Unified FAB stack (top slot). Anchored right-5 like all stack buttons;
+    // sits above Quick Notes (bottom-20/sm) and Voice Assistant (bottom-5).
+    // z-40 shared by the whole stack so no FAB paints over page modals or data.
+    <div ref={containerRef} className="fixed bottom-[8.25rem] right-5 z-40 sm:bottom-[8.75rem]">
+      {/* Expanded action items — open to the LEFT of the stack column so the
+          Quick Notes / Voice Assistant buttons below stay uncovered */}
       <div
         className={cn(
-          "absolute bottom-16 right-0 flex flex-col items-end gap-2 transition-all duration-200",
+          "absolute bottom-0 right-full mr-3 flex flex-col items-end gap-2 transition-all duration-200",
           isOpen
             ? "pointer-events-auto translate-y-0 opacity-100"
             : "pointer-events-none translate-y-2 opacity-0",
@@ -187,8 +191,11 @@ export function QuickActionsWidget() {
           <button
             onClick={toggle}
             aria-label={isOpen ? "Close quick actions" : "Open quick actions"}
+            title={isOpen ? "Close quick actions" : "Quick actions"}
             className={cn(
-              "flex items-center justify-center size-12 rounded-full shadow-lg transition-all duration-200",
+              // Stack-consistent size: 44px mobile / 48px desktop (matches
+              // Quick Notes + Voice Assistant buttons in the same column).
+              "flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 rounded-full shadow-lg transition-all duration-200",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626] focus-visible:ring-offset-2",
               isOpen
                 ? "bg-slate-700 text-white hover:bg-slate-800 rotate-45"

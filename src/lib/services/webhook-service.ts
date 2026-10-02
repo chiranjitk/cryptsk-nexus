@@ -185,7 +185,7 @@ export async function getDeliveryLogs(webhookId?: string, limit = 50) {
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
-      webhook: {
+      Webhook: {
         select: { url: true, events: true },
       },
     },

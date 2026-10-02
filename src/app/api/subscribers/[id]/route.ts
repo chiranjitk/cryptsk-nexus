@@ -2,15 +2,16 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { fireEventAsync } from "@/lib/services/webhook-service";
 import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, requirePermission, AuthError } from "@/lib/api-auth";
 import { removeUserFromFreeRADIUS, updateUserFreeRADIUSGroup, updateUserPasswordInFreeRADIUS, syncUserToFreeRADIUS, blockUserInFreeRADIUS, unblockUserInFreeRADIUS } from "@/lib/radius-sync";
 
 // GET /api/subscribers/[id] — single subscriber with relations
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireAuth(req); // [AUDIT-FIX F-07] detail view leaked PII + invoices + payments unauthenticated
     const { id } = await params;
     const subscriber = await db.subscriber.findUnique({
       where: { id },
@@ -24,6 +25,7 @@ export async function GET(
         },
         RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
         RadiusUser: { select: { id: true, createdAt: true } },
+        NetworkDevice: { select: { id: true, name: true, type: true, ipAddress: true, status: true } },
         Invoice: { orderBy: { createdAt: "desc" }, take: 10 },
         Payment: { orderBy: { createdAt: "desc" }, take: 10 },
         Complaint: { orderBy: { createdAt: "desc" }, take: 5 },
@@ -34,8 +36,37 @@ export async function GET(
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
     }
 
-    return NextResponse.json(subscriber);
+    // [AUDIT-FIX F-22] Strip credential/KYC fields from every layer of the response.
+    // The service password is required by RADIUS internally but must never leave the server;
+    // KYC identifiers ride along on the base model and were previously serialized wholesale.
+    const { servicePassword: _sp, kycAadhaarNumber: _ky, panNumber: _pan, ...safeBase } = subscriber;
+    const strip = <T extends Record<string, unknown>>(row: T | undefined | null): Record<string, unknown> | null => {
+      if (!row) return null;
+      const { servicePassword: _a, kycAadhaarNumber: _b, panNumber: _c, ...rest } = row;
+      return rest as Record<string, unknown>;
+    };
+
+    // Map Prisma PascalCase relations to the camelCase keys the frontend expects.
+    // Original PascalCase keys are kept (additive) so existing consumers are unaffected.
+    const detail = {
+      ...safeBase,
+      area: subscriber.Area ?? null,
+      plan: subscriber.Plan ?? null,
+      radiusGroup: subscriber.RadiusGroup ?? null,
+      radiusUser: subscriber.RadiusUser ?? null,
+      assignedDevice: subscriber.NetworkDevice ?? null,
+      radiusGroupName: subscriber.RadiusGroup?.name ?? null,
+      invoices: (subscriber.Invoice ?? []).map(strip),
+      payments: (subscriber.Payment ?? []).map(strip),
+      complaints: subscriber.Complaint ?? [],
+    };
+
+    return NextResponse.json(detail);
   } catch (error) {
+    if (error && typeof error === "object" && "statusCode" in error) {
+      const authErr = error as { statusCode: number; message: string };
+      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode });
+    }
     console.error("Subscriber GET error:", error);
     return NextResponse.json({ error: "Failed to fetch subscriber" }, { status: 500 });
   }
@@ -82,8 +113,13 @@ export async function PUT(
       }
     }
 
-    // Validate serviceUsername uniqueness if being changed
-    if (body.serviceUsername !== undefined && body.serviceUsername !== subscriber.serviceUsername) {
+    // Validate serviceUsername if being changed (format + uniqueness)
+    const usernameChanged = body.serviceUsername !== undefined && body.serviceUsername !== subscriber.serviceUsername;
+    if (usernameChanged) {
+      const usernameRegex = /^[a-zA-Z0-9._-]+$/;
+      if (!body.serviceUsername || !usernameRegex.test(body.serviceUsername.trim())) {
+        return NextResponse.json({ error: "Invalid service username. Only alphanumeric characters, dots, dashes, and underscores are allowed." }, { status: 400 });
+      }
       const existing = await db.subscriber.findUnique({ where: { serviceUsername: body.serviceUsername } });
       if (existing) {
         return NextResponse.json({ error: "Service username already exists" }, { status: 409 });
@@ -183,6 +219,40 @@ export async function PUT(
       }
     }
 
+    // Re-provision FreeRADIUS identity when serviceUsername changes.
+    // The old radcheck/radreply/radusergroup rows keep the previous username,
+    // so remove them and provision the new username with the effective
+    // password + group — otherwise PPPoE auth breaks after a rename.
+    if (usernameChanged && subscriber.radiusEnabled && subscriber.serviceUsername) {
+      try {
+        await removeUserFromFreeRADIUS(subscriber.serviceUsername);
+
+        const effectiveRadiusGroupId = body.radiusGroupId !== undefined ? (body.radiusGroupId || null) : subscriber.radiusGroupId;
+        const effectivePlanId = body.planId !== undefined ? (body.planId || null) : subscriber.planId;
+        let groupName: string | null = null;
+        let maxSessions = 1;
+        let fallbackRateLimit: string | null = null;
+        if (effectiveRadiusGroupId) {
+          const rg = await db.radiusGroup.findUnique({ where: { id: effectiveRadiusGroupId }, select: { name: true } });
+          groupName = rg?.name || null;
+        }
+        if (effectivePlanId) {
+          const p = await db.plan.findUnique({ where: { id: effectivePlanId }, select: { groupId: true, maxConcurrentSessions: true, downloadSpeed: true, uploadSpeed: true } });
+          if (p?.groupId && !groupName) {
+            const rg = await db.radiusGroup.findUnique({ where: { id: p.groupId }, select: { name: true } });
+            groupName = rg?.name || null;
+          }
+          if (p?.maxConcurrentSessions) maxSessions = p.maxConcurrentSessions;
+          if (p?.downloadSpeed && p?.uploadSpeed) fallbackRateLimit = `${p.downloadSpeed}M/${p.uploadSpeed}M`;
+        }
+        const effectivePassword = (body.servicePassword !== undefined && body.servicePassword) ? body.servicePassword : subscriber.servicePassword;
+        await syncUserToFreeRADIUS(body.serviceUsername.trim(), effectivePassword, groupName, maxSessions, fallbackRateLimit);
+        console.log(`[Subscriber PUT] RADIUS identity re-synced: ${subscriber.serviceUsername} → ${body.serviceUsername.trim()}`);
+      } catch (radiusErr) {
+        console.error("[Subscriber PUT] RADIUS identity re-sync on username change failed:", radiusErr);
+      }
+    }
+
     // Sync RADIUS group when planId changes (plan's RadiusGroup → radusergroup)
     if (body.planId !== undefined && body.planId !== subscriber.planId) {
       if (subscriber.serviceUsername && subscriber.radiusEnabled) {
@@ -222,8 +292,8 @@ export async function PUT(
       }
     }
 
-    // Sync RADIUS password when servicePassword changes
-    if (body.servicePassword !== undefined && body.servicePassword !== subscriber.servicePassword) {
+    // Sync RADIUS password when servicePassword changes (identity unchanged)
+    if (body.servicePassword !== undefined && body.servicePassword !== subscriber.servicePassword && !usernameChanged) {
       if (subscriber.serviceUsername && subscriber.radiusEnabled) {
         try {
           await updateUserPasswordInFreeRADIUS(subscriber.serviceUsername, body.servicePassword);
@@ -291,14 +361,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    let userId: string | undefined;
-    try {
-      userId = await requireAuth(req);
-    } catch (e) {
-      if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
-      throw e;
-    }
-    if (!userId) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    // [AUDIT-FIX F-20] Destructive action — requires explicit subscribers.delete.
+    const userId = await requirePermission(req, "subscribers.delete");
     const { id } = await params;
     const subscriber = await db.subscriber.findUnique({
       where: { id },
@@ -306,6 +370,38 @@ export async function DELETE(
     });
     if (!subscriber) {
       return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+    }
+
+    // ── [AUDIT-FIX F-17] Financial-history retention guards ──
+    // ISPs are legally required to retain billing records (GST / income-tax);
+    // hard-deleting a subscriber used to silently destroy Payments, Invoices
+    // and Refunds. Deleting is now restricted to customers with NO financial
+    // history — everyone else must be disconnected (SUSPENDED/DISCONNECTED)
+    // and retained instead.
+    if (subscriber.status === "ACTIVE") {
+      return NextResponse.json(
+        {
+          error: "Cannot delete an ACTIVE subscriber. Disconnect the connection first (suspend or change status to DISCONNECTED), then delete.",
+          code: "SUBSCRIBER_ACTIVE",
+        },
+        { status: 409 }
+      );
+    }
+
+    const [paymentCount, invoiceCount, refundCount] = await Promise.all([
+      db.payment.count({ where: { subscriberId: id } }),
+      db.invoice.count({ where: { subscriberId: id } }),
+      db.refund.count({ where: { Payment: { subscriberId: id } } }),
+    ]);
+    if (paymentCount > 0 || invoiceCount > 0 || refundCount > 0) {
+      return NextResponse.json(
+        {
+          error: `Subscriber has financial history (${invoiceCount} invoice(s), ${paymentCount} payment(s), ${refundCount} refund(s)). Records must be retained for tax/GST compliance — use status DISCONNECTED instead of deleting.`,
+          code: "FINANCIAL_HISTORY_EXISTS",
+          counts: { invoices: invoiceCount, payments: paymentCount, refunds: refundCount },
+        },
+        { status: 409 }
+      );
     }
 
     const deletedRecord = { ...subscriber };
@@ -323,55 +419,59 @@ export async function DELETE(
     }
 
     // Delete all related records to avoid FK constraint errors.
-    // Ordered to handle cascading FKs between child tables (e.g., Payment → Invoice, RadiusSession → RadiusUser).
+    // [AUDIT-FIX F-18] All statements are parameterized ($1 bindings) — the
+    // previous $executeRawUnsafe list interpolated the URL id directly; safe
+    // today only because a findUnique pre-check happened to block injection.
     const sid = id;
-    const childDeleteSql = [
-      // Tables that reference Invoice (delete before Invoice)
-      `DELETE FROM "GeneratedLegalNotice" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Payment" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "PaymentPlan" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "RecoveryEscalation" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "RecoverySla" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "TdsEntry" WHERE "subscriberId" = '${sid}'`,
+    // Tables that reference Invoice (delete before Invoice)
+    const childDeletes: Array<() => Promise<number>> = [
+      () => db.$executeRawUnsafe(`DELETE FROM "GeneratedLegalNotice" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Payment" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "PaymentPlan" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "RecoveryEscalation" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "RecoverySla" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "TdsEntry" WHERE "subscriberId" = $1`, sid),
       // RadiusSession references RadiusUser (delete before RadiusUser)
-      `DELETE FROM "RadiusSession" WHERE "radiusUserId" IN (SELECT id FROM "RadiusUser" WHERE "subscriberId" = '${sid}')`,
+      () => db.$executeRawUnsafe(
+        `DELETE FROM "RadiusSession" WHERE "radiusUserId" IN (SELECT id FROM "RadiusUser" WHERE "subscriberId" = $1)`, sid
+      ),
       // All other direct FK children of Subscriber
-      `DELETE FROM "CoaEvent" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Complaint" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "DataUsage" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Dispute" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "EnterpriseSession" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "EnterpriseUser" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Installation" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "IpMacHistory" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "IpsAlert" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "IpsBlockRule" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "LdapConfig" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "LoyaltyMember" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "NasSession" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Notification" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "PortalSession" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "ReferralCode" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "ReferralTracking" WHERE "refereeId" = '${sid}' OR "referrerId" = '${sid}'`,
-      `DELETE FROM "SubscriberAddOn" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "SubscriberChargeOverride" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "SubscriberGracePeriod" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "SubscriberTimeAccess" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "SubscriberTopUp" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "UsageLog" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "UserActionHistory" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "UserBillingCycle" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "UserRadiusAttribute" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "Voucher" WHERE "usedBySubscriberId" = '${sid}'`,
+      () => db.$executeRawUnsafe(`DELETE FROM "CoaEvent" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Complaint" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "DataUsage" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Dispute" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "EnterpriseSession" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "EnterpriseUser" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Installation" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "IpMacHistory" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "IpsAlert" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "IpsBlockRule" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "LdapConfig" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "LoyaltyMember" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "NasSession" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Notification" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "PortalSession" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "ReferralCode" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "ReferralTracking" WHERE "refereeId" = $1 OR "referrerId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "SubscriberAddOn" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "SubscriberChargeOverride" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "SubscriberGracePeriod" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "SubscriberTimeAccess" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "SubscriberTopUp" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "UsageLog" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "UserActionHistory" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "UserBillingCycle" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "UserRadiusAttribute" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "Voucher" WHERE "usedBySubscriberId" = $1`, sid),
       // Invoice and RadiusUser last (other tables may reference them)
-      `DELETE FROM "Invoice" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "RecurringInvoiceTemplate" WHERE "subscriberId" = '${sid}'`,
-      `DELETE FROM "RadiusUser" WHERE "subscriberId" = '${sid}'`,
+      () => db.$executeRawUnsafe(`DELETE FROM "Invoice" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "RecurringInvoiceTemplate" WHERE "subscriberId" = $1`, sid),
+      () => db.$executeRawUnsafe(`DELETE FROM "RadiusUser" WHERE "subscriberId" = $1`, sid),
     ];
 
-    for (const sql of childDeleteSql) {
+    for (const exec of childDeletes) {
       try {
-        await db.$executeRawUnsafe(sql);
+        await exec();
       } catch (e) {
         // Table may not exist or column may differ — log and continue
         console.error(`[Subscriber DELETE] Child cleanup failed:`, (e as Error).message);
@@ -382,6 +482,9 @@ export async function DELETE(
     await auditDelete(req, "Subscriber", id, deletedRecord, { userId });
     return NextResponse.json({ message: "Subscriber deleted" });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error("Subscriber DELETE error:", error);
     return NextResponse.json({ error: "Failed to delete subscriber" }, { status: 500 });
   }

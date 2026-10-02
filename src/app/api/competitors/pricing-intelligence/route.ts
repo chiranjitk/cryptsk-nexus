@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
 
     const priceGapAnalysis = tiers.map(tier => {
       const ourPlansInTier = ourPlans.filter(p => {
-        const mbps = p.downloadSpeed / 1000;
+        const mbps = p.downloadSpeed; // plan speeds stored in Mbps (unit migration)
         return mbps >= tier.min && mbps <= tier.max;
       });
 

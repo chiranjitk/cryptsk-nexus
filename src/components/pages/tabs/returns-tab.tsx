@@ -156,7 +156,7 @@ export default function ReturnsTab() {
 
       {/* Return Dialog */}
       <Dialog open={returnDialog} onOpenChange={setReturnDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><RotateCcw className="h-4 w-4" /> Return Equipment</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5"><Label className="text-xs">Equipment ID *</Label><Input value={returnEquipId} onChange={(e) => setReturnEquipId(e.target.value)} placeholder="Enter equipment ID" /></div>
@@ -177,7 +177,7 @@ export default function ReturnsTab() {
 
       {/* Detail Dialog */}
       <Dialog open={!!detailId} onOpenChange={() => setDetailId(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent aria-describedby={undefined} className="max-w-lg">
           <DialogHeader><DialogTitle className="text-base">Return Detail</DialogTitle></DialogHeader>
           {detail?.return ? (
             <div className="space-y-4">

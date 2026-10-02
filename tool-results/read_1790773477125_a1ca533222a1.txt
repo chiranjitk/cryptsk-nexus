@@ -1,0 +1,1226 @@
+     1→// ============================================================
+     2→// CRYPTSK Nexus — VPP Adapter v2.0 (TypeScript — Bun)
+     3→// Hard boundary between Session Engine and VPP/DPDK dataplane.
+     4→// Per: docs/architecture/02_GATEWAY_ARCHITECTURE.md §28-§42.
+     5→//
+     6→// Implements:
+     7→//   §28  Hard boundary — Session Engine → VPP Adapter → VPP (no vppctl)
+     8→//   §29  VPP Policy Objects (ACL, Policer, QoS, NAT, VRF, Classification)
+     9→//   §30  Subscriber → VPP policy mapping
+    10→//   §31  Bandwidth control via VPP policer (no Linux tc)
+    11→//   §32  Reusable ACL profiles
+    12→//   §33  NAT pools + translation state
+    13→//   §41  VPP restart recovery (epoch + rebuild from snapshots)
+    14→//   §42  Session snapshots (recoverable dataplane state)
+    15→//
+    16→// Port: 3015
+    17→// Storage: PrismaClient (SQLite in sandbox, PostgreSQL in prod).
+    18→//   DATABASE_URL comes from process.env — never hardcoded.
+    19→//
+    20→// In sandbox: VPP binary NOT running — in-memory state is the
+    21→// authoritative "VPP policy object" store, persisted to DB
+    22→// (SessionSnapshot, VppPolicyObject, VppRecoveryLog).
+    23→// ============================================================
+    24→
+    25→import { PrismaClient } from "@prisma/client";
+    26→import fs from "fs";
+    27→
+    28→const PORT = 3015;
+    29→const VPP_SOCKET = "/run/vpp/api.sock";
+    30→const startTime = Date.now();
+    31→
+    32→// ─── Single PrismaClient instance ─────────────────────────────
+    33→const db = new PrismaClient();
+    34→
+    35→// ─── In-Memory State (lost on adapter restart — that's why we
+    36→//     have DB snapshots). This is the authoritative "VPP policy
+    37→//     state" for the sandbox (no real VPP running). ─────────────
+    38→type SubscriberPolicy = {
+    39→  sessionId: string;
+    40→  subscriberId: string;
+    41→  username: string;
+    42→  framedIp: string;
+    43→  mac: string;
+    44→  nasIp: string;
+    45→  vlanId?: string;
+    46→  vrf?: string;
+    47→  policyId?: string;
+    48→  aclProfileId?: string;
+    49→  qosProfileId?: string;
+    50→  natProfileId?: string;
+    51→  ipPool?: string;
+    52→  speedDownKbps: number;
+    53→  speedUpKbps: number;
+    54→  timeoutSec?: number;
+    55→  circuitId?: string;
+    56→  remoteId?: string;
+    57→  pppoeSessionId?: string;
+    58→  dhcpClientId?: string;
+    59→  policer: { name: string; cir: number; bc: number };
+    60→  acl: { profileId: string; rules: unknown[] } | null;
+    61→  natMapping: { inside: string; outside: string; pool: string } | null;
+    62→  vppEpochApplied: number;
+    63→  programmedAt: Date;
+    64→};
+    65→
+    66→const inMemory = {
+    67→  vppEpoch: 1,
+    68→  vppConnected: false,
+    69→  vppLastRestartAt: null as Date | null,
+    70→  subscriberPolicies: new Map<string, SubscriberPolicy>(),
+    71→};
+    72→
+    73→let stats = {
+    74→  configsGenerated: 0,
+    75→  lastGenerateAt: 0,
+    76→  errors: 0,
+    77→  programmed: 0,
+    78→  removed: 0,
+    79→  rebuilds: 0,
+    80→  restartsSimulated: 0,
+    81→};
+    82→
+    83→// ─── Helpers ───────────────────────────────────────────────────
+    84→function json(data: unknown, status = 200): Response {
+    85→  return new Response(JSON.stringify(data, null, 2), {
+    86→    status,
+    87→    headers: {
+    88→      "Content-Type": "application/json",
+    89→      "Access-Control-Allow-Origin": "*",
+    90→      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    91→      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    92→    },
+    93→  });
+    94→}
+    95→
+    96→async function readBody(req: Request): Promise<any> {
+    97→  try {
+    98→    return await req.json();
+    99→  } catch {
+   100→    return {};
+   101→  }
+   102→}
+   103→
+   104→// ─── VPP Policy Object ensure-functions (lazy create / upsert by name) ──
+   105→
+   106→async function ensurePolicerObject(name: string, cir: number, bc: number) {
+   107→  const config = { cir, bc, conformAction: "transmit", violateAction: "drop" };
+   108→  return db.vppPolicyObject.upsert({
+   109→    where: { name },
+   110→    create: {
+   111→      name,
+   112→      type: "POLICER",
+   113→      configJson: JSON.stringify(config),
+   114→      description: `auto-created by vpp-adapter for ${name}`,
+   115→    },
+   116→    update: {
+   117→      type: "POLICER",
+   118→      configJson: JSON.stringify(config),
+   119→      isEnabled: true,
+   120→    },
+   121→  });
+   122→}
+   123→
+   124→async function ensureAclObject(aclProfileId: string, rules: unknown[], defaultAction: string) {
+   125→  const profile = await db.vppAclProfile.findUnique({ where: { id: aclProfileId } });
+   126→  if (!profile) return null;
+   127→  const name = `ACL-${profile.name}`;
+   128→  const config = { rules, defaultAction, profileId: aclProfileId };
+   129→  return db.vppPolicyObject.upsert({
+   130→    where: { name },
+   131→    create: {
+   132→      name,
+   133→      type: "ACL",
+   134→      profileId: aclProfileId,
+   135→      configJson: JSON.stringify(config),
+   136→      description: `auto-created from VppAclProfile ${profile.name}`,
+   137→    },
+   138→    update: {
+   139→      type: "ACL",
+   140→      profileId: aclProfileId,
+   141→      configJson: JSON.stringify(config),
+   142→      isEnabled: true,
+   143→    },
+   144→  });
+   145→}
+   146→
+   147→async function ensureNatMappingObject(inside: string, outside: string, poolName: string) {
+   148→  const name = `NAT-${inside}-to-${outside}`;
+   149→  const config = { inside, outside, pool: poolName };
+   150→  return db.vppPolicyObject.upsert({
+   151→    where: { name },
+   152→    create: {
+   153→      name,
+   154→      type: "NAT",
+   155→      configJson: JSON.stringify(config),
+   156→      description: `auto-created NAT mapping ${inside}→${outside}`,
+   157→    },
+   158→    update: {
+   159→      type: "NAT",
+   160→      configJson: JSON.stringify(config),
+   161→      isEnabled: true,
+   162→    },
+   163→  });
+   164→}
+   165→
+   166→async function pickNatPool() {
+   167→  return db.vppNatPool.findFirst({
+   168→    where: { isEnabled: true },
+   169→    orderBy: { createdAt: "asc" },
+   170→  });
+   171→}
+   172→
+   173→// ─── Core: program a subscriber into VPP (in-memory state) ─────
+   174→
+   175→type ProgramInput = {
+   176→  sessionId: string;
+   177→  subscriberId: string;
+   178→  username: string;
+   179→  framedIp?: string;
+   180→  mac?: string;
+   181→  nasIp?: string;
+   182→  nasPort?: string;
+   183→  vlanId?: string;
+   184→  vrf?: string;
+   185→  policyId?: string;
+   186→  aclProfileId?: string;
+   187→  qosProfileId?: string;
+   188→  natProfileId?: string;
+   189→  ipPool?: string;
+   190→  speedDownKbps?: number;
+   191→  speedUpKbps?: number;
+   192→  timeoutSec?: number;
+   193→  circuitId?: string;
+   194→  remoteId?: string;
+   195→  pppoeSessionId?: string;
+   196→  dhcpClientId?: string;
+   197→};
+   198→
+   199→async function programVpp(s: ProgramInput): Promise<{
+   200→  policer: any;
+   201→  acl: any;
+   202→  natMapping: { inside: string; outside: string; pool: string } | null;
+   203→}> {
+   204→  const speedDown = Math.max(0, Number(s.speedDownKbps) || 0);
+   205→  const speedUp = Math.max(0, Number(s.speedUpKbps) || 0);
+   206→  const framedIp = s.framedIp || "";
+   207→
+   208→  // 1. Policer (one per subscriber, named after sessionId)
+   209→  const policerName = `policer-${s.sessionId}`;
+   210→  const policerObj = await ensurePolicerObject(policerName, speedDown, 4096);
+   211→
+   212→  // 2. ACL assignment (only if aclProfileId provided)
+   213→  let aclObj: any = null;
+   214→  let aclAssignment: SubscriberPolicy["acl"] = null;
+   215→  if (s.aclProfileId) {
+   216→    const aclProfile = await db.vppAclProfile.findUnique({ where: { id: s.aclProfileId } });
+   217→    if (aclProfile) {
+   218→      const rules = JSON.parse(aclProfile.rulesJson || "[]");
+   219→      aclObj = await ensureAclObject(s.aclProfileId, rules, aclProfile.defaultAction);
+   220→      aclAssignment = { profileId: s.aclProfileId, rules };
+   221→    }
+   222→  }
+   223→
+   224→  // 3. NAT static mapping (framedIp → first NAT pool's publicIpStart)
+   225→  let natMapping: SubscriberPolicy["natMapping"] = null;
+   226→  if (framedIp) {
+   227→    const pool = await pickNatPool();
+   228→    const outside = pool?.publicIpStart || "203.0.113.100";
+   229→    await ensureNatMappingObject(framedIp, outside, pool?.name || "default");
+   230→    natMapping = {
+   231→      inside: framedIp,
+   232→      outside,
+   233→      pool: pool?.name || "default",
+   234→    };
+   235→  }
+   236→
+   237→  // 4. Update in-memory mapping
+   238→  const entry: SubscriberPolicy = {
+   239→    sessionId: s.sessionId,
+   240→    subscriberId: s.subscriberId || "",
+   241→    username: s.username || "",
+   242→    framedIp,
+   243→    mac: s.mac || "",
+   244→    nasIp: s.nasIp || "",
+   245→    vlanId: s.vlanId,
+   246→    vrf: s.vrf,
+   247→    policyId: s.policyId,
+   248→    aclProfileId: s.aclProfileId,
+   249→    qosProfileId: s.qosProfileId,
+   250→    natProfileId: s.natProfileId,
+   251→    ipPool: s.ipPool,
+   252→    speedDownKbps: speedDown,
+   253→    speedUpKbps: speedUp,
+   254→    timeoutSec: s.timeoutSec,
+   255→    circuitId: s.circuitId,
+   256→    remoteId: s.remoteId,
+   257→    pppoeSessionId: s.pppoeSessionId,
+   258→    dhcpClientId: s.dhcpClientId,
+   259→    policer: { name: policerName, cir: speedDown, bc: 4096 },
+   260→    acl: aclAssignment,
+   261→    natMapping,
+   262→    vppEpochApplied: inMemory.vppEpoch,
+   263→    programmedAt: new Date(),
+   264→  };
+   265→  inMemory.subscriberPolicies.set(s.sessionId, entry);
+   266→
+   267→  return { policer: policerObj, acl: aclObj, natMapping };
+   268→}
+   269→
+   270→// ─── Upsert SessionSnapshot ────────────────────────────────────
+   271→async function upsertSnapshot(s: ProgramInput, recoveryState: "PROGRAMMED" | "RECOVERING" | "VERIFIED" | "STALE" = "PROGRAMMED") {
+   272→  const now = new Date();
+   273→  const configJson = JSON.stringify({
+   274→    speedDownKbps: s.speedDownKbps,
+   275→    speedUpKbps: s.speedUpKbps,
+   276→    mac: s.mac,
+   277→    nasIp: s.nasIp,
+   278→    programmedAt: now.toISOString(),
+   279→  });
+   280→  const data = {
+   281→    subscriberId: s.subscriberId || "",
+   282→    username: s.username || "",
+   283→    nasIp: s.nasIp || "",
+   284→    nasPort: s.nasPort || "",
+   285→    framedIp: s.framedIp || "",
+   286→    mac: s.mac || "",
+   287→    vlan: s.vlanId || "",
+   288→    vrf: s.vrf || "",
+   289→    policyId: s.policyId || "",
+   290→    aclProfileId: s.aclProfileId || "",
+   291→    qosProfileId: s.qosProfileId || "",
+   292→    natProfileId: s.natProfileId || "",
+   293→    ipPool: s.ipPool || "",
+   294→    circuitId: s.circuitId || "",
+   295→    remoteId: s.remoteId || "",
+   296→    pppoeSessionId: s.pppoeSessionId || "",
+   297→    dhcpClientId: s.dhcpClientId || "",
+   298→    speedDownKbps: Math.max(0, Number(s.speedDownKbps) || 0),
+   299→    speedUpKbps: Math.max(0, Number(s.speedUpKbps) || 0),
+   300→    timeoutSec: Number(s.timeoutSec) || 0,
+   301→    vppEpoch: inMemory.vppEpoch,
+   302→    vppProgrammedAt: recoveryState === "STALE" ? undefined : now,
+   303→    vppRecoveryState: recoveryState,
+   304→    configJson,
+   305→  };
+   306→  return db.sessionSnapshot.upsert({
+   307→    where: { sessionId: s.sessionId },
+   308→    create: { sessionId: s.sessionId, ...data },
+   309→    update: data,
+   310→  });
+   311→}
+   312→
+   313→// ─── Legacy Config Generators (kept for back-compat) ────────────
+   314→
+   315→async function generateVPPConfig(): Promise<string> {
+   316→  const lines: string[] = [];
+   317→  lines.push("# ============================================================");
+   318→  lines.push("# CRYPTSK Nexus — VPP Dataplane Configuration (auto-generated)");
+   319→  lines.push(`# Generated: ${new Date().toISOString()}`);
+   320→  lines.push(`# VPP Epoch: ${inMemory.vppEpoch}  VPP Connected: ${inMemory.vppConnected}`);
+   321→  lines.push("# ============================================================");
+   322→  lines.push("");
+   323→
+   324→  try {
+   325→    // 1. Interfaces
+   326→    lines.push("# ─── 1. Interfaces ──────────────────────────────────────");
+   327→    const nasList = await db.nas.findMany({ orderBy: { nasname: "asc" }, take: 100 });
+   328→    for (const nas of nasList) {
+   329→      lines.push(`# NAS: ${nas.shortname} (${nas.nasname}, type=${nas.type})`);
+   330→      lines.push(`set interface state ${nas.nasname} up`);
+   331→    }
+   332→    lines.push("");
+   333→
+   334→    // 2. NAT
+   335→    lines.push("# ─── 2. NAT (Network Address Translation) ──────────────");
+   336→    const activeSessions = await db.radacct.findMany({
+   337→      where: { acctstoptime: null, framedipaddress: { not: null } },
+   338→      take: 1000,
+   339→    });
+   340→    const pool = await pickNatPool();
+   341→    if (activeSessions.length > 0) {
+   342→      lines.push(`# ${activeSessions.length} active subscriber sessions — NAT entries`);
+   343→      for (const s of activeSessions) {
+   344→        const ip = s.framedipaddress;
+   345→        if (!ip) continue;
+   346→        const outside = pool?.publicIpStart || `203.0.113.${(parseInt(ip.split(".")[3] || "0") % 200) + 10}`;
+   347→        lines.push(`nat44 add static address ${ip} -> ${outside}`);
+   348→      }
+   349→    } else {
+   350→      lines.push("# No active subscriber sessions — no NAT entries needed");
+   351→    }
+   352→    lines.push("");
+   353→
+   354→    // 3. ACL
+   355→    lines.push("# ─── 3. ACL (Access Control Lists) ──────────────────────");
+   356→    const aclAttrs = await db.radgroupcheck.findMany({
+   357→      where: { attribute: { in: ["Filter-Id", "NAS-Filter-Id"] } },
+   358→      orderBy: { groupname: "asc" },
+   359→    });
+   360→    if (aclAttrs.length > 0) {
+   361→      lines.push(`# ${aclAttrs.length} ACL rules from policy engine`);
+   362→      for (const a of aclAttrs) {
+   363→        lines.push(`# Group: ${a.groupname}, Filter: ${a.value}`);
+   364→        lines.push(`acl add index 0 ipv4 permit src any dst any flow-hash 10 filter-id ${a.value}`);
+   365→      }
+   366→    } else {
+   367→      lines.push("# No ACL rules defined — default permit");
+   368→    }
+   369→    lines.push("");
+   370→
+   371→    // 4. QoS
+   372→    lines.push("# ─── 4. QoS (Bandwidth Policing) ────────────────────────");
+   373→    const qosAttrs = await db.radgroupcheck.findMany({
+   374→      where: { attribute: "Mikrotik-Rate-Limit" },
+   375→      orderBy: { groupname: "asc" },
+   376→    });
+   377→    if (qosAttrs.length > 0) {
+   378→      lines.push(`# ${qosAttrs.length} QoS policer rules`);
+   379→      for (const q of qosAttrs) {
+   380→        const rates = (q.value || "").split("/")[0];
+   381→        lines.push(`policer add name ${q.groupname} cir ${rates} bc 4096 conform-action transmit violate-action drop`);
+   382→      }
+   383→    } else {
+   384→      lines.push("# No QoS policer rules — no bandwidth enforcement");
+   385→    }
+   386→    lines.push("");
+   387→
+   388→    // 5. Routing
+   389→    lines.push("# ─── 5. Routing ────────────────────────────────────────");
+   390→    lines.push("# Default route (configure per your network topology)");
+   391→    lines.push("ip route add 0.0.0.0/0 via 203.0.113.1");
+   392→    lines.push("");
+   393→
+   394→    // 6. Summary
+   395→    lines.push("# ─── Summary ───────────────────────────────────────────");
+   396→    lines.push(`# NAS devices: ${nasList.length}`);
+   397→    lines.push(`# Active sessions: ${activeSessions.length}`);
+   398→    lines.push(`# ACL rules: ${aclAttrs.length}`);
+   399→    lines.push(`# QoS policers: ${qosAttrs.length}`);
+   400→    lines.push(`# In-memory subscriber policies: ${inMemory.subscriberPolicies.size}`);
+   401→
+   402→    stats.configsGenerated++;
+   403→    stats.lastGenerateAt = Date.now();
+   404→    return lines.join("\n");
+   405→  } catch (err: any) {
+   406→    stats.errors++;
+   407→    return `# Error generating config: ${err.message}`;
+   408→  }
+   409→}
+   410→
+   411→async function generateSubscriberConfig(subscriberId: string): Promise<string> {
+   412→  const lines: string[] = [];
+   413→  try {
+   414→    const sub = await db.subscriber.findUnique({
+   415→      where: { id: subscriberId },
+   416→      include: { Plan: true },
+   417→    });
+   418→    if (!sub) return "# Subscriber not found";
+   419→
+   420→    const ra = await db.radacct.findFirst({
+   421→      where: { username: sub.serviceUsername || "", acctstoptime: null },
+   422→    });
+   423→
+   424→    lines.push(`# ============================================================`);
+   425→    lines.push(`# VPP Config for Subscriber: ${sub.serviceUsername || sub.id}`);
+   426→    lines.push(`# ============================================================`);
+   427→    lines.push("");
+   428→    lines.push(`# RADIUS Username: ${sub.serviceUsername || "—"}`);
+   429→    lines.push(`# Plan: ${sub.Plan?.name || "—"}`);
+   430→    lines.push(`# Framed IP: ${ra?.framedipaddress || "—"}`);
+   431→    lines.push(`# NAS IP: ${ra?.nasipaddress || "—"}`);
+   432→    lines.push(`# MAC: ${ra?.callingstationid || "—"}`);
+   433→    lines.push("");
+   434→
+   435→    const rg = await db.radusergroup.findFirst({
+   436→      where: { username: sub.serviceUsername || "" },
+   437→    });
+   438→    if (rg) {
+   439→      lines.push("# ─── Dataplane Objects ─────────────────────────────────");
+   440→      const checks = await db.radgroupcheck.findMany({
+   441→        where: { groupname: rg.groupname },
+   442→      });
+   443→      for (const c of checks) {
+   444→        if (c.attribute === "Mikrotik-Rate-Limit") {
+   445→          lines.push(`# QoS: ${c.value}`);
+   446→          lines.push(`policer add name ${sub.serviceUsername} cir ${(c.value || "").split("/")[0]} bc 4096`);
+   447→        }
+   448→      }
+   449→    }
+   450→
+   451→    if (ra?.framedipaddress) {
+   452→      lines.push("");
+   453→      lines.push("# ─── NAT ───────────────────────────────────────────────");
+   454→      const pool = await pickNatPool();
+   455→      const outside = pool?.publicIpStart || "203.0.113.100";
+   456→      lines.push(`nat44 add static address ${ra.framedipaddress} -> ${outside}`);
+   457→    }
+   458→
+   459→    return lines.join("\n");
+   460→  } catch (err: any) {
+   461→    return `# Error: ${err.message}`;
+   462→  }
+   463→}
+   464→
+   465→// ─── HTTP Server ────────────────────────────────────────────────
+   466→async function main() {
+   467→  // ── Startup: initialize epoch + recovery state ──
+   468→  inMemory.vppConnected = fs.existsSync(VPP_SOCKET);
+   469→
+   470→  const last = await db.vppRecoveryLog.findFirst({
+   471→    orderBy: { createdAt: "desc" },
+   472→  });
+   473→  if (last && last.newEpoch) {
+   474→    inMemory.vppEpoch = (last.newEpoch || 0) + 1;
+   475→  } else {
+   476→    inMemory.vppEpoch = 1;
+   477→  }
+   478→  inMemory.vppLastRestartAt = new Date();
+   479→
+   480→  console.log(
+   481→    `[vpp-adapter] startup complete — epoch=${inMemory.vppEpoch}, vppConnected=${inMemory.vppConnected}, lastRestartAt=${inMemory.vppLastRestartAt.toISOString()}`
+   482→  );
+   483→
+   484→  Bun.serve({
+   485→    port: PORT,
+   486→    async fetch(req: Request): Promise<Response> {
+   487→      const url = new URL(req.url);
+   488→      const path = url.pathname;
+   489→      const method = req.method;
+   490→
+   491→      // ── CORS preflight ──
+   492→      if (method === "OPTIONS") {
+   493→        return new Response(null, {
+   494→          status: 204,
+   495→          headers: {
+   496→            "Access-Control-Allow-Origin": "*",
+   497→            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+   498→            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+   499→          },
+   500→        });
+   501→      }
+   502→
+   503→      try {
+   504→        // ═══ 1. /health ═══
+   505→        if (path === "/health" && method === "GET") {
+   506→          return json({
+   507→            status: "ok",
+   508→            port: PORT,
+   509→            uptime: Math.floor((Date.now() - startTime) / 1000),
+   510→            vppConnected: inMemory.vppConnected,
+   511→            vppEpoch: inMemory.vppEpoch,
+   512→            vppLastRestartAt: inMemory.vppLastRestartAt,
+   513→            stats,
+   514→          });
+   515→        }
+   516→
+   517→        // ═══ 2. /vpp/state ═══
+   518→        if (path === "/vpp/state" && method === "GET") {
+   519→          const grouped = await db.vppPolicyObject.groupBy({
+   520→            by: ["type"],
+   521→            _count: { _all: true },
+   522→            where: { isEnabled: true },
+   523→          });
+   524→          const policyObjects: Record<string, number> = {
+   525→            ACL: 0,
+   526→            POLICER: 0,
+   527→            NAT: 0,
+   528→            VRF: 0,
+   529→            QoS: 0,
+   530→            CLASSIFICATION: 0,
+   531→          };
+   532→          for (const g of grouped) {
+   533→            policyObjects[g.type] = g._count._all;
+   534→          }
+   535→          return json({
+   536→            vppEpoch: inMemory.vppEpoch,
+   537→            vppConnected: inMemory.vppConnected,
+   538→            vppLastRestartAt: inMemory.vppLastRestartAt,
+   539→            uptime: Math.floor((Date.now() - startTime) / 1000),
+   540→            policyObjects,
+   541→            subscribersProgrammed: inMemory.subscriberPolicies.size,
+   542→            interfaces: [],
+   543→            stats,
+   544→          });
+   545→        }
+   546→
+   547→        // ═══ 3. /vpp/epoch ═══
+   548→        if (path === "/vpp/epoch" && method === "GET") {
+   549→          return json({
+   550→            epoch: inMemory.vppEpoch,
+   551→            lastRestartAt: inMemory.vppLastRestartAt,
+   552→            vppConnected: inMemory.vppConnected,
+   553→          });
+   554→        }
+   555→
+   556→        // ═══ 4. /vpp/simulate-restart ═══
+   557→        if (path === "/vpp/simulate-restart" && method === "POST") {
+   558→          const prevEpoch = inMemory.vppEpoch;
+   559→          const newEpoch = prevEpoch + 1;
+   560→          const affected = inMemory.subscriberPolicies.size;
+   561→
+   562→          // Clear in-memory state (simulating VPP losing all dataplane state)
+   563→          inMemory.subscriberPolicies.clear();
+   564→
+   565→          inMemory.vppEpoch = newEpoch;
+   566→          inMemory.vppLastRestartAt = new Date();
+   567→          stats.restartsSimulated++;
+   568→
+   569→          await db.vppRecoveryLog.create({
+   570→            data: {
+   571→              event: "RESTART_DETECTED",
+   572→              prevEpoch,
+   573→              newEpoch,
+   574→              sessionsAffected: affected,
+   575→              sessionsRecovered: 0,
+   576→              sessionsFailed: 0,
+   577→              durationMs: 0,
+   578→              detailsJson: JSON.stringify({
+   579→                simulated: true,
+   580→                triggeredAt: new Date().toISOString(),
+   581→              }),
+   582→            },
+   583→          });
+   584→
+   585→          return json({
+   586→            newEpoch,
+   587→            message:
+   588→              "VPP restart simulated — session-engine will detect via /vpp/epoch polling",
+   589→          });
+   590→        }
+   591→
+   592→        // ═══ 5. /vpp/rebuild (§41 VPP Restart Recovery) ═══
+   593→        if (path === "/vpp/rebuild" && method === "POST") {
+   594→          const body = await readBody(req);
+   595→          const t0 = Date.now();
+   596→
+   597→          let snapshots: any[] = [];
+   598→          if (body.sessionId) {
+   599→            const s = await db.sessionSnapshot.findUnique({
+   600→              where: { sessionId: body.sessionId },
+   601→            });
+   602→            snapshots = s ? [s] : [];
+   603→          } else if (body.subscriberId) {
+   604→            snapshots = await db.sessionSnapshot.findMany({
+   605→              where: { subscriberId: body.subscriberId },
+   606→            });
+   607→          } else {
+   608→            snapshots = await db.sessionSnapshot.findMany({});
+   609→          }
+   610→
+   611→          const results: any[] = [];
+   612→          let rebuilt = 0;
+   613→          let failed = 0;
+   614→
+   615→          for (const snap of snapshots) {
+   616→            try {
+   617→              // Mark RECOVERING first
+   618→              await db.sessionSnapshot.update({
+   619→                where: { sessionId: snap.sessionId },
+   620→                data: { vppRecoveryState: "RECOVERING" },
+   621→              });
+   622→
+   623→              const programmed = await programVpp({
+   624→                sessionId: snap.sessionId,
+   625→                subscriberId: snap.subscriberId,
+   626→                username: snap.username,
+   627→                framedIp: snap.framedIp,
+   628→                mac: snap.mac,
+   629→                nasIp: snap.nasIp,
+   630→                vlanId: snap.vlan,
+   631→                vrf: snap.vrf,
+   632→                policyId: snap.policyId,
+   633→                aclProfileId: snap.aclProfileId,
+   634→                qosProfileId: snap.qosProfileId,
+   635→                natProfileId: snap.natProfileId,
+   636→                ipPool: snap.ipPool,
+   637→                speedDownKbps: snap.speedDownKbps,
+   638→                speedUpKbps: snap.speedUpKbps,
+   639→                timeoutSec: snap.timeoutSec,
+   640→                circuitId: snap.circuitId,
+   641→                remoteId: snap.remoteId,
+   642→                pppoeSessionId: snap.pppoeSessionId,
+   643→                dhcpClientId: snap.dhcpClientId,
+   644→              });
+   645→
+   646→              // Mark VERIFIED
+   647→              await db.sessionSnapshot.update({
+   648→                where: { sessionId: snap.sessionId },
+   649→                data: {
+   650→                  vppRecoveryState: "VERIFIED",
+   651→                  vppEpoch: inMemory.vppEpoch,
+   652→                  vppProgrammedAt: new Date(),
+   653→                },
+   654→              });
+   655→
+   656→              results.push({
+   657→                sessionId: snap.sessionId,
+   658→                status: "VERIFIED",
+   659→                programmed: {
+   660→                  policer: programmed.policer?.name,
+   661→                  acl: programmed.acl?.name,
+   662→                  natMapping: programmed.natMapping,
+   663→                },
+   664→              });
+   665→              rebuilt++;
+   666→            } catch (err: any) {
+   667→              results.push({
+   668→                sessionId: snap.sessionId,
+   669→                status: "FAILED",
+   670→                error: err.message,
+   671→              });
+   672→              failed++;
+   673→            }
+   674→          }
+   675→
+   676→          const durationMs = Date.now() - t0;
+   677→          stats.rebuilds++;
+   678→
+   679→          await db.vppRecoveryLog.create({
+   680→            data: {
+   681→              event: "REBUILT_POLICIES",
+   682→              prevEpoch: inMemory.vppEpoch,
+   683→              newEpoch: inMemory.vppEpoch,
+   684→              sessionsAffected: snapshots.length,
+   685→              sessionsRecovered: rebuilt,
+   686→              sessionsFailed: failed,
+   687→              durationMs,
+   688→              detailsJson: JSON.stringify({
+   689→                scope: body.sessionId
+   690→                  ? "single"
+   691→                  : body.subscriberId
+   692→                  ? "subscriber"
+   693→                  : "all",
+   694→                results,
+   695→              }),
+   696→            },
+   697→          });
+   698→
+   699→          return json({ rebuilt, failed, results });
+   700→        }
+   701→
+   702→        // ═══ 6. /policy/objects ═══
+   703→        if (path === "/policy/objects" && method === "GET") {
+   704→          const type = url.searchParams.get("type");
+   705→          const includeDisabled =
+   706→            url.searchParams.get("includeDisabled") === "true";
+   707→          const where: any = {};
+   708→          if (type) where.type = type;
+   709→          if (!includeDisabled) where.isEnabled = true;
+   710→          const objs = await db.vppPolicyObject.findMany({
+   711→            where,
+   712→            orderBy: { createdAt: "desc" },
+   713→          });
+   714→          return json({
+   715→            objects: objs.map((o) => ({
+   716→              ...o,
+   717→              config: JSON.parse(o.configJson || "{}"),
+   718→            })),
+   719→          });
+   720→        }
+   721→
+   722→        // ═══ 7. POST /policy/object ═══
+   723→        if (path === "/policy/object" && method === "POST") {
+   724→          const body = await readBody(req);
+   725→          if (!body.name || !body.type)
+   726→            return json({ error: "name and type required" }, 400);
+   727→          const obj = await db.vppPolicyObject.upsert({
+   728→            where: { name: body.name },
+   729→            create: {
+   730→              name: body.name,
+   731→              type: body.type,
+   732→              profileId: body.profileId || "",
+   733→              configJson: JSON.stringify(body.config || {}),
+   734→              description: body.description || "",
+   735→              isEnabled: true,
+   736→            },
+   737→            update: {
+   738→              type: body.type,
+   739→              profileId: body.profileId || "",
+   740→              configJson: JSON.stringify(body.config || {}),
+   741→              description: body.description || "",
+   742→              isEnabled: true,
+   743→            },
+   744→          });
+   745→          return json({ ...obj, config: JSON.parse(obj.configJson || "{}") });
+   746→        }
+   747→
+   748→        // ═══ 8. PUT /policy/object/:id ═══
+   749→        if (path.startsWith("/policy/object/") && method === "PUT") {
+   750→          const id = path.split("/")[3];
+   751→          const body = await readBody(req);
+   752→          const existing = await db.vppPolicyObject.findUnique({ where: { id } });
+   753→          if (!existing) return json({ error: "not found" }, 404);
+   754→          const obj = await db.vppPolicyObject.update({
+   755→            where: { id },
+   756→            data: {
+   757→              name: body.name ?? existing.name,
+   758→              description: body.description ?? existing.description,
+   759→              configJson:
+   760→                body.config !== undefined
+   761→                  ? JSON.stringify(body.config)
+   762→                  : existing.configJson,
+   763→              isEnabled: body.isEnabled ?? existing.isEnabled,
+   764→            },
+   765→          });
+   766→          return json({ ...obj, config: JSON.parse(obj.configJson || "{}") });
+   767→        }
+   768→
+   769→        // ═══ 9. DELETE /policy/object/:id (soft-delete) ═══
+   770→        if (path.startsWith("/policy/object/") && method === "DELETE") {
+   771→          const id = path.split("/")[3];
+   772→          const obj = await db.vppPolicyObject.update({
+   773→            where: { id },
+   774→            data: { isEnabled: false },
+   775→          });
+   776→          return json({
+   777→            success: true,
+   778→            disabled: true,
+   779→            id: obj.id,
+   780→            name: obj.name,
+   781→          });
+   782→        }
+   783→
+   784→        // ═══ 10. ACL Profiles ═══
+   785→        if (path === "/policy/acl-profiles" && method === "GET") {
+   786→          const includeDisabled =
+   787→            url.searchParams.get("includeDisabled") === "true";
+   788→          const profiles = await db.vppAclProfile.findMany({
+   789→            where: includeDisabled ? {} : { isEnabled: true },
+   790→            orderBy: { createdAt: "desc" },
+   791→          });
+   792→          return json({
+   793→            profiles: profiles.map((p) => ({
+   794→              ...p,
+   795→              rules: JSON.parse(p.rulesJson || "[]"),
+   796→            })),
+   797→          });
+   798→        }
+   799→
+   800→        if (path === "/policy/acl-profile" && method === "POST") {
+   801→          const body = await readBody(req);
+   802→          if (!body.name) return json({ error: "name required" }, 400);
+   803→          const profile = await db.vppAclProfile.upsert({
+   804→            where: { name: body.name },
+   805→            create: {
+   806→              name: body.name,
+   807→              description: body.description || "",
+   808→              rulesJson: JSON.stringify(body.rules || []),
+   809→              defaultAction: body.defaultAction || "PERMIT",
+   810→              isEnabled: true,
+   811→            },
+   812→            update: {
+   813→              description: body.description || "",
+   814→              rulesJson: JSON.stringify(body.rules || []),
+   815→              defaultAction: body.defaultAction || "PERMIT",
+   816→              isEnabled: true,
+   817→            },
+   818→          });
+   819→          return json({
+   820→            ...profile,
+   821→            rules: JSON.parse(profile.rulesJson || "[]"),
+   822→          });
+   823→        }
+   824→
+   825→        if (path.startsWith("/policy/acl-profile/") && method === "PUT") {
+   826→          const id = path.split("/")[3];
+   827→          const body = await readBody(req);
+   828→          const existing = await db.vppAclProfile.findUnique({
+   829→            where: { id },
+   830→          });
+   831→          if (!existing) return json({ error: "not found" }, 404);
+   832→          const profile = await db.vppAclProfile.update({
+   833→            where: { id },
+   834→            data: {
+   835→              name: body.name ?? existing.name,
+   836→              description: body.description ?? existing.description,
+   837→              rulesJson:
+   838→                body.rules !== undefined
+   839→                  ? JSON.stringify(body.rules)
+   840→                  : existing.rulesJson,
+   841→              defaultAction: body.defaultAction ?? existing.defaultAction,
+   842→              isEnabled: body.isEnabled ?? existing.isEnabled,
+   843→            },
+   844→          });
+   845→          return json({
+   846→            ...profile,
+   847→            rules: JSON.parse(profile.rulesJson || "[]"),
+   848→          });
+   849→        }
+   850→
+   851→        if (path.startsWith("/policy/acl-profile/") && method === "DELETE") {
+   852→          const id = path.split("/")[3];
+   853→          const profile = await db.vppAclProfile.update({
+   854→            where: { id },
+   855→            data: { isEnabled: false },
+   856→          });
+   857→          return json({
+   858→            success: true,
+   859→            disabled: true,
+   860→            id: profile.id,
+   861→            name: profile.name,
+   862→          });
+   863→        }
+   864→
+   865→        // ═══ 11. NAT Pools ═══
+   866→        if (path === "/policy/nat-pools" && method === "GET") {
+   867→          const includeDisabled =
+   868→            url.searchParams.get("includeDisabled") === "true";
+   869→          const pools = await db.vppNatPool.findMany({
+   870→            where: includeDisabled ? {} : { isEnabled: true },
+   871→          });
+   872→          return json({ pools });
+   873→        }
+   874→
+   875→        if (path === "/policy/nat-pool" && method === "POST") {
+   876→          const body = await readBody(req);
+   877→          if (!body.name || !body.publicIpStart || !body.publicIpEnd)
+   878→            return json(
+   879→              { error: "name, publicIpStart, publicIpEnd required" },
+   880→              400
+   881→            );
+   882→          const pool = await db.vppNatPool.upsert({
+   883→            where: { name: body.name },
+   884→            create: {
+   885→              name: body.name,
+   886→              description: body.description || "",
+   887→              publicIpStart: body.publicIpStart,
+   888→              publicIpEnd: body.publicIpEnd,
+   889→              portStart: body.portStart ?? 1024,
+   890→              portEnd: body.portEnd ?? 65535,
+   891→              mode: body.mode || "NAT44",
+   892→              isEnabled: true,
+   893→            },
+   894→            update: {
+   895→              description: body.description || "",
+   896→              publicIpStart: body.publicIpStart,
+   897→              publicIpEnd: body.publicIpEnd,
+   898→              portStart: body.portStart ?? 1024,
+   899→              portEnd: body.portEnd ?? 65535,
+   900→              mode: body.mode || "NAT44",
+   901→              isEnabled: true,
+   902→            },
+   903→          });
+   904→          return json(pool);
+   905→        }
+   906→
+   907→        if (path.startsWith("/policy/nat-pool/") && method === "PUT") {
+   908→          const id = path.split("/")[3];
+   909→          const body = await readBody(req);
+   910→          const existing = await db.vppNatPool.findUnique({ where: { id } });
+   911→          if (!existing) return json({ error: "not found" }, 404);
+   912→          const pool = await db.vppNatPool.update({
+   913→            where: { id },
+   914→            data: {
+   915→              name: body.name ?? existing.name,
+   916→              description: body.description ?? existing.description,
+   917→              publicIpStart: body.publicIpStart ?? existing.publicIpStart,
+   918→              publicIpEnd: body.publicIpEnd ?? existing.publicIpEnd,
+   919→              portStart: body.portStart ?? existing.portStart,
+   920→              portEnd: body.portEnd ?? existing.portEnd,
+   921→              mode: body.mode ?? existing.mode,
+   922→              isEnabled: body.isEnabled ?? existing.isEnabled,
+   923→            },
+   924→          });
+   925→          return json(pool);
+   926→        }
+   927→
+   928→        if (path.startsWith("/policy/nat-pool/") && method === "DELETE") {
+   929→          const id = path.split("/")[3];
+   930→          const pool = await db.vppNatPool.update({
+   931→            where: { id },
+   932→            data: { isEnabled: false },
+   933→          });
+   934→          return json({
+   935→            success: true,
+   936→            disabled: true,
+   937→            id: pool.id,
+   938→            name: pool.name,
+   939→          });
+   940→        }
+   941→
+   942→        // ═══ 12. POST /subscriber/program ═══
+   943→        if (path === "/subscriber/program" && method === "POST") {
+   944→          const body = await readBody(req);
+   945→          if (!body.sessionId || !body.subscriberId || !body.username) {
+   946→            return json(
+   947→              { error: "sessionId, subscriberId, username are required" },
+   948→              400
+   949→            );
+   950→          }
+   951→          const programmed = await programVpp(body);
+   952→          await upsertSnapshot(body, "PROGRAMMED");
+   953→          stats.programmed++;
+   954→          return json({
+   955→            success: true,
+   956→            programmed: {
+   957→              policer: programmed.policer,
+   958→              acl: programmed.acl,
+   959→              natMapping: programmed.natMapping,
+   960→            },
+   961→            vppEpochApplied: inMemory.vppEpoch,
+   962→            message: `subscriber ${body.username} (${body.sessionId}) programmed at epoch ${inMemory.vppEpoch}`,
+   963→          });
+   964→        }
+   965→
+   966→        // ═══ 13. POST /subscriber/verify ═══
+   967→        if (path === "/subscriber/verify" && method === "POST") {
+   968→          const body = await readBody(req);
+   969→          const sessionId = body.sessionId;
+   970→          const entry = inMemory.subscriberPolicies.get(sessionId);
+   971→          if (!entry) {
+   972→            return json({
+   973→              verified: false,
+   974→              vppEpoch: inMemory.vppEpoch,
+   975→              programmedAt: null,
+   976→              checks: {
+   977→                policerExists: false,
+   978→                aclExists: false,
+   979→                natMappingExists: false,
+   980→              },
+   981→            });
+   982→          }
+   983→          return json({
+   984→            verified: true,
+   985→            vppEpoch: inMemory.vppEpoch,
+   986→            programmedAt: entry.programmedAt,
+   987→            checks: {
+   988→              policerExists: !!entry.policer,
+   989→              aclExists: !!entry.acl,
+   990→              natMappingExists: !!entry.natMapping,
+   991→            },
+   992→          });
+   993→        }
+   994→
+   995→        // ═══ 14. POST /subscriber/remove ═══
+   996→        if (path === "/subscriber/remove" && method === "POST") {
+   997→          const body = await readBody(req);
+   998→          const sessionId = body.sessionId;
+   999→          const entry = inMemory.subscriberPolicies.get(sessionId);
+  1000→          if (!entry) {
+  1001→            return json({
+  1002→              success: false,
+  1003→              error: "session not found in memory",
+  1004→              removed: { policer: null, acl: null, natMapping: null },
+  1005→            });
+  1006→          }
+  1007→          inMemory.subscriberPolicies.delete(sessionId);
+  1008→
+  1009→          // Mark snapshot STALE (state removed but session may still exist in DB)
+  1010→          await db.sessionSnapshot.updateMany({
+  1011→            where: { sessionId },
+  1012→            data: { vppRecoveryState: "STALE" },
+  1013→          });
+  1014→
+  1015→          stats.removed++;
+  1016→          return json({
+  1017→            success: true,
+  1018→            removed: {
+  1019→              policer: entry.policer,
+  1020→              acl: entry.acl,
+  1021→              natMapping: entry.natMapping,
+  1022→            },
+  1023→          });
+  1024→        }
+  1025→
+  1026→        // ═══ 15. GET /subscriber/:sessionId/state ═══
+  1027→        if (
+  1028→          path.startsWith("/subscriber/") &&
+  1029→          path.endsWith("/state") &&
+  1030→          method === "GET"
+  1031→        ) {
+  1032→          const sessionId = path.split("/")[2];
+  1033→          const entry = inMemory.subscriberPolicies.get(sessionId);
+  1034→          const snapshot = await db.sessionSnapshot.findUnique({
+  1035→            where: { sessionId },
+  1036→          });
+  1037→          return json({
+  1038→            sessionId,
+  1039→            inMemory: entry || null,
+  1040→            snapshot: snapshot
+  1041→              ? {
+  1042→                  id: snapshot.id,
+  1043→                  vppEpoch: snapshot.vppEpoch,
+  1044→                  vppProgrammedAt: snapshot.vppProgrammedAt,
+  1045→                  vppRecoveryState: snapshot.vppRecoveryState,
+  1046→                  framedIp: snapshot.framedIp,
+  1047→                  mac: snapshot.mac,
+  1048→                  policyId: snapshot.policyId,
+  1049→                  aclProfileId: snapshot.aclProfileId,
+  1050→                  qosProfileId: snapshot.qosProfileId,
+  1051→                  natProfileId: snapshot.natProfileId,
+  1052→                }
+  1053→              : null,
+  1054→            vppEpoch: inMemory.vppEpoch,
+  1055→          });
+  1056→        }
+  1057→
+  1058→        // ═══ 16. GET /config/generate (legacy) ═══
+  1059→        if (path === "/config/generate" && method === "GET") {
+  1060→          const config = await generateVPPConfig();
+  1061→          return json({
+  1062→            config,
+  1063→            generatedAt: new Date().toISOString(),
+  1064→            ...stats,
+  1065→          });
+  1066→        }
+  1067→
+  1068→        // ═══ 17. GET /config/subscriber/:id (legacy) ═══
+  1069→        if (path.startsWith("/config/subscriber/") && method === "GET") {
+  1070→          const subscriberId = path.split("/")[3];
+  1071→          const config = await generateSubscriberConfig(subscriberId);
+  1072→          return json({ config, subscriberId });
+  1073→        }
+  1074→
+  1075→        // ═══ 18. POST /apply (legacy stub) ═══
+  1076→        if (path === "/apply" && method === "POST") {
+  1077→          const body = await readBody(req);
+  1078→          console.log(
+  1079→            `[vpp-adapter] apply ${body.type} for ${body.subscriber}:`,
+  1080→            JSON.stringify(body.config)
+  1081→          );
+  1082→          return json({
+  1083→            success: true,
+  1084→            message: `Dataplane object ${body.type} for ${body.subscriber} queued (VPP binary not running — in-memory state updated)`,
+  1085→            object: body,
+  1086→          });
+  1087→        }
+  1088→
+  1089→        // ═══ 19. POST /coa ═══
+  1090→        if (path === "/coa" && method === "POST") {
+  1091→          const body = await readBody(req);
+  1092→          const { sessionId, subscriberIP, downloadKbps, uploadKbps } = body;
+  1093→          // Update in-memory policer if session exists
+  1094→          if (sessionId) {
+  1095→            const entry = inMemory.subscriberPolicies.get(sessionId);
+  1096→            if (entry) {
+  1097→              if (downloadKbps !== undefined)
+  1098→                entry.policer.cir = Number(downloadKbps) || entry.policer.cir;
+  1099→              entry.programmedAt = new Date();
+  1100→              entry.vppEpochApplied = inMemory.vppEpoch;
+  1101→            }
+  1102→          }
+  1103→          console.log(
+  1104→            `[vpp-adapter] CoA for ${subscriberIP || sessionId}: ${downloadKbps}/${uploadKbps} kbps`
+  1105→          );
+  1106→          return json({
+  1107→            success: true,
+  1108→            message: `CoA applied: ${subscriberIP || sessionId} → ${downloadKbps}/${uploadKbps} kbps (in-memory policer updated)`,
+  1109→            coa: { sessionId, subscriberIP, downloadKbps, uploadKbps },
+  1110→          });
+  1111→        }
+  1112→
+  1113→        // ═══ 20. POST /reconcile ═══
+  1114→        if (path === "/reconcile" && method === "POST") {
+  1115→          const config = await generateVPPConfig();
+  1116→          // Iterate active radacct sessions and programVpp each
+  1117→          const activeSessions = await db.radacct.findMany({
+  1118→            where: { acctstoptime: null, framedipaddress: { not: null } },
+  1119→            take: 1000,
+  1120→          });
+  1121→          let programmedCount = 0;
+  1122→          for (const s of activeSessions) {
+  1123→            const sessionId = s.acctsessionid;
+  1124→            if (!sessionId) continue;
+  1125→            try {
+  1126→              await programVpp({
+  1127→                sessionId,
+  1128→                subscriberId: s.subscriber_id || "",
+  1129→                username: s.username || "",
+  1130→                framedIp: s.framedipaddress || "",
+  1131→                mac: s.callingstationid || "",
+  1132→                nasIp: s.nasipaddress || "",
+  1133→                speedDownKbps: 51200,
+  1134→                speedUpKbps: 10240,
+  1135→              });
+  1136→              programmedCount++;
+  1137→            } catch (e) {
+  1138→              // ignore — continue
+  1139→            }
+  1140→          }
+  1141→          return json({
+  1142→            success: true,
+  1143→            message:
+  1144→              "Reconciliation complete — generated VPP config from DB state + reprogrammed active sessions",
+  1145→            activeSessions: activeSessions.length,
+  1146→            programmed: programmedCount,
+  1147→            config,
+  1148→            ...stats,
+  1149→          });
+  1150→        }
+  1151→
+  1152→        // ═══ 21. GET /interfaces ═══
+  1153→        if (path === "/interfaces" && method === "GET") {
+  1154→          return json({
+  1155→            interfaces: [],
+  1156→            message:
+  1157→              "VPP not running — interface list unavailable. In-memory policy state is authoritative.",
+  1158→          });
+  1159→        }
+  1160→
+  1161→        // ═══ 22. GET /status ═══
+  1162→        if (path === "/status" && method === "GET") {
+  1163→          return json({
+  1164→            connected: inMemory.vppConnected,
+  1165→            version: inMemory.vppConnected
+  1166→              ? "VPP via /run/vpp/api.sock"
+  1167→              : "VPP binary not running (sandbox mode)",
+  1168→            uptime: Math.floor((Date.now() - startTime) / 1000),
+  1169→            interfaces: 0,
+  1170→            vppEpoch: inMemory.vppEpoch,
+  1171→            vppLastRestartAt: inMemory.vppLastRestartAt,
+  1172→            message:
+  1173→              "VPP Adapter (hard-boundary v2.0) running — in-memory policy state persisted to SessionSnapshot",
+  1174→          });
+  1175→        }
+  1176→
+  1177→        return json({ error: "Not found", path }, 404);
+  1178→      } catch (err: any) {
+  1179→        stats.errors++;
+  1180→        console.error(
+  1181→          `[vpp-adapter] error on ${method} ${path}:`,
+  1182→          err.message
+  1183→        );
+  1184→        return json({ error: err.message, stack: err.stack }, 500);
+  1185→      }
+  1186→    },
+  1187→  });
+  1188→
+  1189→  // ── Background reconcile loop (every 60s) ──
+  1190→  setInterval(async () => {
+  1191→    try {
+  1192→      await generateVPPConfig();
+  1193→      console.log(
+  1194→        `[vpp-adapter] background reconcile — config regenerated (total ${stats.configsGenerated})`
+  1195→      );
+  1196→    } catch (err: any) {
+  1197→      console.error(`[vpp-adapter] background reconcile error:`, err.message);
+  1198→    }
+  1199→  }, 60_000);
+  1200→
+  1201→  console.log(`╔══════════════════════════════════════════════╗`);
+  1202→  console.log(`║  CRYPTSK VPP Adapter v2.0 — Port ${PORT}         ║`);
+  1203→  console.log(`║  VPP connected: ${String(inMemory.vppConnected).padEnd(29)}║`);
+  1204→  console.log(`║  VPP epoch: ${String(inMemory.vppEpoch).padEnd(33)}║`);
+  1205→  console.log(`║  Hard-boundary contract (§28-§42) active      ║`);
+  1206→  console.log(`║  Storage: PrismaClient (DATABASE_URL from env)║`);
+  1207→  console.log(`╚══════════════════════════════════════════════╝`);
+  1208→}
+  1209→
+  1210→process.on("SIGINT", async () => {
+  1211→  console.log("[vpp-adapter] SIGINT received — shutting down...");
+  1212→  await db.$disconnect();
+  1213→  process.exit(0);
+  1214→});
+  1215→
+  1216→process.on("SIGTERM", async () => {
+  1217→  console.log("[vpp-adapter] SIGTERM received — shutting down...");
+  1218→  await db.$disconnect();
+  1219→  process.exit(0);
+  1220→});
+  1221→
+  1222→main().catch((err) => {
+  1223→  console.error("[vpp-adapter] FATAL startup error:", err);
+  1224→  process.exit(1);
+  1225→});
+  1226→

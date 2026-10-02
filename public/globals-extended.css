@@ -14520,31 +14520,23 @@ header {
   background: rgba(100, 100, 100, 0.6);
 }
 
-/* ── Table row hover with subtle left border ── */
+/* ── Table row hover with subtle left border ──
+   ⚠ Do NOT use a ::before pseudo-element on <tr> for this effect.
+   Generated content on a table-row is laid out as an anonymous
+   table-cell by the browser, which inserts a phantom first column
+   and shifts every body cell one column to the right of its header.
+   An inset background gradient produces the identical 3px red bar
+   with zero impact on table layout. */
 .table-row-hover {
-  position: relative;
-  transition: background-color 0.15s ease;
-}
-.table-row-hover::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: #DC2626;
-  border-radius: 0 2px 2px 0;
-  transform: scaleY(0);
-  transition: transform 0.2s ease;
-}
-.table-row-hover:hover::before {
-  transform: scaleY(1);
+  transition: background-color 0.15s ease, background-image 0.2s ease;
 }
 .table-row-hover:hover {
   background-color: rgba(220, 38, 38, 0.04);
+  background-image: linear-gradient(to right, #DC2626 0 3px, transparent 3px);
 }
 .dark .table-row-hover:hover {
   background-color: rgba(239, 68, 68, 0.06);
+  background-image: linear-gradient(to right, #EF4444 0 3px, transparent 3px);
 }
 
 /* ── Stat card shimmer effect ── */

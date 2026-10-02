@@ -138,7 +138,7 @@ export default function StockTab() {
 
       {/* Adjust Stock Dialog */}
       <Dialog open={adjustDialog} onOpenChange={setAdjustDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent aria-describedby={undefined} className="max-w-md">
           <DialogHeader><DialogTitle className="text-base flex items-center gap-2"><Calculator className="h-4 w-4 text-red-600" /> Adjust Stock</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5"><Label className="text-xs">Equipment ID *</Label><Input value={adjustEquipId} onChange={(e) => setAdjustEquipId(e.target.value)} placeholder="Enter equipment ID" /></div>

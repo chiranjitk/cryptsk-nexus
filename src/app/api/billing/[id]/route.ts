@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 
 // GET /api/billing/[id] — single invoice detail
 export async function GET(
@@ -12,6 +12,7 @@ export async function GET(
       await requireAuth(req as unknown as import("next/server").NextRequest);
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      throw error; // [SECURITY-FIX] non-auth errors must not bypass authentication
     }
     const { id } = await params;
     const invoice = await db.invoice.findUnique({
@@ -40,13 +41,22 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    try {
-      await requireAuth(req as unknown as import("next/server").NextRequest);
-    } catch (error) {
-      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
-    }
+    const userId = await requireAuth(req as unknown as import("next/server").NextRequest); // [SECURITY-FIX] was swallow-and-continue
     const { id } = await params;
     const body = await req.json();
+
+    // [PAYMENTS-NOLEAK] PAID is a money state — it must only be reached through
+    // a Payment row (record_payment or the hardened /api/invoices/[id] route).
+    // This legacy editor path used to accept status:"PAID" and book revenue
+    // with nothing in the payments ledger.
+    if (body.status === "PAID") {
+      return NextResponse.json(
+        { error: "Marking an invoice PAID requires a payment record — use Record Payment (POST /api/billing action=record_payment) so the receipt is booked in the ledger." },
+        { status: 400 }
+      );
+    }
+
+    await permissionFor(userId, "invoices.update");
 
     const invoice = await db.invoice.findUnique({ where: { id } });
     if (!invoice) {

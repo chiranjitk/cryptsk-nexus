@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditCreate, auditBulk } from "@/lib/services/audit-service";
-import { requireAuth, AuthError } from "@/lib/api-auth";
+import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 
 // GET /api/payments — list payments with filters + summary + pendingVerifyCount
 export async function GET(req: NextRequest) {
@@ -70,8 +70,15 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    // Prisma relation keys are capitalized (Subscriber/Invoice) but the client
+    // contract is lowercase — remap per row and drop the capitalized keys.
+    const mappedPayments = payments.map((p) => {
+      const { Subscriber, Invoice, ...rest } = p;
+      return { ...rest, subscriber: Subscriber ?? null, invoice: Invoice ?? null };
+    });
+
     return NextResponse.json({
-      payments,
+      payments: mappedPayments,
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -104,6 +111,8 @@ export async function POST(req: NextRequest) {
       : body.action;
 
     if (effectiveAction === "bulk_verify" || effectiveAction === "bulk_reject") {
+      // [AUDIT-FIX F-20] Verification is a money-approval action — agents/viewers cannot.
+      await permissionFor(userId, effectiveAction === "bulk_verify" ? "payments.verify" : "payments.update");
       const { paymentIds } = body;
       if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
         return NextResponse.json({ error: "Payment IDs are required" }, { status: 400 });
@@ -117,32 +126,37 @@ export async function POST(req: NextRequest) {
         include: { Invoice: true },
       });
 
-      const result = await db.payment.updateMany({
-        where: { id: { in: paymentIds }, status: "PENDING" },
-        data: { status: targetStatus },
-      });
+      // [AUDIT-FIX F-10] Bulk verify touches invoice balances — run the whole
+      // batch atomically so a mid-loop crash cannot leave books inconsistent.
+      const result = await db.$transaction(async (tx) => {
+        const r = await tx.payment.updateMany({
+          where: { id: { in: paymentIds }, status: "PENDING" },
+          data: { status: targetStatus },
+        });
 
-      // If verifying, update linked invoice balances
-      if (targetStatus === "VERIFIED") {
-        for (const p of paymentsToUpdate) {
-          if (p.invoiceId && p.Invoice) {
-            const invoice = p.Invoice;
-            const newPaidAmount = invoice.paidAmount + p.amount;
-            const newBalanceAmount = invoice.grandTotal - newPaidAmount;
-            // Use 0.01 tolerance for float precision
-            const newInvoiceStatus = newBalanceAmount <= 0.01 ? "PAID" : "PARTIALLY_PAID";
-            await db.invoice.update({
-              where: { id: p.invoiceId },
-              data: {
-                paidAmount: newPaidAmount,
-                balanceAmount: Math.max(0, Math.round(newBalanceAmount * 100) / 100),
-                status: newInvoiceStatus,
-                paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
-              },
-            });
+        // If verifying, update linked invoice balances
+        if (targetStatus === "VERIFIED") {
+          for (const p of paymentsToUpdate) {
+            if (p.invoiceId && p.Invoice) {
+              const invoice = p.Invoice;
+              const newPaidAmount = invoice.paidAmount + p.amount;
+              const newBalanceAmount = invoice.grandTotal - newPaidAmount;
+              // Use 0.01 tolerance for float precision
+              const newInvoiceStatus = newBalanceAmount <= 0.01 ? "PAID" : "PARTIALLY_PAID";
+              await tx.invoice.update({
+                where: { id: p.invoiceId },
+                data: {
+                  paidAmount: newPaidAmount,
+                  balanceAmount: Math.max(0, Math.round(newBalanceAmount * 100) / 100),
+                  status: newInvoiceStatus,
+                  paidAt: newInvoiceStatus === "PAID" ? new Date() : invoice.paidAt,
+                },
+              });
+            }
           }
         }
-      }
+        return r;
+      });
 
       await auditBulk(req, targetStatus === "VERIFIED" ? "BULK_UPDATE" : "BULK_DELETE", "Payment", result.count, paymentIds);
       return NextResponse.json({
@@ -152,6 +166,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { subscriberId, amount, paymentMode, transactionRef, notes, invoiceId } = body;
+
+    // [AUDIT-FIX F-20] Recording money requires an explicit permission
+    await permissionFor(userId, "payments.create");
 
     if (!subscriberId || !amount || amount <= 0) {
       return NextResponse.json({ error: "Subscriber and valid amount are required" }, { status: 400 });
@@ -177,8 +194,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const payCount = await db.payment.count();
-    const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
+    // [AUDIT-FIX F-02] Duplicate bank/UPI reference guard — the same UTR must never
+    // be recorded twice (double-revenue exploit reproduced during the 2026-09-30 audit).
+    if (transactionRef && String(transactionRef).trim() !== "") {
+      const duplicate = await db.payment.findFirst({
+        where: {
+          transactionRef: String(transactionRef).trim(),
+          status: { not: "FAILED" },
+        },
+        select: { id: true, amount: true, receiptNumber: true },
+      });
+      if (duplicate) {
+        return NextResponse.json(
+          {
+            error: `Duplicate transaction reference "${transactionRef}" — already recorded as payment ${duplicate.receiptNumber || duplicate.id} (₹${duplicate.amount}). If this is genuinely a second transaction, use the bank's distinct reference number.`,
+            duplicateOf: duplicate.id,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    // [AUDIT-FIX F-21] Receipt number was `RCT<count+1>` — two concurrent payments got the
+    // same receipt (column isn't unique, so no backstop). Time+entropy form is collision-proof.
+    const receiptNumber = `RCT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     const payment = await db.payment.create({
       data: {

@@ -74,6 +74,10 @@ export async function createSessionToken(userId: string): Promise<string> {
 
   const payload = JSON.stringify({
     uid: userId,
+    // [AUDIT-FIX F-19] Explicit type discriminator — subscriber self-care tokens
+    // carry type "subscriber"; admin tokens carry "admin". This prevents a
+    // self-care token from being replayed against staff API routes and vice versa.
+    type: 'admin',
     iat: now,
     exp: now + SESSION_MAX_AGE_SECONDS,
   })
@@ -93,6 +97,9 @@ export async function createSessionToken(userId: string): Promise<string> {
 
 /**
  * Verify a session token and return the user ID if valid.
+ * [AUDIT-FIX F-19] Rejects subscriber-type tokens — only admin/staff tokens
+ * (type "admin", or legacy typeless tokens) verify here. Subscriber tokens
+ * verify exclusively via verifySubscriberSessionToken.
  */
 export async function verifySessionToken(token: string): Promise<string | null> {
   try {
@@ -112,7 +119,12 @@ export async function verifySessionToken(token: string): Promise<string | null> 
 
     // Decode payload
     const jsonStr = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'))
-    const payload = JSON.parse(jsonStr) as { uid: string; iat: number; exp: number }
+    const payload = JSON.parse(jsonStr) as { uid: string; type?: string; iat: number; exp: number }
+
+    // Reject cross-portal tokens: subscriber self-care tokens must never
+    // authenticate staff API routes.
+    if (payload.type === 'subscriber') return null
+    if (payload.type !== undefined && payload.type !== 'admin') return null
 
     // Check expiry
     const now = Math.floor(Date.now() / 1000)
