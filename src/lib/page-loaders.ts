@@ -55,7 +55,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   // ══════════════════════════════════════════════════════════════
   // MONITORING
   // ══════════════════════════════════════════════════════════════
-  'Active Sessions': () => import('@/components/pages/sessions-page'),
+  'Active Sessions': () => import('@/components/pages/aaa-sessions-page'),
   'Session History': () => import('@/components/pages/session-history-page'),
   'Authentication Log': () => import('@/components/pages/auth-log-page'),
   'Bandwidth': () => import('@/components/pages/bandwidth-page'),
@@ -158,6 +158,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Expiry & Renewal': () => import('@/components/pages/expiry-renewal-page'),
   'Side Revenue': () => import('@/components/pages/side-revenue-page'),
   'Plan & Area MIS': () => import('@/components/pages/plan-area-mis-page'),
+  'Report Snapshots': () => import('@/components/pages/report-snapshots-page'),
 
   // ══════════════════════════════════════════════════════════════
   // SETTINGS

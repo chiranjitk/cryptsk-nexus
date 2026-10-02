@@ -1,0 +1,1466 @@
+"use client";
+
+import React, { useState, useCallback, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/utils";
+import { toast } from "sonner";
+import PageHeader from "@/components/page-header";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
+import {
+  Wifi,
+  Users,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Clock,
+  Server,
+  Shield,
+  RefreshCw,
+  Search,
+  X,
+  Copy,
+  Unplug,
+  Monitor,
+  Network,
+  Activity,
+  Download,
+  Upload,
+  HardDrive,
+  ChevronDown,
+  AlertTriangle,
+  Loader2,
+  Eye,
+  UserX,
+} from "lucide-react";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface SessionData {
+  acctsessionid: string;
+  username: string;
+  nasipaddress: string;
+  framedipaddress: string;
+  callingstationid: string;
+  acctstarttime: string;
+  acctsessiontime: number;
+  acctinputoctets: number;
+  acctoutputoctets: number;
+  downloadFormatted: string;
+  uploadFormatted: string;
+  durationFormatted: string;
+  nasporttype: string;
+  framedprotocol: string;
+  subscriber: {
+    name: string;
+    code: string;
+    status: string;
+    connectionType: string;
+  } | null;
+  radiusGroup: { name: string } | null;
+  nasDevice: { name: string; type: string } | null;
+}
+
+interface PaginationData {
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+}
+
+interface StatsData {
+  activeCount: number;
+  totalBandwidth: number;
+  totalBandwidthFormatted: string;
+  avgSessionTime: number;
+  avgSessionTimeFormatted: string;
+  nasCount: number;
+  userCount: number;
+}
+
+interface NasBreakdown {
+  nasIp: string;
+  nasName: string;
+  sessions: number;
+  bandwidth: number;
+  bandwidthFormatted: string;
+}
+
+interface GroupBreakdown {
+  groupName: string;
+  sessions: number;
+  users: number;
+}
+
+interface SessionsResponse {
+  data: SessionData[];
+  pagination: PaginationData;
+  stats: StatsData;
+  breakdown: {
+    byNas: NasBreakdown[];
+    byGroup: GroupBreakdown[];
+  };
+}
+
+type SortField = "acctsessiontime" | "acctoutputoctets" | "acctinputoctets";
+type SortDir = "asc" | "desc";
+
+// ── Helper ────────────────────────────────────────────────────────────────────
+
+function formatDateTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function AaaSessionsPage() {
+  const queryClient = useQueryClient();
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [nasFilter, setNasFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [limit] = useState(50);
+
+  // Sort
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Dialogs
+  const [detailSession, setDetailSession] = useState<SessionData | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = useState<SessionData | null>(
+    null
+  );
+  const [disconnectReason, setDisconnectReason] = useState("Admin Disconnect");
+  const [bulkDisconnectOpen, setBulkDisconnectOpen] = useState(false);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+
+  // ── Query ─────────────────────────────────────────────────────────────────
+
+  const queryParams = useMemo(() => {
+    const p = new URLSearchParams();
+    if (search) p.set("search", search);
+    if (nasFilter !== "all") p.set("nas", nasFilter);
+    if (groupFilter !== "all") p.set("group", groupFilter);
+    p.set("page", String(page));
+    p.set("limit", String(limit));
+    return p.toString();
+  }, [search, nasFilter, groupFilter, page, limit]);
+
+  const {
+    data: sessionsData,
+    isLoading,
+    isError,
+    error,
+    dataUpdatedAt,
+    refetch,
+  } = useQuery<SessionsResponse>({
+    queryKey: ["aaa-active-sessions", queryParams],
+    queryFn: () => apiFetch<SessionsResponse>(`/api/aaa/active-sessions?${queryParams}`),
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (acctsessionid: string) => {
+      return apiFetch("/api/aaa/active-sessions", {
+        method: "POST",
+        body: JSON.stringify({ action: "disconnect", acctsessionid }),
+      });
+    },
+    onSuccess: () => {
+      toast.success("Session disconnected successfully");
+      queryClient.invalidateQueries({ queryKey: ["aaa-active-sessions"] });
+      setDisconnectTarget(null);
+      setDetailSession(null);
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to disconnect: ${err.message}`);
+    },
+  });
+
+  const bulkDisconnectMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      return apiFetch("/api/aaa/active-sessions", {
+        method: "POST",
+        body: JSON.stringify({ action: "bulk-disconnect", acctsessionids: ids }),
+      });
+    },
+    onSuccess: () => {
+      toast.success(`${selectedIds.size} session(s) disconnected successfully`);
+      queryClient.invalidateQueries({ queryKey: ["aaa-active-sessions"] });
+      setSelectedIds(new Set());
+      setBulkDisconnectOpen(false);
+    },
+    onError: (err: Error) => {
+      toast.error(`Bulk disconnect failed: ${err.message}`);
+    },
+  });
+
+  const disconnectUserMutation = useMutation({
+    mutationFn: async (username: string) => {
+      return apiFetch("/api/aaa/active-sessions", {
+        method: "POST",
+        body: JSON.stringify({ action: "disconnect-user", username }),
+      });
+    },
+    onSuccess: () => {
+      toast.success("All user sessions disconnected");
+      queryClient.invalidateQueries({ queryKey: ["aaa-active-sessions"] });
+      setDisconnectTarget(null);
+      setDetailSession(null);
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to disconnect user: ${err.message}`);
+    },
+  });
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleSort = useCallback(
+    (field: SortField) => {
+      if (sortField === field) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortField(field);
+        setSortDir("desc");
+      }
+    },
+    [sortField]
+  );
+
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleToggleAll = useCallback(() => {
+    if (!sessionsData) return;
+    if (selectedIds.size === sessionsData.data.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sessionsData.data.map((s) => s.acctsessionid)));
+    }
+  }, [sessionsData, selectedIds.size]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsManualRefresh(true);
+    await refetch();
+    toast.success("Sessions refreshed");
+    setTimeout(() => setIsManualRefresh(false), 1000);
+  }, [refetch]);
+
+  const handleCopySessionId = useCallback((id: string) => {
+    navigator.clipboard.writeText(id).then(() => {
+      toast.success("Session ID copied to clipboard");
+    });
+  }, []);
+
+  const handleSearchSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    setPage(1);
+  }, []);
+
+  const handleClearSearch = useCallback(() => {
+    setSearch("");
+    setPage(1);
+  }, []);
+
+  // ── Derived / Sorted Data ────────────────────────────────────────────────
+
+  const sortedSessions = useMemo(() => {
+    if (!sessionsData?.data) return [];
+    if (!sortField) return sessionsData.data;
+    return [...sessionsData.data].sort((a, b) => {
+      const diff = (a[sortField] ?? 0) - (b[sortField] ?? 0);
+      return sortDir === "asc" ? diff : -diff;
+    });
+  }, [sessionsData, sortField, sortDir]);
+
+  const nasOptions = useMemo(() => {
+    if (!sessionsData?.breakdown?.byNas) return [];
+    return sessionsData.breakdown.byNas.map((n) => ({
+      value: n.nasIp,
+      label: n.nasName || n.nasIp,
+    }));
+  }, [sessionsData]);
+
+  const groupOptions = useMemo(() => {
+    if (!sessionsData?.breakdown?.byGroup) return [];
+    return sessionsData.breakdown.byGroup.map((g) => ({
+      value: g.groupName,
+      label: g.groupName,
+    }));
+  }, [sessionsData]);
+
+  const isAllSelected =
+    sessionsData && selectedIds.size === sessionsData.data.length && sessionsData.data.length > 0;
+
+  // ── Pagination Helper ────────────────────────────────────────────────────
+
+  const paginationPages = useMemo(() => {
+    const p = sessionsData?.pagination;
+    if (!p || p.pages <= 1) return [];
+    const pages: (number | "ellipsis")[] = [];
+    pages.push(1);
+    if (p.page > 3) pages.push("ellipsis");
+    for (
+      let i = Math.max(2, p.page - 1);
+      i <= Math.min(p.pages - 1, p.page + 1);
+      i++
+    ) {
+      pages.push(i);
+    }
+    if (p.page < p.pages - 2) pages.push("ellipsis");
+    if (p.pages > 1) pages.push(p.pages);
+    return pages;
+  }, [sessionsData]);
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  const stats = sessionsData?.stats;
+
+  const statsCards = useMemo(
+    () => [
+      {
+        label: "Active Sessions",
+        value: stats?.activeCount ?? 0,
+        icon: Wifi,
+        gradient: "from-green-500/10 to-emerald-500/5 dark:from-green-500/20 dark:to-emerald-500/10",
+        iconBg: "bg-green-100 dark:bg-green-900/50",
+        iconColor: "text-green-600 dark:text-green-400",
+        border: "border-green-200 dark:border-green-800/50",
+      },
+      {
+        label: "Unique Users",
+        value: stats?.userCount ?? 0,
+        icon: Users,
+        gradient: "from-teal-500/10 to-cyan-500/5 dark:from-teal-500/20 dark:to-cyan-500/10",
+        iconBg: "bg-teal-100 dark:bg-teal-900/50",
+        iconColor: "text-teal-600 dark:text-teal-400",
+        border: "border-teal-200 dark:border-teal-800/50",
+      },
+      {
+        label: "Total Bandwidth",
+        value: stats?.totalBandwidthFormatted ?? "0 B",
+        icon: Activity,
+        gradient: "from-rose-500/10 to-pink-500/5 dark:from-rose-500/20 dark:to-pink-500/10",
+        iconBg: "bg-rose-100 dark:bg-rose-900/50",
+        iconColor: "text-rose-600 dark:text-rose-400",
+        border: "border-rose-200 dark:border-rose-800/50",
+      },
+      {
+        label: "Avg Duration",
+        value: stats?.avgSessionTimeFormatted ?? "0s",
+        icon: Clock,
+        gradient: "from-amber-500/10 to-yellow-500/5 dark:from-amber-500/20 dark:to-yellow-500/10",
+        iconBg: "bg-amber-100 dark:bg-amber-900/50",
+        iconColor: "text-amber-600 dark:text-amber-400",
+        border: "border-amber-200 dark:border-amber-800/50",
+      },
+      {
+        label: "NAS Devices",
+        value: stats?.nasCount ?? 0,
+        icon: Server,
+        gradient: "from-slate-500/10 to-zinc-500/5 dark:from-slate-500/20 dark:to-zinc-500/10",
+        iconBg: "bg-slate-100 dark:bg-slate-900/50",
+        iconColor: "text-slate-600 dark:text-slate-400",
+        border: "border-slate-200 dark:border-slate-800/50",
+      },
+      {
+        label: "Groups Active",
+        value: stats ? (sessionsData?.breakdown?.byGroup?.length ?? 0) : 0,
+        icon: Shield,
+        gradient: "from-purple-500/10 to-fuchsia-500/5 dark:from-purple-500/20 dark:to-fuchsia-500/10",
+        iconBg: "bg-purple-100 dark:bg-purple-900/50",
+        iconColor: "text-purple-600 dark:text-purple-400",
+        border: "border-purple-200 dark:border-purple-800/50",
+      },
+    ],
+    [stats, sessionsData]
+  );
+
+  // ── Sort header renderer ─────────────────────────────────────────────────
+
+  const renderSortHeader = (label: string, field: SortField) => {
+    const active = sortField === field;
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ml-3 h-8 gap-1 font-medium"
+        onClick={() => handleSort(field)}
+      >
+        {label}
+        {active ? (
+          sortDir === "asc" ? (
+            <ArrowUp className="h-3.5 w-3.5" />
+          ) : (
+            <ArrowDown className="h-3.5 w-3.5" />
+          )
+        ) : (
+          <ArrowUpDown className="h-3.5 w-3.5 opacity-40" />
+        )}
+      </Button>
+    );
+  };
+
+  // ── Render: Stats ─────────────────────────────────────────────────────────
+
+  const renderStats = () => (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      {statsCards.map((card) => (
+        <Card
+          key={card.label}
+          className={`border ${card.border} bg-gradient-to-br ${card.gradient}`}
+        >
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div
+                className={`flex items-center justify-center h-9 w-9 rounded-lg ${card.iconBg} shrink-0`}
+              >
+                <card.icon className={`h-4.5 w-4.5 ${card.iconColor}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">
+                  {card.label}
+                </p>
+                <p className="text-lg font-bold text-foreground truncate">
+                  {isLoading && !stats ? (
+                    <Skeleton className="h-6 w-16" />
+                  ) : (
+                    card.value
+                  )}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+
+  // ── Render: Active Sessions Table ─────────────────────────────────────────
+
+  const renderActiveSessionsTab = () => (
+    <div className="space-y-4">
+      {/* Filters bar */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <form
+          onSubmit={handleSearchSubmit}
+          className="relative flex-1 min-w-0"
+        >
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by username, IP, or MAC..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 pr-8"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={handleClearSearch}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </form>
+
+        <Select value={nasFilter} onValueChange={(v) => { setNasFilter(v); setPage(1); }}>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="All NAS Devices" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All NAS Devices</SelectItem>
+            {nasOptions.map((n) => (
+              <SelectItem key={n.value} value={n.value}>
+                {n.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={groupFilter} onValueChange={(v) => { setGroupFilter(v); setPage(1); }}>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="All Groups" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Groups</SelectItem>
+            {groupOptions.map((g) => (
+              <SelectItem key={g.value} value={g.value}>
+                {g.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Button
+          variant="outline"
+          size="default"
+          onClick={handleRefresh}
+          disabled={isManualRefresh}
+          className="shrink-0"
+        >
+          <RefreshCw
+            className={`h-4 w-4 ${isManualRefresh ? "animate-spin" : ""}`}
+          />
+          <span className="hidden sm:inline">Refresh</span>
+        </Button>
+
+        {selectedIds.size > 0 && (
+          <Button
+            variant="destructive"
+            size="default"
+            onClick={() => setBulkDisconnectOpen(true)}
+            className="shrink-0"
+          >
+            <UserX className="h-4 w-4" />
+            <span className="hidden sm:inline">
+              Disconnect ({selectedIds.size})
+            </span>
+          </Button>
+        )}
+      </div>
+
+      {/* Table */}
+      <Card>
+        <CardContent className="p-0">
+          {isLoading && !sessionsData ? (
+            <div className="p-6 space-y-3">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : isError ? (
+            <div className="p-8 text-center">
+              <AlertTriangle className="h-8 w-8 text-destructive mx-auto mb-2" />
+              <p className="text-sm text-destructive font-medium">
+                Failed to load sessions
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {error?.message || "Unknown error"}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetch()}
+                className="mt-3"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
+            </div>
+          ) : sortedSessions.length === 0 ? (
+            <div className="p-12 text-center">
+              <Wifi className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
+                No active sessions found
+              </p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                {search || nasFilter !== "all" || groupFilter !== "all"
+                  ? "Try adjusting your filters"
+                  : "Sessions will appear here when users connect"}
+              </p>
+            </div>
+          ) : (
+            <>
+              <ScrollArea className="max-h-[600px]">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/30">
+                      <TableHead className="w-10 pl-4">
+                        <Checkbox
+                          checked={isAllSelected}
+                          onCheckedChange={handleToggleAll}
+                          aria-label="Select all sessions"
+                        />
+                      </TableHead>
+                      <TableHead>Username</TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        Subscriber
+                      </TableHead>
+                      <TableHead>Framed IP</TableHead>
+                      <TableHead className="hidden md:table-cell">MAC</TableHead>
+                      <TableHead className="hidden lg:table-cell">NAS</TableHead>
+                      <TableHead className="hidden xl:table-cell">Group</TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        Start Time
+                      </TableHead>
+                      <TableHead>{renderSortHeader("Duration", "acctsessiontime")}</TableHead>
+                      <TableHead className="hidden md:table-cell">
+                        {renderSortHeader("↓", "acctoutputoctets")}
+                      </TableHead>
+                      <TableHead className="hidden md:table-cell">
+                        {renderSortHeader("↑", "acctinputoctets")}
+                      </TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-10 pr-4" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedSessions.map((session) => {
+                      const isSelected = selectedIds.has(session.acctsessionid);
+                      return (
+                        <TableRow
+                          key={session.acctsessionid}
+                          data-state={isSelected ? "selected" : undefined}
+                          className="cursor-pointer"
+                          onClick={() => setDetailSession(session)}
+                        >
+                          <TableCell
+                            className="pl-4"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={() =>
+                                handleToggleSelect(session.acctsessionid)
+                              }
+                              aria-label={`Select ${session.username}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-bold font-mono text-sm">
+                              {session.username}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <span className="text-sm text-muted-foreground">
+                              {session.subscriber?.name || (
+                                <span className="italic text-muted-foreground/60">
+                                  Unlinked
+                                </span>
+                              )}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-mono text-sm">
+                              {session.framedipaddress}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {session.callingstationid}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-sm font-medium">
+                                {session.nasDevice?.name || session.nasipaddress}
+                              </span>
+                              <span className="text-xs text-muted-foreground font-mono">
+                                {session.nasipaddress}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            {session.radiusGroup ? (
+                              <Badge variant="outline" className="text-xs">
+                                {session.radiusGroup.name}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/60 italic">
+                                None
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <span className="text-xs text-muted-foreground">
+                              {formatDateTime(session.acctstarttime)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm font-medium">
+                              {session.durationFormatted}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            <div className="flex items-center gap-1 text-sm">
+                              <Download className="h-3 w-3 text-green-500" />
+                              <span>{session.downloadFormatted}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            <div className="flex items-center gap-1 text-sm">
+                              <Upload className="h-3 w-3 text-amber-500" />
+                              <span>{session.uploadFormatted}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30 hover:bg-green-500/20 gap-1.5">
+                              <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                              </span>
+                              Active
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="pr-4" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setDetailSession(session)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+
+              {/* Pagination */}
+              {sessionsData && sessionsData.pagination.pages > 1 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 border-t">
+                  <p className="text-xs text-muted-foreground">
+                    Showing{" "}
+                    <span className="font-medium">
+                      {(sessionsData.pagination.page - 1) * sessionsData.pagination.limit + 1}
+                    </span>{" "}
+                    to{" "}
+                    <span className="font-medium">
+                      {Math.min(
+                        sessionsData.pagination.page * sessionsData.pagination.limit,
+                        sessionsData.pagination.total
+                      )}
+                    </span>{" "}
+                    of{" "}
+                    <span className="font-medium">
+                      {sessionsData.pagination.total}
+                    </span>{" "}
+                    sessions
+                  </p>
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() =>
+                            setPage((p) => Math.max(1, p - 1))
+                          }
+                          className={
+                            sessionsData.pagination.page <= 1
+                              ? "pointer-events-none opacity-40"
+                              : "cursor-pointer"
+                          }
+                        />
+                      </PaginationItem>
+                      {paginationPages.map((pg, idx) =>
+                        pg === "ellipsis" ? (
+                          <PaginationItem key={`e-${idx}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={pg}>
+                            <PaginationLink
+                              isActive={sessionsData.pagination.page === pg}
+                              onClick={() => setPage(pg as number)}
+                              className="cursor-pointer"
+                            >
+                              {pg}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() =>
+                            setPage((p) =>
+                              Math.min(
+                                sessionsData.pagination.pages,
+                                p + 1
+                              )
+                            )
+                          }
+                          className={
+                            sessionsData.pagination.page >=
+                            sessionsData.pagination.pages
+                              ? "pointer-events-none opacity-40"
+                              : "cursor-pointer"
+                          }
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  // ── Render: By NAS Tab ────────────────────────────────────────────────────
+
+  const renderByNasTab = () => {
+    const nasData = sessionsData?.breakdown?.byNas;
+    if (!nasData || nasData.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <Server className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">No NAS device data available</p>
+        </div>
+      );
+    }
+    const sorted = [...nasData].sort((a, b) => b.sessions - a.sessions);
+    const maxSessions = Math.max(...sorted.map((n) => n.sessions), 1);
+
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {sorted.map((nas) => (
+          <Card key={nas.nasIp} className="overflow-hidden">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-slate-100 dark:bg-slate-900/50 shrink-0">
+                  <Network className="h-4.5 w-4.5 text-slate-600 dark:text-slate-400" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="text-sm truncate">
+                    {nas.nasName || nas.nasIp}
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground font-mono truncate">
+                    {nas.nasIp}
+                  </p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Sessions</span>
+                <span className="font-bold">{nas.sessions}</span>
+              </div>
+              <Progress
+                value={(nas.sessions / maxSessions) * 100}
+                className="h-2"
+              />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Bandwidth</span>
+                <span className="font-medium text-rose-600 dark:text-rose-400">
+                  {nas.bandwidthFormatted}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
+  // ── Render: By Group Tab ──────────────────────────────────────────────────
+
+  const renderByGroupTab = () => {
+    const groupData = sessionsData?.breakdown?.byGroup;
+    if (!groupData || groupData.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <Shield className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">No group data available</p>
+        </div>
+      );
+    }
+    const sorted = [...groupData].sort((a, b) => b.sessions - a.sessions);
+    const maxSessions = Math.max(...sorted.map((g) => g.sessions), 1);
+
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {sorted.map((group) => (
+          <Card key={group.groupName} className="overflow-hidden">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-purple-100 dark:bg-purple-900/50 shrink-0">
+                  <Shield className="h-4.5 w-4.5 text-purple-600 dark:text-purple-400" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="text-sm truncate">
+                    {group.groupName}
+                  </CardTitle>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Sessions</span>
+                <span className="font-bold">{group.sessions}</span>
+              </div>
+              <Progress
+                value={(group.sessions / maxSessions) * 100}
+                className="h-2"
+              />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Users</span>
+                <span className="font-medium">{group.users}</span>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
+  // ── Render: Session Detail Dialog ─────────────────────────────────────────
+
+  const renderSessionDetail = () => {
+    if (!detailSession) return null;
+    const s = detailSession;
+    const totalBytes =
+      (s.acctoutputoctets || 0) + (s.acctinputoctets || 0);
+    const totalFormatted = `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+
+    return (
+      <Dialog
+        open={!!detailSession}
+        onOpenChange={(open) => !open && setDetailSession(null)}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Monitor className="h-5 w-5 text-red-600" />
+              Session Details
+            </DialogTitle>
+            <DialogDescription>
+              RADIUS session for {s.username}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* User & Session Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  User Information
+                </h4>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Username</span>
+                    <span className="font-bold font-mono">{s.username}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Session ID</span>
+                    <button
+                      className="font-mono text-xs hover:text-primary flex items-center gap-1"
+                      onClick={() => handleCopySessionId(s.acctsessionid)}
+                    >
+                      {s.acctsessionid.length > 24
+                        ? `${s.acctsessionid.slice(0, 24)}...`
+                        : s.acctsessionid}
+                      <Copy className="h-3 w-3" />
+                    </button>
+                  </div>
+                  {s.subscriber && (
+                    <>
+                      <Separator />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          Subscriber
+                        </span>
+                        <span className="font-medium">
+                          {s.subscriber.name}
+                        </span>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Code</span>
+                        <span className="font-mono text-xs">
+                          {s.subscriber.code}
+                        </span>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          Connection
+                        </span>
+                        <Badge variant="outline" className="text-xs">
+                          {s.subscriber.connectionType || "N/A"}
+                        </Badge>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Network Information
+                </h4>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Framed IP</span>
+                    <span className="font-mono">{s.framedipaddress}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">MAC Address</span>
+                    <span className="font-mono text-xs">
+                      {s.callingstationid}
+                    </span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">NAS</span>
+                    <div className="text-right">
+                      <div className="font-medium text-sm">
+                        {s.nasDevice?.name || s.nasipaddress}
+                      </div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {s.nasipaddress}
+                      </div>
+                    </div>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">NAS Type</span>
+                    <span className="text-xs">
+                      {s.nasDevice?.type || "Unknown"}
+                    </span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Group</span>
+                    <span>
+                      {s.radiusGroup ? (
+                        <Badge variant="outline" className="text-xs">
+                          {s.radiusGroup.name}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground/60 italic text-xs">
+                          None
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bandwidth Boxes */}
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Bandwidth Usage
+              </h4>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-950/30 p-3 text-center">
+                  <Download className="h-4 w-4 text-green-600 dark:text-green-400 mx-auto mb-1" />
+                  <p className="text-xs text-muted-foreground">Download</p>
+                  <p className="text-sm font-bold text-green-700 dark:text-green-300">
+                    {s.downloadFormatted}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-center">
+                  <Upload className="h-4 w-4 text-amber-600 dark:text-amber-400 mx-auto mb-1" />
+                  <p className="text-xs text-muted-foreground">Upload</p>
+                  <p className="text-sm font-bold text-amber-700 dark:text-amber-300">
+                    {s.uploadFormatted}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800/50 bg-slate-50 dark:bg-slate-950/30 p-3 text-center">
+                  <HardDrive className="h-4 w-4 text-slate-600 dark:text-slate-400 mx-auto mb-1" />
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                    {totalFormatted}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Session Timing */}
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Session Info
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Start Time</p>
+                  <p className="text-sm font-medium mt-0.5">
+                    {formatDateTime(s.acctstarttime)}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Duration</p>
+                  <p className="text-sm font-bold mt-0.5">
+                    {s.durationFormatted}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <div className="mt-1">
+                    <Badge className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30 gap-1.5">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                      Active
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Connection Info */}
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Connection Details
+              </h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Protocol</p>
+                  <p className="text-sm font-medium mt-0.5">
+                    {s.framedprotocol || "N/A"}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Port Type</p>
+                  <p className="text-sm font-medium mt-0.5">
+                    {s.nasporttype || "N/A"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleCopySessionId(s.acctsessionid)}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy Session ID
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDisconnectTarget(s)}
+            >
+              <Unplug className="h-3.5 w-3.5" />
+              Disconnect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  // ── Render: Disconnect Confirmation Dialog ────────────────────────────────
+
+  const renderDisconnectDialog = () => (
+    <Dialog
+      open={!!disconnectTarget}
+      onOpenChange={(open) => !open && setDisconnectTarget(null)}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <Unplug className="h-5 w-5" />
+            Disconnect Session
+          </DialogTitle>
+          <DialogDescription>
+            This action will immediately terminate the user&apos;s RADIUS session.
+            They will need to re-authenticate to reconnect.
+          </DialogDescription>
+        </DialogHeader>
+
+        {disconnectTarget && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Username</span>
+                <span className="font-bold font-mono">
+                  {disconnectTarget.username}
+                </span>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Framed IP</span>
+                <span className="font-mono">
+                  {disconnectTarget.framedipaddress}
+                </span>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Duration</span>
+                <span className="font-medium">
+                  {disconnectTarget.durationFormatted}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason</label>
+              <Select
+                value={disconnectReason}
+                onValueChange={setDisconnectReason}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Admin Disconnect">
+                    Admin Disconnect
+                  </SelectItem>
+                  <SelectItem value="Policy Violation">
+                    Policy Violation
+                  </SelectItem>
+                  <SelectItem value="Maintenance">Maintenance</SelectItem>
+                  <SelectItem value="Plan Change">Plan Change</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (disconnectTarget?.username) {
+                    disconnectUserMutation.mutate(disconnectTarget.username);
+                  }
+                }}
+                disabled={disconnectUserMutation.isPending}
+              >
+                {disconnectUserMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <UserX className="h-3.5 w-3.5" />
+                )}
+                Disconnect All User Sessions
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setDisconnectTarget(null)}
+            disabled={
+              disconnectMutation.isPending || disconnectUserMutation.isPending
+            }
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              if (disconnectTarget) {
+                disconnectMutation.mutate(disconnectTarget.acctsessionid);
+              }
+            }}
+            disabled={
+              disconnectMutation.isPending || disconnectUserMutation.isPending
+            }
+          >
+            {disconnectMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Unplug className="h-4 w-4" />
+            )}
+            Confirm Disconnect
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // ── Render: Bulk Disconnect Dialog ────────────────────────────────────────
+
+  const renderBulkDisconnectDialog = () => (
+    <AlertDialog
+      open={bulkDisconnectOpen}
+      onOpenChange={setBulkDisconnectOpen}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            Bulk Disconnect Sessions
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-2">
+              <p>
+                You are about to disconnect{" "}
+                <span className="font-bold text-foreground">
+                  {selectedIds.size}
+                </span>{" "}
+                session(s). This action cannot be undone.
+              </p>
+              <p className="text-xs text-destructive/80">
+                All selected users will be immediately disconnected and will
+                need to re-authenticate.
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            disabled={bulkDisconnectMutation.isPending}
+          >
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              bulkDisconnectMutation.mutate(Array.from(selectedIds));
+            }}
+            disabled={bulkDisconnectMutation.isPending}
+            className="bg-destructive text-white hover:bg-destructive/90"
+          >
+            {bulkDisconnectMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Unplug className="h-4 w-4" />
+            )}
+            Disconnect {selectedIds.size} Session(s)
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  // ── Main Render ───────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Active Sessions"
+        description="Real-time RADIUS session monitoring and management"
+        icon={Wifi}
+        badge={{
+          text: stats ? `${stats.activeCount} Active` : "Loading...",
+          variant: stats && stats.activeCount > 0 ? "default" : "secondary",
+        }}
+        breadcrumbs={[
+          { label: "AAA" },
+          { label: "Sessions" },
+          { label: "Active Sessions" },
+        ]}
+      />
+
+      {/* Stats Cards */}
+      {renderStats()}
+
+      {/* Main Tabs */}
+      <Tabs defaultValue="active-sessions" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="active-sessions" className="gap-1.5">
+            <Activity className="h-3.5 w-3.5" />
+            Active Sessions
+          </TabsTrigger>
+          <TabsTrigger value="by-nas" className="gap-1.5">
+            <Server className="h-3.5 w-3.5" />
+            By NAS
+          </TabsTrigger>
+          <TabsTrigger value="by-group" className="gap-1.5">
+            <Shield className="h-3.5 w-3.5" />
+            By Group
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="active-sessions">
+          {renderActiveSessionsTab()}
+        </TabsContent>
+
+        <TabsContent value="by-nas">{renderByNasTab()}</TabsContent>
+
+        <TabsContent value="by-group">{renderByGroupTab()}</TabsContent>
+      </Tabs>
+
+      {/* Dialogs */}
+      {renderSessionDetail()}
+      {renderDisconnectDialog()}
+      {renderBulkDisconnectDialog()}
+
+      {/* Auto-refresh indicator */}
+      <div className="text-center">
+        <p className="text-xs text-muted-foreground/50">
+          Auto-refreshing every 15 seconds
+          {dataUpdatedAt > 0 && (
+            <>
+              {" "}
+              · Last updated{" "}
+              {new Date(dataUpdatedAt).toLocaleTimeString()}
+            </>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}

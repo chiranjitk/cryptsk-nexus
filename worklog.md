@@ -1639,7 +1639,6 @@ Stage Summary:
 - Nav: PARTNER MANAGEMENT menu group added with 4 items
 
 ---
-<<<<<<< HEAD
 Task ID: RADIUS-MAPPING-FIX-12
 Agent: main (orchestrator)
 Task: Fix all FreeRADIUS group mapping — comprehensive attribute sync
@@ -2046,7 +2045,6 @@ Files deployed:
 NPM packages installed on prod:
   - qrcode (for print cards QR code generation)
   - sanitize-html (for portal page HTML sanitization)
-=======
 Task ID: PHASE-0-8-RE-VERIFICATION
 Agent: Z.ai Code (orchestrator)
 Task: Re-verify Phase 0-8 with actual E2E Gate flow testing (not just code inspection)
@@ -4140,8 +4138,6 @@ Stage Summary:
 - MEMORY DOCTRINE (must-read for every future agent round): (1) never run full-project tsc (OOM — use tool-results/tsconfig.scoped.json); (2) close Chrome during any cold-compile-heavy operation; (3) after editing many files, expect cache invalidation → full recompile → follow warm-up discipline; (4) don't restart the 6 stopped mini-services while actively compiling/browsing.
 - No source code changed this round — only next.config.ts + ecosystem.config.cjs (both gitignored-by-design) and this worklog. Tree otherwise clean at e4eab9c (push pending for worklog).
 
----
-Task ID: 2-a
 Agent: general-purpose (Alert Center + History)
 Task: Rebuild Alert Center + Alert History to production grade
 
@@ -4159,8 +4155,6 @@ Stage Summary:
 - Decisions: single no-status /api/alerts fetch powers feed + queue + "Active Now" (server already filters suppressed rules); escalation queue = level>0 OR ack>2h; assign-alert/users payload available but unused (not in this task's dialog spec — easy follow-up); resolved rows can still be resolved again from dialog footer if ever needed (Ack/Escalate hidden).
 - Risks/next: parallel tasks should extend /tmp/tsconfig-alerta.json include list with ABSOLUTE paths + "types": [] override; consider adding assignee dropdown (users already fetched) to the dialog; consider acknowledgedAt in the history route response to complete the Acknowledged column.
 
----
-Task ID: 2-b
 Agent: general-purpose (Alert Rules + Suppressions)
 Task: Rebuild Alert Rules + Suppressions to production grade
 
@@ -4177,8 +4171,6 @@ Stage Summary:
 - Key decisions: (1) client-side search/status/severity filtering so the stat strip always reflects the whole ruleset; (2) cross-page navigation uses the zustand page switcher, not router.push; (3) duplicate copies enabled state verbatim; (4) suppressed rows swap the enabled switch for badge + CountdownChip and hide Suppress-1h; (5) test-fire surfaces all backend outcomes inline (fired / deduplicated / suppressed / error).
 - Contract gaps for the backend round: (a) GET /api/alerts cannot return expired suppressions or completed maintenance windows — the Suppressions "Expired" stat is always 0; add ?includeExpired=1 or a history action if an audit view is wanted; (b) toggle-rule/update-rule/delete-rule should be documented as keying off `id`, not ruleId; (c) escalationLevels[].action is write-only metadata today — auto-escalate consumes only interval + maxSeverity; either consume the ladder or simplify the UI; (d) create-maintenance action exists but no UI surface on this page — natural next-round addition to the Maintenance Windows tab.
 - Next actions: coordinator full tsc sweep (scoped config reusable at /tmp/tsconfig-alertb.json), then the warm-up discipline browser pass over both pages.
----
-Task ID: 2-c
 Agent: general-purpose (Notification Rules + Live Alerts)
 Task: Rebuild Notification Rules; polish Live Alerts
 
@@ -4749,8 +4741,6 @@ Stage Summary:
 - Deliverable committed: REPORTS_SECTION_ANALYSIS_AND_PLAN.md
 - Phase 1 scope locked: report-export.ts + REPORTS nav section + Invoice Register + AR Aging + Subscriber Lifecycle Report (pages+APIs, all authed/audited/exportable) + registry/loaders + globals.css discipline + browser verification.
 - Key architecture decisions: single-level slugs (distinct labels, no nesting), CANCELLED excluded from totals, side-revenue union-of-sources, BigInt->Number at edge, no new heavy client deps (print-to-PDF).
----
-Task ID: 2-a
 Agent: general-purpose (report APIs)
 Task: Build invoice-register, ar-aging, lifecycle report APIs
 
@@ -4771,8 +4761,6 @@ Stage Summary:
 - Key decisions: (1) lifecycle action→event mapping is a constant built from audit-service vocabulary since DB has no Subscriber audit rows yet — DELETE→DISCONNECTED justified by the delete-guard (ACTIVE subs cannot be deleted); STATUS_CHANGE/UPDATE refined by status transition inside details/previousValues JSON; (2) disconnection count computed over ≤2000-row audit scan (documented cap comment, not a DB aggregate); (3) summaries describe returned rows (register) / full open-invoice scan (aging); (4) no shared helper file created (3-file constraint) — small per-route helpers instead.
 - Next agent: report UI pages can consume these contracts directly; consider wiring into RPT-MAIN Phase 1 page build + registry/loaders.
 
----
-Task ID: 2-b
 Agent: general-purpose (report pages)
 Task: Build Invoice Register, AR Aging, Subscriber Lifecycle Report pages
 
@@ -4879,4 +4867,68 @@ Stage Summary:
 - Fresh-setup.sh now bun-only (no psql/psycopg2) — survives zonky-PG sandboxes; seed-side-revenue.ts tracked for reset recovery.
 - Notes: side-revenue count 14 (not 15) in default window — 1 addon purchase (daysAgo 40) correctly outside; expiry unknownExpiry=2 (subs without anchor dates, documented); statement ledger negative running balance = advance-payment credit (standard semantics).
 - Next (Phase 3 stretch): scheduled report snapshots via billing-cron, drill-down cross-links (report row → subscriber 360), server PDF evaluation.
->>>>>>> origin/main
+---
+Task ID: RPT-P3-B
+Agent: Z.ai Code (frontend build agent, Reports Phase 3 — frontend half)
+Task: Reports Phase 3 frontend — 360 drill-down (7 pages), Export PDF buttons (7 pages), Report Snapshots page + 3-touchpoint registration
+
+Work Log:
+- Created src/store/report-drill-store.ts: zustand { focusSubscriberId, focusSeq, setFocusSubscriber, clearFocus } + openSubscriber360(id) which sets focus then dynamically imports app-store and calls setCurrentPage("360° Customer View", "SUBSCRIBERS") — verified against app-store.setCurrentPage(page, section?) signature and the exact call style used by command-palette/global-search; client-app + page-shell resolve currentPage label → PAGE_LOADERS['360° Customer View'] so navigation lands correctly. focusSeq=Date.now() guarantees re-fire on repeat drill-ins.
+- Hooked src/components/pages/subscriber-360-page.tsx: added useEffect import + focusId/focusSeq selectors; effect sets selectedId/search/kycPreview (same three setters as handleSelect, inline per brief) then clearFocus() — consume-once semantics like pendingSubscriberAction.
+- Added downloadServerFormat(opts) to src/lib/report-export.ts (reuses existing triggerDownload; parses Content-Disposition filename, throws API {error} message on !ok, falls back to baseName_date.ext).
+- Drill-down "360°" ghost icon-button column (END of table, Eye icon, title="View 360° Customer View", sr-only label, disabled when subscriberId null) + rows typed with subscriberId added on all 7 report pages: invoice-register, ar-aging, subscriber-lifecycle-report (events, null-guarded), statement-of-account (register rows; PLUS "View 360°" outline button in ledger-mode subscriber header card wired to the subscriberId state that activated ledger mode), collection-register, expiry-renewal, side-revenue. colSpan updated for empty rows; register branch of statement got the column only (ledger branch untouched).
+- Export PDF button (FileText icon, outline sm, disabled rows.length===0) added next to Export CSV on all 7 pages, calling downloadServerFormat({ basePath:/api/reports/<key>, params: current filters, format:"pdf", baseName }). Extracted buildFilterParams() helpers reused by both queryFn and the PDF handler so file filters always match the on-screen data. statement-of-account: register mode only (button hidden in ledger mode). lifecycle uses basePath /api/reports/lifecycle with baseName subscriber-lifecycle-report. side-revenue topSpenders drill-down SKIPPED — verified API topSpenders rows carry no subscriber id (only code/name/total).
+- Created src/components/pages/report-snapshots-page.tsx (~370L): header + Refresh; 4-card KPI strip (Total/OK/EMPTY/FAILED with red destructive badge when failed>0); Schedule Catalog grid (grid gap-4 md:grid-cols-2 xl:grid-cols-3) — per-entry label/description/last-snapshot line (periodKey · rows · relative time) / "No snapshots yet", amber "Due" badges from due[key][freq], per-frequency "Run now" outline buttons w/ Play icon (per-button pending disable via runNow.variables), duplicate→toast.info("<label> <freq> snapshot already exists for this period"), else toast.success with rowCount, invalidate on success; Snapshot History card with __ALL__-sentinel Select filters (report/frequency/status) + overflow-x-auto max-h-96 overflow-y-auto table (Report, Frequency Badge, Period, Rows, Status Badge OK green/EMPTY amber/FAILED red w/ error title-tooltip, Generated date-time, Generated By, Actions CSV/XLSX/PDF ghost icon buttons + Trash2 delete w/ window.confirm + toast + invalidate); useQuery refetchInterval 60_000; snapshot downloads via downloadServerFormat base "/api/reports/snapshots/download" params {id, dimension:"plan" for plan-area-mis}; skeleton loading + red error card w/ Retry degrade gracefully if backend absent.
+- Registration 3/3: nav-config.ts REPORTS item { label:"Report Snapshots", href:"/report-snapshots", icon:Camera } directly after Plan & Area MIS (NavInterface requires href+icon); page-loaders.ts 'Report Snapshots' loader; modules/registry.ts finance-module pages { label:"Report Snapshots", section:"REPORTS" } after Plan & Area MIS.
+- Verification: bunx eslint on all 14 touched files → 0 errors 0 warnings; bunx tsc --noEmit whole project → exit 0; NO globals.css edits needed (verified every class used incl. h-3.5/w-3.5/h-8 w-8 p-0/max-h-96/md:grid-cols-2/xl:grid-cols-3 already compiled in the frozen artifact); no pm2 restart, no build, no git.
+- Live contract smoke (admin curl): login OK; /api/reports/collection-register 200 envelope; snapshots API ALREADY LIVE from RPT-P3-A — GET {snapshots[], catalog[6 entries], due{reportKey→{DAILY,WEEKLY,MONTHLY}}} matches my types exactly; POST {reportKey,frequency} → {snapshot{rowCount 11, status OK, periodKey 2026-10-02}, duplicate:false} then duplicate:true; download csv → 200 text/csv attachment filename parsed + pdf → "PDF document version 1.3, 1 page"; DELETE {success:true} (test snapshot deleted, state clean); 6/7 report ?format=pdf branches return real PDFs.
+
+Stage Summary:
+- Phase 3 frontend SHIPPED: cross-page drill-down (report row → focused 360° Customer View) on 7 report pages + ledger header; server PDF export buttons on 7 report pages; new Report Snapshots page (catalog + run-now + history + downloads) registered in all 3 touchpoints — REPORTS section now 26 items.
+- Contracts consumed: /api/reports/snapshots (GET/POST/DELETE + download) exactly per brief — verified live; report pages send their exact filter params to ?format=pdf; drill-down expects subscriberId in report rows (confirmed present in backend routes: invoice-register:225, ar-aging:115, lifecycle:266 nullable, statement:371, collection:117, expiry:128, side-revenue:107/132/158).
+- Notes for backend (RPT-P3-A): (1) /api/reports/lifecycle?format=pdf still returned JSON at test time — frontend button is ready, just needs the pdf branch; (2) snapshots download for plan-area-mis currently requests dimension=plan by default — if per-snapshot dimension should be recorded in snapshot.summary, frontend can read it later; (3) topSpenders (side-revenue) lacks subscriber id so no drill-down there — add subscriberId if 360 drill-down is wanted later.
+- Deviations: none. Class vocabulary strictly Phase-2/Phase-1; Radix Select sentinels (__ALL__/__REGISTER__) respected; test snapshot cleaned up.
+---
+Task ID: RPT-P3-A
+Agent: Z.ai Code (Reports Phase 3 — backend)
+Task: Reports Phase 3 backend — ReportSnapshot model+engine+scheduler, /api/reports/snapshots(+download), server-side PDF (jsPDF) wired into report routes
+
+Work Log:
+- Read worklog tail (RPT-P1/P2, 3-a/3-b) + verified contracts before coding: requireAuth/AuthError pattern, auditLog(request, action, entity, entityId, {userId, details}) signature, session-store record/revoke, xlsxResponse/export-utils shapes, User.role = UserRole enum (seed admin is SUPER_ADMIN — brief's findFirst(role:"ADMIN") would MISS it; engine matches role IN (ADMIN, SUPER_ADMIN) oldest-first with email fallback), CSV column sets of all 7 report routes.
+- Prisma: appended ReportSnapshot (verbatim per brief, placed between RepairRecord and Reseller with a doctrine comment); DATABASE_URL=postgresql://cryptsknexus:nexus_pg_2026@... bun run db:push → generated client; verified via pg: SELECT count FROM "ReportSnapshot" → 0 rows.
+- Created src/lib/pdf-export.ts: pdfResponse(headers, rows, filename, {title,subtitle,meta}) — jsPDF+jspdf-autotable, A4 landscape when >6 cols, title block (bold 14 / subtitle 9 / meta 8 / "Generated <ISO> — Cryptsk Nexus"), autoTable 7.5pt striped repeat-head, page X/Y footer loop (getNumberOfPages/setPage), sanitizeCell per cell (₹→"Rs. ", control chars stripped, null→""), NextResponse application/pdf + attachment + no-store + Access-Control-Expose-Headers. Node sanity: %PDF- magic + page count OK.
+- Wired ?format=pdf into all 7 report routes (minimal mechanical diffs, no refactor): invoice-register/ar-aging got a third per-route pdf branch mirroring their csv branch; collection-register/expiry-renewal/side-revenue/plan-area-mis/statement-of-account(ledger+register both) extended their combined csv||xlsx branch to csv||xlsx||pdf with a nested pdfResponse return carrying title+cheap filter-context subtitle; auditExport(..., format, rows.length) untouched where it already used the format var. All 8 pdf variants curl-verified %PDF- (invoice 7.5KB … collection 41KB; statement register 23KB + ledger 5.5KB).
+- Created src/lib/report-snapshot-engine.ts: 6-entry catalog (statement-of-account excluded per brief) with buildParams (local-ymd matching each route's default window: MTD for invoice/collection/plan-area-mis, asOf=today for ar-aging, withinDays=30 for expiry, last-30d for side-revenue); periodKeyFor (UTC DAILY YYYY-MM-DD / WEEKLY ISO YYYY-Www / MONTHLY YYYY-MM); generateSnapshot (idempotent findUnique → duplicate:true for OK/EMPTY; FAILED rows RETRYABLE and overwritten; mints internal service session for the admin user; IN-PROCESS route invocation via a STATIC loader map — `import("@/app/api/reports/invoice-register/route")` etc., because a template-literal dynamic import is not statically resolvable by Turbopack/webpack; envelope parse {rows|byPlan,byArea,summary}; rowCount/status OK|EMPTY; upsert with payloadJson capped ~4MB via candidate row slices 2000→1000→500→250→100 (+byArea 500); on ANY error upserts a FAILED row (error truncated 500) and RETURNS it — never throws to the scheduler; finally always revokeSessionByToken); runDueSnapshots (UTC hour>=1 gate; DAILY daily / WEEKLY Monday / MONTHLY 1st; skip-if-exists counting, per-item try/catch, global (globalThis).__snapEngineRunning re-entry guard); getCatalog(); snapshotDueMap(now) for UI (due && !exists, FAILED rows count as not-exists).
+- Created src/instrumentation.ts (register(): nodejs runtime + not production-build, global one-shot flag, initial run in 45s + setInterval 15min, .unref() both timers, per-tick try/catch + dynamic import).
+- Created /api/reports/snapshots (GET list light-fields-only — payloadJson EXCLUDED, paramsJson+summaryJson parsed into objects, filters reportKey/frequency/status, take default 100 cap 500, returns {snapshots, catalog[6 with frequencies], due}; POST {reportKey, frequency?=DAILY} → catalog/frequency validation 400s → generateSnapshot → {snapshot, duplicate} + auditLog SNAPSHOT_RUN/Report with userId; DELETE ?id= → 404 if missing, else {success:true}) and /api/reports/snapshots/download (GET ?id&format=csv|xlsx|pdf&dimension=plan|area; static COLUMN_MAP per reportKey mirroring each route's CSV branch incl. separate plan/area column sets for plan-area-mis; byArea rows used only when dimension=area AND byArea non-empty; cells from stored JSON rows null→"" ISO dates as-is; filenames `${reportKey}-snapshot_export_YYYY-MM-DD`; auditExport ReportSnapshot; invalid format 400, unknown id 404).
+- Smoke tests (curl, admin login): login 200. GET → catalog 6, due map (DAILY true, WEEKLY/MONTHLY false on Fri), snapshots []. POST invoice-register → OK-shaped snapshot but rowCount 0/EMPTY — TRUE data state (all 11 seed invoices are September 2026, MTD October empty; verified invoice-month distribution in PG; live route returns 0 rows for the same window); repeat POST → duplicate:true same id. collection WEEKLY → OK 11 rows ₹19,459, periodKey 2026-W40, byMode/byStatus in summary. ar-aging MONTHLY → OK 6 rows ₹9,906 (buckets populated). expiry DAILY → initially FAILED (see bug below) → after fix OK 11 rows, dueIn30 11, MRR-at-risk ₹10,389, renewalsLast30Days 42. side-revenue DAILY → OK 14 rows ₹2,046 (TOPUP 5/₹452, VOUCHER 3/₹850, ADDON 6/₹744); re-POST duplicate:true. plan-area-mis DAILY → OK 8 byPlan rows (outstanding ₹9,906); download dimension=area → 6 byArea rows with area headers. Downloads on ar-aging MONTHLY snapshot: csv (text/csv, BOM efbbbf, header+6), xlsx (PK\003\004), pdf (%PDF, strings contain "(AR Aging Snapshot)" + "Generated <ISO>"). Error paths: invalid format 400, unknown id 404, no-auth 401 (both endpoints), POST bad reportKey/frequency 400 with valid-key lists. DELETE → {success:true}, re-DELETE 404, list drops to 7, due map flips invoice-register DAILY back to true. Audit verified in PG: SNAPSHOT_RUN rows (Super Administrator, frequency/duplicate/status/rowCount/periodKey) + EXPORT entity=ReportSnapshot rows (format+recordCount).
+- Scheduler verified live: after the 07:08:27 boot "[snapshots] scheduler registered (initial run in 45s, then every 15min)" appeared; 07:09:12 runDueSnapshots ran → generated=ar-aging:DAILY (generatedBy "system"), skipped=2 (existing invoice/side-revenue), failed=3 (pre-fix session-collision rows, retried + healed afterwards). No route compile errors in pm2 log.
+- BUG FOUND+FIXED (pre-existing, cross-cutting): createSessionToken payload had NO nonce (uid/type/iat/exp with second-resolution iat) → two tokens minted for the same user within the same second were byte-identical → UserSession.tokenHash unique violation in recordUserSession (fail-open catch) → requireAuth then hit the OTHER invocation's already-revoked row → "Session revoked or expired" 401s inside the engine (3 scheduler FAILEDs + first expiry POST). Fixed in src/lib/session.ts by adding jti: crypto.randomUUID() to the payload (global Web Crypto → still Edge-safe; verifySessionToken/impersonate/login ignore unknown fields; legacy tokens without jti still verify). Post-fix: all retries OK, zero session-store failures in logs.
+- Note: parallel agent RPT-P3-B was observed hitting the same dev server mid-test (07:07:20-29 POST/download/DELETE of a snapshot id) — API state is shared, smoke numbers above are my own runs.
+- Scoped eslint (incl. session.ts, all touched routes + new libs): 0 errors, 0 warnings. Did NOT touch src/components/, report-export.ts, store/, nav-config/page-loaders/registry, mini-services; no pm2 restart, no build, no git.
+
+Stage Summary:
+- Phase 3 backend SHIPPED: ReportSnapshot table (unique reportKey+frequency+periodKey, payload capped ~4MB), snapshot engine (idempotent, in-process route invocation, service-session hygiene, never-crash FAILED semantics, UTC-hour>=1 / Mon / 1st schedule + 15min tick via src/instrumentation.ts), /api/reports/snapshots GET+POST+DELETE and /snapshots/download csv|xlsx|pdf, and server-side PDF (?format=pdf) on ALL 7 report routes (incl. both statement-of-account modes).
+- CONTRACTS for RPT-P3-B: GET/POST/DELETE /api/reports/snapshots → {success,data:{snapshots, catalog, due}} / {success,data:{snapshot, duplicate}} / {success:true}; snapshot light shape = {id, reportKey, label, frequency, periodKey, rowCount, status(OK|EMPTY|FAILED), error, params{}, summary{}, generatedBy, createdAt(ISO)} — payloadJson never leaves the server except via /download (?id=&format=csv|xlsx|pdf&dimension=plan|area → file). due = { [reportKey]: { DAILY, WEEKLY, MONTHLY } } (due && no non-FAILED row for current period). Download of an EMPTY/FAILED snapshot returns header-only file (rows=[]).
+- Deviations from brief (all backend-side, contract-compatible): (1) service admin = role IN (ADMIN, SUPER_ADMIN) oldest-first (seed admin is SUPER_ADMIN; brief's role:"ADMIN" alone would fail-open to email fallback every time); (2) engine uses a static per-report loader map instead of a template-literal dynamic import (bundler-safe, same in-process semantics); (3) FAILED snapshots are retryable (re-run overwrites) while OK/EMPTY stay idempotent duplicate:true; (4) invoice-register snapshot is rowCount 0/EMPTY on current seed (MTD empty — documented data reality since RPT-P1, engine mirrors the live route); (5) payload truncation ladder 2000/1000/500/250/100 + byArea 500 inside ~4MB; (6) NEW dependency touch: src/lib/session.ts createSessionToken now carries a jti nonce (fixes real same-second token collisions — worth a coordinator heads-up as it is shared auth surface).
+- Notes: pm2 watch is DISABLED (Next dev hot-reloads modules in-process) → instrumentation.register() runs only on true process boots; expect "[snapshots] scheduler registered" once per restart, first pass 45s later. Snapshot rows keep original createdAt on FAILED→OK overwrite (upsert update doesn't bump it). All snapshot times/period keys are UTC.
+
+---
+Task ID: RPT-P3 (Phase 3 — coordinator integration + E2E)
+Agent: Z.ai Code (coordinator)
+Task: Reports Phase 3 — scheduled report snapshots (billing-cron style), server-side PDF, drill-down cross-links (report row → 360°); parallel build via RPT-P3-A + RPT-P3-B, integration, browser E2E, ship
+
+Work Log:
+- Pre-flight (coordinator, before launching agents to avoid file conflicts): added subscriberId to JSON row payloads of 5 report routes (invoice-register, ar-aging, lifecycle events, collection-register, expiry-renewal, side-revenue ×3 sources) for drill-down; side-revenue VOUCHER FK is usedBySubscriberId (not subscriberId — schema-verified); installed jspdf+jspdf-autotable (verified %PDF- in Node); next.config serverExternalPackages += jspdf; confirmed no instrumentation.ts existed.
+- Launched RPT-P3-A (backend) + RPT-P3-B (frontend) in parallel with a fixed API contract; both shipped clean.
+- Coordinator integration fix: /api/reports/lifecycle was missing from 3-a's route list → added the ?format=pdf branch (pdfResponse import + title/subtitle), smoke-tested 200 application/pdf %PDF-.
+- Reviewed 3-a's src/lib/session.ts change: jti nonce in createSessionToken — additive, fixes real same-second tokenHash unique-violations (root cause of the pre-fix engine FAILEDs at 07:09; post-fix run 07:23:27 = generated=invoice-register:DAILY skipped=5 failed=none).
+- Browser E2E (agent-browser, admin login): nav order — REPORTS group before SETTINGS (idx 39 < 66), "Report Snapshots" directly after "Plan & Area MIS"; Snapshots page live (KPI 8/7/1/0; catalog 6 cards with last-snapshot lines + due badges; history table CSV/XLSX/PDF/Delete); Run now duplicate → toast "already exists for this period"; Download PDF → 200 + "PDF downloaded" toast; Collection Register Export PDF with live filters (from/to/status → 200); drill-down: Collection Register row Eye → 360° loaded (Ananya Ghosh), Statement of Account 360 button → 360° loaded (Sneha Mukherjee); lifecycle PDF 200; mobile 390px no h-scroll, footer natural-push on long page; 0 unexpected console errors (only intentional 401/400/404 negative tests).
+- Full lint: 0 errors (5 pre-existing warnings in untouched files; scoped eslint on all Phase-3 files = clean).
+- pm2 untouched (hot reload only); no bun build; git safety flow then commit+push.
+
+Stage Summary:
+- Phase 3 SHIPPED — Reports section is now 26 items: scheduled snapshot engine (6 MIS reports × DAILY/WEEKLY/MONTHLY, idempotent, auto-runs via instrumentation every 15min tick, UTC-anchored periods, retryable FAILED semantics), snapshot console page (KPI + catalog run-now + history + CSV/XLSX/PDF download + delete), server-side PDF on all 8 report routes (7 + snapshots/download), and subscriber drill-down (Eye buttons → 360° Customer View) across 7 report pages.
+- Engine semantics documented: service sessions minted per generateSnapshot call and revoked in finally; FAILED rows retry, OK/EMPTY idempotent; invoice-register DAILY correctly EMPTY (Oct MTD has no seed invoices).
+- Deviations: engine UTC-based periods (documented IST-equivalent 06:30 IST for DAILY); topSpenders rows still lack subscriberId (drill-down skipped there — future nicety); plan-area-mis snapshot download defaults dimension=plan (byArea available via param).
+- Next (Reports backlog): P0 security sweep still open (16+ unauthenticated routes, 4 runtime 500s, firewall matchCriteria guard, negative-payment validation); report row click-through to invoice/payment entities; snapshot email/WhatsApp delivery hooks.

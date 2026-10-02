@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "ssh2", "net-snmp", "ros-client", "pg", "pg-native",
     "bcryptjs", "bcrypt", "nodemailer", "@prisma/client", "canvas", "jsdom",
-    "xlsx",
+    "xlsx", "jspdf",
   ],
 };
 

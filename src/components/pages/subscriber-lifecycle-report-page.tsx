@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   UserPlus, UserMinus, TrendingUp, TrendingDown, Users, Activity, MapPin, Layers,
-  AlertTriangle, Download, Printer, RefreshCw,
+  AlertTriangle, Download, Printer, RefreshCw, Eye, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -17,8 +17,9 @@ import { Progress } from "@/components/ui/progress";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { downloadCsv, printReport } from "@/lib/report-export";
+import { downloadCsv, printReport, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type LifecycleSummary = {
@@ -32,6 +33,7 @@ type PlanCount = { plan: string; count: number };
 
 type LifecycleEvent = {
   timestamp: string; event: string; action: string;
+  subscriberId: string | null;
   subscriberCode: string; subscriberName: string; area: string; plan: string;
   userName: string; details: string;
 };
@@ -91,12 +93,17 @@ export default function SubscriberLifecycleReportPage() {
   const [from, setFrom] = useState(toISO(new Date(now.getFullYear(), now.getMonth(), 1)));
   const [to, setTo] = useState(toISO(now));
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return params;
+  };
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<LifecycleData>({
     queryKey: ["lifecycle-report", from, to],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
+      const params = buildFilterParams();
       return apiFetch<{ success: boolean; data: LifecycleData }>(`/api/reports/lifecycle?${params}`).then((j) => j.data);
     },
   });
@@ -113,6 +120,20 @@ export default function SubscriberLifecycleReportPage() {
     if (events.length === 0) return;
     downloadCsv("subscriber-lifecycle-events", EXPORT_COLUMNS, events);
     toast.success("Lifecycle events exported as CSV");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/lifecycle",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "subscriber-lifecycle-report",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
+    }
   };
 
   const handlePrint = () => {
@@ -191,6 +212,9 @@ export default function SubscriberLifecycleReportPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={events.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
+          </Button>
+          <Button variant="outline" size="sm" disabled={events.length === 0} onClick={handleExportPdf}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
@@ -294,12 +318,13 @@ export default function SubscriberLifecycleReportPage() {
                   <TableHead className="text-xs font-medium uppercase">Plan</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Performed By</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Details</TableHead>
+                  <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {events.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                   </TableRow>
                 ) : events.map((e, i) => (
                   <TableRow key={i} className="hover:bg-muted/50 transition-colors duration-150">
@@ -315,6 +340,13 @@ export default function SubscriberLifecycleReportPage() {
                     <TableCell className="text-xs text-muted-foreground">{e.plan || "—"}</TableCell>
                     <TableCell className="text-sm">{e.userName || "—"}</TableCell>
                     <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{e.details || "—"}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                        onClick={() => openSubscriber360(e.subscriberId)} disabled={!e.subscriberId}>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="sr-only">View 360°</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  IndianRupee, Receipt, Users, AlertTriangle, Download, Printer, RefreshCw, Search,
+  IndianRupee, Receipt, Users, AlertTriangle, Download, Printer, RefreshCw, Search, Eye, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -22,8 +22,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { downloadCsv, printReport, fmtINRDisplay } from "@/lib/report-export";
+import { downloadCsv, printReport, fmtINRDisplay, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type ModeStat = { count: number; total: number };
@@ -36,9 +37,9 @@ type CollectionSummary = {
 };
 
 type CollectionRow = {
-  receiptNumber: string; paymentDate: string; subscriberCode: string; name: string;
-  area: string; invoiceNumber: string; amount: number; paymentMode: string;
-  status: string; collectedBy: string; transactionRef: string; notes: string;
+  receiptNumber: string; paymentDate: string; subscriberId: string | null;
+  subscriberCode: string; name: string; area: string; invoiceNumber: string; amount: number;
+  paymentMode: string; status: string; collectedBy: string; transactionRef: string; notes: string;
 };
 
 type CollectionData = { summary: CollectionSummary; rows: CollectionRow[] };
@@ -108,16 +109,21 @@ export default function CollectionRegisterPage() {
   });
   const areas = areasData?.items || [];
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (mode !== "ALL") params.set("mode", mode);
+    if (status !== "ALL") params.set("status", status);
+    if (areaId !== "ALL") params.set("areaId", areaId);
+    if (q) params.set("q", q);
+    return params;
+  };
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<CollectionData>({
     queryKey: ["collection-register", from, to, mode, status, areaId, q],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (mode !== "ALL") params.set("mode", mode);
-      if (status !== "ALL") params.set("status", status);
-      if (areaId !== "ALL") params.set("areaId", areaId);
-      if (q) params.set("q", q);
+      const params = buildFilterParams();
       return apiFetch<{ success: boolean; data: CollectionData }>(`/api/reports/collection-register?${params}`).then((j) => j.data);
     },
   });
@@ -129,6 +135,20 @@ export default function CollectionRegisterPage() {
     if (rows.length === 0) return;
     downloadCsv("collection-register", EXPORT_COLUMNS, rows);
     toast.success("Collection register exported as CSV");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/collection-register",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "collection-register",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
+    }
   };
 
   const handlePrint = () => {
@@ -211,6 +231,9 @@ export default function CollectionRegisterPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={rows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
+          </Button>
+          <Button variant="outline" size="sm" disabled={rows.length === 0} onClick={handleExportPdf}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={rows.length === 0}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
@@ -296,12 +319,13 @@ export default function CollectionRegisterPage() {
                   <TableHead className="text-xs font-medium uppercase">Mode</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Status</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Collected By</TableHead>
+                  <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                    <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                   </TableRow>
                 ) : rows.map((r) => (
                   <TableRow key={r.receiptNumber} className="hover:bg-muted/50 transition-colors duration-150">
@@ -319,6 +343,13 @@ export default function CollectionRegisterPage() {
                     <TableCell><ModeBadge mode={r.paymentMode} /></TableCell>
                     <TableCell><StatusBadge status={r.status} /></TableCell>
                     <TableCell className="text-sm">{r.collectedBy || "—"}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                        onClick={() => openSubscriber360(r.subscriberId)} disabled={!r.subscriberId}>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="sr-only">View 360°</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

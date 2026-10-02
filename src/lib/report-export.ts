@@ -185,3 +185,44 @@ ${totalsHtml}
   win.document.write(html);
   win.document.close();
 }
+
+// ─── Server-Rendered Format Downloads (CSV / XLSX / PDF) ──────────
+// Reports Phase 3: report APIs serve authoritative files (?format=…)
+// with audit trail + server-side pagination/PDF rendering. The client
+// just streams the blob and derives the filename from Content-Disposition.
+
+export interface ServerFormatOptions {
+  /** Report API base path, e.g. "/api/reports/collection-register". */
+  basePath: string;
+  /** Current filter state — re-sent so the file matches what's on screen. */
+  params?: Record<string, string>;
+  /** Requested file format. */
+  format: "csv" | "xlsx" | "pdf";
+  /** Filename stem used when the server sends no Content-Disposition. */
+  baseName: string;
+}
+
+/**
+ * Download a server-rendered report file (CSV / XLSX / PDF).
+ * Throws with the API's `error` message on non-2xx responses.
+ */
+export async function downloadServerFormat(opts: ServerFormatOptions): Promise<void> {
+  const qs = new URLSearchParams({ ...(opts.params || {}), format: opts.format });
+  const res = await fetch(`${opts.basePath}?${qs.toString()}`, { credentials: "include" });
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.error) message = j.error;
+    } catch {
+      // binary/empty body on error — keep the generic message
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = cd.match(/filename="([^"]+)"/);
+  const filename =
+    m?.[1] || `${opts.baseName}_${new Date().toISOString().slice(0, 10)}.${opts.format}`;
+  triggerDownload(blob, filename);
+}

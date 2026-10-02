@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireAuth } from '@/lib/api-auth';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Client } = require('ssh2');
+// ─── Lazy-load ssh2 ───────────────────────────────────────────────
+// ssh2 ships a native C++ binding (.node binary) that webpack cannot
+// bundle. We use dynamic import() so the module is loaded at runtime
+// by Node.js (which handles .node files natively) rather than at
+// build-time by webpack. This also respects `serverExternalPackages`
+// in next.config.ts.
+let cachedClient: any = null;
+async function getSshClient(): Promise<any> {
+  if (!cachedClient) {
+    const mod = await import('ssh2');
+    cachedClient = mod.Client;
+  }
+  return cachedClient;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -31,7 +43,8 @@ interface SshAuth {
   privateKey?: string;
 }
 
-function createConnection(auth: SshAuth): any {
+async function createConnection(auth: SshAuth): Promise<any> {
+  const Client = await getSshClient();
   const conn = new Client();
   const config: Record<string, unknown> = {
     host: auth.host,
@@ -49,9 +62,9 @@ function createConnection(auth: SshAuth): any {
   return conn;
 }
 
-function sshExec(auth: SshAuth, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+async function sshExec(auth: SshAuth, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  const conn = await createConnection(auth);
   return new Promise((resolve, reject) => {
-    const conn = createConnection(auth);
     const timeout = setTimeout(() => {
       conn.end();
       reject(new Error('SSH connection timed out after 30s'));
@@ -115,7 +128,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
 
       return new Promise((resolve) => {
-        const conn = createConnection({ host, port, username, password, privateKey });
+        createConnection({ host, port, username, password, privateKey }).then((conn: any) => {
         const timeout = setTimeout(() => {
           conn.end();
           resolve(NextResponse.json({ success: false, error: 'Connection timed out after 10s' }, { status: 408 }));
@@ -154,6 +167,9 @@ export async function POST(request: NextRequest): Promise<Response> {
             message = `Connection timed out to ${host}:${port || 22}`;
           }
           resolve(NextResponse.json({ success: false, error: message }, { status }));
+        });
+        }).catch((err: Error) => {
+          resolve(NextResponse.json({ success: false, error: err.message }, { status: 502 }));
         });
       });
     }

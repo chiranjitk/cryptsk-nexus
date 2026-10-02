@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "@/lib/utils";
+import { apiFetch, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import PageHeader from "@/components/page-header";
 
@@ -41,7 +41,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -102,13 +101,29 @@ interface SessionData {
   durationFormatted: string;
   nasporttype: string;
   framedprotocol: string;
+  // ── Enriched fields ──
+  planName: string;
+  speedDownKbps: number;
+  speedUpKbps: number;
+  totalOctets: number;
+  totalOctetsFormatted: string;
+  lastActivity: string;
+  vppEpoch: number;
+  vppRecoveryState: string;
+  // ── New fields per user request ──
+  externalIp: string;       // Public/NAT egress IP (from NAT/SNAT at login)
+  deviceType: string;       // OS: Windows/Linux/Mac/Android/iOS (from captive portal User-Agent)
   subscriber: {
     name: string;
-    code: string;
+    code: string;           // SN — serial number / service ID
     status: string;
-    connectionType: string;
+    connectionType: string; // FTTH / PPPoE / Hotspot
   } | null;
-  radiusGroup: { name: string } | null;
+  radiusGroup: {
+    name: string;
+    speedLimitDown?: number;
+    speedLimitUp?: number;
+  } | null;
   nasDevice: { name: string; type: string } | null;
 }
 
@@ -153,7 +168,7 @@ interface SessionsResponse {
   };
 }
 
-type SortField = "acctsessiontime" | "acctoutputoctets" | "acctinputoctets";
+type SortField = "acctsessiontime" | "acctoutputoctets" | "acctinputoctets" | "acctstarttime";
 type SortDir = "asc" | "desc";
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -172,6 +187,148 @@ function formatDateTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// Format bytes → human-readable
+function formatBytesLocal(bytes: number): string {
+  if (typeof bytes !== "number" || isNaN(bytes) || !isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const k = 1024;
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
+  const val = bytes / Math.pow(k, i);
+  return `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)} ${units[i]}`;
+}
+
+// Format seconds → duration
+function formatDurationLocal(seconds: number): string {
+  if (typeof seconds !== "number" || isNaN(seconds) || !isFinite(seconds) || seconds < 0) return "0m";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || parts.length === 0) parts.push(`${m}m`);
+  return parts.join(" ");
+}
+
+/**
+ * Normalize the API response to match the page's expected shape.
+ * Handles TWO response shapes:
+ *   1. OLD (currently on prod): { sessions: [...], total, stats } with camelCase fields
+ *   2. NEW (local route):       { success, data, pagination, stats, breakdown } with camelCase fields
+ * The page expects lowercase field names (acctsessionid, framedipaddress, etc.)
+ * so we map camelCase → lowercase here, and add the computed *Formatted fields.
+ */
+function normalizeSessionsResponse(raw: any): SessionsResponse {
+  // Already in expected shape (data array present)
+  if (raw?.data && Array.isArray(raw.data)) {
+    return {
+      data: raw.data.map(normalizeSession),
+      pagination: raw.pagination ?? { page: 1, limit: raw.data.length, total: raw.data.length, pages: 1 },
+      stats: raw.stats ?? defaultStats(),
+      breakdown: raw.breakdown ?? { byNas: [], byGroup: [] },
+    };
+  }
+  // OLD shape: { sessions, total, stats }
+  if (raw?.sessions && Array.isArray(raw.sessions)) {
+    const sessions = raw.sessions.map(normalizeSession);
+    return {
+      data: sessions,
+      pagination: { page: 1, limit: sessions.length, total: raw.total ?? sessions.length, pages: 1 },
+      stats: raw.stats ?? defaultStats(),
+      breakdown: raw.breakdown ?? { byNas: [], byGroup: [] },
+    };
+  }
+  // Fallback: empty
+  return {
+    data: [],
+    pagination: { page: 1, limit: 0, total: 0, pages: 1 },
+    stats: defaultStats(),
+    breakdown: { byNas: [], byGroup: [] },
+  };
+}
+
+function defaultStats(): StatsData {
+  return {
+    activeCount: 0,
+    totalBandwidth: 0,
+    totalBandwidthFormatted: "0 B",
+    avgSessionTime: 0,
+    avgSessionTimeFormatted: "0m",
+    nasCount: 0,
+    userCount: 0,
+  };
+}
+
+/** Map a single session row from API shape → page shape (camelCase → lowercase + computed Formatted) */
+function normalizeSession(s: any): SessionData {
+  const inputOctets = Number(s.acctinputoctets ?? s.inputOctets ?? s.acctInputOctets ?? 0);
+  const outputOctets = Number(s.acctoutputoctets ?? s.outputOctets ?? s.acctOutputOctets ?? 0);
+  let sessionTime = Number(s.acctsessiontime ?? s.sessionTime ?? s.acctSessionTime ?? 0);
+  const startTimeStr = String(s.acctstarttime ?? s.startTime ?? s.acctStartTime ?? "");
+
+  // ── FIX: if API returns 0 duration but has a valid startTime, compute it live ──
+  // This handles the prod API which doesn't compute acctsessiontime from startTime.
+  // We compute (NOW - startTime) in seconds. If startTime is in the future or invalid, fall back to 0.
+  if (sessionTime === 0 && startTimeStr) {
+    const startMs = new Date(startTimeStr).getTime();
+    if (!isNaN(startMs)) {
+      const nowMs = Date.now();
+      const diffSec = Math.floor((nowMs - startMs) / 1000);
+      if (diffSec > 0) sessionTime = diffSec;
+    }
+  }
+
+  const totalOctets = inputOctets + outputOctets;
+  // Pull plan + speed (these come from the enriched API response)
+  const planName = String(s.planName ?? s.plan_name ?? "");
+  const speedDownKbps = Number(s.speedDownKbps ?? s.speed_down_kbps ?? s.speedDown ?? 0);
+  const speedUpKbps = Number(s.speedUpKbps ?? s.speed_up_kbps ?? s.speedUp ?? 0);
+  // VPP-related fields (for VPP-managed sessions)
+  const vppEpoch = Number(s.vppEpoch ?? s.vpp_epoch ?? 0);
+  const vppRecoveryState = String(s.vppRecoveryState ?? s.vpp_recovery_state ?? "");
+  // Last activity time (acctupdatetime)
+  const lastActivity = String(s.acctupdatetime ?? s.updateTime ?? s.lastActivity ?? s.acctUpdateTime ?? "");
+  // External/Public IP — the NAT egress IP. Falls back to NAS IP if not yet captured by API.
+  // TODO: API should return the actual external IP based on NAT mode (masquerade → WAN IP, SNAT → public IP)
+  const externalIp = String(s.externalIp ?? s.external_ip ?? s.publicIp ?? s.public_ip ?? s.nasipaddress ?? "");
+  // Device type — OS from captive portal User-Agent. Needs API to capture & store at login.
+  // TODO: captive portal should parse User-Agent and store as a session attribute
+  const deviceType = String(s.deviceType ?? s.device_type ?? s.os ?? s.userAgent ?? "");
+
+  return {
+    acctsessionid: String(s.acctsessionid ?? s.acctSessionId ?? s.acctSessionID ?? ""),
+    username: String(s.username ?? s.userName ?? ""),
+    nasipaddress: String(s.nasipaddress ?? s.nasIpAddress ?? s.nasIPAddress ?? ""),
+    framedipaddress: String(s.framedipaddress ?? s.framedIpAddress ?? s.framedIPAddress ?? ""),
+    callingstationid: String(s.callingstationid ?? s.callingStationId ?? s.callingStationID ?? ""),
+    acctstarttime: startTimeStr,
+    acctsessiontime: sessionTime,
+    acctinputoctets: inputOctets,
+    acctoutputoctets: outputOctets,
+    downloadFormatted: formatBytesLocal(outputOctets),
+    uploadFormatted: formatBytesLocal(inputOctets),
+    durationFormatted: formatDurationLocal(sessionTime),
+    nasporttype: String(s.nasporttype ?? s.nasPortType ?? ""),
+    framedprotocol: String(s.framedprotocol ?? s.framedProtocol ?? ""),
+    // Enriched fields
+    planName,
+    speedDownKbps,
+    speedUpKbps,
+    totalOctets,
+    totalOctetsFormatted: formatBytesLocal(totalOctets),
+    lastActivity,
+    vppEpoch,
+    vppRecoveryState,
+    // New fields
+    externalIp,
+    deviceType,
+    subscriber: s.subscriber ?? null,
+    radiusGroup: s.radiusGroup ?? null,
+    nasDevice: s.nasDevice ?? null,
+  };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -223,7 +380,11 @@ export default function AaaSessionsPage() {
     refetch,
   } = useQuery<SessionsResponse>({
     queryKey: ["aaa-active-sessions", queryParams],
-    queryFn: () => apiFetch<SessionsResponse>(`/api/aaa/active-sessions?${queryParams}`),
+    queryFn: async () => {
+      const raw = await apiFetch<any>(`/api/aaa/active-sessions?${queryParams}`);
+      // Normalize regardless of which shape the API returns (old prod or new local route)
+      return normalizeSessionsResponse(raw);
+    },
     refetchInterval: 15000,
     staleTime: 10000,
   });
@@ -308,7 +469,7 @@ export default function AaaSessionsPage() {
   }, []);
 
   const handleToggleAll = useCallback(() => {
-    if (!sessionsData) return;
+    if (!sessionsData?.data) return;
     if (selectedIds.size === sessionsData.data.length) {
       setSelectedIds(new Set());
     } else {
@@ -339,35 +500,58 @@ export default function AaaSessionsPage() {
     setPage(1);
   }, []);
 
+  const handleClearAllFilters = useCallback(() => {
+    setSearch("");
+    setNasFilter("all");
+    setGroupFilter("all");
+    setPage(1);
+  }, []);
+
+  const hasActiveFilters =
+    search !== "" || nasFilter !== "all" || groupFilter !== "all";
+
   // ── Derived / Sorted Data ────────────────────────────────────────────────
 
   const sortedSessions = useMemo(() => {
     if (!sessionsData?.data) return [];
     if (!sortField) return sessionsData.data;
     return [...sessionsData.data].sort((a, b) => {
+      // Date-based sort for start time
+      if (sortField === "acctstarttime") {
+        const aTime = new Date(a.acctstarttime).getTime() || 0;
+        const bTime = new Date(b.acctstarttime).getTime() || 0;
+        return sortDir === "asc" ? aTime - bTime : bTime - aTime;
+      }
+      // Numeric sort for octets / duration
       const diff = (a[sortField] ?? 0) - (b[sortField] ?? 0);
       return sortDir === "asc" ? diff : -diff;
     });
   }, [sessionsData, sortField, sortDir]);
 
+  // ── Filter options: derive from session list (works even when breakdown is empty) ──
   const nasOptions = useMemo(() => {
-    if (!sessionsData?.breakdown?.byNas) return [];
-    return sessionsData.breakdown.byNas.map((n) => ({
-      value: n.nasIp,
-      label: n.nasName || n.nasIp,
-    }));
+    if (!sessionsData?.data) return [];
+    const map = new Map<string, string>(); // nasIp → label
+    sessionsData.data.forEach((s) => {
+      const ip = s.nasipaddress;
+      if (ip && !map.has(ip)) {
+        map.set(ip, s.nasDevice?.name || ip);
+      }
+    });
+    return Array.from(map, ([value, label]) => ({ value, label }));
   }, [sessionsData]);
 
   const groupOptions = useMemo(() => {
-    if (!sessionsData?.breakdown?.byGroup) return [];
-    return sessionsData.breakdown.byGroup.map((g) => ({
-      value: g.groupName,
-      label: g.groupName,
-    }));
+    if (!sessionsData?.data) return [];
+    const set = new Set<string>();
+    sessionsData.data.forEach((s) => {
+      if (s.radiusGroup?.name) set.add(s.radiusGroup.name);
+    });
+    return Array.from(set, (name) => ({ value: name, label: name }));
   }, [sessionsData]);
 
   const isAllSelected =
-    sessionsData && selectedIds.size === sessionsData.data.length && sessionsData.data.length > 0;
+    sessionsData?.data && selectedIds.size === sessionsData.data.length && sessionsData.data.length > 0;
 
   // ── Pagination Helper ────────────────────────────────────────────────────
 
@@ -461,15 +645,20 @@ export default function AaaSessionsPage() {
       <Button
         variant="ghost"
         size="sm"
-        className="-ml-3 h-8 gap-1 font-medium"
+        className={cn(
+          "-ml-3 h-8 gap-1",
+          active
+            ? "text-foreground font-semibold"
+            : "text-muted-foreground font-medium hover:text-foreground"
+        )}
         onClick={() => handleSort(field)}
       >
         {label}
         {active ? (
           sortDir === "asc" ? (
-            <ArrowUp className="h-3.5 w-3.5" />
+            <ArrowUp className="h-3.5 w-3.5 text-primary" />
           ) : (
-            <ArrowDown className="h-3.5 w-3.5" />
+            <ArrowDown className="h-3.5 w-3.5 text-primary" />
           )
         ) : (
           <ArrowUpDown className="h-3.5 w-3.5 opacity-40" />
@@ -485,7 +674,7 @@ export default function AaaSessionsPage() {
       {statsCards.map((card) => (
         <Card
           key={card.label}
-          className={`border ${card.border} bg-gradient-to-br ${card.gradient}`}
+          className={`border ${card.border} bg-gradient-to-br ${card.gradient} transition-all duration-200 hover:shadow-md hover:-translate-y-0.5`}
         >
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
@@ -523,7 +712,12 @@ export default function AaaSessionsPage() {
           onSubmit={handleSearchSubmit}
           className="relative flex-1 min-w-0"
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            {hasActiveFilters && (
+              <span className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 h-2 w-2 rounded-full bg-blue-500 ring-2 ring-background" />
+            )}
+          </div>
           <Input
             placeholder="Search by username, IP, or MAC..."
             value={search}
@@ -582,17 +776,15 @@ export default function AaaSessionsPage() {
           <span className="hidden sm:inline">Refresh</span>
         </Button>
 
-        {selectedIds.size > 0 && (
+        {hasActiveFilters && (
           <Button
-            variant="destructive"
+            variant="ghost"
             size="default"
-            onClick={() => setBulkDisconnectOpen(true)}
-            className="shrink-0"
+            onClick={handleClearAllFilters}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
           >
-            <UserX className="h-4 w-4" />
-            <span className="hidden sm:inline">
-              Disconnect ({selectedIds.size})
-            </span>
+            <X className="h-4 w-4" />
+            <span className="hidden sm:inline">Clear filters</span>
           </Button>
         )}
       </div>
@@ -626,23 +818,37 @@ export default function AaaSessionsPage() {
               </Button>
             </div>
           ) : sortedSessions.length === 0 ? (
-            <div className="p-12 text-center">
-              <Wifi className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
-              <p className="text-sm font-medium text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+              <div className="relative mb-4">
+                <Wifi className="h-12 w-12 text-muted-foreground/30 animate-pulse" />
+              </div>
+              <p className="text-base font-semibold text-foreground">
                 No active sessions found
               </p>
-              <p className="text-xs text-muted-foreground/70 mt-1">
-                {search || nasFilter !== "all" || groupFilter !== "all"
-                  ? "Try adjusting your filters"
-                  : "Sessions will appear here when users connect"}
+              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                {hasActiveFilters
+                  ? "No sessions match your current filters. Try adjusting or clearing them."
+                  : "Sessions will appear here when users connect to the network."}
               </p>
+              {hasActiveFilters && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearAllFilters}
+                  className="mt-4"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Clear filters
+                </Button>
+              )}
             </div>
           ) : (
             <>
-              <ScrollArea className="max-h-[600px]">
-                <Table>
+              {/* Plain div (not ScrollArea) — gives reliable horizontal + vertical scroll */}
+              <div className="max-h-[600px] overflow-auto rounded-lg border">
+                <Table className="min-w-[1800px]">
                   <TableHeader>
-                    <TableRow className="bg-muted/30">
+                    <TableRow className="sticky top-0 z-10 bg-muted shadow-[0_1px_3px_-1px_rgba(0,0,0,0.08)]">
                       <TableHead className="w-10 pl-4">
                         <Checkbox
                           checked={isAllSelected}
@@ -650,36 +856,46 @@ export default function AaaSessionsPage() {
                           aria-label="Select all sessions"
                         />
                       </TableHead>
+                      <TableHead className="hidden md:table-cell">SN</TableHead>
                       <TableHead>Username</TableHead>
                       <TableHead className="hidden lg:table-cell">
                         Subscriber
                       </TableHead>
-                      <TableHead>Framed IP</TableHead>
+                      <TableHead className="hidden xl:table-cell">
+                        Type
+                      </TableHead>
+                      <TableHead className="hidden xl:table-cell">
+                        Plan / Speed
+                      </TableHead>
+                      <TableHead>IP Address</TableHead>
+                      <TableHead className="hidden xl:table-cell">External IP</TableHead>
                       <TableHead className="hidden md:table-cell">MAC</TableHead>
                       <TableHead className="hidden lg:table-cell">NAS</TableHead>
-                      <TableHead className="hidden xl:table-cell">Group</TableHead>
                       <TableHead className="hidden lg:table-cell">
-                        Start Time
+                        {renderSortHeader("Start Time", "acctstarttime")}
                       </TableHead>
                       <TableHead>{renderSortHeader("Duration", "acctsessiontime")}</TableHead>
                       <TableHead className="hidden md:table-cell">
-                        {renderSortHeader("↓", "acctoutputoctets")}
+                        {renderSortHeader("↓ DL", "acctoutputoctets")}
                       </TableHead>
                       <TableHead className="hidden md:table-cell">
-                        {renderSortHeader("↑", "acctinputoctets")}
+                        {renderSortHeader("↑ UL", "acctinputoctets")}
                       </TableHead>
+                      <TableHead className="hidden xl:table-cell">Total Data</TableHead>
+                      <TableHead className="hidden xl:table-cell">Device</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-10 pr-4" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sortedSessions.map((session) => {
+                    {sortedSessions.map((session, index) => {
                       const isSelected = selectedIds.has(session.acctsessionid);
+                      const sn = (page - 1) * limit + index + 1;
                       return (
                         <TableRow
                           key={session.acctsessionid}
                           data-state={isSelected ? "selected" : undefined}
-                          className="cursor-pointer"
+                          className="cursor-pointer even:bg-muted/10 hover:bg-muted/40"
                           onClick={() => setDetailSession(session)}
                         >
                           <TableCell
@@ -694,23 +910,77 @@ export default function AaaSessionsPage() {
                               aria-label={`Select ${session.username}`}
                             />
                           </TableCell>
+                          {/* SN — row counter (1, 2, 3... accounting for pagination) */}
+                          <TableCell className="hidden md:table-cell">
+                            <span className="font-mono text-xs font-medium text-muted-foreground">
+                              {sn}
+                            </span>
+                          </TableCell>
                           <TableCell>
                             <span className="font-bold font-mono text-sm">
                               {session.username}
                             </span>
                           </TableCell>
+                          {/* Subscriber name + code (code moved back here from SN column) */}
                           <TableCell className="hidden lg:table-cell">
-                            <span className="text-sm text-muted-foreground">
-                              {session.subscriber?.name || (
-                                <span className="italic text-muted-foreground/60">
-                                  Unlinked
+                            {session.subscriber ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-sm text-muted-foreground">
+                                  {session.subscriber.name}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground/70 font-mono">
+                                  {session.subscriber.code}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="italic text-muted-foreground/60 text-sm">
+                                Unlinked
+                              </span>
+                            )}
+                          </TableCell>
+                          {/* Type — FTTH / PPPoE / Hotspot from user profile */}
+                          <TableCell className="hidden xl:table-cell">
+                            {session.subscriber?.connectionType ? (
+                              <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30">
+                                {session.subscriber.connectionType}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/60 italic">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            <div className="flex flex-col gap-0.5">
+                              {session.planName ? (
+                                <>
+                                  <span className="text-xs font-medium">
+                                    {session.planName}
+                                  </span>
+                                  {(session.speedDownKbps > 0 || session.speedUpKbps > 0) && (
+                                    <span className="text-[10px] text-muted-foreground font-mono">
+                                      ↓ {session.speedDownKbps > 0 ? `${(session.speedDownKbps / 1024).toFixed(0)} Mbps` : "—"}
+                                      {" / "}
+                                      ↑ {session.speedUpKbps > 0 ? `${(session.speedUpKbps / 1024).toFixed(0)} Mbps` : "—"}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-xs text-muted-foreground/60 italic">
+                                  No plan
                                 </span>
                               )}
-                            </span>
+                            </div>
                           </TableCell>
                           <TableCell>
                             <span className="font-mono text-sm">
                               {session.framedipaddress}
+                            </span>
+                          </TableCell>
+                          {/* External IP — public/NAT egress IP */}
+                          <TableCell className="hidden xl:table-cell">
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {session.externalIp || "—"}
                             </span>
                           </TableCell>
                           <TableCell className="hidden md:table-cell">
@@ -723,21 +993,13 @@ export default function AaaSessionsPage() {
                               <span className="text-sm font-medium">
                                 {session.nasDevice?.name || session.nasipaddress}
                               </span>
-                              <span className="text-xs text-muted-foreground font-mono">
-                                {session.nasipaddress}
-                              </span>
+                              {/* Only show IP below if a device name exists (otherwise it's already shown above) */}
+                              {session.nasDevice?.name && (
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  {session.nasipaddress}
+                                </span>
+                              )}
                             </div>
-                          </TableCell>
-                          <TableCell className="hidden xl:table-cell">
-                            {session.radiusGroup ? (
-                              <Badge variant="outline" className="text-xs">
-                                {session.radiusGroup.name}
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground/60 italic">
-                                None
-                              </span>
-                            )}
                           </TableCell>
                           <TableCell className="hidden lg:table-cell">
                             <span className="text-xs text-muted-foreground">
@@ -761,11 +1023,29 @@ export default function AaaSessionsPage() {
                               <span>{session.uploadFormatted}</span>
                             </div>
                           </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            <div className="flex items-center gap-1 text-sm font-medium">
+                              <HardDrive className="h-3 w-3 text-blue-500" />
+                              <span>{session.totalOctetsFormatted}</span>
+                            </div>
+                          </TableCell>
+                          {/* Device Type — OS from captive portal User-Agent */}
+                          <TableCell className="hidden xl:table-cell">
+                            {session.deviceType ? (
+                              <Badge variant="outline" className="text-xs bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30">
+                                {session.deviceType}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/60 italic">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <Badge className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30 hover:bg-green-500/20 gap-1.5">
-                              <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75" />
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                              <span className="relative flex h-2 w-2 items-center justify-center">
+                                <span className="animate-ping absolute inline-flex h-1.5 w-1.5 rounded-full bg-green-500 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500 ring-2 ring-green-500/20" />
                               </span>
                               Active
                             </Badge>
@@ -785,7 +1065,41 @@ export default function AaaSessionsPage() {
                     })}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
+
+              {/* Bulk action contextual toolbar (visible when rows are selected) */}
+              {selectedIds.size > 0 && (
+                <div className="flex items-center justify-between gap-3 border-t bg-foreground/95 backdrop-blur supports-[backdrop-filter]:bg-foreground/85 text-background px-4 py-3 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.15)]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-background px-2 text-xs font-semibold text-foreground tabular-nums">
+                      {selectedIds.size}
+                    </span>
+                    <span className="font-medium">
+                      {selectedIds.size === 1 ? "session selected" : "sessions selected"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedIds(new Set())}
+                      className="text-background hover:bg-background/15 hover:text-background"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Clear</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setBulkDisconnectOpen(true)}
+                      className="bg-background text-foreground hover:bg-background/90"
+                    >
+                      <UserX className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Disconnect All</span>
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Pagination */}
               {sessionsData && sessionsData.pagination.pages > 1 && (
@@ -869,18 +1183,31 @@ export default function AaaSessionsPage() {
   );
 
   // ── Render: By NAS Tab ────────────────────────────────────────────────────
+  // Derive breakdown from session list (prod API doesn't return `breakdown` object)
 
   const renderByNasTab = () => {
-    const nasData = sessionsData?.breakdown?.byNas;
-    if (!nasData || nasData.length === 0) {
+    if (!sessionsData?.data || sessionsData.data.length === 0) {
       return (
         <div className="text-center py-12">
           <Server className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">No NAS device data available</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">Sessions will appear here when users connect</p>
         </div>
       );
     }
-    const sorted = [...nasData].sort((a, b) => b.sessions - a.sessions);
+    // Aggregate: group sessions by nasIp → count + total bandwidth
+    const nasMap = new Map<string, { nasIp: string; nasName: string; sessions: number; bandwidth: number }>();
+    sessionsData.data.forEach((s) => {
+      const ip = s.nasipaddress || "unknown";
+      const existing = nasMap.get(ip) || { nasIp: ip, nasName: s.nasDevice?.name || ip, sessions: 0, bandwidth: 0 };
+      existing.sessions += 1;
+      existing.bandwidth += s.totalOctets || 0;
+      if (!existing.nasName || existing.nasName === existing.nasIp) {
+        existing.nasName = s.nasDevice?.name || ip;
+      }
+      nasMap.set(ip, existing);
+    });
+    const sorted = Array.from(nasMap.values()).sort((a, b) => b.sessions - a.sessions);
     const maxSessions = Math.max(...sorted.map((n) => n.sessions), 1);
 
     return (
@@ -894,11 +1221,13 @@ export default function AaaSessionsPage() {
                 </div>
                 <div className="min-w-0">
                   <CardTitle className="text-sm truncate">
-                    {nas.nasName || nas.nasIp}
+                    {nas.nasName}
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground font-mono truncate">
-                    {nas.nasIp}
-                  </p>
+                  {nas.nasName !== nas.nasIp && (
+                    <p className="text-xs text-muted-foreground font-mono truncate">
+                      {nas.nasIp}
+                    </p>
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -914,7 +1243,7 @@ export default function AaaSessionsPage() {
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Bandwidth</span>
                 <span className="font-medium text-rose-600 dark:text-rose-400">
-                  {nas.bandwidthFormatted}
+                  {formatBytesLocal(nas.bandwidth)}
                 </span>
               </div>
             </CardContent>
@@ -925,18 +1254,30 @@ export default function AaaSessionsPage() {
   };
 
   // ── Render: By Group Tab ──────────────────────────────────────────────────
+  // Derive breakdown from session list (prod API doesn't return `breakdown` object)
 
   const renderByGroupTab = () => {
-    const groupData = sessionsData?.breakdown?.byGroup;
-    if (!groupData || groupData.length === 0) {
+    if (!sessionsData?.data || sessionsData.data.length === 0) {
       return (
         <div className="text-center py-12">
           <Shield className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">No group data available</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">Sessions will appear here when users connect</p>
         </div>
       );
     }
-    const sorted = [...groupData].sort((a, b) => b.sessions - a.sessions);
+    // Aggregate: group sessions by radiusGroup.name → count sessions + unique users
+    const groupMap = new Map<string, { groupName: string; sessions: number; users: Set<string> }>();
+    sessionsData.data.forEach((s) => {
+      const gname = s.radiusGroup?.name || "Ungrouped";
+      const existing = groupMap.get(gname) || { groupName: gname, sessions: 0, users: new Set<string>() };
+      existing.sessions += 1;
+      if (s.username) existing.users.add(s.username);
+      groupMap.set(gname, existing);
+    });
+    const sorted = Array.from(groupMap.values())
+      .map((g) => ({ ...g, users: g.users.size }))
+      .sort((a, b) => b.sessions - a.sessions);
     const maxSessions = Math.max(...sorted.map((g) => g.sessions), 1);
 
     return (
@@ -1141,6 +1482,64 @@ export default function AaaSessionsPage() {
               </div>
             </div>
 
+            {/* Plan & Speed */}
+            {(s.planName || s.speedDownKbps > 0 || s.speedUpKbps > 0) && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  Plan & Speed
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg border border-purple-200 dark:border-purple-800/50 bg-purple-50 dark:bg-purple-950/30 p-3">
+                    <p className="text-xs text-muted-foreground">Plan</p>
+                    <p className="text-sm font-bold text-purple-700 dark:text-purple-300 mt-0.5">
+                      {s.planName || "N/A"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-950/30 p-3">
+                    <p className="text-xs text-muted-foreground">Download</p>
+                    <p className="text-sm font-bold text-green-700 dark:text-green-300 mt-0.5">
+                      {s.speedDownKbps > 0 ? `${(s.speedDownKbps / 1024).toFixed(1)} Mbps` : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/30 p-3">
+                    <p className="text-xs text-muted-foreground">Upload</p>
+                    <p className="text-sm font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+                      {s.speedUpKbps > 0 ? `${(s.speedUpKbps / 1024).toFixed(1)} Mbps` : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 p-3">
+                    <p className="text-xs text-muted-foreground">Total Used</p>
+                    <p className="text-sm font-bold text-blue-700 dark:text-blue-300 mt-0.5">
+                      {s.totalOctetsFormatted}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VPP Dataplane Info (if VPP-managed) */}
+            {(s.vppEpoch > 0 || s.vppRecoveryState) && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  VPP Dataplane
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">VPP Epoch</p>
+                    <p className="text-sm font-medium mt-0.5 font-mono">
+                      {s.vppEpoch || "N/A"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Recovery State</p>
+                    <p className="text-sm font-medium mt-0.5">
+                      {s.vppRecoveryState || "N/A"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Session Timing */}
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
@@ -1160,12 +1559,18 @@ export default function AaaSessionsPage() {
                   </p>
                 </div>
                 <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Last Activity</p>
+                  <p className="text-sm font-medium mt-0.5">
+                    {s.lastActivity ? formatDateTime(s.lastActivity) : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3 col-span-2 sm:col-span-3">
                   <p className="text-xs text-muted-foreground">Status</p>
                   <div className="mt-1">
                     <Badge className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30 gap-1.5">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      <span className="relative flex h-2 w-2 items-center justify-center">
+                        <span className="animate-ping absolute inline-flex h-1.5 w-1.5 rounded-full bg-green-500 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500 ring-2 ring-green-500/20" />
                       </span>
                       Active
                     </Badge>
@@ -1423,14 +1828,23 @@ export default function AaaSessionsPage() {
           <TabsTrigger value="active-sessions" className="gap-1.5">
             <Activity className="h-3.5 w-3.5" />
             Active Sessions
+            <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted-foreground/10 px-1.5 text-xs font-semibold tabular-nums">
+              {stats?.activeCount ?? 0}
+            </span>
           </TabsTrigger>
           <TabsTrigger value="by-nas" className="gap-1.5">
             <Server className="h-3.5 w-3.5" />
             By NAS
+            <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted-foreground/10 px-1.5 text-xs font-semibold tabular-nums">
+              {nasOptions.length}
+            </span>
           </TabsTrigger>
           <TabsTrigger value="by-group" className="gap-1.5">
             <Shield className="h-3.5 w-3.5" />
             By Group
+            <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted-foreground/10 px-1.5 text-xs font-semibold tabular-nums">
+              {groupOptions.length}
+            </span>
           </TabsTrigger>
         </TabsList>
 

@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Users, IndianRupee, CheckCircle2, Wallet, AlertTriangle, Download, Printer,
-  RefreshCw, Search, ArrowLeft, FileText,
+  RefreshCw, Search, ArrowLeft, FileText, Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -24,8 +24,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { downloadCsv, printReport, fmtINRDisplay } from "@/lib/report-export";
+import { downloadCsv, printReport, fmtINRDisplay, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type RegisterSummary = {
@@ -120,6 +121,15 @@ export default function StatementOfAccountPage() {
 
   const isLedger = subscriberId !== "";
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (subscriberId) params.set("subscriberId", subscriberId);
+    if (q) params.set("q", q);
+    return params;
+  };
+
   // /api/subscribers returns { subscribers:[...], total } — NOT the success/data envelope.
   const { data: subsData } = useQuery<{ subscribers: { id: string; code: string; name: string }[] }>({
     queryKey: ["soa-subscriber-options"],
@@ -154,6 +164,21 @@ export default function StatementOfAccountPage() {
       if (regRows.length === 0) return;
       downloadCsv("statement-of-account", REGISTER_COLUMNS, regRows);
       toast.success("Statement of account exported as CSV");
+    }
+  };
+
+  // Server PDF export — register mode only (ledger uses Print / PDF client render).
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/statement-of-account",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "statement-of-account",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
     }
   };
 
@@ -260,6 +285,11 @@ export default function StatementOfAccountPage() {
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={isLedger ? entries.length === 0 : regRows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
           </Button>
+          {!isLedger && (
+            <Button variant="outline" size="sm" disabled={regRows.length === 0} onClick={handleExportPdf}>
+              <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={isLedger ? entries.length === 0 : regRows.length === 0}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
           </Button>
@@ -319,7 +349,12 @@ export default function StatementOfAccountPage() {
                 <p className="text-sm font-bold">{led.subscriber.name}</p>
                 <p className="text-xs text-muted-foreground">{led.subscriber.code}{led.subscriber.plan ? ` · ${led.subscriber.plan}` : ""}</p>
               </div>
-              <StatusBadge status={led.subscriber.status} />
+              <div className="flex items-center gap-2">
+                <StatusBadge status={led.subscriber.status} />
+                <Button variant="outline" size="sm" title="View 360° Customer View" onClick={() => openSubscriber360(subscriberId)}>
+                  <Eye className="h-3.5 w-3.5 mr-1" />View 360°
+                </Button>
+              </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div><p className="text-muted-foreground">Phone</p><p className="font-medium mt-0.5">{led.subscriber.phone || "—"}</p></div>
@@ -360,6 +395,7 @@ export default function StatementOfAccountPage() {
                       <TableHead className="text-xs font-medium uppercase text-right">Outstanding</TableHead>
                       <TableHead className="text-xs font-medium uppercase text-right">Wallet</TableHead>
                       <TableHead className="text-xs font-medium uppercase">Last Payment</TableHead>
+                      <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                     </>
                   )}
                 </TableRow>
@@ -384,7 +420,7 @@ export default function StatementOfAccountPage() {
                 ) : (
                   regRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                      <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                     </TableRow>
                   ) : regRows.map((r) => (
                     <TableRow key={r.subscriberId} className="hover:bg-muted/50 transition-colors duration-150">
@@ -403,6 +439,13 @@ export default function StatementOfAccountPage() {
                       <TableCell className="text-right tabular-nums text-sm font-semibold text-red-600">{fmtINRDisplay(r.totalOutstanding)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">{fmtINRDisplay(r.walletBalance)}</TableCell>
                       <TableCell className="text-xs">{r.lastPaymentAt ? formatDate(r.lastPaymentAt) : "—"}</TableCell>
+                      <TableCell>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                          onClick={() => openSubscriber360(r.subscriberId)} disabled={!r.subscriberId}>
+                          <Eye className="h-3.5 w-3.5" />
+                          <span className="sr-only">View 360°</span>
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}

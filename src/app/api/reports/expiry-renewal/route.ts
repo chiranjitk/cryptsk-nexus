@@ -19,6 +19,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_ROWS = 2000;
@@ -125,6 +126,7 @@ export async function GET(request: NextRequest) {
       const expiryDate = new Date(anchor.getTime() + validityDays * DAY_MS);
       const daysToExpiry = Math.floor((endOfDay(expiryDate).getTime() - todayEnd.getTime()) / DAY_MS);
       return {
+        subscriberId: s.id,
         subscriberCode: s.code,
         name: s.name,
         phone: s.phone,
@@ -167,8 +169,8 @@ export async function GET(request: NextRequest) {
       renewedSubscriberCount: new Set(recentRenewals.map((p) => p.subscriberId)).size,
     };
 
-    // CSV / XLSX export branch
-    if (format === "csv" || format === "xlsx") {
+    // CSV / XLSX / PDF export branch
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       const headers = [
         "Subscriber Code",
         "Name",
@@ -199,7 +201,12 @@ export async function GET(request: NextRequest) {
       const filename = generateExportFilename("expiry-renewal", format);
       return format === "xlsx"
         ? xlsxResponse(headers, exportRows, filename)
-        : csvResponse(headers, exportRows, filename);
+        : format === "pdf"
+          ? pdfResponse(headers, exportRows, filename, {
+              title: "Expiry & Renewal",
+              subtitle: `As of ${ymd(now)} · Within ${withinDays} days`,
+            })
+          : csvResponse(headers, exportRows, filename);
     }
 
     return NextResponse.json({

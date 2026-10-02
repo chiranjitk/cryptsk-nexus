@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  IndianRupee, Wallet, Ticket, Puzzle, AlertTriangle, Download, Printer, RefreshCw,
+  IndianRupee, Wallet, Ticket, Puzzle, AlertTriangle, Download, Printer, RefreshCw, Eye, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -23,8 +23,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { downloadCsv, printReport, fmtINRDisplay } from "@/lib/report-export";
+import { downloadCsv, printReport, fmtINRDisplay, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type SourceStat = { count: number; total: number };
@@ -36,8 +37,9 @@ type SideRevenueSummary = {
 };
 
 type SideRevenueRow = {
-  date: string; source: string; subscriberCode: string; name: string;
-  area: string; item: string; type: string; amount: number; reference: string;
+  date: string; source: string; subscriberId: string | null;
+  subscriberCode: string; name: string; area: string; item: string; type: string;
+  amount: number; reference: string;
 };
 
 type SideRevenueData = { summary: SideRevenueSummary; rows: SideRevenueRow[] };
@@ -85,13 +87,18 @@ export default function SideRevenuePage() {
   const [to, setTo] = useState(toISO(now));
   const [source, setSource] = useState("ALL");
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (source !== "ALL") params.set("source", source);
+    return params;
+  };
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<SideRevenueData>({
     queryKey: ["side-revenue", from, to, source],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (source !== "ALL") params.set("source", source);
+      const params = buildFilterParams();
       return apiFetch<{ success: boolean; data: SideRevenueData }>(`/api/reports/side-revenue?${params}`).then((j) => j.data);
     },
   });
@@ -105,6 +112,20 @@ export default function SideRevenuePage() {
     if (rows.length === 0) return;
     downloadCsv("side-revenue", EXPORT_COLUMNS, rows);
     toast.success("Side revenue report exported as CSV");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/side-revenue",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "side-revenue",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
+    }
   };
 
   const handlePrint = () => {
@@ -183,6 +204,9 @@ export default function SideRevenuePage() {
           </Button>
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={rows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
+          </Button>
+          <Button variant="outline" size="sm" disabled={rows.length === 0} onClick={handleExportPdf}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={rows.length === 0}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
@@ -269,12 +293,13 @@ export default function SideRevenuePage() {
                   <TableHead className="text-xs font-medium uppercase">Type</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Reference</TableHead>
                   <TableHead className="text-xs font-medium uppercase text-right">Amount</TableHead>
+                  <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                   </TableRow>
                 ) : rows.map((r, i) => (
                   <TableRow key={i} className="hover:bg-muted/50 transition-colors duration-150">
@@ -291,6 +316,13 @@ export default function SideRevenuePage() {
                     <TableCell className="text-xs text-muted-foreground">{r.type || "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.reference || "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-semibold">{fmtINRDisplay(r.amount)}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                        onClick={() => openSubscriber360(r.subscriberId)} disabled={!r.subscriberId}>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="sr-only">View 360°</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

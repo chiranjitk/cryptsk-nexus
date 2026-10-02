@@ -18,6 +18,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_ROWS = 2000;
@@ -104,6 +105,7 @@ export async function GET(request: NextRequest) {
       });
       for (const t of topups) {
         merged.push({
+          subscriberId: t.subscriberId,
           date: new Date(t.purchasedAt).toISOString(),
           source: "TOPUP",
           subscriberCode: t.Subscriber?.code ?? "",
@@ -128,6 +130,7 @@ export async function GET(request: NextRequest) {
       });
       for (const v of vouchers) {
         merged.push({
+          subscriberId: v.usedBySubscriberId,
           date: new Date(v.usedAt as Date).toISOString(),
           source: "VOUCHER",
           subscriberCode: v.Subscriber?.code ?? "",
@@ -153,6 +156,7 @@ export async function GET(request: NextRequest) {
       });
       for (const a of addons) {
         merged.push({
+          subscriberId: a.subscriberId,
           date: new Date(a.startDate).toISOString(),
           source: "ADDON",
           subscriberCode: a.Subscriber?.code ?? "",
@@ -200,8 +204,8 @@ export async function GET(request: NextRequest) {
       topSpenders,
     };
 
-    // CSV / XLSX export branch
-    if (format === "csv" || format === "xlsx") {
+    // CSV / XLSX / PDF export branch
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       const headers = [
         "Date",
         "Source",
@@ -228,7 +232,12 @@ export async function GET(request: NextRequest) {
       const filename = generateExportFilename("side-revenue", format);
       return format === "xlsx"
         ? xlsxResponse(headers, exportRows, filename)
-        : csvResponse(headers, exportRows, filename);
+        : format === "pdf"
+          ? pdfResponse(headers, exportRows, filename, {
+              title: "Side Revenue",
+              subtitle: `Period ${ymd(from)} → ${ymd(to)} · Source: ${source}`,
+            })
+          : csvResponse(headers, exportRows, filename);
     }
 
     return NextResponse.json({

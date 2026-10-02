@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Users, AlertTriangle, UserCheck, Coins,
-  Download, Printer, RefreshCw,
+  Download, Printer, RefreshCw, Eye, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -22,8 +22,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { downloadCsv, printReport, fmtINRDisplay } from "@/lib/report-export";
+import { downloadCsv, printReport, fmtINRDisplay, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type ExpirySummary = {
@@ -34,6 +35,7 @@ type ExpirySummary = {
 };
 
 type ExpiryRow = {
+  subscriberId: string | null;
   subscriberCode: string; name: string; phone: string; area: string;
   plan: string; planPrice: number; lastRenewal: string; expiryDate: string;
   daysToExpiry: number; bucket: string; status: string;
@@ -117,12 +119,17 @@ export default function ExpiryRenewalPage() {
   });
   const areas = areasData?.items || [];
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    params.set("withinDays", withinDays);
+    if (areaId !== "ALL") params.set("areaId", areaId);
+    return params;
+  };
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<ExpiryData>({
     queryKey: ["expiry-renewal", withinDays, areaId],
     queryFn: () => {
-      const params = new URLSearchParams();
-      params.set("withinDays", withinDays);
-      if (areaId !== "ALL") params.set("areaId", areaId);
+      const params = buildFilterParams();
       return apiFetch<{ success: boolean; data: ExpiryData }>(`/api/reports/expiry-renewal?${params}`).then((j) => j.data);
     },
   });
@@ -142,6 +149,20 @@ export default function ExpiryRenewalPage() {
     if (rows.length === 0) return;
     downloadCsv("expiry-renewal", EXPORT_COLUMNS, rows);
     toast.success("Expiry & renewal report exported as CSV");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/expiry-renewal",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "expiry-renewal",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
+    }
   };
 
   const handlePrint = () => {
@@ -224,6 +245,9 @@ export default function ExpiryRenewalPage() {
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={rows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
           </Button>
+          <Button variant="outline" size="sm" disabled={rows.length === 0} onClick={handleExportPdf}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
+          </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={rows.length === 0}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
           </Button>
@@ -291,12 +315,13 @@ export default function ExpiryRenewalPage() {
                   <TableHead className="text-xs font-medium uppercase text-right">Days To Expiry</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Bucket</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+                  <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                    <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                   </TableRow>
                 ) : rows.map((r) => (
                   <TableRow key={r.subscriberCode} className="hover:bg-muted/50 transition-colors duration-150">
@@ -319,6 +344,13 @@ export default function ExpiryRenewalPage() {
                     <TableCell className={`text-right tabular-nums text-sm ${r.daysToExpiry < 0 ? "font-semibold text-red-600" : r.daysToExpiry <= 7 ? "font-semibold text-amber-600" : ""}`}>{r.daysToExpiry}</TableCell>
                     <TableCell><BucketBadge bucket={r.bucket} /></TableCell>
                     <TableCell><StatusBadge status={r.status} /></TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                        onClick={() => openSubscriber360(r.subscriberId)} disabled={!r.subscriberId}>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="sr-only">View 360°</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
