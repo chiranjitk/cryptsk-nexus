@@ -9,12 +9,32 @@ interface AuthUser {
   permissions: string[];
 }
 
-const AuthContext = createContext<{ user: AuthUser | null; loading: boolean }>({ user: null, loading: false });
+interface AuthContextValue {
+  user: AuthUser | null;
+  loading: boolean;
+  hasPermission: (permission: string) => boolean;
+  hasAnyPermission: (permissions: string[]) => boolean;
+}
+
+const defaultValue: AuthContextValue = {
+  user: {
+    id: 'default',
+    name: 'Admin',
+    email: 'admin@cryptsk.com',
+    role: 'SUPER_ADMIN',
+    permissions: ['*'],
+  },
+  loading: false,
+  hasPermission: () => true,
+  hasAnyPermission: () => true,
+};
+
+const AuthContext = createContext<AuthContextValue>(defaultValue);
 
 export function useAuth() {
   return useContext(AuthContext);
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  return <AuthContext.Provider value={{ user: null, loading: false }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={defaultValue}>{children}</AuthContext.Provider>;
 }
