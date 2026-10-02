@@ -128,8 +128,8 @@ export async function POST(request: NextRequest) {
             macAddress: ip.macAddress,
             description: ip.description,
             subnetId: ip.subnetId,
-            subnetName: ip.subnet?.name || "",
-            subnetCidr: ip.subnet?.cidr || "",
+            subnetName: ip.Subnet?.name || "",
+            subnetCidr: ip.Subnet?.cidr || "",
           },
         });
       }

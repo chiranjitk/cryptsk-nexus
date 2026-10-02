@@ -80,7 +80,7 @@ export const MODULES: ModuleDefinition[] = [
     pages: [
       { label: "NAS Clients", section: "NETWORK" },
       { label: "NAS Devices", section: "NETWORK" },
-      { label: "Subnets (IPAM)", section: "NETWORK" },
+      { label: "IP Pool Management", section: "NETWORK" },
       { label: "Bandwidth", section: "MONITORING" },
       { label: "FTTH/GPON", section: "NETWORK" },
       { label: "Active Sessions", section: "MONITORING" },

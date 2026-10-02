@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     const notification = await db.notification.create({
       data: {
         subscriberId: subscriberId || null,
-        userId: session || null,
+        userId: session?.userId || null,
         type: notificationType as "IN_APP" | "SMS" | "EMAIL" | "WHATSAPP" | "PUSH",
         category: notificationCategory as "BILL_DUE" | "PAYMENT_CONFIRM" | "DATA_USAGE" | "PLAN_CHANGE" | "OUTAGE" | "MAINTENANCE" | "WELCOME" | "OTHER",
         title,
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    auditCreate(request, "Notification", notification.id, { type: notificationType, category: notificationCategory, title, subscriberId, contentType: body.contentType }, { userId: session }).catch(() => {});
+    auditCreate(request, "Notification", notification.id, { type: notificationType, category: notificationCategory, title, subscriberId, contentType: body.contentType }, { userId: session?.userId }).catch(() => {});
     return NextResponse.json(notification, { status: 201 });
   } catch (error) {
     if (error instanceof AuthError) {

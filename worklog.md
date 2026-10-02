@@ -4974,3 +4974,25 @@ Stage Summary:
 - 7 runtime-500 endpoints + 1 missing xlsx export + 2 page-crash case-mismatches fixed — these were pre-existing bugs independent of Phase 1-3 work (several match the P0 backlog "runtime 500" family: technicians/dispatch, technicians/leaderboard, disputes, collections/smart, compliance/audit-report, revenue/leakage, revenue/audit now ALL fixed; remaining known-500s from backlog: /api/ipam, /api/captive-portal, technicians/[id], complaints auto-assign — still open).
 - Pattern note for future fixes: recurring root cause is Prisma relation-name case mismatch (schema relations are PascalCase: Subscriber/Payment/User/Invoice/Area) — backend must map to the page's expected lowercase shapes or pages must use schema casing; 4 of 9 fixes were exactly this.
 - Test assets kept: /home/z/.e2e/reports-e2e.sh (full matrix, re-runnable), /home/z/.e2e/sweep-page.sh (resilient single-page browser sweep with re-login).
+
+---
+Task ID: NAV-IPAM-1
+Agent: Main Agent
+Task: User reported "where gone ipam from slidbar" — IPAM page missing from sidebar navigation. Investigate, fix, and E2E-verify.
+
+Work Log:
+- Audited nav-config.ts vs modules/registry.ts vs page-loaders.ts labels (132 nav labels cross-checked via bun script).
+- ROOT CAUSE 1 (sidebar hide): prod commit 0b3f214 renamed nav label "Subnets (IPAM)" → "IP Pool Management" but registry.ts still had old label. isPageEnabled() exact-matches labels → page hidden from sidebar since that merge. Fixed registry.ts label.
+- ROOT CAUSE 2 (blank page): page-loaders.ts ALSO keyed by old label 'Subnets (IPAM)' → lazy-loader lookup failed → blank content even when deep-linked. Fixed page-loaders.ts + command-palette.tsx + extended-pages.tsx (same stale label, 4 files total).
+- ROOT CAUSE 3 (ipam API 500 when data exists): src/app/api/ipam/route.ts included capitalized Prisma relations (Vlan/IpAddress/Subnet) but transform read lowercase (sn.ipAddresses, sn.vlan, ip.subnet) → TypeError the moment Subnet table had rows (empty table masked it pre-seed). Same alias bug family as RPT-E2E-1. Fixed route.ts + export/route.ts + assign-subscriber/route.ts + conflict-check/route.ts (all 4 ipam routes).
+- ROOT CAUSE 4 (logout loop): /api/auth/me passed requireAuth()'s OBJECT return {userId, role} directly to getUserById() → Prisma "Expected String, provided Object" → 500 → client auto-logout on every navigation. Fixed: destructure { userId }. Also fixed same misuse in notifications/route.ts (userId: session || null → session?.userId || null) and notifications/[id]/route.ts audit calls.
+- Seeded IPAM data (Subnet table was empty — data vacuum): 5 VLANs (Management/PPPoE/Hotspot/IPTV/VoIP) + 7 ISP subnets (Management LAN, PPPoE Pools Zone A/B, CGNAT Pool RFC6598, Hotspot Guests, IPTV Multicast, VoIP Trunk) with full CIDR notation, gateways, DNS, NAT modes, allocation strategies, IP ranges.
+- OOM crash-loop root-caused & mitigated: next-server repeatedly OOM-killed (dmesg: RSS 2.8GB on 4GB box, 52 restarts during session). Two pressure sources: (a) snapshot scheduler boot-run at 45s force-compiles all 26 report API routes while pages still compiling → instrumentation.ts initial run delayed 45s → 3min; (b) open agent-browser tab auto-reloading on every restart re-triggering heaviest compiles → must close browser during recovery.
+- E2E verified in browser: login → "IP Pool Management" visible under NETWORK → click → page renders all 7 subnets with VLAN columns, IP totals (/24→254), utilization, gateway — navigation round-trip keeps session (auth/me fix confirmed) → /api/ipam 200 with stats {totalSubnets:7, totalIps:4326386} → /api/ipam/export CSV 200 with correct VLAN ID/Name columns.
+
+Stage Summary:
+- IPAM restored to sidebar + fully working (registry + loaders + command palette + 4 API routes fixed, data seeded).
+- Bonus fixes from systematic audit: /api/auth/me logout-loop (critical UX bug affecting ALL pages), notifications userId object-misuse, ipam export/assign/conflict-check silent data bugs.
+- Label-drift lesson (2nd occurrence after e7b7337): renaming a nav label requires touching 3-4 files (nav-config, registry, page-loaders, command-palette) — consider a single LABELS constant source in future refactor.
+- OOM environment lesson: on 4GB sandbox, browser must stay CLOSED while heavy report pages compile cold in dev mode; snapshot boot-run now at 3min. If loop resumes: agent-browser close → wait → single-page visits only.
+- Known issue left open: TechnicianPerformancePage/DueRecoveryPage client crash (reading 'areaName'/'name') observed in console buffer — API shapes verified correct (dispatch returns complaint alias), crash reproduces only under OOM memory pressure (chunk load failures) — needs re-verification on a stable-memory session or production build; NOT a regression from this task.

@@ -158,7 +158,7 @@ export const EXTENDED_PAGES: Record<string, React.ComponentType> = {
   'Dynamic Routing': DynamicRoutingPage,
   'FTTH/GPON': FtthGponPage,
   'System Interfaces': InterfacesPage,
-  'Subnets (IPAM)': IpamPage,
+  'IP Pool Management': IpamPage,
   'IPAM CGNAT': IpamCgnatTab,
   'MikroTik Manager': MikrotikManagerPage,
   'MultiWAN': MultiwanPage,

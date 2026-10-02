@@ -28,7 +28,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   // NETWORK — Infrastructure
   // ══════════════════════════════════════════════════════════════
   'NAS Clients': () => import('@/components/pages/nas-clients-page'),
-  'Subnets (IPAM)': () => import('@/components/pages/ipam-page'),
+  'IP Pool Management': () => import('@/components/pages/ipam-page'),
   'System Interfaces': () => import('@/components/pages/interfaces-page'),
   'DHCP Server': () => import('@/components/pages/dhcp-page'),
   'DNS Server': () => import('@/components/pages/dns-page'),

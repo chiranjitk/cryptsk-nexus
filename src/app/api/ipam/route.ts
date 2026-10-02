@@ -108,10 +108,10 @@ export async function GET(request: NextRequest) {
     // Transform subnets
     const transformedSubnets = subnets.map((sn) => {
       const totalIps = calculateTotalIps(sn.cidr || sn.network);
-      const usedIps = sn.ipAddresses.filter((ip) => ip.status === "used" || ip.status === "reserved").length;
+      const usedIps = sn.IpAddress.filter((ip) => ip.status === "used" || ip.status === "reserved").length;
       return {
         id: sn.id, name: sn.name, network: sn.cidr || sn.network, gateway: sn.gateway,
-        totalIps, usedIps, vlan: sn.vlan ? String(sn.vlan.vlanId) : "",
+        totalIps, usedIps, vlan: sn.Vlan ? String(sn.Vlan.vlanId) : "",
         description: sn.description, status: "Active",
         networkv6: sn.networkv6 || "", prefixv6: sn.prefixv6 || "",
         parentId: sn.parentId || "",
@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
 
     // Transform IPs
     const transformedIps = ips.map((ip) => ({
-      id: ip.id, ip: ip.address, subnet: ip.subnet?.cidr || ip.subnet?.network || "",
+      id: ip.id, ip: ip.address, subnet: ip.Subnet?.cidr || ip.Subnet?.network || "",
       subnetId: ip.subnetId,
       assignedTo: ip.description || "", mac: ip.macAddress || "", hostname: ip.hostname || "",
       status: ip.status === "used" ? "Used" : ip.status === "reserved" ? "Reserved" : "Free",
