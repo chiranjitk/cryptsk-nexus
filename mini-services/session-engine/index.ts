@@ -679,7 +679,6 @@ function formatDurationCron(seconds: number): string {
 
 logger.info("Auto-enforcement cron started (every 30s)", {});
 
-<<<<<<< HEAD
 // ═══════════════════════════════════════════════════════════════
 // ─── EVENT-DRIVEN TRIGGER: PostgreSQL LISTEN/NOTIFY ─────────────
 // Per: docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md §10
@@ -955,92 +954,6 @@ async function reconcileWithRadAcct() {
 startEventListener().catch(err => logger.error("Failed to start event listener", { error: err.message }));
 setInterval(reconcileWithRadAcct, 60_000); // 60s — fallback ONLY
 logger.info("Reconciliation fallback registered (every 60s)", {});
-=======
-// ─── §41 VPP Restart Detection (every 5s) ────────────────────
-// GET /vpp/epoch from vpp-adapter. If epoch > lastKnownVppEpoch,
-// trigger runVppRestartRecovery to rebuild all ACTIVE session policies.
-
-setInterval(async () => {
-  try {
-    const r = await callVpp<{ epoch: number; lastRestartAt?: string; vppConnected?: boolean }>("/vpp/epoch");
-    lastVppEpochPollAt = Date.now();
-    if (!r.ok || !r.data) return;
-    const epoch = r.data.epoch || 0;
-    // NOTE: We intentionally do NOT bail when vppConnected===false here, because
-    // in dev/cert the vpp-adapter reports vppConnected=false (no real VPP binary
-    // running), but epoch increments on every simulated restart — and we still
-    // need to test the §41 VPP Restart Recovery flow against those increments.
-    if (lastKnownVppEpoch === 0) {
-      // First successful poll — baseline, don't trigger recovery
-      lastKnownVppEpoch = epoch;
-      logger.info("VPP epoch baseline set", { epoch });
-      return;
-    }
-    if (epoch > lastKnownVppEpoch) {
-      const prev = lastKnownVppEpoch;
-      logger.warn("VPP restart detected — triggering recovery", { prevEpoch: prev, newEpoch: epoch });
-      try {
-        await db.vppRecoveryLog.create({
-          data: {
-            event: "RESTART_DETECTED",
-            prevEpoch: prev,
-            newEpoch: epoch,
-            sessionsAffected: 0,
-            sessionsRecovered: 0,
-            sessionsFailed: 0,
-            durationMs: 0,
-            detailsJson: JSON.stringify({ lastRestartAt: r.data.lastRestartAt }),
-          },
-        });
-      } catch {}
-      await runVppRestartRecovery(prev, epoch, "restart-detector");
-      lastKnownVppEpoch = epoch;
-    }
-  } catch (err) {
-    logger.error("VPP epoch poll error", { error: String(err) });
-  }
-}, 5_000);
-
-// ─── §40 Startup Reconciliation (once at startup + every 5 min) ─
-// Ensures every ACTIVE NasSession has a snapshot + calls /vpp/rebuild.
-// First run logs scope=STARTUP, recurring runs log scope=SCHEDULED.
-
-setInterval(async () => {
-  try {
-    const scope = startupReconciliationDone ? "SCHEDULED" : "STARTUP";
-    startupReconciliationDone = true;
-    await runReconciliation(scope);
-  } catch (err) {
-    logger.error("Scheduled reconciliation error", { error: String(err) });
-  }
-}, 5 * 60 * 1000);
-
-// ─── §39 NAS Health Check (every 30s) ────────────────────────
-// Pings each unique nasIp from active sessions via HEAD on port 80
-// (2s timeout). Unreachable NAS → mark sessions STALE + broadcast.
-
-setInterval(async () => {
-  try {
-    await runNasHealthCheck();
-  } catch (err) {
-    logger.error("NAS health check loop error", { error: String(err) });
-  }
-}, 30_000);
-
-// Run startup reconciliation shortly after process boot (let vpp-adapter settle)
-setTimeout(async () => {
-  try {
-    if (!startupReconciliationDone) {
-      startupReconciliationDone = true;
-      await runReconciliation("STARTUP");
-    }
-  } catch (err) {
-    logger.error("Startup reconciliation (deferred) error", { error: String(err) });
-  }
-}, 8_000);
-
-logger.info("VPP restart detector (5s) + reconciliation (5min) + NAS health check (30s) loops registered", {});
->>>>>>> origin/main
 
 // ─── Request Router ──────────────────────────────────────────
 
