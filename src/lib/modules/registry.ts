@@ -79,7 +79,7 @@ export const MODULES: ModuleDefinition[] = [
     defaultEnabled: true,
     pages: [
       { label: "NAS Clients", section: "NETWORK" },
-      { label: "Network Devices", section: "NETWORK" },
+      { label: "Network Devices", section: "MONITORING" },
       { label: "IP Pool Management", section: "NETWORK" },
       { label: "Bandwidth", section: "MONITORING" },
       { label: "FTTH/GPON", section: "NETWORK" },
