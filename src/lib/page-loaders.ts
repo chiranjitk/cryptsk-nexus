@@ -216,6 +216,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'AaaSessions': () => import('@/components/pages/aaa-sessions-page'),
   'AaaUsers': () => import('@/components/pages/aaa-users-page'),
   'Devices': () => import('@/components/pages/devices-page'),
+  'Network Devices': () => import('@/components/pages/devices-page'), // POL-ENGINE-1b: prod renamed NAS Devices -> Network Devices but no loader was added (NAV-IPAM-1 bug class)
   'PlanRecommendation': () => import('@/components/pages/plan-recommendation-page'),
   'SessionEngine': () => import('@/components/pages/session-engine-page'),
   'IpamCgnat': () => import('@/components/pages/ipam-cgnat-tab'),
