@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 
 // ─── Surfing Quota Policies (POL-ENGINE-1) ────────────────────────
-// 24online-parity time-quota policies: Absolute (fixed hours) or
+// time-quota policies: Absolute (fixed hours) or
 // Ratebased (postpaid), optional expiry window + per-cycle reset.
 
 type QuotaType = "ABSOLUTE" | "RATEBASED";

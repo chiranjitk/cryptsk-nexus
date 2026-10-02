@@ -95,7 +95,7 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Network Health", section: "NETWORK" },
       { label: "RADIUS Proxy", section: "SERVICES" },
       { label: "Zone Budgets", section: "MONITORING" },
-      // POL-ENGINE-1: 24online-parity policy engine pages (Time Access superseded)
+      // POL-ENGINE-1: policy engine pages (Time Access superseded)
       { label: "Surfing Quota", section: "POLICY" },
       { label: "Access Time", section: "POLICY" },
       { label: "Bandwidth Policy", section: "POLICY" },

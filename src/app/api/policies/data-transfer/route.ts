@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 
 // ─── Data Transfer Policies (POL-ENGINE-1) ────────────────────────
-// 24online-parity volume quota: Absolute (capped) or Ratebased
+// volume quota: Absolute (capped) or Ratebased
 // (postpaid), rates on Total or Individual Up/Down, MB limits,
 // optional cycle reset + expiry window.
 

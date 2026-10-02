@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Fair Access Policies (POL-ENGINE-1) ──────────────────────────
-// 24online-parity FAP: after the data limit is crossed the subscriber
+// FAP: after the data limit is crossed the subscriber
 // is throttled to the switch-over bandwidth policy. Reset cycles
 // re-grant the quota (D/W/M × multiplier at reset time).
 

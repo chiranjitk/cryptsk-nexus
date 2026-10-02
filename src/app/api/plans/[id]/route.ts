@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, AuthError } from "@/lib/api-auth";
 import { syncGroupToFreeRADIUS, removeGroupFromFreeRADIUS } from "@/lib/radius-sync";
 
 // GET /api/plans/[id] — single plan
@@ -15,6 +15,12 @@ export async function GET(
       where: { id },
       include: {
         _count: { select: { Subscriber: true } },
+        SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true, allottedMinutes: true, expiryDays: true, cycleType: true } },
+        AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true, _count: { select: { slots: true } } } },
+        BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true, policyType: true, policyFor: true } },
+        DataTransferPolicy: { select: { id: true, name: true, scheme: true, totalLimitMb: true, cycleType: true } },
+        FairAccessPolicy: { select: { id: true, name: true, fapType: true, dataOn: true, limitMb: true } },
+        IpPool: { select: { id: true, name: true, cidr: true, frPoolName: true } },
       },
     });
 
@@ -93,14 +99,42 @@ export async function PUT(
         ...(body.bandwidthPolicyId !== undefined && { bandwidthPolicyId: body.bandwidthPolicyId || null }),
         ...(body.dataTransferPolicyId !== undefined && { dataTransferPolicyId: body.dataTransferPolicyId || null }),
         ...(body.fairAccessPolicyId !== undefined && { fairAccessPolicyId: body.fairAccessPolicyId || null }),
+        // POL-ENGINE-2: package form fields (empty string / null unbinds where applicable)
+        ...(body.billingScheme !== undefined && { billingScheme: String(body.billingScheme).toUpperCase() === "POSTPAID" ? "POSTPAID" : "PREPAID" }),
+        ...(body.availableFor !== undefined && {
+          availableFor: Array.isArray(body.availableFor)
+            ? body.availableFor.filter((t: string) => ["REGISTRATION", "RENEWAL"].includes(t)).join(",")
+            : String(body.availableFor || "").split(",").map((t: string) => t.trim()).filter((t: string) => ["REGISTRATION", "RENEWAL"].includes(t)).join(","),
+        }),
+        ...(body.onlinePurchaseable !== undefined && { onlinePurchaseable: Boolean(body.onlinePurchaseable) }),
+        ...(body.discountAmount !== undefined && { discountAmount: Number(body.discountAmount) || 0 }),
+        ...(body.discountIsPercent !== undefined && { discountIsPercent: Boolean(body.discountIsPercent) }),
+        ...(body.macBinding !== undefined && { macBinding: Boolean(body.macBinding) }),
+        ...(body.priority !== undefined && { priority: body.priority === null || body.priority === "" ? null : Number(body.priority) }),
+        ...(body.idleTimeoutType !== undefined && { idleTimeoutType: ["NONE", "LIVE_REQUEST", "DATA_TRANSFER"].includes(String(body.idleTimeoutType).toUpperCase()) ? String(body.idleTimeoutType).toUpperCase() : "NONE" }),
+        ...(body.idleTimeoutMin !== undefined && { idleTimeoutMin: body.idleTimeoutMin === null || body.idleTimeoutMin === "" ? null : Number(body.idleTimeoutMin) }),
+        ...(body.expiryBasis !== undefined && { expiryBasis: ["GLOBAL", "FIXED_DATE", "FIXED_DATETIME"].includes(String(body.expiryBasis).toUpperCase()) ? String(body.expiryBasis).toUpperCase() : "GLOBAL" }),
+        ...(body.fixedExpiryAt !== undefined && {
+          fixedExpiryAt: body.fixedExpiryAt ? (isNaN(new Date(body.fixedExpiryAt).getTime()) ? null : new Date(body.fixedExpiryAt)) : null,
+        }),
+        ...(body.expireTimeOfDay !== undefined && { expireTimeOfDay: String(body.expireTimeOfDay || "23:59:59") }),
+        ...(body.ipPoolId !== undefined && { ipPoolId: body.ipPoolId || null }),
+        ...(body.cycleType !== undefined && { cycleType: ["NONE", "WEEKLY", "MONTHLY"].includes(String(body.cycleType).toUpperCase()) ? String(body.cycleType).toUpperCase() : "NONE" }),
+        ...(body.billingDay !== undefined && { billingDay: body.billingDay === null || body.billingDay === "" ? null : Number(body.billingDay) }),
+        ...(body.cycleMultiplier !== undefined && { cycleMultiplier: body.cycleMultiplier === null || body.cycleMultiplier === "" ? null : Number(body.cycleMultiplier) }),
+        ...(body.cycleAmountBasis !== undefined && { cycleAmountBasis: ["ACTUAL_DAYS", "FULL_AMOUNT"].includes(String(body.cycleAmountBasis).toUpperCase()) ? String(body.cycleAmountBasis).toUpperCase() : "ACTUAL_DAYS" }),
+        ...(body.quotaChargeBasis !== undefined && { quotaChargeBasis: ["ACTUAL_DAYS", "FULL_AMOUNT"].includes(String(body.quotaChargeBasis).toUpperCase()) ? String(body.quotaChargeBasis).toUpperCase() : "ACTUAL_DAYS" }),
+        ...(body.cyclePrice !== undefined && { cyclePrice: body.cyclePrice === null || body.cyclePrice === "" ? null : Number(body.cyclePrice) }),
+        ...(body.cycleDays !== undefined && { cycleDays: body.cycleDays === null || body.cycleDays === "" ? null : Number(body.cycleDays) }),
       },
       include: {
         _count: { select: { Subscriber: true } },
-        SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true } },
-        AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true } },
-        BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true } },
-        DataTransferPolicy: { select: { id: true, name: true, totalLimitMb: true } },
-        FairAccessPolicy: { select: { id: true, name: true, limitMb: true } },
+        SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true, allottedMinutes: true, expiryDays: true, cycleType: true } },
+        AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true, _count: { select: { slots: true } } } },
+        BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true, policyType: true, policyFor: true } },
+        DataTransferPolicy: { select: { id: true, name: true, scheme: true, totalLimitMb: true, cycleType: true } },
+        FairAccessPolicy: { select: { id: true, name: true, fapType: true, dataOn: true, limitMb: true } },
+        IpPool: { select: { id: true, name: true, cidr: true, frPoolName: true } },
       },
     });
 

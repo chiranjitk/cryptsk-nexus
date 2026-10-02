@@ -6,9 +6,10 @@ import { apiFetch, formatINR } from "@/lib/utils";
 import {
   Zap, Plus, Pencil, Trash2, Star, Check, Archive, StarOff, LayoutGrid, List, Search, Copy,
   BarChart3, GitCompare, ArrowRightLeft, ChevronLeft, ChevronRight, Users, DollarSign,
-  PieChart as PieChartIcon, TrendingUp, GripVertical,
+  PieChart as PieChartIcon, TrendingUp, GripVertical, Eye,
   ArrowDown, ArrowUp, Home, Briefcase, Building2, Wifi, Cable, Radio, Layers,
-  Info, Settings, Tag, Gauge, Sparkles, Globe, Link2,
+  Sparkles, Globe,
+  Timer, CalendarClock, Gauge, ArrowDownUp, Hourglass, Network, Link2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,16 +32,26 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { PlanFormDialog, planFormDefaults, PlanFormState } from "@/components/pages/plans/plan-form-dialog";
+import { PlanDetailsSheet, PlanDetail } from "@/components/pages/plans/plan-details-sheet";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
 import { toast } from "sonner";
 import { useModuleStore } from "@/store/module-store";
-import PlanPolicyBindingTab from "@/components/pages/policies/plan-policy-binding-tab";
 import PageHeader from "@/components/page-header";
 
 // ─── Types ──────────────────────────────────────────────
+// Policy/pool relation shapes returned by the enriched plans API
+interface PlanSurfingQuota { id: string; name: string; quotaType: string; allottedMinutes: number | null; expiryDays: number | null; cycleType: string }
+interface PlanAccessTime { id: string; name: string; defaultStrategy: string; _count: { slots: number } }
+interface PlanBandwidth { id: string; name: string; downloadKbps: number; uploadKbps: number; policyType: string; policyFor: string }
+interface PlanDataTransfer { id: string; name: string; scheme: string; totalLimitMb: number | null; cycleType: string }
+interface PlanFairAccess { id: string; name: string; fapType: string; dataOn: string; limitMb: number }
+interface PlanPool { id: string; name: string; cidr: string; frPoolName: string }
+
 interface Plan {
   id: string; name: string; description: string; category: string;
   downloadSpeed: number; uploadSpeed: number; speedUnit: string;
@@ -57,6 +68,24 @@ interface Plan {
   ipv6PrefixDelegation: boolean;
   ipv6DefaultPoolId: string | null;
   ipv6AssignmentMode: string;
+  // POL-ENGINE-2: package form fields
+  billingScheme: string;
+  availableFor: string;
+  onlinePurchaseable: boolean;
+  discountAmount: number; discountIsPercent: boolean;
+  macBinding: boolean; priority: number | null;
+  idleTimeoutType: string; idleTimeoutMin: number | null;
+  expiryBasis: string; fixedExpiryAt: string | null; expireTimeOfDay: string;
+  ipPoolId: string | null;
+  cycleType: string; billingDay: number | null; cycleMultiplier: number | null;
+  cycleAmountBasis: string; quotaChargeBasis: string;
+  cyclePrice: number | null; cycleDays: number | null;
+  SurfingQuotaPolicy?: PlanSurfingQuota | null;
+  AccessTimePolicy?: PlanAccessTime | null;
+  BandwidthPolicy?: PlanBandwidth | null;
+  DataTransferPolicy?: PlanDataTransfer | null;
+  FairAccessPolicy?: PlanFairAccess | null;
+  IpPool?: PlanPool | null;
   _count: { subscribers: number };
 }
 
@@ -99,23 +128,7 @@ const CATEGORY_ICON_COLORS: Record<string, string> = {
 
 const PIE_COLORS = ["#22c55e", "#3b82f6", "#f97316", "#a855f7", "#06b6d4", "#ef4444", "#eab308", "#ec4899"];
 
-const defaultForm = {
-  name: "", description: "", category: "FTTH" as string, status: "ACTIVE" as string,
-  downloadSpeed: 50, uploadSpeed: 50, speedUnit: "MBPS" as string,
-  downloadSpeedFup: null as number | null, uploadSpeedFup: null as number | null,
-  dataLimitGb: null as number | null, dataLimitUnit: "GB" as string,
-  priceMonthly: 499, priceQuarterly: null as number | null,
-  priceHalfYearly: null as number | null, priceYearly: null as number | null,
-  installationCharge: 0, securityDeposit: 0, routerRental: 0,
-  validityDays: 30, cgstPercent: 9, sgstPercent: 9, igstPercent: 0,
-  contentionRatio: "1:10", isPopular: false, sortOrder: 0,
-  burstSpeed: null as number | null, burstDuration: null as number | null,
-  maxConcurrentSessions: 1, freeTrialDays: 0, slaUptime: 99.5,
-  ipv6Enabled: false,
-  ipv6PrefixDelegation: false,
-  ipv6DefaultPoolId: null as string | null,
-  ipv6AssignmentMode: "SLAAC" as string,
-};
+const defaultForm = planFormDefaults;
 
 export default function PlansPage() {
   const queryClient = useQueryClient();
@@ -140,6 +153,8 @@ export default function PlansPage() {
   const [subscribersOpen, setSubscribersOpen] = useState(false);
   const [subscribersPlanId, setSubscribersPlanId] = useState<string | null>(null);
   const [subscribersPlanName, setSubscribersPlanName] = useState<string>("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsPlan, setDetailsPlan] = useState<PlanDetail | null>(null);
 
   const [form, setForm] = useState({ ...defaultForm });
   const [editForm, setEditForm] = useState({ ...defaultForm });
@@ -263,6 +278,32 @@ export default function PlansPage() {
       ipv6PrefixDelegation: plan.ipv6PrefixDelegation ?? false,
       ipv6DefaultPoolId: plan.ipv6DefaultPoolId ?? null,
       ipv6AssignmentMode: plan.ipv6AssignmentMode || "SLAAC",
+      // POL-ENGINE-2: package form fields
+      billingScheme: plan.billingScheme || "PREPAID",
+      availableFor: (plan.availableFor || "REGISTRATION,RENEWAL").split(",").map((t) => t.trim()).filter(Boolean),
+      onlinePurchaseable: plan.onlinePurchaseable ?? true,
+      discountAmount: plan.discountAmount ?? 0,
+      discountIsPercent: plan.discountIsPercent ?? false,
+      macBinding: plan.macBinding ?? false,
+      priority: plan.priority ?? null,
+      idleTimeoutType: plan.idleTimeoutType || "NONE",
+      idleTimeoutMin: plan.idleTimeoutMin ?? null,
+      expiryBasis: plan.expiryBasis || "GLOBAL",
+      fixedExpiryAt: plan.fixedExpiryAt ? new Date(plan.fixedExpiryAt).toISOString().slice(0, 16) : "",
+      expireTimeOfDay: plan.expireTimeOfDay || "23:59:59",
+      surfingQuotaPolicyId: plan.SurfingQuotaPolicy?.id || "",
+      accessTimePolicyId: plan.AccessTimePolicy?.id || "",
+      bandwidthPolicyId: plan.BandwidthPolicy?.id || "",
+      dataTransferPolicyId: plan.DataTransferPolicy?.id || "",
+      fairAccessPolicyId: plan.FairAccessPolicy?.id || "",
+      ipPoolId: plan.IpPool?.id || "",
+      cycleType: plan.cycleType || "NONE",
+      billingDay: plan.billingDay ?? null,
+      cycleMultiplier: plan.cycleMultiplier ?? null,
+      cycleAmountBasis: plan.cycleAmountBasis || "ACTUAL_DAYS",
+      quotaChargeBasis: plan.quotaChargeBasis || "ACTUAL_DAYS",
+      cyclePrice: plan.cyclePrice ?? null,
+      cycleDays: plan.cycleDays ?? null,
     });
     setEditOpen(true);
   };
@@ -290,6 +331,32 @@ export default function PlansPage() {
       ipv6PrefixDelegation: plan.ipv6PrefixDelegation ?? false,
       ipv6DefaultPoolId: plan.ipv6DefaultPoolId ?? null,
       ipv6AssignmentMode: plan.ipv6AssignmentMode || "SLAAC",
+      // POL-ENGINE-2: package form fields
+      billingScheme: plan.billingScheme || "PREPAID",
+      availableFor: (plan.availableFor || "REGISTRATION,RENEWAL").split(",").map((t) => t.trim()).filter(Boolean),
+      onlinePurchaseable: plan.onlinePurchaseable ?? true,
+      discountAmount: plan.discountAmount ?? 0,
+      discountIsPercent: plan.discountIsPercent ?? false,
+      macBinding: plan.macBinding ?? false,
+      priority: plan.priority ?? null,
+      idleTimeoutType: plan.idleTimeoutType || "NONE",
+      idleTimeoutMin: plan.idleTimeoutMin ?? null,
+      expiryBasis: plan.expiryBasis || "GLOBAL",
+      fixedExpiryAt: plan.fixedExpiryAt ? new Date(plan.fixedExpiryAt).toISOString().slice(0, 16) : "",
+      expireTimeOfDay: plan.expireTimeOfDay || "23:59:59",
+      surfingQuotaPolicyId: plan.SurfingQuotaPolicy?.id || "",
+      accessTimePolicyId: plan.AccessTimePolicy?.id || "",
+      bandwidthPolicyId: plan.BandwidthPolicy?.id || "",
+      dataTransferPolicyId: plan.DataTransferPolicy?.id || "",
+      fairAccessPolicyId: plan.FairAccessPolicy?.id || "",
+      ipPoolId: plan.IpPool?.id || "",
+      cycleType: plan.cycleType || "NONE",
+      billingDay: plan.billingDay ?? null,
+      cycleMultiplier: plan.cycleMultiplier ?? null,
+      cycleAmountBasis: plan.cycleAmountBasis || "ACTUAL_DAYS",
+      quotaChargeBasis: plan.quotaChargeBasis || "ACTUAL_DAYS",
+      cyclePrice: plan.cyclePrice ?? null,
+      cycleDays: plan.cycleDays ?? null,
     });
     setAddOpen(true);
     toast.info(`Duplicated "${plan.name}" — edit and save to create`);
@@ -315,6 +382,11 @@ export default function PlansPage() {
     setSubscribersPlanId(plan.id);
     setSubscribersPlanName(plan.name);
     setSubscribersOpen(true);
+  };
+
+  const openDetails = (plan: Plan) => {
+    setDetailsPlan(plan as unknown as PlanDetail);
+    setDetailsOpen(true);
   };
 
   const handleCreate = () => {
@@ -429,7 +501,6 @@ export default function PlansPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="plans" className="gap-1.5"><Zap className="h-3.5 w-3.5" />Plans</TabsTrigger>
-          <TabsTrigger value="policies" className="gap-1.5"><Link2 className="h-3.5 w-3.5" />Policy Binding</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="h-3.5 w-3.5" />Analytics</TabsTrigger>
         </TabsList>
 
@@ -516,6 +587,9 @@ export default function PlansPage() {
                         <Badge variant={plan.status === "ACTIVE" ? "default" : "secondary"} className="text-[10px] shrink-0">
                           {plan.status}
                         </Badge>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${plan.billingScheme === "POSTPAID" ? "border-violet-300 text-violet-700 dark:text-violet-400" : "border-emerald-300 text-emerald-700 dark:text-emerald-400"}`}>
+                          {(plan.billingScheme || "PREPAID").toLowerCase()}
+                        </Badge>
                       </div>
                       <CardTitle className="text-lg font-bold">{plan.name}</CardTitle>
                       {plan.description && <p className="text-xs text-muted-foreground line-clamp-2">{plan.description}</p>}
@@ -597,6 +671,23 @@ export default function PlansPage() {
                           <button type="button" onClick={() => openSubscribers(plan)} title="View subscribers on this plan" className="font-semibold text-red-600 hover:underline cursor-pointer flex items-center gap-1 min-w-0">
                             <Users className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                             <span className="truncate">{plan._count.subscribers}</span>
+                          </button>
+                        </div>
+                        {/* Policy mapping strip */}
+                        <div className="flex flex-wrap gap-1 pt-1.5 border-t border-dashed">
+                          <PolicyChip icon={Timer} name={plan.SurfingQuotaPolicy?.name} label="SQ" title="Surfing Quota Policy" />
+                          <PolicyChip icon={CalendarClock} name={plan.AccessTimePolicy?.name} label="AT" title="Access Time Policy" />
+                          <PolicyChip icon={Gauge} name={plan.BandwidthPolicy?.name} label="BW" title="Bandwidth Policy" />
+                          <PolicyChip icon={ArrowDownUp} name={plan.DataTransferPolicy?.name} label="DT" title="Data Transfer Policy" />
+                          <PolicyChip icon={Hourglass} name={plan.FairAccessPolicy?.name} label="FAP" title="Fair Access Policy" />
+                          <PolicyChip icon={Network} name={plan.IpPool?.name} label="Pool" title="IP Pool Binding" />
+                          <button
+                            type="button"
+                            onClick={() => openDetails(plan)}
+                            className="ml-auto text-[10px] text-red-600 hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+                            title="View all package details"
+                          >
+                            <Eye className="h-3 w-3" aria-hidden="true" />details
                           </button>
                         </div>
                         {isModuleEnabled("ipv6") && plan.ipv6Enabled && (
@@ -704,7 +795,14 @@ export default function PlansPage() {
                           <TableHead className="text-xs w-8"></TableHead>
                           <TableHead className="text-xs w-8"></TableHead>
                           <TableHead className="text-xs">Plan Name</TableHead>
-                          <TableHead className="text-xs">Category</TableHead>
+                          <TableHead className="text-xs">Type</TableHead>
+                          <TableHead className="text-xs">Surfing Quota</TableHead>
+                          <TableHead className="text-xs hidden xl:table-cell">Access Time</TableHead>
+                          <TableHead className="text-xs hidden xl:table-cell">Bandwidth</TableHead>
+                          <TableHead className="text-xs hidden 2xl:table-cell">Data Transfer</TableHead>
+                          <TableHead className="text-xs hidden 2xl:table-cell">Fair Access</TableHead>
+                          <TableHead className="text-xs hidden lg:table-cell">IP Pool</TableHead>
+                          <TableHead className="text-xs">Validity</TableHead>
                           <TableHead className="text-xs">Speed</TableHead>
                           <TableHead className="text-xs">Monthly Price</TableHead>
                           <TableHead className="text-xs">Subscribers</TableHead>
@@ -750,7 +848,23 @@ export default function PlansPage() {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell><Badge variant="outline" className="text-[10px]">{CATEGORY_LABELS[plan.category]}</Badge></TableCell>
+                            <TableCell>
+                              <div className="flex flex-col gap-0.5">
+                                <Badge variant="outline" className={`text-[10px] w-fit ${plan.billingScheme === "POSTPAID" ? "border-violet-300 text-violet-700 dark:text-violet-400" : "border-emerald-300 text-emerald-700 dark:text-emerald-400"}`}>
+                                  {plan.billingScheme || "PREPAID"}
+                                </Badge>
+                                <span className="text-[10px] text-muted-foreground">{CATEGORY_LABELS[plan.category]} · {(plan.availableFor || "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).join("/") || "—"}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {plan.SurfingQuotaPolicy ? <span title={plan.SurfingQuotaPolicy.name}>{plan.SurfingQuotaPolicy.name}</span> : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                            <TableCell className="text-xs hidden xl:table-cell">{plan.AccessTimePolicy ? <span title={plan.AccessTimePolicy.name}>{plan.AccessTimePolicy.name}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                            <TableCell className="text-xs hidden xl:table-cell">{plan.BandwidthPolicy ? <span title={plan.BandwidthPolicy.name}>{plan.BandwidthPolicy.name}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                            <TableCell className="text-xs hidden 2xl:table-cell">{plan.DataTransferPolicy ? <span title={plan.DataTransferPolicy.name}>{plan.DataTransferPolicy.name}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                            <TableCell className="text-xs hidden 2xl:table-cell">{plan.FairAccessPolicy ? <span title={plan.FairAccessPolicy.name}>{plan.FairAccessPolicy.name}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                            <TableCell className="text-xs hidden lg:table-cell">{plan.IpPool ? <span title={plan.IpPool.cidr}>{plan.IpPool.name}</span> : <span className="text-muted-foreground">Default</span>}</TableCell>
+                            <TableCell className="text-xs">{plan.validityDays}d</TableCell>
                             <TableCell className="text-sm">{plan.downloadSpeed}/{plan.uploadSpeed} {plan.speedUnit}</TableCell>
                             <TableCell className="text-sm font-semibold">{formatINR(plan.priceMonthly)}</TableCell>
                             <TableCell className="text-sm"><button type="button" onClick={() => openSubscribers(plan)} title="View subscribers on this plan" className="font-semibold text-red-600 hover:underline cursor-pointer">{plan._count.subscribers}</button></TableCell>
@@ -769,6 +883,7 @@ export default function PlansPage() {
                             )}
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetails(plan)} title="View all details" aria-label="View all details"><Eye className="h-3.5 w-3.5" aria-hidden="true" /></Button>
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(plan)} title="Edit plan" aria-label="Edit plan"><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></Button>
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDuplicate(plan)} title="Clone plan" aria-label="Clone plan"><Copy className="h-3.5 w-3.5" aria-hidden="true" /></Button>
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMigrate(plan)} title="Migrate subscribers" aria-label="Migrate subscribers"><ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" /></Button>
@@ -827,11 +942,6 @@ export default function PlansPage() {
               )}
             </div>
           )}
-        </TabsContent>
-
-        {/* ═══════ POLICY BINDING TAB (POL-ENGINE-1) ═══════ */}
-        <TabsContent value="policies" className="space-y-6 animate-in fade-in duration-200">
-          <PlanPolicyBindingTab />
         </TabsContent>
 
         {/* ═══════ ANALYTICS TAB ═══════ */}
@@ -1077,6 +1187,13 @@ export default function PlansPage() {
               <TableBody>
                 {[
                   { label: "Category", fn: (p: Plan) => CATEGORY_LABELS[p.category] },
+                  { label: "Billing Scheme", fn: (p: Plan) => p.billingScheme || "PREPAID" },
+                  { label: "Surfing Quota Policy", fn: (p: Plan) => p.SurfingQuotaPolicy?.name || "—" },
+                  { label: "Access Time Policy", fn: (p: Plan) => p.AccessTimePolicy?.name || "—" },
+                  { label: "Bandwidth Policy", fn: (p: Plan) => p.BandwidthPolicy?.name || "—" },
+                  { label: "Data Transfer Policy", fn: (p: Plan) => p.DataTransferPolicy?.name || "—" },
+                  { label: "Fair Access Policy", fn: (p: Plan) => p.FairAccessPolicy?.name || "—" },
+                  { label: "IP Pool", fn: (p: Plan) => p.IpPool?.name || "Default" },
                   { label: "Status", fn: (p: Plan) => p.status },
                   { label: "Download Speed", fn: (p: Plan) => `${p.downloadSpeed} ${p.speedUnit}` },
                   { label: "Upload Speed", fn: (p: Plan) => `${p.uploadSpeed} ${p.speedUnit}` },
@@ -1208,394 +1325,35 @@ export default function PlansPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ─── Plan Details Sheet (all created details) ─── */}
+      <PlanDetailsSheet
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        plan={detailsPlan}
+        onEdit={(plan) => {
+          setDetailsOpen(false);
+          const listPlan = plans.find((p) => p.id === plan.id);
+          if (listPlan) openEdit(listPlan);
+        }}
+      />
     </div>
   );
 }
 
-// ─── IPv6 Configuration Section ──────────────────────────────────
-function Ipv6Section({
-  form, setForm,
+// ─── Policy chip for plan cards ────────────────────────────────────
+function PolicyChip({
+  icon: Icon, name, label, title,
 }: {
-  form: typeof defaultForm;
-  setForm: React.Dispatch<React.SetStateAction<typeof defaultForm>>;
+  icon: React.ElementType; name?: string | null; label: string; title: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const { data: dhcpv6PoolsData } = useQuery<{ items: { id: string; prefix: string; name: string; description: string }[] }>({
-    queryKey: ["dhcpv6-subnets-list"],
-    queryFn: () => apiFetch("/api/dhcpv6/subnets?limit=100"),
-    enabled: form.ipv6Enabled,
-  });
-  const dhcpv6Pools = dhcpv6PoolsData?.items ?? [];
-
   return (
-    <>
-      <Separator />
-      <button
-        type="button"
-        className="flex items-center justify-between w-full py-1 text-sm font-semibold text-foreground hover:text-foreground/80 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span className="flex items-center gap-2">
-          <span className="h-5 w-5 rounded flex items-center justify-center bg-muted">
-            <Globe className="h-3 w-3 text-muted-foreground" />
-          </span>
-          IPv6 Configuration
-          {form.ipv6Enabled && (
-            <Badge className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800">Active</Badge>
-          )}
-        </span>
-        <ChevronRight className={`h-4 w-4 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`} />
-      </button>
-      {expanded && (
-        <div className="space-y-3 pl-1">
-          <div className="flex items-center justify-between">
-            <Label>Enable IPv6 for this Plan</Label>
-            <Switch checked={form.ipv6Enabled} onCheckedChange={(v) => setForm({ ...form, ipv6Enabled: v })} />
-          </div>
-
-          {form.ipv6Enabled && (
-            <div className="space-y-3 pl-0.5">
-              <Separator className="my-1" />
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>IPv6 Prefix Delegation</Label>
-                  <p className="text-[11px] text-muted-foreground">Give subscribers a /64 prefix for their home router</p>
-                </div>
-                <Switch checked={form.ipv6PrefixDelegation} onCheckedChange={(v) => setForm({ ...form, ipv6PrefixDelegation: v })} />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>IPv6 Assignment Mode</Label>
-                <Select value={form.ipv6AssignmentMode} onValueChange={(v) => setForm({ ...form, ipv6AssignmentMode: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="SLAAC">SLAAC</SelectItem>
-                    <SelectItem value="DHCPV6">DHCPv6</SelectItem>
-                    <SelectItem value="PD_ONLY">PD Only</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Default DHCPv6 Pool</Label>
-                <Select value={form.ipv6DefaultPoolId ?? ""} onValueChange={(v) => setForm({ ...form, ipv6DefaultPoolId: v || null })}>
-                  <SelectTrigger><SelectValue placeholder="Select a DHCPv6 pool..." /></SelectTrigger>
-                  <SelectContent>
-                    {dhcpv6Pools.length === 0 && (
-                      <SelectItem value="none" disabled>No pools available</SelectItem>
-                    )}
-                    {dhcpv6Pools.map((pool) => (
-                      <SelectItem key={pool.id} value={pool.id}>
-                        {pool.prefix} — {pool.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] text-muted-foreground">
-                  Select a default IPv6 pool for assigning addresses to subscribers on this plan
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-// ─── Shared Plan Form Dialog Component ──────────────────────────
-function PlanFormDialog({
-  open, onOpenChange, title, description, form, setForm, onSubmit, isPending, submitLabel,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  title: string;
-  description: string;
-  form: typeof defaultForm;
-  setForm: React.Dispatch<React.SetStateAction<typeof defaultForm>>;
-  onSubmit: () => void;
-  isPending: boolean;
-  submitLabel: string;
-}) {
-  const { isModuleEnabled } = useModuleStore();
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["basic", "speed", "pricing", "advanced"]));
-
-  const toggleSection = (section: string) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(section)) next.delete(section);
-      else next.add(section);
-      return next;
-    });
-  };
-
-  const sectionHeader = (section: string, label: string, icon: React.ElementType) => {
-    const Icon = icon;
-    return (
-    <button
-      type="button"
-      className="flex items-center justify-between w-full py-1 text-sm font-semibold text-foreground hover:text-foreground/80 transition-colors"
-      onClick={() => toggleSection(section)}
+    <span
+      className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md border ${name ? "bg-muted-foreground/5 border-border text-foreground" : "border-dashed border-border/60 text-muted-foreground/50"}`}
+      title={name ? `${title}: ${name}` : `${title}: not bound`}
     >
-      <span className="flex items-center gap-2">
-        <span className="h-5 w-5 rounded flex items-center justify-center bg-muted">
-          <Icon className="h-3 w-3 text-muted-foreground" />
-        </span>
-        {label}
-      </span>
-      <ChevronRight className={`h-4 w-4 transition-transform duration-200 ${expandedSections.has(section) ? "rotate-90" : ""}`} />
-    </button>
-  );
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[640px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          {/* ─── BASIC ─── */}
-          <Separator />
-          {sectionHeader("basic", "Basic Information", Info)}
-          {expandedSections.has("basic") && (
-            <div className="space-y-3 pl-1">
-              <div className="space-y-1.5">
-                <Label>Plan Name *</Label>
-                <Input placeholder="e.g., Fiber 100 Mbps" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Description</Label>
-                <Textarea placeholder="Plan description..." value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Category</Label>
-                  <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FTTH">FTTH</SelectItem>
-                      <SelectItem value="WIRELESS">Wireless</SelectItem>
-                      <SelectItem value="CABLE">Cable</SelectItem>
-                      <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
-                      <SelectItem value="HOTSPOT">Hotspot</SelectItem>
-                      <SelectItem value="COMBO">Combo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Status</Label>
-                  <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ACTIVE">Active</SelectItem>
-                      <SelectItem value="ARCHIVED">Archived</SelectItem>
-                      <SelectItem value="HIDDEN">Hidden</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Sort Order</Label>
-                  <Input type="number" placeholder="0" value={form.sortOrder} onChange={(e) => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} />
-                </div>
-                <div className="flex items-end gap-3 pb-0.5">
-                  <Switch checked={form.isPopular} onCheckedChange={(v) => setForm({ ...form, isPopular: v })} />
-                  <Label>Mark as Popular</Label>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ─── SPEED & DATA ─── */}
-          <Separator />
-          {sectionHeader("speed", "Speed & Data", Gauge)}
-          {expandedSections.has("speed") && (
-            <div className="space-y-3 pl-1">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Download Speed *</Label>
-                  <Input type="number" value={form.downloadSpeed} onChange={(e) => setForm({ ...form, downloadSpeed: parseInt(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Upload Speed</Label>
-                  <Input type="number" value={form.uploadSpeed} onChange={(e) => setForm({ ...form, uploadSpeed: parseInt(e.target.value) || 0 })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Speed Unit</Label>
-                  <Select value={form.speedUnit} onValueChange={(v) => setForm({ ...form, speedUnit: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MBPS">Mbps</SelectItem>
-                      <SelectItem value="KBPS">Kbps</SelectItem>
-                      <SelectItem value="GBPS">Gbps</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Data Limit</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Unlimited"
-                      value={form.dataLimitUnit === "UNLIMITED" ? "" : (form.dataLimitGb ?? "")}
-                      onChange={(e) => setForm({ ...form, dataLimitGb: e.target.value ? parseFloat(e.target.value) : null, dataLimitUnit: e.target.value ? form.dataLimitUnit : "UNLIMITED" })}
-                      className="flex-1"
-                    />
-                    <Select value={form.dataLimitUnit} onValueChange={(v) => setForm({ ...form, dataLimitUnit: v })}>
-                      <SelectTrigger className="w-[90px]"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="GB">GB</SelectItem>
-                        <SelectItem value="TB">TB</SelectItem>
-                        <SelectItem value="UNLIMITED">∞</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-2 rounded-md bg-muted/50">
-                <p className="text-xs font-medium text-muted-foreground mb-2">FUP Speed (after data limit)</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>FUP Download Speed</Label>
-                    <Input type="number" placeholder="Post-FUP download" value={form.downloadSpeedFup ?? ""} onChange={(e) => setForm({ ...form, downloadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>FUP Upload Speed</Label>
-                    <Input type="number" placeholder="Post-FUP upload" value={form.uploadSpeedFup ?? ""} onChange={(e) => setForm({ ...form, uploadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ─── PRICING ─── */}
-          <Separator />
-          {sectionHeader("pricing", "Pricing", DollarSign)}
-          {expandedSections.has("pricing") && (
-            <div className="space-y-3 pl-1">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Monthly Price *</Label>
-                  <Input type="number" value={form.priceMonthly} onChange={(e) => setForm({ ...form, priceMonthly: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Installation Charge</Label>
-                  <Input type="number" value={form.installationCharge} onChange={(e) => setForm({ ...form, installationCharge: parseFloat(e.target.value) || 0 })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Quarterly Price</Label>
-                  <Input type="number" placeholder="Optional" value={form.priceQuarterly ?? ""} onChange={(e) => setForm({ ...form, priceQuarterly: e.target.value ? parseFloat(e.target.value) : null })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Half-Yearly Price</Label>
-                  <Input type="number" placeholder="Optional" value={form.priceHalfYearly ?? ""} onChange={(e) => setForm({ ...form, priceHalfYearly: e.target.value ? parseFloat(e.target.value) : null })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Yearly Price</Label>
-                  <Input type="number" placeholder="Optional" value={form.priceYearly ?? ""} onChange={(e) => setForm({ ...form, priceYearly: e.target.value ? parseFloat(e.target.value) : null })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Security Deposit</Label>
-                  <Input type="number" value={form.securityDeposit} onChange={(e) => setForm({ ...form, securityDeposit: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Router Rental (/mo)</Label>
-                  <Input type="number" value={form.routerRental} onChange={(e) => setForm({ ...form, routerRental: parseFloat(e.target.value) || 0 })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label>CGST (%)</Label>
-                  <Input type="number" step="0.5" value={form.cgstPercent} onChange={(e) => setForm({ ...form, cgstPercent: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>SGST (%)</Label>
-                  <Input type="number" step="0.5" value={form.sgstPercent} onChange={(e) => setForm({ ...form, sgstPercent: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>IGST (%)</Label>
-                  <Input type="number" step="0.5" value={form.igstPercent} onChange={(e) => setForm({ ...form, igstPercent: parseFloat(e.target.value) || 0 })} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ─── ADVANCED ─── */}
-          <Separator />
-          {sectionHeader("advanced", "Advanced Settings", Settings)}
-          {expandedSections.has("advanced") && (
-            <div className="space-y-3 pl-1">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Contention Ratio</Label>
-                  <Select value={form.contentionRatio} onValueChange={(v) => setForm({ ...form, contentionRatio: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1:4">1:4 (Premium)</SelectItem>
-                      <SelectItem value="1:8">1:8 (Standard)</SelectItem>
-                      <SelectItem value="1:10">1:10 (Normal)</SelectItem>
-                      <SelectItem value="1:16">1:16 (Economy)</SelectItem>
-                      <SelectItem value="1:20">1:20 (Budget)</SelectItem>
-                      <SelectItem value="1:25">1:25 (Basic)</SelectItem>
-                      <SelectItem value="1:50">1:50 (Shared)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Validity (days)</Label>
-                  <Input type="number" value={form.validityDays} onChange={(e) => setForm({ ...form, validityDays: parseInt(e.target.value) || 30 })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Burst Speed ({form.speedUnit})</Label>
-                  <Input type="number" placeholder="Optional" value={form.burstSpeed ?? ""} onChange={(e) => setForm({ ...form, burstSpeed: e.target.value ? parseInt(e.target.value) : null })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Burst Duration (seconds)</Label>
-                  <Input type="number" placeholder="Optional" value={form.burstDuration ?? ""} onChange={(e) => setForm({ ...form, burstDuration: e.target.value ? parseInt(e.target.value) : null })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Max Concurrent Sessions</Label>
-                  <Input type="number" value={form.maxConcurrentSessions} onChange={(e) => setForm({ ...form, maxConcurrentSessions: parseInt(e.target.value) || 1 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Free Trial Days</Label>
-                  <Input type="number" value={form.freeTrialDays} onChange={(e) => setForm({ ...form, freeTrialDays: parseInt(e.target.value) || 0 })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>SLA Uptime (%)</Label>
-                  <Input type="number" step="0.1" value={form.slaUptime} onChange={(e) => setForm({ ...form, slaUptime: parseFloat(e.target.value) || 99.5 })} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        {isModuleEnabled("ipv6") && (
-          <Ipv6Section form={form} setForm={setForm} />
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending} className="bg-red-600 hover:bg-red-700 text-white">
-            {submitLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <Icon className="h-2.5 w-2.5" aria-hidden="true" />
+      <span className="max-w-[90px] truncate">{name || label}</span>
+    </span>
   );
 }

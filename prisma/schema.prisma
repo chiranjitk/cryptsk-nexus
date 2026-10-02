@@ -429,7 +429,7 @@ model BandwidthPolicy {
   fapUploadKbps       Int?
   fapDataLimitMb      Int?
   hardDataLimitMb     Int?
-  // POL-ENGINE-1: 24online-parity bandwidth policy attributes
+  // POL-ENGINE-1: bandwidth policy attributes
   policyFor           BwPolicyFor   @default(USER)
   policyType          BwPolicyType  @default(STRICT)
   totalKbps           Int?
@@ -2704,12 +2704,37 @@ model Plan {
   isPopular                Boolean                    @default(false)
   sortOrder                Int                        @default(0)
   groupId                  String?
-  // POL-ENGINE-1: 24online-parity policy bindings (each ≤1 per family)
+  // POL-ENGINE-1: policy bindings (each ≤1 per family)
   surfingQuotaPolicyId     String?
   accessTimePolicyId       String?
   bandwidthPolicyId        String?
   dataTransferPolicyId     String?
   fairAccessPolicyId       String?
+  // POL-ENGINE-2: package form — billing scheme, availability, discount
+  billingScheme            BillingScheme              @default(PREPAID)
+  availableFor             String                     @default("REGISTRATION,RENEWAL")
+  onlinePurchaseable       Boolean                    @default(true)
+  discountAmount           Float                      @default(0)
+  discountIsPercent        Boolean                    @default(false)
+  // POL-ENGINE-2: access & session control
+  macBinding               Boolean                    @default(false)
+  priority                 Int?
+  idleTimeoutType          IdleTimeoutType            @default(NONE)
+  idleTimeoutMin           Int?
+  // POL-ENGINE-2: expiry behaviour
+  expiryBasis              ExpiryBasis                @default(GLOBAL)
+  fixedExpiryAt            DateTime?
+  expireTimeOfDay          String                     @default("23:59:59")
+  // POL-ENGINE-2: IP pool binding
+  ipPoolId                 String?
+  // POL-ENGINE-2: postpaid billing schedule & cycle charging
+  cycleType                PlanCycleType              @default(NONE)
+  billingDay               Int?
+  cycleMultiplier          Int?
+  cycleAmountBasis         CycleAmountBasis           @default(ACTUAL_DAYS)
+  quotaChargeBasis         CycleAmountBasis           @default(ACTUAL_DAYS)
+  cyclePrice               Float?
+  cycleDays                Int?
   ipv6Enabled              Boolean                    @default(false)
   ipv6PrefixDelegation     Boolean                    @default(false)
   ipv6DefaultPoolId        String?
@@ -2722,6 +2747,7 @@ model Plan {
   RadiusGroup              RadiusGroup?               @relation(fields: [groupId], references: [id])
   PromotionPlan            PromotionPlan[]
   QosConfig                QosConfig[]
+  IpPool                   Subnet?                    @relation("PlanIpPool", fields: [ipPoolId], references: [id], onDelete: SetNull)
   RecurringInvoiceTemplate RecurringInvoiceTemplate[]
   Subscriber               Subscriber[]
   Voucher                  Voucher[]
@@ -3910,6 +3936,7 @@ model Subnet {
   Subnet                 Subnet?            @relation("SubnetToSubnet", fields: [parentId], references: [id])
   other_Subnet           Subnet[]           @relation("SubnetToSubnet")
   Vlan                   Vlan?              @relation(fields: [vlanId], references: [id])
+  Plan                   Plan[]             @relation("PlanIpPool")
   TcClassMapping         TcClassMapping[]
 
   @@index([allocationStrategy])
@@ -6114,9 +6141,38 @@ model PortalWalledGarden {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// POLICY ENGINE (POL-ENGINE-1) — 24online-parity ISP policy types.
+// POLICY ENGINE (POL-ENGINE-1) — ISP policy types.
 // Five policy families bind to Plans; each plan ≤1 policy per family.
 // ══════════════════════════════════════════════════════════════════
+
+// POL-ENGINE-2: package billing / control enums
+enum BillingScheme {
+  PREPAID
+  POSTPAID
+}
+
+enum IdleTimeoutType {
+  NONE
+  LIVE_REQUEST
+  DATA_TRANSFER
+}
+
+enum ExpiryBasis {
+  GLOBAL
+  FIXED_DATE
+  FIXED_DATETIME
+}
+
+enum PlanCycleType {
+  NONE
+  WEEKLY
+  MONTHLY
+}
+
+enum CycleAmountBasis {
+  ACTUAL_DAYS
+  FULL_AMOUNT
+}
 
 enum QuotaType {
   ABSOLUTE

@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Data Transfer Policies (POL-ENGINE-1) ────────────────────────
-// 24online-parity volume quota: Absolute (capped) or Ratebased
+// volume quota: Absolute (capped) or Ratebased
 // (postpaid), rates on Total or Individual Up/Down, MB limits,
 // optional cycle reset + expiry. Binds to Plans.
 

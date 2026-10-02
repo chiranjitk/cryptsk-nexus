@@ -44,11 +44,12 @@ export async function GET(req: NextRequest) {
         include: {
           _count: { select: { Subscriber: true } },
           RadiusGroup: true,
-          SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true } },
-          AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true } },
-          BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true } },
-          DataTransferPolicy: { select: { id: true, name: true, totalLimitMb: true } },
-          FairAccessPolicy: { select: { id: true, name: true, limitMb: true } },
+          SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true, allottedMinutes: true, expiryDays: true, cycleType: true } },
+          AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true, _count: { select: { slots: true } } } },
+          BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true, policyType: true, policyFor: true } },
+          DataTransferPolicy: { select: { id: true, name: true, scheme: true, totalLimitMb: true, cycleType: true } },
+          FairAccessPolicy: { select: { id: true, name: true, fapType: true, dataOn: true, limitMb: true } },
+          IpPool: { select: { id: true, name: true, cidr: true, frPoolName: true } },
         },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
         skip: (page - 1) * limit,
@@ -87,6 +88,13 @@ export async function POST(req: NextRequest) {
       freeTrialDays, slaUptime,
       ipv6Enabled, ipv6PrefixDelegation, ipv6DefaultPoolId, ipv6AssignmentMode,
       surfingQuotaPolicyId, accessTimePolicyId, bandwidthPolicyId, dataTransferPolicyId, fairAccessPolicyId,
+      // POL-ENGINE-2: package form fields
+      billingScheme, availableFor, onlinePurchaseable,
+      discountAmount, discountIsPercent,
+      macBinding, priority, idleTimeoutType, idleTimeoutMin,
+      expiryBasis, fixedExpiryAt, expireTimeOfDay,
+      ipPoolId,
+      cycleType, billingDay, cycleMultiplier, cycleAmountBasis, quotaChargeBasis, cyclePrice, cycleDays,
     } = body;
 
     if (!name) {
@@ -102,6 +110,40 @@ export async function POST(req: NextRequest) {
     // IPv6 validation
     if (ipv6AssignmentMode && ipv6AssignmentMode.trim() !== "" && !isValidAssignmentMode(ipv6AssignmentMode)) {
       return NextResponse.json({ success: false, error: "Invalid IPv6 assignment mode. Must be one of: SLAAC, DHCPV6, STATIC, PD_ONLY" }, { status: 400 });
+    }
+
+    // POL-ENGINE-2: enum whitelists + normalization
+    const BILLING_SCHEMES = ["PREPAID", "POSTPAID"];
+    const IDLE_TIMEOUT_TYPES = ["NONE", "LIVE_REQUEST", "DATA_TRANSFER"];
+    const EXPIRY_BASES = ["GLOBAL", "FIXED_DATE", "FIXED_DATETIME"];
+    const PLAN_CYCLE_TYPES = ["NONE", "WEEKLY", "MONTHLY"];
+    const CYCLE_AMOUNT_BASES = ["ACTUAL_DAYS", "FULL_AMOUNT"];
+    if (billingScheme && !BILLING_SCHEMES.includes(String(billingScheme).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid billing scheme. Must be PREPAID or POSTPAID" }, { status: 400 });
+    }
+    if (idleTimeoutType && !IDLE_TIMEOUT_TYPES.includes(String(idleTimeoutType).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid idle timeout type" }, { status: 400 });
+    }
+    if (expiryBasis && !EXPIRY_BASES.includes(String(expiryBasis).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid expiry basis" }, { status: 400 });
+    }
+    if (cycleType && !PLAN_CYCLE_TYPES.includes(String(cycleType).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid billing cycle type" }, { status: 400 });
+    }
+    if (cycleAmountBasis && !CYCLE_AMOUNT_BASES.includes(String(cycleAmountBasis).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid cycle amount basis" }, { status: 400 });
+    }
+    if (quotaChargeBasis && !CYCLE_AMOUNT_BASES.includes(String(quotaChargeBasis).toUpperCase())) {
+      return NextResponse.json({ success: false, error: "Invalid quota charge basis" }, { status: 400 });
+    }
+    const availFor = Array.isArray(availableFor)
+      ? availableFor.filter((t: string) => ["REGISTRATION", "RENEWAL"].includes(t)).join(",")
+      : typeof availableFor === "string" && availableFor
+        ? availableFor.split(",").map((t: string) => t.trim()).filter((t: string) => ["REGISTRATION", "RENEWAL"].includes(t)).join(",")
+        : "";
+    const fixedExpiry = fixedExpiryAt ? new Date(fixedExpiryAt) : null;
+    if (fixedExpiry && isNaN(fixedExpiry.getTime())) {
+      return NextResponse.json({ success: false, error: "Invalid fixed expiry date" }, { status: 400 });
     }
 
     // Destructure groupId from body (user may or may not provide it)
@@ -148,10 +190,32 @@ export async function POST(req: NextRequest) {
         bandwidthPolicyId: bandwidthPolicyId || null,
         dataTransferPolicyId: dataTransferPolicyId || null,
         fairAccessPolicyId: fairAccessPolicyId || null,
+        // POL-ENGINE-2: package form fields
+        billingScheme: billingScheme ? String(billingScheme).toUpperCase() : "PREPAID",
+        availableFor: availFor || "REGISTRATION,RENEWAL",
+        onlinePurchaseable: onlinePurchaseable !== undefined ? Boolean(onlinePurchaseable) : true,
+        discountAmount: discountAmount != null && !isNaN(Number(discountAmount)) ? Number(discountAmount) : 0,
+        discountIsPercent: Boolean(discountIsPercent),
+        macBinding: Boolean(macBinding),
+        priority: priority != null && priority !== "" ? Number(priority) : null,
+        idleTimeoutType: idleTimeoutType ? String(idleTimeoutType).toUpperCase() : "NONE",
+        idleTimeoutMin: idleTimeoutMin != null && idleTimeoutMin !== "" ? Number(idleTimeoutMin) : null,
+        expiryBasis: expiryBasis ? String(expiryBasis).toUpperCase() : "GLOBAL",
+        fixedExpiryAt: fixedExpiry,
+        expireTimeOfDay: expireTimeOfDay ? String(expireTimeOfDay) : "23:59:59",
+        ipPoolId: ipPoolId || null,
+        cycleType: cycleType ? String(cycleType).toUpperCase() : "NONE",
+        billingDay: billingDay != null && billingDay !== "" ? Number(billingDay) : null,
+        cycleMultiplier: cycleMultiplier != null && cycleMultiplier !== "" ? Number(cycleMultiplier) : null,
+        cycleAmountBasis: cycleAmountBasis ? String(cycleAmountBasis).toUpperCase() : "ACTUAL_DAYS",
+        quotaChargeBasis: quotaChargeBasis ? String(quotaChargeBasis).toUpperCase() : "ACTUAL_DAYS",
+        cyclePrice: cyclePrice != null && cyclePrice !== "" ? Number(cyclePrice) : null,
+        cycleDays: cycleDays != null && cycleDays !== "" ? Number(cycleDays) : null,
       },
       include: {
         _count: { select: { Subscriber: true } },
         RadiusGroup: true,
+        IpPool: { select: { id: true, name: true, cidr: true, frPoolName: true } },
       },
     });
 
@@ -181,6 +245,7 @@ export async function POST(req: NextRequest) {
           include: {
             _count: { select: { Subscriber: true } },
             RadiusGroup: true,
+            IpPool: { select: { id: true, name: true, cidr: true, frPoolName: true } },
           },
         });
 
@@ -201,7 +266,7 @@ export async function POST(req: NextRequest) {
           ipv6DefaultPoolId: ipv6DefaultPoolId || null,
         });
 
-        await auditCreate(req, "Plan", updatedPlan.id, { name, priceMonthly, speed: `${downloadSpeed} ${speedUnit}`, autoGroup: group.name, policies: { surfingQuotaPolicyId, accessTimePolicyId, bandwidthPolicyId, dataTransferPolicyId, fairAccessPolicyId } }, { userId });
+        await auditCreate(req, "Plan", updatedPlan.id, { name, priceMonthly, speed: `${downloadSpeed} ${speedUnit}`, billingScheme: billingScheme || "PREPAID", autoGroup: group.name, policies: { surfingQuotaPolicyId, accessTimePolicyId, bandwidthPolicyId, dataTransferPolicyId, fairAccessPolicyId } }, { userId });
         return NextResponse.json(updatedPlan, { status: 201 });
       } catch (groupError: any) {
         // If group name already exists (unique constraint), return plan without group

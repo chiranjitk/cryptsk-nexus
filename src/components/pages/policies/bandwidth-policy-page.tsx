@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Bandwidth Policies (POL-ENGINE-1) ────────────────────────────
-// 24online-parity speed policies: Pool/User base, Strict/Committed,
+// speed policies: Pool/User base, Strict/Committed,
 // priority 0-7, per-user or shared usage, up/down/total Kbps. Binds
 // to Plans and serves as FAP switch-over target.
 

@@ -2,7 +2,7 @@
 // Both desktop sidebar and mobile sidebar import from here.
 // NEVER maintain separate nav lists — it causes drift and mismatches.
 //
-// Architecture: Pure OSS/BSS + Internet Gateway (like 24online / Hight8)
+// Architecture: Pure OSS/BSS + Internet Gateway control plane
 // FreeRADIUS is backend AAA — NOT exposed in GUI.
 // Subscriber profile = RADIUS user. Plan = RADIUS group.
 // All provisioning happens through Subscriber/Plan management.
@@ -161,7 +161,7 @@ export const navGroups: NavGroup[] = [
     label: "POLICY",
     defaultOpen: true,
     items: [
-      // ── Policy Engine (POL-ENGINE-1, 24online-parity) ──
+      // ── Policy Engine (POL-ENGINE-1) ──
       { label: "Surfing Quota", href: "/surfing-quota", icon: Hourglass },
       { label: "Access Time", href: "/access-time", icon: CalendarClockIcon },
       { label: "Bandwidth Policy", href: "/bandwidth-policy", icon: Gauge },

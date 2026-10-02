@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Policy engine shared kit (POL-ENGINE-1) ──────────────────────
-// Common shell + hooks for the five 24online-parity policy pages.
+// Common shell + hooks for the five policy pages.
 // Single-page layout: create/edit form on top, manage table below.
 
 import { useCallback, useEffect, useState } from "react";

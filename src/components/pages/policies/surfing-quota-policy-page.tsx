@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Surfing Quota Policies (POL-ENGINE-1) ────────────────────────
-// 24online-parity: time quota per policy — Absolute (fixed hours) or
+//  time quota per policy — Absolute (fixed hours) or
 // Ratebased (postpaid), expiry window, optional cycle reset. Binds to
 // Plans. Single page = create + manage combined.
 

@@ -1,7 +1,7 @@
 "use client";
 
 // ─── Access Time Policies (POL-ENGINE-1) ──────────────────────────
-// 24online-parity: weekday time slots; during a slot a member is
+//  weekday time slots; during a slot a member is
 // either disallowed or gets a pricing factor; the default strategy
 // applies outside all slots. Single page = create + manage combined.
 

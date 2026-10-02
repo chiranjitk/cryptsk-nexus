@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 
 // ─── Bandwidth Policies (POL-ENGINE-1) ────────────────────────────
-// 24online-parity speed policies on the existing BandwidthPolicy
+// speed policies on the existing BandwidthPolicy
 // model: Pool/User base, Strict/Committed, priority 0-7, per-user or
 // shared usage, up/down/total Kbps. Consumed by Plans and by FAP
 // switch-over.

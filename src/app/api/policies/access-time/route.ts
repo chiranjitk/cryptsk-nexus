@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 
 // ─── Access Time Policies (POL-ENGINE-1) ──────────────────────────
-// 24online-parity: weekday time slots; members are either disallowed
+//  weekday time slots; members are either disallowed
 // or get a pricing factor during a slot; default strategy applies
 // outside all slots.
 

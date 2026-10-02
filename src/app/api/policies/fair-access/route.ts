@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 
 // ─── Fair Access Policies (POL-ENGINE-1) ──────────────────────────
-// 24online-parity FAP: when a subscriber crosses the data limit the
+// FAP: when a subscriber crosses the data limit the
 // switch-over Bandwidth Policy throttles them. Reset type re-grants
 // the full quota every cycle (D/W/M × multiplier at reset time).
 
