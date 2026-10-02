@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
             portalPages: true,
           },
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

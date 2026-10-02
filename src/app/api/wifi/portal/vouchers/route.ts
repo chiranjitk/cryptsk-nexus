@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
         roomType: {
           select: { id: true, name: true },
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

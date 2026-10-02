@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const redirect = await db.dnsRedirectRule.findFirst({
       where: { id},
       include: {
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

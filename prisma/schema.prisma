@@ -612,12 +612,12 @@ model CaptivePortal {
   Subnet                                                        Subnet[]
   PartnerPortalMapping                                           PartnerPortalMapping[]
   // ── StaySuite portal engine relations ──
-  PortalAuthentication                                          PortalAuthentication[]
-  PortalMapping                                                 PortalMapping[]
-  PortalMappingFallback                                         PortalMapping[] @relation("PortalMappingFallback")
-  PortalPage                                                    PortalPage[]
-  PortalABTest                                                  PortalABTest[]
-  PortalDnsRecord                                               PortalDnsRecord[]
+  authMethods                 PortalAuthentication[]
+  portalMappings              PortalMapping[]
+  portalMappingsFallback      PortalMapping[] @relation("PortalMappingFallback")
+  portalPages                 PortalPage[]
+  PortalABTest                PortalABTest[]
+  PortalDnsRecord             PortalDnsRecord[]
 
   @@index([enabled])
   @@index([interfaceId])

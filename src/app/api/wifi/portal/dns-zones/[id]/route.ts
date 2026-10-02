@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         records: {
           orderBy: [{ type: 'asc' }, { name: 'asc' }],
         },
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
       },

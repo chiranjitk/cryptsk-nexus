@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const instance = await db.captivePortal.findFirst({
       where: { id},
       include: {
-        property: {
+        partner: {
           select: { id: true, name: true },
         },
         portalMappings: {
