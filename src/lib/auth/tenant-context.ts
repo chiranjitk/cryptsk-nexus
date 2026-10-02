@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/api-auth';
+import { db } from '@/lib/db';
 
 export interface TenantContext {
   userId: string;
@@ -37,3 +38,14 @@ export function hasPermission(_context: TenantContext, _permission: string): boo
 export function hasAnyPermission(_context: TenantContext, _permissions: string[]): boolean { return true; }
 export async function requireAnyPermission(request: NextRequest, _permissions: string[]): Promise<TenantContext | NextResponse> { return requirePermission(request, '*'); }
 export async function getUserProfile(request: NextRequest): Promise<TenantContext | null> { return getTenantContext(request); }
+
+/**
+ * Resolve a partnerId — if 'default' or not a valid UUID, return the first partner's ID
+ */
+export async function resolvePropertyId(partnerId: string): Promise<string> {
+  // If it's a valid UUID (36 chars), return as-is
+  if (partnerId && partnerId.length === 36) return partnerId;
+  // Otherwise, find the first partner
+  const firstPartner = await db.partner.findFirst({ select: { id: true } });
+  return firstPartner?.id || 'default';
+}
