@@ -43,20 +43,33 @@ else
 fi
 
 echo "═══ STEP 4: users + database ═══"
-python3 - <<'PYEOF'
-import psycopg2, os
-conn = psycopg2.connect(host='127.0.0.1', port=5432, user='postgres', dbname='postgres')
-conn.autocommit = True; cur = conn.cursor()
-for sql in ["CREATE USER z WITH PASSWORD 'CryptskNexus2026' SUPERUSER",
-            "CREATE USER cryptsknexus WITH PASSWORD 'CryptskNexus2026' SUPERUSER",
-            "CREATE DATABASE cryptsknexus OWNER cryptsknexus"]:
-    try: cur.execute(sql); print("OK:", sql[:44])
-    except Exception as e: print("skip:", str(e).split("\n")[0][:60])
-cur.close(); conn.close()
-PYEOF
+# zonky PG ships no psql and the sandbox has no psycopg2 — use bun + pg pkg.
+bun -e '
+const { Client } = require("pg");
+(async () => {
+  const c = new Client({ host: "127.0.0.1", port: 5432, user: "postgres", database: "postgres" });
+  await c.connect();
+  for (const sql of ["CREATE USER z WITH PASSWORD \x27CryptskNexus2026\x27 SUPERUSER",
+                     "CREATE USER cryptsknexus WITH PASSWORD \x27CryptskNexus2026\x27 SUPERUSER",
+                     "CREATE DATABASE cryptsknexus OWNER cryptsknexus"]) {
+    try { await c.query(sql); console.log("OK:", sql.slice(0, 44)); }
+    catch (e) { console.log("skip:", String(e.message).split("\n")[0].slice(0, 60)); }
+  }
+  await c.end();
+})();'
 
 echo "═══ STEP 5: schema (skip if already provisioned) ═══"
-TABLES=$(psql "$DB_URL" -t -A -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo 0)
+TABLES=$(bun -e "
+const { Client } = require('pg');
+(async () => {
+  try {
+    const c = new Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    const r = await c.query(\"SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema='public'\");
+    console.log(r.rows[0].n);
+    await c.end();
+  } catch { console.log(0); }
+})();" 2>/dev/null || echo 0)
 if [ "${TABLES:-0}" -ge 230 ]; then
   echo "schema already present ($TABLES tables) — skipping push/seed"
 else
@@ -64,12 +77,17 @@ else
   DATABASE_URL="$DB_URL" npx prisma db push --skip-generate >/dev/null
   DATABASE_URL="$DB_URL" npx prisma generate >/dev/null
   echo "loading RADIUS production schema (241 tables target)..."
-  DATABASE_URL="$DB_URL" python3 -c "
-import psycopg2, os
-sql=open('pgsql-production/complete-database.sql').read()
-conn=psycopg2.connect(os.environ['DATABASE_URL']); conn.autocommit=True
-cur=conn.cursor(); cur.execute(sql); print('loaded OK')
-conn.close()"
+  DATABASE_URL="$DB_URL" bun -e '
+const { Client } = require("pg");
+const fs = require("fs");
+(async () => {
+  const sql = fs.readFileSync("pgsql-production/complete-database.sql", "utf8");
+  const c = new Client({ connectionString: process.env.DATABASE_URL });
+  await c.connect();
+  try { await c.query(sql); console.log("loaded OK"); }
+  catch (e) { console.log("load warn:", String(e.message).split("\n")[0].slice(0, 90)); }
+  await c.end();
+})();'
   echo "seeding demo data..."
   DATABASE_URL="$DB_URL" bun prisma/seed.ts | tail -3
 fi
@@ -126,6 +144,16 @@ echo "═══ STEP 8: verify ═══"
 sleep 8
 curl -s -o /dev/null -w "app  :3000 → %{http_code}\n" --max-time 60 http://127.0.0.1:3000/ || true
 curl -s -o /dev/null -w "cron :3004 → %{http_code} (401=alive)\n" --max-time 10 http://127.0.0.1:3004/api/jobs || true
-psql "$DB_URL" -t -A -c "SELECT 'subscribers: '||count(*) FROM \"Subscriber\"" || true
+bun -e '
+const { Client } = require("pg");
+(async () => {
+  try {
+    const c = new Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    const r = await c.query("SELECT count(*)::int AS n FROM \"Subscriber\"");
+    console.log("subscribers: " + r.rows[0].n);
+    await c.end();
+  } catch (e) { console.log("db check failed:", String(e.message).split("\n")[0]); }
+})();' || true
 npx pm2 status 2>/dev/null | head -20 || true
 echo "✅ fresh-setup complete (login: admin@cryptsk.com / Admin@2026)"

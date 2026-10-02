@@ -11,6 +11,7 @@ import { Prisma, type InvoiceStatus } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
+import { xlsxResponse } from "@/lib/xlsx-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const VALID_STATUSES: InvoiceStatus[] = [
@@ -173,6 +174,46 @@ export async function GET(request: NextRequest) {
       ]);
       await auditExport(request, "Invoice", "csv", rows.length);
       return csvResponse(headers, rows, generateExportFilename("invoice-register"));
+    }
+
+    // XLSX export branch (Phase 2, Task 3-a) — mirrors the CSV branch above
+    if (format === "xlsx") {
+      const headers = [
+        "Invoice #",
+        "Issue Date",
+        "Due Date",
+        "Subscriber Code",
+        "Subscriber Name",
+        "Phone",
+        "Area",
+        "Plan",
+        "Subtotal",
+        "CGST",
+        "SGST",
+        "Grand Total",
+        "Paid",
+        "Balance",
+        "Status",
+      ];
+      const rows = invoices.map((inv) => [
+        inv.invoiceNumber,
+        ymd(new Date(inv.issueDate)),
+        ymd(new Date(inv.dueDate)),
+        inv.Subscriber?.code ?? "",
+        inv.Subscriber?.name ?? "",
+        inv.Subscriber?.phone ?? "",
+        inv.Subscriber?.Area?.name ?? "",
+        inv.Plan?.name ?? "",
+        round2(num(inv.subtotal)),
+        round2(num(inv.cgstAmount)),
+        round2(num(inv.sgstAmount)),
+        round2(num(inv.grandTotal)),
+        round2(num(inv.paidAmount)),
+        round2(num(inv.balanceAmount)),
+        inv.status,
+      ]);
+      await auditExport(request, "Invoice", "xlsx", rows.length);
+      return xlsxResponse(headers, rows, generateExportFilename("invoice-register", "xlsx"));
     }
 
     // JSON response — dates as ISO strings

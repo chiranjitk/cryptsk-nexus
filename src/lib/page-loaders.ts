@@ -153,6 +153,11 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Invoice Register': () => import('@/components/pages/invoice-register-page'),
   'AR Aging': () => import('@/components/pages/ar-aging-page'),
   'Subscriber Lifecycle Report': () => import('@/components/pages/subscriber-lifecycle-report-page'),
+  'Statement of Account': () => import('@/components/pages/statement-of-account-page'),
+  'Collection Register': () => import('@/components/pages/collection-register-page'),
+  'Expiry & Renewal': () => import('@/components/pages/expiry-renewal-page'),
+  'Side Revenue': () => import('@/components/pages/side-revenue-page'),
+  'Plan & Area MIS': () => import('@/components/pages/plan-area-mis-page'),
 
   // ══════════════════════════════════════════════════════════════
   // SETTINGS
