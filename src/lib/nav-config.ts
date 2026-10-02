@@ -42,6 +42,7 @@ import {
   Server,
   Shield,
   ShieldAlert,
+  CalendarClock as CalendarClockIcon,
   FileSpreadsheet,
   Gauge,
   Cable,
@@ -62,6 +63,12 @@ import {
   Scroll,
   MonitorSmartphone,
   FileSearch,
+  Smartphone,
+  Mail,
+  MessageSquare,
+  Webhook,
+  BellRing,
+  PauseCircle,
   ClipboardList,
   ScanEye,
   Timer,
@@ -110,6 +117,7 @@ export const navGroups: NavGroup[] = [
     label: "SUBSCRIBERS",
     defaultOpen: true,
     items: [
+      { label: "Active Sessions", href: "/sessions", icon: MonitorDot },
       { label: "Subscribers", href: "/subscribers", icon: Users },
       { label: "Plans", href: "/plans", icon: CreditCard },
       { label: "360° Customer View", href: "/subscriber-360", icon: Eye },
@@ -136,6 +144,7 @@ export const navGroups: NavGroup[] = [
       { label: "MultiWAN", href: "/multiwan", icon: Globe },
       { label: "Dynamic Routing", href: "/dynamic-routing", icon: Network },
       { label: "FTTH/GPON", href: "/ftth-gpon", icon: Network },
+      { label: "VPP Gateway", href: "/vpp-gateway", icon: Server },
       { label: "Network Health", href: "/network-health", icon: Heart },
       { label: "DHCPv6 Server", href: "/dhcpv6", icon: Globe },
     ],
@@ -170,12 +179,10 @@ export const navGroups: NavGroup[] = [
     label: "MONITORING",
     defaultOpen: false,
     items: [
-      { label: "Active Sessions", href: "/sessions", icon: MonitorDot },
       { label: "Session History", href: "/session-history", icon: History },
       { label: "Authentication Log", href: "/auth-log", icon: Shield },
       { label: "Bandwidth", href: "/bandwidth", icon: Activity },
       { label: "Traffic Analytics", href: "/traffic-analytics", icon: BarChart3 },
-      { label: "BW Reports", href: "/bw-reports", icon: BarChart3 },
       { label: "App Awareness", href: "/app-awareness", icon: ScanEye },
       { label: "Uptime Monitor", href: "/uptime-monitor", icon: Eye },
       { label: "Latency Monitor", href: "/latency-monitor", icon: Timer },
@@ -185,7 +192,6 @@ export const navGroups: NavGroup[] = [
       { label: "IP-MAC History", href: "/ip-mac-history", icon: FileSearch },
       { label: "Zone Budgets", href: "/zone-budgets", icon: PieChart },
       { label: "NAT Logs", href: "/nat-logs", icon: FileSearch },
-      { label: "Network Alerts", href: "/network-alerts", icon: Siren },
       { label: "Grafana Dashboards", href: "/grafana-dashboards", icon: BarChart3 },
     ],
   },
@@ -207,7 +213,6 @@ export const navGroups: NavGroup[] = [
       { label: "Enterprise Auth", href: "/enterprise-auth", icon: Building2 },
       { label: "WiFi Offload", href: "/wifi-offload", icon: Radio },
       { label: "Hotspot", href: "/hotspot", icon: Wifi },
-      { label: "Tech Performance", href: "/technician-performance", icon: Trophy },
       { label: "CoA Tracking", href: "/coa-tracking", icon: RefreshCw },
     ],
   },
@@ -245,12 +250,6 @@ export const navGroups: NavGroup[] = [
     label: "FINANCE",
     defaultOpen: false,
     items: [
-      { label: "Reports", href: "/reports", icon: ClipboardList },
-      { label: "Revenue Reports", href: "/revenue-reports", icon: TrendingUp },
-      { label: "Revenue Forecast", href: "/revenue-forecast", icon: BarChart3 },
-      { label: "Collection", href: "/collection", icon: HandCoins },
-      { label: "Due Recovery", href: "/due-recovery", icon: DollarSign },
-      { label: "GST/Tax", href: "/gst-tax", icon: Calculator },
       { label: "Referral", href: "/referral", icon: Gift },
       { label: "Loyalty Gamification", href: "/loyalty-gamification", icon: Trophy },
       { label: "Charge Override", href: "/charge-override", icon: DollarSign },
@@ -258,11 +257,6 @@ export const navGroups: NavGroup[] = [
       { label: "Grace Periods", href: "/grace-periods", icon: Clock },
       { label: "Add-on Services", href: "/add-on-services", icon: PackagePlus },
       { label: "Top-Ups", href: "/top-ups", icon: PlusCircle },
-      { label: "Smart Collections", href: "/smart-collections", icon: Target },
-      { label: "Revenue Leakage", href: "/revenue-leakage", icon: AlertTriangle },
-      { label: "Compliance & SLA", href: "/compliance-sla", icon: ShieldCheckIcon },
-      { label: "Reseller Intelligence", href: "/reseller-intelligence", icon: Radar },
-      { label: "Data Export", href: "/data-export", icon: FileSpreadsheet },
     ],
   },
 
@@ -277,9 +271,7 @@ export const navGroups: NavGroup[] = [
       { label: "AI Advisor", href: "/ai-advisor", icon: Brain },
       { label: "AI Diagnosis", href: "/ai-diagnosis", icon: Stethoscope },
       { label: "Churn Alerts", href: "/churn-alerts", icon: AlertCircle, badgeVariant: "destructive" },
-      { label: "Churn Prediction", href: "/churn-prediction", icon: BrainCircuit },
       { label: "Competitor Intel", href: "/competitor-intel", icon: Radar },
-      { label: "Competitor Analysis", href: "/competitor-analysis", icon: GitCompare },
       { label: "WhatsApp Bot", href: "/whatsapp-bot", icon: MessageCircle },
     ],
   },
@@ -295,7 +287,44 @@ export const navGroups: NavGroup[] = [
       { label: "Distribution Hubs", href: "/distribution-hubs", icon: Building2 },
       { label: "Partners", href: "/partners", icon: Handshake },
       { label: "Partner Users", href: "/partner-users", icon: UserCircle },
+    ],
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // REPORTS — Unified MIS suite (user order 2026-10-02: section sits
+  // at the end of the sidebar, right BEFORE SETTINGS). All report
+  // surfaces re-homed here + new register reports.
+  // ══════════════════════════════════════════════════════════════
+  {
+    id: "REPORTS",
+    label: "REPORTS",
+    defaultOpen: false,
+    items: [
+      { label: "Reports", href: "/reports", icon: ClipboardList },
+      { label: "Invoice Register", href: "/invoice-register", icon: FileText },
+      { label: "AR Aging", href: "/ar-aging", icon: Clock },
+      { label: "Subscriber Lifecycle Report", href: "/subscriber-lifecycle-report", icon: RotateCcw },
+      { label: "Statement of Account", href: "/statement-of-account", icon: Receipt },
+      { label: "Collection Register", href: "/collection-register", icon: Wallet },
+      { label: "Expiry & Renewal", href: "/expiry-renewal", icon: Timer },
+      { label: "Side Revenue", href: "/side-revenue", icon: PlusCircle },
+      { label: "Plan & Area MIS", href: "/plan-area-mis", icon: PieChart },
+      { label: "Revenue Reports", href: "/revenue-reports", icon: TrendingUp },
+      { label: "Revenue Forecast", href: "/revenue-forecast", icon: BarChart3 },
+      { label: "Collection", href: "/collection", icon: HandCoins },
+      { label: "Due Recovery", href: "/due-recovery", icon: DollarSign },
+      { label: "GST/Tax", href: "/gst-tax", icon: Calculator },
+      { label: "Smart Collections", href: "/smart-collections", icon: Target },
+      { label: "Revenue Leakage", href: "/revenue-leakage", icon: AlertTriangle },
+      { label: "Compliance & SLA", href: "/compliance-sla", icon: ShieldCheckIcon },
+      { label: "Reseller Intelligence", href: "/reseller-intelligence", icon: Radar },
       { label: "Partner Reports", href: "/partner-reports", icon: BarChart3 },
+      { label: "BW Reports", href: "/bw-reports", icon: BarChart3 },
+      { label: "Tech Performance", href: "/technician-performance", icon: Trophy },
+      { label: "Churn Prediction", href: "/churn-prediction", icon: BrainCircuit },
+      { label: "Competitor Analysis", href: "/competitor-analysis", icon: GitCompare },
+      { label: "Data Export", href: "/data-export", icon: FileSpreadsheet },
+      { label: "Audit Log", href: "/audit-log", icon: ScrollText },
     ],
   },
 
@@ -315,12 +344,45 @@ export const navGroups: NavGroup[] = [
       { label: "Promotions", href: "/promotions", icon: Megaphone },
       { label: "Notifications", href: "/notifications", icon: Bell, badgeVariant: "secondary" },
       { label: "API Keys", href: "/api-keys", icon: KeyRound },
-      { label: "Audit Log", href: "/audit-log", icon: ScrollText },
+      { label: "Automation Jobs", href: "/automation-jobs", icon: CalendarClockIcon },
       { label: "Backup", href: "/backup", icon: DatabaseBackup },
-      { label: "Integrations", href: "/integrations", icon: Plug },
       { label: "Knowledge Base", href: "/knowledge-base", icon: BookOpen },
       { label: "Module Manager", href: "/module-manager", icon: Layers },
       { label: "System Health", href: "/system-health", icon: Heart },
+    ],
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // INTEGRATIONS
+  // ════════════════════════════════════════════════════════════
+  {
+    id: "INTEGRATIONS",
+    label: "INTEGRATIONS",
+    defaultOpen: false,
+    items: [
+      { label: "Payment Gateways", href: "/payment-gateways", icon: CreditCard },
+      { label: "SMS Gateway", href: "/sms-gateway", icon: Smartphone },
+      { label: "Email Gateway", href: "/email-gateway", icon: Mail },
+      { label: "WhatsApp & Push", href: "/whatsapp-push", icon: MessageSquare },
+      { label: "Webhooks", href: "/webhooks", icon: Webhook },
+      { label: "Integration Logs", href: "/integration-logs", icon: FileText },
+    ],
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // ALERT MANAGEMENT
+  // ════════════════════════════════════════════════════════════
+  {
+    id: "ALERT MANAGEMENT",
+    label: "ALERT MANAGEMENT",
+    defaultOpen: false,
+    items: [
+      { label: "Alert Center", href: "/alert-center", icon: BellRing },
+      { label: "Live Alerts", href: "/network-alerts", icon: Siren, badgeVariant: "destructive" },
+      { label: "Alert Rules", href: "/alert-rules", icon: ClipboardList },
+      { label: "Suppressions", href: "/alert-suppressions", icon: PauseCircle },
+      { label: "Alert History", href: "/alert-history", icon: History },
+      { label: "Notification Rules", href: "/notification-rules", icon: Bell },
     ],
   },
 ];
