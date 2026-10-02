@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ExternalLink, Play, Code, ImageIcon } from 'lucide-react';
-import DOMPurify from 'dompurify';
+import DOMPurify from '@/lib/stubs/dompurify';
 
 // ────────────────────────────────────────────────────────────
 // Types — match the /api/wifi/ad-campaigns/serve response shape

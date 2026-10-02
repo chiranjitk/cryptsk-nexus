@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'today'; // today, week, month
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
 
     // Calculate date range based on period
     const now = new Date();
@@ -38,13 +38,13 @@ export async function GET(request: NextRequest) {
 
     // Current period where clause for WiFiSession
     const where: Prisma.WiFiSessionWhereInput = {
-// REMOVED:       tenantId,
+      tenantId,
       startTime: { gte: startDate },
     };
 
     // Previous period where clause (for growth comparison)
     const prevWhere: Prisma.WiFiSessionWhereInput = {
-// REMOVED:       tenantId,
+      tenantId,
       startTime: { gte: prevStartDate, lt: prevEndDate },
     };
 
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
           EXTRACT(HOUR FROM "startTime" AT TIME ZONE 'UTC')::int as hour,
           COUNT(*)::bigint as count
         FROM "WiFiSession"
-// REMOVED:         WHERE "tenantId" = ${tenantId}::uuid
+        WHERE "tenantId" = ${tenantId}::uuid
           AND "startTime" >= ${startDate}
         GROUP BY hour
         ORDER BY hour
@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
       // 9. Vouchers used in the period
       db.wiFiVoucher.count({
         where: {
-// REMOVED:           tenantId,
+          tenantId,
           isUsed: true,
           usedAt: { gte: startDate },
         },

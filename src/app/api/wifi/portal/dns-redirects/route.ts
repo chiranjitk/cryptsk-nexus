@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-// REMOVED:     const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { tenantId: user.tenantId };
 
     if (partnerId) where.partnerId = partnerId;
     if (applyTo) where.applyTo = applyTo;
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
 
     const {
       partnerId,
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-// REMOVED:       where: { id: partnerId, tenantId },
+      where: { id: partnerId, tenantId },
     });
     if (!property) {
       return NextResponse.json(
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     const redirect = await db.dnsRedirectRule.create({
       data: {
-// REMOVED:         tenantId,
+        tenantId,
         partnerId,
         name,
         matchPattern,

@@ -145,7 +145,7 @@ async function buildPortalConfig(portalId: string, language?: string | null) {
   const amenities: string[] = (designSettings.amenities as string[]) || [];
 
   // Build the safe response object
-// REMOVED:   // tenantId and partnerId are included so the SurveyWidget can call
+  // tenantId and partnerId are included so the SurveyWidget can call
   // the public satisfaction API endpoints (which require these as query params).
 
   // Load post-login & CNA preferences
@@ -156,17 +156,17 @@ async function buildPortalConfig(portalId: string, language?: string | null) {
     let usedPropertyLevel = false;
     if (portal.partnerId) {
       const [row] = await db.$queryRaw<{ exists: boolean }[]>(
-// REMOVED:         Prisma.sql`SELECT EXISTS(SELECT 1 FROM "WiFiSettings" WHERE "tenantId" = ${portal.tenantId}::uuid AND "partnerId" = ${portal.partnerId}::uuid AND "key" = 'portal_preferences') as exists`
+        Prisma.sql`SELECT EXISTS(SELECT 1 FROM "WiFiSettings" WHERE "tenantId" = ${portal.tenantId}::uuid AND "partnerId" = ${portal.partnerId}::uuid AND "key" = 'portal_preferences') as exists`
       );
       if (row?.exists) {
-// REMOVED:         const propPrefs = await getWifiSettings(portal.tenantId, 'portal_preferences', portal.partnerId);
+        const propPrefs = await getWifiSettings(portal.tenantId, 'portal_preferences', portal.partnerId);
         postLoginPrefs = { postLoginMode: propPrefs.postLoginMode, postLoginRedirectUrl: propPrefs.postLoginRedirectUrl, postLoginRedirectTarget: propPrefs.postLoginRedirectTarget, cnaEnabledMac: propPrefs.cnaEnabledMac };
         usedPropertyLevel = true;
       }
     }
     // Fall back to tenant-level prefs (partnerId=NULL)
     if (!usedPropertyLevel) {
-// REMOVED:       const tenantPrefs = await getWifiSettings(portal.tenantId, 'portal_preferences', undefined);
+      const tenantPrefs = await getWifiSettings(portal.tenantId, 'portal_preferences', undefined);
       postLoginPrefs = { postLoginMode: tenantPrefs.postLoginMode, postLoginRedirectUrl: tenantPrefs.postLoginRedirectUrl, postLoginRedirectTarget: tenantPrefs.postLoginRedirectTarget, cnaEnabledMac: tenantPrefs.cnaEnabledMac };
     }
   } catch { /* use defaults */ }
@@ -174,7 +174,7 @@ async function buildPortalConfig(portalId: string, language?: string | null) {
   return {
     name: portal.name,
     slug: portal.slug,
-// REMOVED:     tenantId: portal.tenantId,
+    tenantId: portal.tenantId,
     partnerId: portal.partnerId,
     // Auth flow is controlled solely by PortalPage.authFlow (set via Portal Designer).
     // CaptivePortal.authMethod is no longer used as a separate config.
@@ -378,8 +378,8 @@ async function buildPortalConfig(portalId: string, language?: string | null) {
   // guest-facing portal and the admin GDPR dashboard stay in sync.
   // The GDPR settings act as a global override for marketing opt-in visibility.
   try {
-// REMOVED:     if (portal.tenantId) {
-// REMOVED:       const gdprSettings = await getWifiSettings(portal.tenantId, 'consent_management');
+    if (portal.tenantId) {
+      const gdprSettings = await getWifiSettings(portal.tenantId, 'consent_management');
       if (gdprSettings) {
         // If GDPR consent management explicitly enables/disables marketing opt-in,
         // override the portal designer's local marketingOptIn.enabled setting.
@@ -531,7 +531,7 @@ export async function GET(request: NextRequest) {
         SELECT pm.id, pm."portalId", pm.subnet, pm."fallbackPortalId", pm.priority
         FROM "PortalMapping" pm
         JOIN "CaptivePortal" cp ON cp.id = pm."portalId"
-// REMOVED:         JOIN "Tenant" t ON t.id = pm."tenantId"
+        JOIN "Tenant" t ON t.id = pm."tenantId"
         WHERE pm.enabled = true
           AND pm.subnet IS NOT NULL
           AND cp.enabled = true
@@ -605,7 +605,7 @@ export async function GET(request: NextRequest) {
                ip.subnet::text AS "poolSubnet"
         FROM "PortalMapping" pm
         JOIN "CaptivePortal" cp ON cp.id = pm."portalId"
-// REMOVED:         JOIN "Tenant" t ON t.id = pm."tenantId"
+        JOIN "Tenant" t ON t.id = pm."tenantId"
         LEFT JOIN "IpPool" ip ON (
           (pm."ipPoolId" IS NOT NULL AND ip.id = pm."ipPoolId")
           OR (
@@ -618,7 +618,7 @@ export async function GET(request: NextRequest) {
                   AND ip.subnet::text = replace(pm.subnet, '/32', ''))
               OR (pm.subnet IS NULL AND ip.subnet IS NULL)
             )
-// REMOVED:             AND ip."tenantId" = pm."tenantId"
+            AND ip."tenantId" = pm."tenantId"
           )
         )
         LEFT JOIN "IpPoolRange" ipr ON ipr."poolId" = ip.id

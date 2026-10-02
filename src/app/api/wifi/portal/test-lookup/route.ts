@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
     const results: Record<string, unknown>[] = [];
 
     // ── Step 1: Check PortalMapping subnet CIDR match ──
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       LEFT JOIN "IpPool" ip ON ip.id = pm."ipPoolId"
       WHERE pm.enabled = true
         AND pm.subnet IS NOT NULL
-// REMOVED:         AND (pm."tenantId" = ${tenantId}::uuid)
+        AND (pm."tenantId" = ${tenantId}::uuid)
         AND pm.subnet ~ '^\\d+\\.\\d+\\.\\d+\\.\\d+(/\\d+)?$'
         AND ${clientIp}::inet <<= CASE
           WHEN pm.subnet ~ '/' THEN pm.subnet::inet
@@ -103,12 +103,12 @@ export async function POST(request: NextRequest) {
                 AND ip.subnet::text = replace(pm.subnet, '/32', ''))
             OR (pm.subnet IS NULL AND ip.subnet IS NULL)
           )
-// REMOVED:           AND ip."tenantId" = pm."tenantId"
+          AND ip."tenantId" = pm."tenantId"
         )
       )
       LEFT JOIN "IpPoolRange" ipr ON ipr."poolId" = ip.id
       WHERE pm.enabled = true
-// REMOVED:         AND (pm."tenantId" = ${tenantId}::uuid)
+        AND (pm."tenantId" = ${tenantId}::uuid)
         AND (
           (ipr.id IS NOT NULL AND ${clientIp}::inet BETWEEN ipr."startIp" AND ipr."endIp")
           OR (ipr.id IS NULL AND ip.subnet IS NOT NULL AND ${clientIp}::inet <<= ip.subnet)
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
 
     // ── Step 3: Check default portal ──
     const defaultPortal = await db.captivePortal.findFirst({
-// REMOVED:       where: { isDefault: true, enabled: true, tenantId },
+      where: { isDefault: true, enabled: true, tenantId },
       select: { id: true, name: true, slug: true },
     });
 
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
       FROM "PortalMapping" pm
       JOIN "CaptivePortal" cp ON cp.id = pm."portalId"
       LEFT JOIN "IpPool" ip ON ip.id = pm."ipPoolId"
-// REMOVED:       WHERE pm."tenantId" = ${tenantId}::uuid
+      WHERE pm."tenantId" = ${tenantId}::uuid
       ORDER BY pm.enabled DESC, pm.priority DESC
     `) as any[];
 
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
       SELECT ip.id, ip.name, ip.subnet::text as subnet, ip.enabled,
              (SELECT COUNT(*)::int FROM "IpPoolRange" WHERE "poolId" = ip.id) as "rangeCount"
       FROM "IpPool" ip
-// REMOVED:       WHERE ip."tenantId" = ${tenantId}::uuid
+      WHERE ip."tenantId" = ${tenantId}::uuid
       ORDER BY ip.enabled DESC, ip.name
     `) as any[];
 
@@ -230,7 +230,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       testIp: clientIp,
-// REMOVED:       tenantId,
+      tenantId,
       diagnosis,
       wouldResolveTo,
       results,

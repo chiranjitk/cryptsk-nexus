@@ -17,7 +17,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const zone = await db.dnsZone.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
       include: {
         records: {
           orderBy: [{ type: 'asc' }, { name: 'asc' }],
@@ -55,7 +55,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const body = await request.json();
 
     const existing = await db.dnsZone.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {
@@ -113,7 +113,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const existing = await db.dnsZone.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
       include: {
         _count: {
           select: { records: true },

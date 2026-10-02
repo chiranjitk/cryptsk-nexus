@@ -17,7 +17,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const redirect = await db.dnsRedirectRule.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
       include: {
         property: {
           select: { id: true, name: true },
@@ -52,7 +52,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const body = await request.json();
 
     const existing = await db.dnsRedirectRule.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {
@@ -102,7 +102,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const existing = await db.dnsRedirectRule.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {

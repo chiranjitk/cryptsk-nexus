@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(searchParams.get('offset') || '0', 10);
 
     // WiFiPlan does NOT have partnerId — it's tenant-scoped only
-// REMOVED:     const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { tenantId: user.tenantId };
 
     if (status) where.status = status;
     if (search) {
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
 
     const created = await db.wiFiPlan.create({
       data: {
-// REMOVED:         tenantId: user.tenantId,
+        tenantId: user.tenantId,
         name: data.name,
         description: data.description ?? null,
         downloadSpeed: data.downloadSpeed,

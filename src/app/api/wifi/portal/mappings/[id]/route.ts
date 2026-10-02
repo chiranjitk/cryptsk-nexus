@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const mapping = await db.portalMapping.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
       include: {
         captivePortal: {
           select: { id: true, name: true },
@@ -54,7 +54,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const body = await request.json();
 
     const existing = await db.portalMapping.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {
@@ -72,7 +72,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // If portalId is being changed, validate the new portal belongs to same tenant
     if (portalId !== undefined && portalId !== existing.portalId) {
       const newPortal = await db.captivePortal.findFirst({
-// REMOVED:         where: { id: portalId, tenantId: user.tenantId },
+        where: { id: portalId, tenantId: user.tenantId },
       });
       if (!newPortal) {
         return NextResponse.json(
@@ -129,7 +129,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const existing = await db.portalMapping.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {

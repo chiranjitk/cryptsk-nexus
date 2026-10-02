@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-// REMOVED:     const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { tenantId: user.tenantId };
 
     if (partnerId) {
       where.partnerId = partnerId;
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
 
     const {
       partnerId,
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
       ssidList,
     } = body;
 
-// REMOVED:     console.log(`[PortalInstances POST] body:`, { partnerId: partnerId || 'MISSING', name: name || 'MISSING', slug: slug || 'none', tenantId });
+    console.log(`[PortalInstances POST] body:`, { partnerId: partnerId || 'MISSING', name: name || 'MISSING', slug: slug || 'none', tenantId });
 
     if (!partnerId || !name) {
       console.warn('[PortalInstances POST] 400: Missing partnerId or name');
@@ -125,13 +125,13 @@ export async function POST(request: NextRequest) {
     // Resolve partnerId: if 'default' or invalid UUID, use tenant's first property
     let resolvedPropertyId = partnerId;
     if (partnerId === 'default' || partnerId.length !== 36) {
-// REMOVED:       console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" for tenant ${tenantId}`);
+      console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" for tenant ${tenantId}`);
       const firstPartner = await db.partner.findFirst({
-// REMOVED:         where: { tenantId },
+        where: { tenantId },
         select: { id: true },
       });
       if (!firstPartner) {
-// REMOVED:         console.error(`[PortalInstances POST] 404: No property found for tenant ${tenantId}`);
+        console.error(`[PortalInstances POST] 404: No property found for tenant ${tenantId}`);
         return NextResponse.json(
           { success: false, error: { code: 'NOT_FOUND', message: 'No property found for this tenant' } },
           { status: 404 }
@@ -142,11 +142,11 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-// REMOVED:       where: { id: resolvedPropertyId, tenantId },
+      where: { id: resolvedPropertyId, tenantId },
     });
 
     if (!property) {
-// REMOVED:       console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found for tenant ${tenantId}`);
+      console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found for tenant ${tenantId}`);
       return NextResponse.json(
         { success: false, error: { code: 'NOT_FOUND', message: 'Partner not found' } },
         { status: 404 }
@@ -248,7 +248,7 @@ export async function POST(request: NextRequest) {
 
     const instance = await db.captivePortal.create({
       data: {
-// REMOVED:         tenantId,
+        tenantId,
         partnerId: resolvedPropertyId,
         name,
         description,
@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
 
       await db.portalPage.create({
         data: {
-// REMOVED:           tenantId,
+          tenantId,
           portalId: instance.id,
           language: 'en',
           title: 'Welcome',

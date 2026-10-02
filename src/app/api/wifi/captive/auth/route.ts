@@ -16,8 +16,8 @@ import { db } from '@/lib/db'
  *   - CP-HIGH-07: Exact last name match
  *
  * Accepts three auth methods:
-// REMOVED:  *  - voucher: { method: "voucher", code: "XXXX", tenantId: string }
-// REMOVED:  *  - room:    { method: "room", roomNumber: "101", lastName: "Smith", tenantId: string }
+ *  - voucher: { method: "voucher", code: "XXXX", tenantId: string }
+ *  - room:    { method: "room", roomNumber: "101", lastName: "Smith", tenantId: string }
  *  - ldap:    { method: "ldap", username: "jdoe", password: "secret", partnerId: string }
  */
 
@@ -189,16 +189,16 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-// REMOVED:     const { method, tenantId } = body
+    const { method, tenantId } = body
 
-// REMOVED:     // CP-CRIT-03: tenantId is REQUIRED for all auth methods — no cross-tenant access
-// REMOVED:     if (!tenantId || typeof tenantId !== 'string') {
+    // CP-CRIT-03: tenantId is REQUIRED for all auth methods — no cross-tenant access
+    if (!tenantId || typeof tenantId !== 'string') {
       return NextResponse.json(
-// REMOVED:         { success: false, error: 'tenantId is required' },
+        { success: false, error: 'tenantId is required' },
         { status: 400 }
       )
     }
-// REMOVED:     const tenant = await db.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+    const tenant = await db.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
     if (!tenant) {
       return NextResponse.json(
         { success: false, error: 'Invalid tenant' },
@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
 
       // CP-CRIT-03: Scope voucher lookup to tenant
       const voucher = await db.wiFiVoucher.findFirst({
-// REMOVED:         where: { code: trimmedCode, tenantId },
+        where: { code: trimmedCode, tenantId },
         include: {
           plan: {
             select: {
@@ -316,7 +316,7 @@ export async function POST(request: NextRequest) {
       try {
         // Find a partnerId for the auth log (from voucher's tenant)
         const voucherPartner = await db.partner.findFirst({
-// REMOVED:           where: { tenantId: voucher.tenantId },
+          where: { tenantId: voucher.tenantId },
           select: { id: true },
         });
         if (voucherPartner) {
@@ -347,7 +347,7 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
     // method=room
     // Rate limiting: Enforced at network layer by nftables (CP-CRIT-02).
-// REMOVED:     // tenantId is REQUIRED — cross-tenant room queries are blocked (CP-CRIT-03).
+    // tenantId is REQUIRED — cross-tenant room queries are blocked (CP-CRIT-03).
     // -----------------------------------------------------------------------
     if (method === 'room') {
       const { roomNumber, lastName } = body
@@ -371,10 +371,10 @@ export async function POST(request: NextRequest) {
       const room = await db.room.findFirst({
         where: {
           number: trimmedRoom,
-// REMOVED:           property: { tenantId },
+          property: { tenantId },
         },
         include: {
-// REMOVED:           property: { select: { id: true, name: true, tenantId: true } },
+          property: { select: { id: true, name: true, tenantId: true } },
           bookings: {
             where: {
               status: { in: ['confirmed', 'checked_in'] },
@@ -482,7 +482,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Step 2: Get tenant/property for creating WiFiUser
-// REMOVED:       const effectiveTenantId = ldapConfig.tenantId;
+      const effectiveTenantId = ldapConfig.tenantId;
       const effectivePropertyId = ldapConfig.partnerId;
 
       // Step 3: Authenticate against LDAP server
@@ -549,7 +549,7 @@ export async function POST(request: NextRequest) {
             radiusSyncedAt: now,
           },
           create: {
-// REMOVED:             tenantId: effectiveTenantId,
+            tenantId: effectiveTenantId,
             partnerId: effectivePropertyId,
             username: username.trim(),
             password: `__ldap__${Date.now()}`, // Placeholder — actual auth is via LDAP

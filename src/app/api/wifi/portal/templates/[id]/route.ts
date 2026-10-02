@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const template = await db.portalTemplate.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!template) {
@@ -46,7 +46,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const body = await request.json();
 
     const existing = await db.portalTemplate.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {
@@ -98,7 +98,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const existing = await db.portalTemplate.findFirst({
-// REMOVED:       where: { id, tenantId: user.tenantId },
+      where: { id, tenantId: user.tenantId },
     });
 
     if (!existing) {

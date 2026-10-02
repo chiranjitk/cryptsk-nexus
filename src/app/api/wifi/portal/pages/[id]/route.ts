@@ -61,7 +61,7 @@ export async function PUT(
     const existing = await db.portalPage.findUnique({
       where: { id },
     });
-// REMOVED:     if (!existing || existing.tenantId !== user.tenantId) {
+    if (!existing || existing.tenantId !== user.tenantId) {
       return NextResponse.json(
         { success: false, error: { code: 'NOT_FOUND', message: 'Portal page not found' } },
         { status: 404 }
@@ -136,7 +136,7 @@ export async function PUT(
           } catch { return termsUrl; }
         })();
 
-// REMOVED:         const currentGdpr = await getWifiSettings(existing.tenantId, 'consent_management');
+        const currentGdpr = await getWifiSettings(existing.tenantId, 'consent_management');
         const gdprUpdate: Partial<ConsentManagementSettings> = {};
 
         // Sync marketingOptIn.enabled
@@ -156,7 +156,7 @@ export async function PUT(
         }
 
         if (Object.keys(gdprUpdate).length > 0) {
-// REMOVED:           await setWifiSettings(existing.tenantId, 'consent_management', {
+          await setWifiSettings(existing.tenantId, 'consent_management', {
             ...(currentGdpr as ConsentManagementSettings),
             ...gdprUpdate,
           });
@@ -192,7 +192,7 @@ export async function DELETE(
     const existing = await db.portalPage.findUnique({
       where: { id },
     });
-// REMOVED:     if (!existing || existing.tenantId !== user.tenantId) {
+    if (!existing || existing.tenantId !== user.tenantId) {
       return NextResponse.json(
         { success: false, error: { code: 'NOT_FOUND', message: 'Portal page not found' } },
         { status: 404 }

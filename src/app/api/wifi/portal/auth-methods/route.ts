@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-// REMOVED:     const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { tenantId: user.tenantId };
 
     if (partnerId) where.partnerId = partnerId;
     if (portalId) where.portalId = portalId;
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
 
     const {
       partnerId,
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     // Verify portal belongs to same tenant
     const portal = await db.captivePortal.findFirst({
-// REMOVED:       where: { id: portalId, tenantId },
+      where: { id: portalId, tenantId },
     });
     if (!portal) {
       return NextResponse.json(
@@ -110,15 +110,15 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant — if not found, try auto-resolving from tenant
     let property = await db.partner.findFirst({
-// REMOVED:       where: { id: resolvedPropertyId, tenantId },
+      where: { id: resolvedPropertyId, tenantId },
     });
     if (!property) {
       // Fallback: use portal's own partnerId (always correct since portal belongs to tenant)
       property = await db.partner.findFirst({
-// REMOVED:         where: { id: portal.partnerId, tenantId },
+        where: { id: portal.partnerId, tenantId },
       });
       if (!property) {
-// REMOVED:         console.error(`[auth-methods POST] Partner not found. body.partnerId=${partnerId}, portal.partnerId=${portal.partnerId}, tenantId=${tenantId}`);
+        console.error(`[auth-methods POST] Partner not found. body.partnerId=${partnerId}, portal.partnerId=${portal.partnerId}, tenantId=${tenantId}`);
         return NextResponse.json(
           { success: false, error: { code: 'NOT_FOUND', message: 'Partner not found' } },
           { status: 404 }
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
 
     // Check for duplicate method on same portal (unique constraint)
     const existingAuth = await db.portalAuthentication.findFirst({
-// REMOVED:       where: { portalId, method, tenantId },
+      where: { portalId, method, tenantId },
     });
     if (existingAuth) {
       return NextResponse.json(
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
 
     const authMethod = await db.portalAuthentication.create({
       data: {
-// REMOVED:         tenantId,
+        tenantId,
         partnerId: partner.id, // Use the verified property ID (may differ from body if fallback resolved)
         portalId,
         method,

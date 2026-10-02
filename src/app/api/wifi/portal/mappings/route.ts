@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-// REMOVED:     const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { tenantId: user.tenantId };
 
     if (partnerId) where.partnerId = partnerId;
     if (portalId) where.portalId = portalId;
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-// REMOVED:     const tenantId = user.tenantId;
+    const tenantId = user.tenantId;
 
     const {
       partnerId,
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-// REMOVED:       where: { id: partnerId, tenantId },
+      where: { id: partnerId, tenantId },
     });
     if (!property) {
       return NextResponse.json(
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     // Verify portal belongs to same tenant
     const portal = await db.captivePortal.findFirst({
-// REMOVED:       where: { id: portalId, tenantId },
+      where: { id: portalId, tenantId },
     });
     if (!portal) {
       return NextResponse.json(
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     // Verify IpPool belongs to same tenant (if provided)
     if (ipPoolId) {
       const pool = await db.ipPool.findFirst({
-// REMOVED:         where: { id: ipPoolId, tenantId },
+        where: { id: ipPoolId, tenantId },
       });
       if (!pool) {
         return NextResponse.json(
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
       const existingMappings = await db.portalMapping.findMany({
         where: {
           ipPoolId,
-// REMOVED:           tenantId,
+          tenantId,
         },
       });
       if (existingMappings.length > 0) {
@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
 
     const mapping = await db.portalMapping.create({
       data: {
-// REMOVED:         tenantId,
+        tenantId,
         partnerId,
         portalId,
         ipPoolId: ipPoolId || null,
