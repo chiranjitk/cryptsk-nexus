@@ -155,7 +155,6 @@ export async function syncGroupToFreeRADIUS(
     idleTimeoutSeconds?: number;  // default 3600 (1 hour)
   }
 ) {
-<<<<<<< HEAD
   const grp = groupName.replace(/'/g, "''");
   const {
     downloadSpeed, uploadSpeed, burstSpeed, burstDuration,
@@ -242,34 +241,9 @@ export async function syncGroupToFreeRADIUS(
   // radgroupcheck — attributes checked/enforced at auth time
   // ════════════════════════════════════════════════════════════════
   const checkAttrs: [string, string][] = [];
-=======
-  const { downloadSpeed, uploadSpeed, dataLimitMb, maxSessions } = options;
-
-  // Clear existing attributes for this group
-  await db.$executeRaw`DELETE FROM radgroupreply WHERE groupname = ${groupName}`;
-  await db.$executeRaw`DELETE FROM radgroupcheck WHERE groupname = ${groupName}`;
-
-  // Add Mikrotik-Rate-Limit to radgroupreply
-  // Input is in Mbps — format directly as Xm/Ym for Mikrotik
-  if (downloadSpeed && uploadSpeed) {
-    const rateLimit = `${downloadSpeed}M/${uploadSpeed}M`;
-    await db.$executeRaw`
-      INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES (${groupName}, 'Mikrotik-Rate-Limit', ':=', ${rateLimit})
-    `;
-  }
-
-  // Add data limit as ChilliSpot-Max-Total-Octets if specified
-  if (dataLimitMb && dataLimitMb > 0) {
-    const bytes = dataLimitMb * 1024 * 1024;
-    await db.$executeRaw`
-      INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'ChilliSpot-Max-Total-Octets', ':=', ${bytes})
-    `;
-  }
->>>>>>> origin/main
 
   // 1. Simultaneous-Use (login limit)
   if (maxSessions && maxSessions > 0) {
-<<<<<<< HEAD
     checkAttrs.push(["Simultaneous-Use", String(maxSessions)]);
   }
 
@@ -309,11 +283,6 @@ export async function syncGroupToFreeRADIUS(
     await db.$executeRawUnsafe(`
       INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ('${grp}', '${attr}', ':=', '${escapedVal}')
     `);
-=======
-    await db.$executeRaw`
-      INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'Simultaneous-Use', ':=', ${maxSessions})
-    `;
->>>>>>> origin/main
   }
 }
 
