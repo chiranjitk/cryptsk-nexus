@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: true },
   reactStrictMode: false,
   // Dev-origin allowlist — sandbox-local origins ONLY. Never add production
-  // domains here (user order 2026-10-02: keep nexus.cryptsk.com out of git).
+  // domains here (user order 2026-10-02: production hostnames stay out of git).
   allowedDevOrigins: ["*.space-z.ai", "127.0.0.1", "localhost"],
   // ─── Cap Turbopack memory (4GB sandbox, OOM protection) ───
   // NOTE: turbopackFileSystemCacheForDev was measured to INFLATE baseline
