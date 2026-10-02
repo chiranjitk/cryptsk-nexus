@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const instance = await db.captivePortal.findFirst({
-      where: { id, tenantId: user.tenantId },
+      where: { id},
       include: {
         property: {
           select: { id: true, name: true },
@@ -59,7 +59,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const body = await request.json();
 
     const existing = await db.captivePortal.findFirst({
-      where: { id, tenantId: user.tenantId },
+      where: { id},
     });
 
     if (!existing) {
@@ -171,7 +171,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // If setting as default, unset all other defaults first (only one default per tenant)
     if (isDefault === true) {
       await db.captivePortal.updateMany({
-        where: { tenantId: user.tenantId, isDefault: true, id: { not: id } },
+        where: { isDefault: true, id: { not: id } },
         data: { isDefault: false },
       });
     }
@@ -215,7 +215,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     // Audit log
     try {
-      await logWifi(request, 'update', 'portal_instance', id, { name: instance.name, slug: instance.slug, enabled: instance.enabled, authMethod: instance.authMethod }, { tenantId: user.tenantId, userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
+      await logWifi(request, 'update', 'portal_instance', id, { name: instance.name, slug: instance.slug, enabled: instance.enabled, authMethod: instance.authMethod }, { userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
     } catch (auditErr) {
       console.error('Audit log failed for portal instance update:', auditErr);
     }
@@ -251,7 +251,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const existing = await db.captivePortal.findFirst({
-      where: { id, tenantId: user.tenantId },
+      where: { id},
       include: {
         _count: {
           select: {
@@ -284,7 +284,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
       // Audit log (deactivation)
       try {
-        await logWifi(request, 'update', 'portal_instance', id, { name: existing.name, slug: existing.slug, enabled: false, note: 'deactivated due to associations' }, { tenantId: user.tenantId, userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
+        await logWifi(request, 'update', 'portal_instance', id, { name: existing.name, slug: existing.slug, enabled: false, note: 'deactivated due to associations' }, { userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
       } catch (auditErr) {
         console.error('Audit log failed for portal instance deactivation:', auditErr);
       }
@@ -299,7 +299,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     // Audit log (deletion)
     try {
-      await logWifi(request, 'delete', 'portal_instance', id, { name: existing.name, slug: existing.slug }, { tenantId: user.tenantId, userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
+      await logWifi(request, 'delete', 'portal_instance', id, { name: existing.name, slug: existing.slug }, { userId: user.userId, oldValue: existing as unknown as Record<string, unknown> });
     } catch (auditErr) {
       console.error('Audit log failed for portal instance delete:', auditErr);
     }

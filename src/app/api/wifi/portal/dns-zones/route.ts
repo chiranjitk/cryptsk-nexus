@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (partnerId) where.partnerId = partnerId;
     if (enabled !== null && enabled !== undefined && enabled !== '') {
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       partnerId,
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-      where: { id: partnerId, tenantId },
+      where: { id: partnerId},
     });
     if (!property) {
       return NextResponse.json(
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
 
     const zone = await db.dnsZone.create({
       data: {
-        tenantId,
+
         partnerId,
         domain,
         description,

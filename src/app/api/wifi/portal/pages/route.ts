@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const portalId = searchParams.get('portalId');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
     if (portalId) {
       where.portalId = portalId;
     }
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     // Verify portal belongs to tenant
     const portal = await db.captivePortal.findFirst({
-      where: { id: portalId, tenantId: user.tenantId },
+      where: { id: portalId},
     });
     if (!portal) {
       return NextResponse.json(
@@ -149,7 +149,6 @@ export async function POST(request: NextRequest) {
     // Create new
     const page = await db.portalPage.create({
       data: {
-        tenantId: user.tenantId,
         portalId,
         language: language || 'en',
         ...pagePayload,

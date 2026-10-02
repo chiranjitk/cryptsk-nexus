@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (zoneId) where.zoneId = zoneId;
     if (type) where.type = type;
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       zoneId,
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 
     // Verify zone belongs to tenant
     const zone = await db.dnsZone.findFirst({
-      where: { id: zoneId, tenantId },
+      where: { id: zoneId},
     });
     if (!zone) {
       return NextResponse.json(
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
 
     const record = await db.dnsRecord.create({
       data: {
-        tenantId,
+
         zoneId,
         name,
         type,

@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { method, tenantId } = body
+    const { method} = body
 
     // CP-CRIT-03: tenantId is REQUIRED for all auth methods — no cross-tenant access
     if (!tenantId || typeof tenantId !== 'string') {
@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
 
       // CP-CRIT-03: Scope voucher lookup to tenant
       const voucher = await db.wiFiVoucher.findFirst({
-        where: { code: trimmedCode, tenantId },
+        where: { code: trimmedCode},
         include: {
           plan: {
             select: {

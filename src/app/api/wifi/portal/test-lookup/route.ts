@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
     const results: Record<string, unknown>[] = [];
 
     // ── Step 1: Check PortalMapping subnet CIDR match ──
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
 
     // ── Step 3: Check default portal ──
     const defaultPortal = await db.captivePortal.findFirst({
-      where: { isDefault: true, enabled: true, tenantId },
+      where: { isDefault: true, enabled: true},
       select: { id: true, name: true, slug: true },
     });
 
@@ -230,7 +230,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       testIp: clientIp,
-      tenantId,
       diagnosis,
       wouldResolveTo,
       results,
