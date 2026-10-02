@@ -1,12 +1,40 @@
 "use client";
 
+// ═════════════════════════════════════════════════════════════
+// Billing & Invoices — no-leak production pass (Task 6-b)
+//
+// API contracts verified against route source (no-leak commit 130a592):
+// • GET /api/billing?page&limit&search&status&subscriberId&dateFrom&dateTo
+//   → { invoices[], total, page, totalPages, statusCounts } where
+//   statusCounts is ALWAYS global (not narrowed by the active filters).
+// • POST /api/billing actions: generate | send | bulk_send |
+//   record_payment. send/bulk_send ONLY flip status DRAFT→SENT — no
+//   email is dispatched (the UI says so explicitly, never "email sent").
+//   record_payment is transactional and returns { payment, invoice }
+//   where payment carries a REAL receipt number (RCT-<base36 ts>-<entropy>),
+//   collector attribution (collectedById/verifiedById) and notes
+//   "[auto-verified at counter]". Overpayment → 400 whose error body is
+//   surfaced verbatim in the dialog.
+// • GET /api/payments/analytics → { summary, leakRadar, aging,
+//   collectors, ... } powers the No-Leak Command Strip (60s refresh).
+// • GUARDRAIL for future work: /api/billing/[id] PUT does NOT create
+//   Payment rows — flipping status to PAID through it would book
+//   revenue with no ledger entry. The hardened auto-payment path lives
+//   in /api/invoices/[id] PUT (status=PAID). This page moves money
+//   exclusively via record_payment.
+// ═════════════════════════════════════════════════════════════
+
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, formatINR } from "@/lib/utils";
+import { useAppStore } from "@/store/app-store";
+import { MiniStat, AsyncActionButton, WarningStrip } from "@/components/integrations/shared";
+import { EmptyState } from "@/components/alerts/shared";
 import {
   FileText, Search, Send, CreditCard, Eye, X, FilePlus,
   IndianRupee, Edit2, Ban, CalendarDays, FileSpreadsheet, Plus,
   Receipt, CheckCircle, Clock, DollarSign,
+  ShieldCheck, Wallet, Banknote, Radar, Hourglass,
 } from "lucide-react";
 import PageHeader from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,7 +72,7 @@ interface Invoice {
 }
 
 interface InvoiceDetail extends Invoice {
-  payments: { id: string; receiptNumber: string; amount: number; paymentMode: string; status: string; createdAt: string }[];
+  payments: { id: string; receiptNumber: string; amount: number; paymentMode: string; status: string; createdAt: string; notes?: string | null }[];
 }
 
 interface StatusCounts {
@@ -53,17 +81,82 @@ interface StatusCounts {
 
 interface SubOption { id: string; name: string; code: string }
 
+// ─── Payment analytics (GET /api/payments/analytics) ─────────
+interface PaymentAnalytics {
+  summary: {
+    collectedTodayTotal: number; collectedMonthTotal: number;
+    pendingVerifyCount: number; pendingVerifyAmount: number;
+    oldestPendingHours: number; failed30d: number; refunded30d: number;
+  };
+  leakRadar: {
+    autoVerifiedCount: number; missingReceiptCount: number;
+    stalePendingCount: number; unmatchedGatewayCount: number;
+  };
+  aging: {
+    buckets: { key: string; label: string; count: number; amount: number }[];
+    totalOutstanding: number; totalCount: number; invoiceCount: number;
+    topDebtors: { subscriberId: string; name: string; code: string; invoiceCount: number; outstanding: number; daysOverdue: number }[];
+  };
+  collectors?: { userId: string | null; name: string; total: number; count: number }[];
+}
+
+// POST /api/billing action=record_payment — no-leak response shape
+interface RecordPaymentResponse {
+  error?: string;
+  payment?: {
+    id: string; invoiceId: string | null; amount: number; paymentMode: string;
+    status: string; receiptNumber: string; notes: string | null;
+  } | null;
+  invoice?: { id: string; status: string; paidAmount: number; balanceAmount: number } | null;
+}
+
+// Success panel shown inside the Record Payment dialog before close
+interface PaymentSuccessState {
+  receiptNumber: string; subscriberName: string; amount: number;
+  paymentMode: string; balanceAfter: number; statusAfter: string;
+}
+
+const AUTO_VERIFIED_MARKER = "[auto-verified at counter]";
+
+const LEAK_RADAR_CHIPS: { key: keyof PaymentAnalytics["leakRadar"]; label: string; hint: string }[] = [
+  { key: "autoVerifiedCount", label: "Auto-verified", hint: "Collector and verifier are the same user — maker-checker bypass" },
+  { key: "missingReceiptCount", label: "No receipt", hint: "Verified payments with an empty receipt number" },
+  { key: "stalePendingCount", label: "Stale pending", hint: "Pending verification for more than 24 hours" },
+  { key: "unmatchedGatewayCount", label: "Unmatched gateway", hint: "Gateway transactions not linked to a payment" },
+];
+
+const LEAK_CHIP_BASE = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors";
+const LEAK_CHIP_FLAGGED = `${LEAK_CHIP_BASE} border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/40`;
+const LEAK_CHIP_ZERO = `${LEAK_CHIP_BASE} border-border bg-muted/40 text-muted-foreground hover:bg-muted`;
+const LEAK_CHIP_CLEAN = `${LEAK_CHIP_BASE} border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40`;
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// apiFetch throws composite "API <status>: <body>" strings. Dig the
+// backend's own error text out of the body so operators see the REAL
+// reason (e.g. the record_payment overpayment 400) instead of JSON.
+function parseApiError(err: unknown): string {
+  const raw = typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  if (!raw) return "Something went wrong";
+  const sep = raw.indexOf(": ");
+  if (sep !== -1) {
+    try {
+      const parsed = JSON.parse(raw.slice(sep + 2));
+      if (parsed && typeof parsed.error === "string" && parsed.error) return parsed.error;
+    } catch { /* body was not JSON — fall through to raw text */ }
+  }
+  return raw;
+}
+
 const STATUS_MAP: Record<string, { label: string; class: string; dotClass: string; pulse?: boolean }> = {
-  DRAFT: { label: "Draft", class: "bg-gray-100 text-gray-600", dotClass: "bg-gray-400" },
-  SENT: { label: "Sent", class: "bg-blue-100 text-blue-700", dotClass: "bg-blue-500" },
-  PAID: { label: "Paid", class: "bg-green-100 text-green-700", dotClass: "bg-green-500" },
-  PARTIALLY_PAID: { label: "Partial", class: "bg-blue-100 text-blue-700", dotClass: "bg-blue-500" },
-  OVERDUE: { label: "Overdue", class: "bg-red-100 text-red-700", dotClass: "bg-red-500", pulse: true },
-  CANCELLED: { label: "Cancelled", class: "bg-slate-100 text-slate-600", dotClass: "bg-slate-400" },
+  DRAFT: { label: "Draft", class: "bg-slate-100 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300", dotClass: "bg-slate-400" },
+  SENT: { label: "Sent", class: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300", dotClass: "bg-sky-500" },
+  PAID: { label: "Paid", class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300", dotClass: "bg-emerald-500" },
+  PARTIALLY_PAID: { label: "Partial", class: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300", dotClass: "bg-amber-500" },
+  OVERDUE: { label: "Overdue", class: "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300", dotClass: "bg-red-500", pulse: true },
+  CANCELLED: { label: "Cancelled", class: "bg-slate-100 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400", dotClass: "bg-slate-400" },
 };
 
 const emptyEditForm = {
@@ -72,6 +165,7 @@ const emptyEditForm = {
 
 export default function BillingPage() {
   const queryClient = useQueryClient();
+  const setCurrentPage = useAppStore((s) => s.setCurrentPage);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -97,6 +191,12 @@ export default function BillingPage() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [paymentRef, setPaymentRef] = useState("");
+  const [paymentSuccess, setPaymentSuccess] = useState<PaymentSuccessState | null>(null);
+  const [paymentError, setPaymentError] = useState("");
+
+  // Send confirmation gate — send/bulk_send never dispatch email, so the
+  // click first opens a dialog that says exactly what will happen.
+  const [sendConfirm, setSendConfirm] = useState<{ mode: "single" | "bulk"; invoice: Invoice | null; ids: string[] } | null>(null);
 
   // Manual create form
   const today = new Date().toISOString().split("T")[0];
@@ -134,6 +234,15 @@ export default function BillingPage() {
     enabled: !!selectedInvoice?.id && detailOpen,
   });
 
+  // No-Leak Command Strip — payments pipeline health (60s auto-refresh).
+  const { data: analytics, isLoading: analyticsLoading, isError: analyticsError } = useQuery<PaymentAnalytics>({
+    queryKey: ["payment-analytics-billing"],
+    queryFn: () => apiFetch<PaymentAnalytics>("/api/payments/analytics"),
+    refetchInterval: 60_000,
+  });
+
+  const goPayments = () => setCurrentPage("Payments", "OPERATIONS");
+
   // Generate invoices
   const generateMutation = useMutation({
     mutationFn: () => apiFetch("/api/billing", { method: "POST", body: JSON.stringify({ action: "generate" }) }),
@@ -149,27 +258,36 @@ export default function BillingPage() {
     onError: (err) => toast.error(err.message || "Failed to generate invoices"),
   });
 
-  // Send invoice
+  // Send invoice (status flip only — the confirmation dialog explains this)
   const sendMutation = useMutation({
     mutationFn: (subscriberId: string) => apiFetch("/api/billing", { method: "POST", body: JSON.stringify({ action: "send", subscriberId }) }),
     onSuccess: (d) => {
       if (d.error) { toast.error(d.error); return; }
-      toast.success("Invoice sent successfully");
+      toast.success("Invoice marked as sent — no email dispatched");
+      setSendConfirm(null);
       queryClient.invalidateQueries({ queryKey: ["billing"] });
+    },
+    onError: (err) => {
+      setSendConfirm(null);
+      toast.error(parseApiError(err) || "Failed to send invoice");
     },
   });
 
-  // Bulk send invoices
+  // Bulk send invoices (status flip only)
   const bulkSendMutation = useMutation({
     mutationFn: (ids: string[]) => apiFetch("/api/billing", { method: "POST", body: JSON.stringify({ action: "bulk_send", invoiceIds: ids }) }),
     onSuccess: (d) => {
       if (d.error) { toast.error(d.error); return; }
-      toast.success(d.message || `Sent ${d.count} invoices`);
+      toast.success(`Marked ${d.count ?? "selected"} invoice(s) as sent — no email dispatched`);
       setSelectedIds(new Set());
       setBulkMode(false);
+      setSendConfirm(null);
       queryClient.invalidateQueries({ queryKey: ["billing"] });
     },
-    onError: (err) => toast.error(err.message || "Bulk send failed"),
+    onError: (err) => {
+      setSendConfirm(null);
+      toast.error(parseApiError(err) || "Bulk send failed");
+    },
   });
 
   // Edit invoice
@@ -215,13 +333,16 @@ export default function BillingPage() {
     onError: (err) => toast.error(err.message || "Failed to cancel invoice"),
   });
 
-  // Record payment
+  // Record payment — returns { payment, invoice } with a REAL receipt
+  // number + collector attribution (no-leak hardening). The dialog keeps
+  // itself open to show the receipt before the operator dismisses it.
   const recordPaymentMutation = useMutation({
-    mutationFn: () => {
-      if (!selectedInvoice) return Promise.reject("No invoice selected");
+    mutationFn: (): Promise<RecordPaymentResponse> => {
+      setPaymentError("");
+      if (!selectedInvoice) return Promise.reject(new Error("No invoice selected"));
       const amount = parseFloat(paymentAmount);
-      if (!amount || amount <= 0) return Promise.reject("Invalid amount");
-      return apiFetch("/api/billing", {
+      if (!amount || amount <= 0) return Promise.reject(new Error("Enter an amount greater than zero"));
+      return apiFetch<RecordPaymentResponse>("/api/billing", {
         method: "POST",
         body: JSON.stringify({
           action: "record_payment",
@@ -234,15 +355,39 @@ export default function BillingPage() {
       });
     },
     onSuccess: (d) => {
-      if (d.error) { toast.error(d.error); return; }
-      toast.success("Payment recorded successfully");
-      setPaymentOpen(false);
-      setPaymentAmount("");
-      setPaymentRef("");
-      queryClient.invalidateQueries({ queryKey: ["billing"] });
-      if (detailOpen) queryClient.invalidateQueries({ queryKey: ["invoice-detail"] });
+      if (d.error) { setPaymentError(d.error); toast.error(d.error); return; }
+      const payment = d.payment;
+      // Refresh the invoice list + detail when the payment is tied to one.
+      if (payment?.invoiceId) {
+        queryClient.invalidateQueries({ queryKey: ["billing"] });
+        if (detailOpen) queryClient.invalidateQueries({ queryKey: ["invoice-detail"] });
+      }
+      // Money moved — the No-Leak strip should reflect it immediately.
+      queryClient.invalidateQueries({ queryKey: ["payment-analytics-billing"] });
+      if (payment?.receiptNumber) {
+        setPaymentSuccess({
+          receiptNumber: payment.receiptNumber,
+          subscriberName: selectedInvoice?.subscriber?.name || "subscriber",
+          amount: payment.amount,
+          paymentMode: payment.paymentMode,
+          balanceAfter: d.invoice?.balanceAmount ?? Math.max(0, (selectedInvoice?.balanceAmount ?? 0) - payment.amount),
+          statusAfter: d.invoice?.status ?? "",
+        });
+        setPaymentAmount("");
+        setPaymentRef("");
+        toast.success(`Payment recorded — receipt ${payment.receiptNumber} (auto-verified at counter)`);
+      } else {
+        setPaymentOpen(false);
+        setPaymentAmount("");
+        setPaymentRef("");
+        toast.success("Payment recorded successfully");
+      }
     },
-    onError: (err) => toast.error(typeof err === "string" ? err : "Failed to record payment"),
+    onError: (err) => {
+      const msg = parseApiError(err);
+      setPaymentError(msg);
+      toast.error(msg);
+    },
   });
 
   // Create manual invoice
@@ -264,7 +409,15 @@ export default function BillingPage() {
 
   // ─── Helpers ──────────────────────────────────────────
   const openDetail = (inv: Invoice) => { setSelectedInvoice(inv); setDetailOpen(true); };
-  const openPayment = (inv: Invoice) => { setSelectedInvoice(inv); setPaymentAmount(String(inv.balanceAmount > 0 ? inv.balanceAmount : inv.grandTotal)); setPaymentMode("CASH"); setPaymentRef(""); setPaymentOpen(true); };
+  const openPayment = (inv: Invoice) => {
+    setSelectedInvoice(inv);
+    setPaymentAmount(String(inv.balanceAmount > 0 ? inv.balanceAmount : inv.grandTotal));
+    setPaymentMode("CASH");
+    setPaymentRef("");
+    setPaymentSuccess(null);
+    setPaymentError("");
+    setPaymentOpen(true);
+  };
   const openEdit = (inv: Invoice) => {
     setSelectedInvoice(inv);
     setEditForm({
@@ -279,12 +432,25 @@ export default function BillingPage() {
   };
   const openCancel = (inv: Invoice) => { setSelectedInvoice(inv); setCancelReason(""); setCancelOpen(true); };
 
+  // Open the honesty gate instead of mutating directly — send only
+  // flips status DRAFT→SENT (no email), and the dialog says so.
   const handleSend = (inv: Invoice) => {
     if (inv.status !== "DRAFT" && inv.status !== "SENT") {
       toast.error("Can only send Draft or Sent invoices");
       return;
     }
-    sendMutation.mutate(inv.subscriberId);
+    setSendConfirm({ mode: "single", invoice: inv, ids: [] });
+  };
+
+  const confirmSend = () => {
+    if (!sendConfirm) return;
+    if (sendConfirm.mode === "single" && sendConfirm.invoice) {
+      sendMutation.mutate(sendConfirm.invoice.subscriberId);
+    } else if (sendConfirm.ids.length > 0) {
+      bulkSendMutation.mutate(sendConfirm.ids);
+    } else {
+      setSendConfirm(null);
+    }
   };
 
   const toggleSelect = (id: string) => {
@@ -329,6 +495,13 @@ export default function BillingPage() {
   const total = data?.total ?? 0;
   const sc = data?.statusCounts;
 
+  // Leak radar totals for the command strip
+  const leakRadar = analytics?.leakRadar;
+  const leakTotal = leakRadar
+    ? leakRadar.autoVerifiedCount + leakRadar.missingReceiptCount + leakRadar.stalePendingCount + leakRadar.unmatchedGatewayCount
+    : 0;
+  const topCollector = analytics?.collectors?.[0];
+
   // Filtered subs for the dropdown
   const [subSearch, setSubSearch] = useState("");
   const filteredSubs = subscribers?.filter((s) =>
@@ -353,13 +526,107 @@ export default function BillingPage() {
             <Button variant="outline" size="sm" onClick={() => { setBulkMode(!bulkMode); setSelectedIds(new Set()); }}>
               {bulkMode ? "Cancel Selection" : "Bulk Select"}
             </Button>
-            <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
-              <FilePlus className="h-4 w-4 mr-2" />
-              {generateMutation.isPending ? "Generating..." : "Generate Invoices"}
-            </Button>
+            <AsyncActionButton
+              label="Generate Invoices"
+              pendingLabel="Generating..."
+              pending={generateMutation.isPending}
+              icon={<FilePlus className="h-4 w-4" />}
+              variant="default"
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => generateMutation.mutate()}
+            />
           </div>
         }
       />
+
+      {/* ─── No-Leak Command Strip — payments pipeline health ─── */}
+      <Card className="border shadow-sm">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" />
+            <span className="text-sm font-semibold shrink-0">No-Leak Command</span>
+            <span className="text-xs text-muted-foreground truncate">payments pipeline health · auto-refresh 60s</span>
+          </div>
+          {analyticsLoading && !analytics ? (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-3 w-28" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+              {/* Outstanding AR */}
+              <div className="flex items-start justify-between gap-2 min-w-0">
+                <div className="min-w-0">
+                  <MiniStat icon={<Wallet className="h-3 w-3" />} label="Outstanding AR" tone="bad" value={formatINR(analytics?.aging.totalOutstanding ?? 0)} />
+                  <p className="mt-0.5 text-[10px] text-muted-foreground truncate">
+                    Across {analytics?.aging.invoiceCount ?? 0} open invoice(s)
+                    {(analytics?.aging.topDebtors?.[0]?.outstanding ?? 0) > 0 ? ` · top: ${analytics?.aging.topDebtors[0].name} ${formatINR(analytics?.aging.topDebtors[0].outstanding ?? 0)}` : ""}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={goPayments}>Aging view</Button>
+              </div>
+              {/* Pending verification queue */}
+              <div className="flex items-start justify-between gap-2 min-w-0">
+                <div className="min-w-0">
+                  <MiniStat icon={<Hourglass className="h-3 w-3" />} label="Pending Verification" tone="warn" value={formatINR(analytics?.summary.pendingVerifyAmount ?? 0)} />
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                    {analytics?.summary.pendingVerifyCount ?? 0} payment(s) awaiting checker
+                    {(analytics?.summary.oldestPendingHours ?? 0) > 0 ? ` · oldest ${analytics?.summary.oldestPendingHours}h` : ""}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={goPayments}>Verify queue</Button>
+              </div>
+              {/* Collected MTD */}
+              <div className="min-w-0">
+                <MiniStat icon={<Banknote className="h-3 w-3" />} label="Collected MTD" tone="good" value={formatINR(analytics?.summary.collectedMonthTotal ?? 0)} />
+                <p className="mt-0.5 text-[10px] text-muted-foreground truncate">
+                  Today {formatINR(analytics?.summary.collectedTodayTotal ?? 0)} verified
+                  {topCollector && topCollector.total > 0 ? ` · top: ${topCollector.name}` : ""}
+                </p>
+              </div>
+              {/* Leak radar */}
+              <div className="min-w-0">
+                <MiniStat
+                  icon={<Radar className="h-3 w-3" />}
+                  label="Leak Radar"
+                  tone={analyticsError && !analytics ? "default" : leakTotal > 0 ? "warn" : "good"}
+                  value={analyticsError && !analytics ? "Unavailable" : leakTotal > 0 ? `${leakTotal} flagged` : "All clean"}
+                />
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {analyticsError && !analytics ? (
+                    <span className="text-[10px] text-muted-foreground">Analytics unreachable — retrying every 60s</span>
+                  ) : leakTotal === 0 ? (
+                    <button type="button" onClick={goPayments} className={LEAK_CHIP_CLEAN} aria-label="All clean — open Payments">
+                      <CheckCircle className="h-3 w-3" />All clean
+                    </button>
+                  ) : (
+                    LEAK_RADAR_CHIPS.map((chip) => {
+                      const count = analytics?.leakRadar[chip.key] ?? 0;
+                      return (
+                        <button
+                          key={chip.key}
+                          type="button"
+                          onClick={goPayments}
+                          title={`${chip.hint} — open Payments`}
+                          aria-label={`${chip.label}: ${count} — open Payments`}
+                          className={count > 0 ? LEAK_CHIP_FLAGGED : LEAK_CHIP_ZERO}
+                        >
+                          {count} {chip.label}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Summary Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -483,14 +750,17 @@ export default function BillingPage() {
       {/* Bulk actions bar */}
       {bulkMode && selectedIds.size > 0 && (
         <Card className="border shadow-sm bg-muted/50">
-          <CardContent className="p-3 flex items-center justify-between">
-            <span className="text-sm font-medium">{selectedIds.size} invoice(s) selected</span>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => bulkSendMutation.mutate(Array.from(selectedIds))} disabled={bulkSendMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
-                <Send className="h-4 w-4 mr-2" />{bulkSendMutation.isPending ? "Sending..." : "Send Selected"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Clear Selection</Button>
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{selectedIds.size} invoice(s) selected</span>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => setSendConfirm({ mode: "bulk", invoice: null, ids: Array.from(selectedIds) })} disabled={bulkSendMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
+                  <Send className="h-4 w-4 mr-2" />{bulkSendMutation.isPending ? "Sending..." : "Send Selected"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Clear Selection</Button>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">Marks invoices as sent — use INTEGRATIONS gateways for real delivery.</p>
           </CardContent>
         </Card>
       )}
@@ -498,9 +768,9 @@ export default function BillingPage() {
       {/* Invoice Table */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[62vh] overflow-y-auto nice-scroll">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
                   {bulkMode && (
                     <TableHead className="text-xs w-10">
@@ -523,10 +793,12 @@ export default function BillingPage() {
               <TableBody>
                 {!invoices.length ? (
                   <TableRow>
-                    <TableCell colSpan={bulkMode ? 9 : 8} className="text-center py-12">
-                      <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
-                      <p className="text-muted-foreground font-medium">No invoices found</p>
-                      <p className="text-xs text-muted-foreground/60 mt-1">Generate invoices for active subscribers to get started</p>
+                    <TableCell colSpan={bulkMode ? 9 : 8} className="py-6">
+                      <EmptyState
+                        icon={FileText}
+                        title="No invoices found"
+                        hint="Generate invoices for active subscribers to get started."
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -557,34 +829,40 @@ export default function BillingPage() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-medium ${STATUS_MAP[inv.status]?.class || "bg-gray-100 text-gray-600"}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_MAP[inv.status]?.dotClass || "bg-gray-400"} ${STATUS_MAP[inv.status]?.pulse ? "animate-pulse" : ""}`} />
-                          {STATUS_MAP[inv.status]?.label || inv.status}
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-medium ${STATUS_MAP[inv.status]?.class || "bg-gray-100 text-gray-600"}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${STATUS_MAP[inv.status]?.dotClass || "bg-gray-400"} ${STATUS_MAP[inv.status]?.pulse ? "animate-pulse" : ""}`} />
+                            {STATUS_MAP[inv.status]?.label || inv.status}
+                          </span>
+                          {/* No-leak: keep the money owed visible next to the state */}
+                          {(inv.status === "SENT" || inv.status === "PARTIALLY_PAID" || inv.status === "OVERDUE") && inv.balanceAmount > 0 && (
+                            <span className="text-[10px] text-red-600 dark:text-red-400 tabular-nums">{formatINR(inv.balanceAmount)} due</span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs hidden lg:table-cell">{formatDate(inv.dueDate)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetail(inv)} title="View">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openDetail(inv)} title="View" aria-label={`View invoice ${inv.invoiceNumber}`}>
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
                           {inv.status !== "PAID" && inv.status !== "CANCELLED" && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(inv)} title="Edit">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(inv)} title="Edit" aria-label={`Edit invoice ${inv.invoiceNumber}`}>
                               <Edit2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {(inv.status === "DRAFT" || inv.status === "SENT") && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleSend(inv)} title="Send">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleSend(inv)} title="Mark as sent (no email)" aria-label={`Mark invoice ${inv.invoiceNumber} as sent`}>
                               <Send className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {inv.balanceAmount > 0 && inv.status !== "CANCELLED" && inv.status !== "PAID" && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPayment(inv)} title="Record Payment">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPayment(inv)} title="Record Payment" aria-label={`Record payment for invoice ${inv.invoiceNumber}`}>
                               <CreditCard className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {inv.status !== "CANCELLED" && inv.status !== "PAID" && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => openCancel(inv)} title="Cancel">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => openCancel(inv)} title="Cancel" aria-label={`Cancel invoice ${inv.invoiceNumber}`}>
                               <Ban className="h-3.5 w-3.5" />
                             </Button>
                           )}
@@ -720,7 +998,14 @@ export default function BillingPage() {
                     </TableRow></TableHeader><TableBody>
                       {detail.payments.map((p) => (
                         <TableRow key={p.id}>
-                          <TableCell className="text-xs font-mono">{p.receiptNumber}</TableCell>
+                          <TableCell className="text-xs font-mono">
+                            {p.receiptNumber}
+                            {p.notes?.includes(AUTO_VERIFIED_MARKER) && (
+                              <Badge variant="outline" className="ml-1 border-violet-300 bg-violet-50 text-[9px] text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+                                auto-verified
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="text-xs">{formatINR(p.amount)}</TableCell>
                           <TableCell className="text-xs">{p.paymentMode}</TableCell>
                           <TableCell className="text-xs"><Badge variant="outline" className={`text-[10px] ${p.status === "VERIFIED" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>{p.status}</Badge></TableCell>
@@ -733,15 +1018,20 @@ export default function BillingPage() {
 
               {/* Actions */}
               {detail.balanceAmount > 0 && detail.status !== "CANCELLED" && detail.status !== "PAID" && (
-                <div className="flex gap-2 pt-2">
-                  {detail.status === "DRAFT" && (
-                    <Button variant="outline" onClick={() => handleSend(detail)} className="flex-1">
-                      <Send className="h-4 w-4 mr-2" />Send Invoice
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex gap-2">
+                    {detail.status === "DRAFT" && (
+                      <Button variant="outline" onClick={() => { setDetailOpen(false); handleSend(detail); }} className="flex-1">
+                        <Send className="h-4 w-4 mr-2" />Send Invoice
+                      </Button>
+                    )}
+                    <Button onClick={() => { setDetailOpen(false); openPayment(detail); }} className="bg-red-600 hover:bg-red-700 text-white flex-1">
+                      <CreditCard className="h-4 w-4 mr-2" />Record Payment
                     </Button>
+                  </div>
+                  {detail.status === "DRAFT" && (
+                    <p className="text-[11px] text-muted-foreground">Marks invoices as sent — use INTEGRATIONS gateways for real delivery.</p>
                   )}
-                  <Button onClick={() => { setDetailOpen(false); openPayment(detail); }} className="bg-red-600 hover:bg-red-700 text-white flex-1">
-                    <CreditCard className="h-4 w-4 mr-2" />Record Payment
-                  </Button>
                 </div>
               )}
             </div>
@@ -870,45 +1160,131 @@ export default function BillingPage() {
       </Dialog>
 
       {/* ─── Record Payment Dialog ─── */}
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+      <Dialog
+        open={paymentOpen}
+        onOpenChange={(o) => {
+          setPaymentOpen(o);
+          if (!o) { setPaymentSuccess(null); setPaymentError(""); }
+        }}
+      >
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />Record Payment
             </DialogTitle>
             <DialogDescription>
-              Invoice {selectedInvoice?.invoiceNumber} · Balance: {formatINR(selectedInvoice?.balanceAmount || 0)}
+              {paymentSuccess
+                ? "Payment recorded and verified."
+                : <>Invoice {selectedInvoice?.invoiceNumber} · Balance: {formatINR(selectedInvoice?.balanceAmount || 0)}</>}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Amount (₹) *</Label>
-              <Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount" />
+          {paymentSuccess ? (
+            <div className="space-y-3">
+              {/* Receipt banner — stays visible until the operator dismisses */}
+              <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-800/60 dark:bg-emerald-950/30">
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <div className="min-w-0 text-sm">
+                    <p className="font-medium text-emerald-800 dark:text-emerald-200">
+                      Receipt {paymentSuccess.receiptNumber} issued to {paymentSuccess.subscriberName} — auto-verified at counter
+                    </p>
+                    <p className="mt-1 text-xs tabular-nums text-emerald-700/80 dark:text-emerald-300/80">
+                      {formatINR(paymentSuccess.amount)} via {paymentSuccess.paymentMode} · Balance remaining {formatINR(paymentSuccess.balanceAfter)}
+                      {paymentSuccess.statusAfter === "PAID" ? " · Invoice fully settled (PAID)" : ""}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The receipt is in the payments ledger with collector attribution — find it any time under Payments.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>Payment Mode</Label>
-              <Select value={paymentMode} onValueChange={setPaymentMode}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CASH">Cash</SelectItem>
-                  <SelectItem value="UPI">UPI</SelectItem>
-                  <SelectItem value="ONLINE">Online</SelectItem>
-                  <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
-                  <SelectItem value="CHEQUE">Cheque</SelectItem>
-                  <SelectItem value="WALLET">Wallet</SelectItem>
-                </SelectContent>
-              </Select>
+          ) : (
+            <div className="space-y-4">
+              {paymentError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50/70 p-3 text-xs text-red-800 dark:border-red-800/60 dark:bg-red-950/30 dark:text-red-200">
+                  <p className="font-medium">Payment rejected</p>
+                  <p className="mt-1 break-words">{paymentError}</p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Amount (₹) *</Label>
+                <Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount" />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Mode</Label>
+                <Select value={paymentMode} onValueChange={setPaymentMode} disabled={recordPaymentMutation.isPending}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="UPI">UPI</SelectItem>
+                    <SelectItem value="ONLINE">Online</SelectItem>
+                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    <SelectItem value="WALLET">Wallet</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Transaction Reference</Label>
+                <Input value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} placeholder="UPI ref, cheque #, etc." disabled={recordPaymentMutation.isPending} />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Transaction Reference</Label>
-              <Input value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} placeholder="UPI ref, cheque #, etc." />
-            </div>
-          </div>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentOpen(false)}>Cancel</Button>
-            <Button onClick={() => recordPaymentMutation.mutate()} disabled={recordPaymentMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white">
-              {recordPaymentMutation.isPending ? "Recording..." : "Record Payment"}
-            </Button>
+            {paymentSuccess ? (
+              <Button onClick={() => setPaymentOpen(false)}>Done</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setPaymentOpen(false)}>Cancel</Button>
+                <AsyncActionButton
+                  label="Record Payment"
+                  pendingLabel="Recording..."
+                  pending={recordPaymentMutation.isPending}
+                  icon={<CreditCard className="h-4 w-4" />}
+                  variant="default"
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => recordPaymentMutation.mutate()}
+                />
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Send Confirmation (honesty gate) ─── */}
+      <Dialog open={!!sendConfirm} onOpenChange={(o) => { if (!o) setSendConfirm(null); }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5" />Mark as sent
+            </DialogTitle>
+            <DialogDescription>
+              {sendConfirm?.mode === "bulk"
+                ? `${sendConfirm.ids.length} selected invoice(s) will be marked as SENT.`
+                : `Invoice ${sendConfirm?.invoice?.invoiceNumber || ""} will be marked as SENT.`}
+            </DialogDescription>
+          </DialogHeader>
+          <WarningStrip>
+            Marks invoices as sent — use INTEGRATIONS gateways for real delivery. This action only flips the invoice status; no email goes out.
+          </WarningStrip>
+          {sendConfirm?.mode === "bulk" && (
+            <p className="break-words font-mono text-xs text-muted-foreground">
+              {invoices.filter((i) => sendConfirm.ids.includes(i.id)).map((i) => i.invoiceNumber).slice(0, 4).join(", ")}
+              {sendConfirm.ids.length > 4 ? ` +${sendConfirm.ids.length - 4} more` : ""}
+            </p>
+ )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendConfirm(null)}>Cancel</Button>
+            <AsyncActionButton
+              label={sendConfirm?.mode === "bulk" ? "Mark Selected as Sent" : "Mark as Sent"}
+              pendingLabel="Marking..."
+              pending={sendMutation.isPending || bulkSendMutation.isPending}
+              icon={<Send className="h-4 w-4" />}
+              variant="default"
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={confirmSend}
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>

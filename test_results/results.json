@@ -1,0 +1,1514 @@
+[
+  {
+    "id": "T1.1",
+    "desc": "POST subscriber with plan & RADIUS → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"b4b4e86d-e1a4-4d8a-b8d3-8ae1a5fa8c22\",\"code\":\"CRY00016\",\"name\":\"Test M1 User1\",\"email\":\"t11_1785530962239@test.com\",\"phone\":\"9000000010\",\"altPhone\":\"\",\"address\":\"123 Test Street\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"testm1user1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"p..."
+  },
+  {
+    "id": "T1.1b",
+    "desc": "radcheck has 2+ rows for testm1user1_1785530962239",
+    "expected": "YES",
+    "actual": "YES",
+    "pass": true,
+    "evidence": "[{\"c\":\"2\"}]"
+  },
+  {
+    "id": "T1.2",
+    "desc": "POST duplicate phone → 409",
+    "expected": 409,
+    "actual": 409,
+    "pass": true,
+    "evidence": "{\"error\":\"Phone number already registered under subscriber CRY00016 (Test M1 User1)\"}"
+  },
+  {
+    "id": "T1.3",
+    "desc": "POST duplicate serviceUsername → 409",
+    "expected": 409,
+    "actual": 409,
+    "pass": true,
+    "evidence": "{\"error\":\"Service username already exists. Choose a different one.\"}"
+  },
+  {
+    "id": "T1.4",
+    "desc": "POST phone too short → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid phone number. Must be 10 digits starting with 6-9\"}"
+  },
+  {
+    "id": "T1.4b",
+    "desc": "POST phone starts with 5 → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid phone number. Must be 10 digits starting with 6-9\"}"
+  },
+  {
+    "id": "T1.4c",
+    "desc": "POST phone has alpha → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid phone number. Must be 10 digits starting with 6-9\"}"
+  },
+  {
+    "id": "T1.5",
+    "desc": "POST without planId → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"efc426e5-c1ba-4c45-b52d-2f463f3c0995\",\"code\":\"CRY00017\",\"name\":\"No Plan User\",\"email\":\"noplan_1785530962239@test.com\",\"phone\":\"9000000012\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"PENDING_ACTIVATION\",\"serviceUsername\":\"noplan1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":false..."
+  },
+  {
+    "id": "T1.5b",
+    "desc": "Status = PENDING_ACTIVATION",
+    "expected": "PENDING_ACTIVATION",
+    "actual": "PENDING_ACTIVATION",
+    "pass": true,
+    "evidence": "{\"id\":\"efc426e5-c1ba-4c45-b52d-2f463f3c0995\",\"code\":\"CRY00017\",\"name\":\"No Plan User\",\"email\":\"noplan_1785530962239@test.com\",\"phone\":\"9000000012\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"PENDING_ACTIVATION\",\"serviceUsername\":\"noplan1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":false..."
+  },
+  {
+    "id": "T1.5c",
+    "desc": "No radcheck rows for no-plan subscriber",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T1.6",
+    "desc": "POST radiusEnabled=false → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"e9bf63e0-0153-4e78-8285-1dea6cdd03d3\",\"code\":\"CRY00018\",\"name\":\"Test NoRad\",\"email\":\"norad_1785530962239@test.com\",\"phone\":\"9000000013\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"nora1user_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"..."
+  },
+  {
+    "id": "T1.6b",
+    "desc": "No radcheck for non-RADIUS subscriber",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T1.7",
+    "desc": "POST ipStackType IPV4_ONLY → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"cefecc0f-7d62-4a75-a84c-1aaca0147525\",\"code\":\"CRY00019\",\"name\":\"IPv4 Only User\",\"email\":\"ipv4_1785530962239@test.com\",\"phone\":\"9000000014\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"ipv4only1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath..."
+  },
+  {
+    "id": "T1.8",
+    "desc": "POST auto-generated username → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"18801ad5-4db9-4dfc-815a-f2ec37b811ea\",\"code\":\"CRY00020\",\"name\":\"Test AutoUser\",\"email\":\"auto_1785530962239@test.com\",\"phone\":\"9000000015\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"testautouserCRY00020\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\"..."
+  },
+  {
+    "id": "T1.8b",
+    "desc": "Auto-generated username is non-null",
+    "expected": "NON_NULL",
+    "actual": "NON_NULL",
+    "pass": true,
+    "evidence": "{\"username\":\"testautouserCRY00020\"}"
+  },
+  {
+    "id": "T1.9",
+    "desc": "PUT subscriber plan change → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"b4b4e86d-e1a4-4d8a-b8d3-8ae1a5fa8c22\",\"code\":\"CRY00016\",\"name\":\"Test M1 User1\",\"email\":\"t11_1785530962239@test.com\",\"phone\":\"9000000010\",\"altPhone\":\"\",\"address\":\"123 Test Street\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"802878d7-e3d1-456c-bdcc-8dddbc153043\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"testm1user1_1785530962239\",\"servicePassword\":\"Pass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,..."
+  },
+  {
+    "id": "T1.9b",
+    "desc": "radusergroup updated after plan change",
+    "expected": "UPDATED",
+    "actual": "UPDATED",
+    "pass": true,
+    "evidence": "[{\"groupname\":\"standard-50-mbps\"}]"
+  },
+  {
+    "id": "T1.10",
+    "desc": "PUT subscriber SUSPENDED → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"b4b4e86d-e1a4-4d8a-b8d3-8ae1a5fa8c22\",\"code\":\"CRY00016\",\"name\":\"Test M1 User1\",\"email\":\"t11_1785530962239@test.com\",\"phone\":\"9000000010\",\"altPhone\":\"\",\"address\":\"123 Test Street\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"802878d7-e3d1-456c-bdcc-8dddbc153043\",\"connectionType\":\"FTTH\",\"status\":\"SUSPENDED\",\"serviceUsername\":\"testm1user1_1785530962239\",\"servicePassword\":\"Pass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":nu..."
+  },
+  {
+    "id": "T1.10b",
+    "desc": "Auth-Type=Reject added (B12 check)",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"attribute\":\"Auth-Type\",\"value\":\"Reject\"}]"
+  },
+  {
+    "id": "T1.11",
+    "desc": "DELETE subscriber → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Subscriber deleted\"}"
+  },
+  {
+    "id": "T1.11b",
+    "desc": "radcheck cleaned after delete",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T1.12",
+    "desc": "GET subscribers paginated → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"subscribers\":[{\"id\":\"18801ad5-4db9-4dfc-815a-f2ec37b811ea\",\"code\":\"CRY00020\",\"name\":\"Test AutoUser\",\"email\":\"auto_1785530962239@test.com\",\"phone\":\"9000000015\",\"address\":\"\",\"status\":\"ACTIVE\",\"connectionType\":\"FTTH\",\"balance\":0,\"createdAt\":\"2026-07-31T20:49:23.671Z\",\"updatedAt\":\"2026-07-31T20:49:23.671Z\",\"serviceUsername\":\"testautouserCRY00020\",\"radiusEnabled\":true,\"radiusGroupId\":null,\"sessionTimeout\":null,\"idleTimeout\":null,\"lastAuthAt\":null,\"lastAuthResult\":\"\",\"ipStackType\":\"IPV4_ONLY\",\"ipv6A..."
+  },
+  {
+    "id": "T1.12b",
+    "desc": "Array length <= 5",
+    "expected": "YES",
+    "actual": "YES",
+    "pass": true,
+    "evidence": "{\"length\":5}"
+  },
+  {
+    "id": "T1.13",
+    "desc": "GET subscribers search → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"subscribers\":[],\"total\":0,\"page\":1,\"totalPages\":1,\"stats\":{\"activeCount\":26,\"newThisMonth\":31,\"suspendedCount\":1,\"trialCount\":1}}"
+  },
+  {
+    "id": "T2.1",
+    "desc": "radcheck Cleartext-Password for testautouserCRY00020",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"attribute\":\"Cleartext-Password\",\"value\":\"Pass@123\"}]"
+  },
+  {
+    "id": "T2.2",
+    "desc": "radusergroup entry for testautouserCRY00020",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"username\":\"testautouserCRY00020\",\"groupname\":\"basic-30-mbps\"}]"
+  },
+  {
+    "id": "T2.3",
+    "desc": "radreply Mikrotik-Rate-Limit for testautouserCRY00020",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"attribute\":\"Mikrotik-Rate-Limit\",\"value\":\"30720M/15360M\"}]"
+  },
+  {
+    "id": "T2.4",
+    "desc": "POST manual RADIUS user → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"User\":{\"id\":\"74a8a4f3-a0c5-4b20-b614-b6640400cb22\",\"subscriberId\":\"82d91825-591e-4a78-8b9a-29415c8a514d\",\"username\":\"manualuser1_1785530962239\",\"password\":\"ManualPass@123\",\"radiusEnabled\":true,\"radiusGroupId\":\"db0fffd0-fc2c-4513-9668-9e8b066871e7\",\"sessionTimeout\":null,\"idleTimeout\":null,\"createdAt\":\"2026-07-31T20:49:25.483Z\"}}"
+  },
+  {
+    "id": "T2.5",
+    "desc": "PUT RADIUS user password → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"User\":{\"id\":\"74a8a4f3-a0c5-4b20-b614-b6640400cb22\",\"subscriberId\":\"82d91825-591e-4a78-8b9a-29415c8a514d\",\"username\":\"manualuser1_1785530962239\",\"password\":\"NewPass@456\",\"radiusGroupId\":\"db0fffd0-fc2c-4513-9668-9e8b066871e7\",\"radiusGroupName\":\"basic-30-mbps\",\"sessionTimeout\":null,\"idleTimeout\":null,\"radiusEnabled\":true,\"updatedAt\":\"2026-07-31T20:49:25.573Z\"}}"
+  },
+  {
+    "id": "T2.5b",
+    "desc": "radcheck password updated",
+    "expected": "NewPass@456",
+    "actual": "NewPass@456",
+    "pass": true,
+    "evidence": "[{\"value\":\"NewPass@456\"}]"
+  },
+  {
+    "id": "T2.6",
+    "desc": "PUT RADIUS group change → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"User\":{\"id\":\"74a8a4f3-a0c5-4b20-b614-b6640400cb22\",\"subscriberId\":\"82d91825-591e-4a78-8b9a-29415c8a514d\",\"username\":\"manualuser1_1785530962239\",\"password\":\"NewPass@456\",\"radiusGroupId\":\"c698d46d-d030-4f9c-a2c3-f8879827723d\",\"radiusGroupName\":\"standard-50-mbps\",\"sessionTimeout\":null,\"idleTimeout\":null,\"radiusEnabled\":true,\"updatedAt\":\"2026-07-31T20:49:25.899Z\"}}"
+  },
+  {
+    "id": "T2.6b",
+    "desc": "radusergroup updated to new group",
+    "expected": "standard-50-mbps",
+    "actual": "standard-50-mbps",
+    "pass": true,
+    "evidence": "[{\"groupname\":\"standard-50-mbps\"}]"
+  },
+  {
+    "id": "T2.7",
+    "desc": "DELETE RADIUS user → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true}"
+  },
+  {
+    "id": "T2.7b",
+    "desc": "radcheck cleaned after RADIUS user delete",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T2.8",
+    "desc": "Simultaneous-Use in radcheck",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"attribute\":\"Simultaneous-Use\",\"value\":\"1\"}]"
+  },
+  {
+    "id": "T2.9",
+    "desc": "ChilliSpot-Max-Total-Octets in radgroupcheck",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"groupname\":\"Test DataLimit 50 1785516844123\",\"attribute\":\"ChilliSpot-Max-Total-Octets\",\"value\":\"53687091200\"},{\"groupname\":\"Test DataLimit 50 1785523978780\",\"attribute\":\"ChilliSpot-Max-Total-Octets\",\"value\":\"53687091200\"},{\"groupname\":\"Test Plan 100M 1785523978780\",\"attribute\":\"ChilliSpot-Max-Total-Octets\",\"value\":\"107374182400\"}]"
+  },
+  {
+    "id": "T2.10",
+    "desc": "Toggle RADIUS disabled → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"RADIUS disabled for subscriber\"}"
+  },
+  {
+    "id": "T2.11",
+    "desc": "POST bulk import CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"count\":2,\"errorCount\":0,\"errors\":[],\"message\":\"Import complete: 2 users created, 0 errors\"}"
+  },
+  {
+    "id": "T2.12",
+    "desc": "GET RADIUS users export CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T2.13",
+    "desc": "GET FreeRADIUS sync status → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"status\":\"drifted\",\"app\":{\"radiusEnabledSubscribers\":29},\"radius\":{\"users\":31,\"replies\":2,\"userGroups\":14,\"groupReplies\":10,\"groupChecks\":13},\"drift\":{\"total\":24,\"orphanedRadiusUsers\":[\"imp1_1785528811635\",\"imp2_1785528811635\",\"testconflict\"],\"missingRadiusUsers\":[\"imp1_1785530540178\",\"imp1_1785530962239\",\"imp1_1785530883862\",\"imp2_1785530546673\",\"imp1_1785530936384\",\"imp2_1785530540178\",\"imp2_1785530962239\",\"imp2_1785530750226\",\"imp2_1785530883862\",\"noplan1_1785530962239\",\"imp1_1785530546673\",..."
+  },
+  {
+    "id": "T3.1",
+    "desc": "POST new plan → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"669f46ff-3d8e-45c9-9e05-037e27d5f73f\",\"name\":\"Test Plan 100M 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":100,\"uploadSpeed\":50,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":100,\"priceMonthly\":999,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstDura..."
+  },
+  {
+    "id": "T3.2",
+    "desc": "POST plan with existing groupId → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"efd93d43-4a34-4efc-960a-320042ed3b0f\",\"name\":\"Test Plan ExistingGroup 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":70,\"uploadSpeed\":35,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":null,\"priceMonthly\":799,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"..."
+  },
+  {
+    "id": "T3.3a",
+    "desc": "POST plan no name → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Plan name is required\"}"
+  },
+  {
+    "id": "T3.3b",
+    "desc": "POST plan speed=0 → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Download speed must be greater than 0\"}"
+  },
+  {
+    "id": "T3.3c",
+    "desc": "POST plan negative price → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Monthly price must be 0 or greater\"}"
+  },
+  {
+    "id": "T3.4",
+    "desc": "POST plan no maxConcurrent → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"c3917ac7-4f89-4db6-b3e1-33141522cf87\",\"name\":\"Test NoConcurrent 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":40,\"uploadSpeed\":20,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":null,\"priceMonthly\":349,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstD..."
+  },
+  {
+    "id": "T3.4b",
+    "desc": "maxConcurrentSessions defaults to 1",
+    "expected": 1,
+    "actual": 1,
+    "pass": true,
+    "evidence": "{\"id\":\"c3917ac7-4f89-4db6-b3e1-33141522cf87\",\"name\":\"Test NoConcurrent 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":40,\"uploadSpeed\":20,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":null,\"priceMonthly\":349,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstD..."
+  },
+  {
+    "id": "T3.5",
+    "desc": "POST plan with dataLimitGb:50 → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"83aae538-d6cc-4b12-9b58-64b574f4083c\",\"name\":\"Test DataLimit 50 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":55,\"uploadSpeed\":28,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":50,\"priceMonthly\":599,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstDur..."
+  },
+  {
+    "id": "T3.6",
+    "desc": "PUT plan speed change → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"669f46ff-3d8e-45c9-9e05-037e27d5f73f\",\"name\":\"Test Plan 100M 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":80,\"uploadSpeed\":40,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":100,\"priceMonthly\":999,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstDurat..."
+  },
+  {
+    "id": "T3.6b",
+    "desc": "RADIUS group synced (speed=80)",
+    "expected": "SYNCED",
+    "actual": "SYNCED",
+    "pass": true,
+    "evidence": "[{\"speedLimitDown\":80,\"speedLimitUp\":40}]"
+  },
+  {
+    "id": "T3.7",
+    "desc": "PUT plan deactivate → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"669f46ff-3d8e-45c9-9e05-037e27d5f73f\",\"name\":\"Test Plan 100M 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":80,\"uploadSpeed\":40,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":100,\"priceMonthly\":999,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null,\"burstDurat..."
+  },
+  {
+    "id": "T3.8",
+    "desc": "DELETE plan → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Plan deleted\"}"
+  },
+  {
+    "id": "T3.8b",
+    "desc": "RADIUS group deleted after plan delete",
+    "expected": "DELETED",
+    "actual": "DELETED",
+    "pass": true,
+    "evidence": "[]"
+  },
+  {
+    "id": "T3.9",
+    "desc": "GET plans filtered → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"items\":[{\"id\":\"83aae538-d6cc-4b12-9b58-64b574f4083c\",\"name\":\"Test DataLimit 50 1785530962239\",\"description\":\"\",\"category\":\"FTTH\",\"downloadSpeed\":55,\"uploadSpeed\":28,\"speedUnit\":\"MBPS\",\"downloadSpeedFup\":null,\"uploadSpeedFup\":null,\"dataLimitGb\":50,\"priceMonthly\":599,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"installationCharge\":0,\"securityDeposit\":0,\"routerRental\":0,\"validityDays\":30,\"cgstPercent\":9,\"sgstPercent\":9,\"igstPercent\":0,\"contentionRatio\":\"1:10\",\"burstSpeed\":null..."
+  },
+  {
+    "id": "T3.10",
+    "desc": "POST plans reorder → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"3 plans reordered\"}"
+  },
+  {
+    "id": "T4.1",
+    "desc": "POST plan migrate → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"Successfully migrated 1 subscribers from \\\"Basic 30 Mbps\\\" to \\\"Standard 50 Mbps\\\"\",\"migratedCount\":1,\"radiusSynced\":1,\"radiusFailed\":0,\"sourcePlan\":\"Basic 30 Mbps\",\"targetPlan\":\"Standard 50 Mbps\"}"
+  },
+  {
+    "id": "T4.2",
+    "desc": "radusergroup updated after migrate (B2 check)",
+    "expected": "standard-50-mbps",
+    "actual": "standard-50-mbps",
+    "pass": true,
+    "evidence": "[{\"groupname\":\"standard-50-mbps\"}]"
+  },
+  {
+    "id": "T4.3",
+    "desc": "Migrate same source/target → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Source and target plans cannot be the same\"}"
+  },
+  {
+    "id": "T4.4",
+    "desc": "Migrate non-existent plan → 404/400",
+    "expected": "404",
+    "actual": "404",
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid source plan ID format\"}"
+  },
+  {
+    "id": "T4.5",
+    "desc": "Migrate inactive/missing plan → 400/404",
+    "expected": "400",
+    "actual": "400",
+    "pass": true,
+    "evidence": "{\"error\":\"Target plan not found\"}"
+  },
+  {
+    "id": "T4.6",
+    "desc": "Bulk plan migrate → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"Successfully migrated 1 subscribers from \\\"Standard 50 Mbps\\\" to \\\"Basic 30 Mbps\\\"\",\"migratedCount\":1,\"radiusSynced\":1,\"radiusFailed\":0,\"sourcePlan\":\"Standard 50 Mbps\",\"targetPlan\":\"Basic 30 Mbps\"}"
+  },
+  {
+    "id": "T4.7",
+    "desc": "Migrate non-RADIUS subscriber → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"Successfully migrated 1 subscribers from \\\"Basic 30 Mbps\\\" to \\\"Standard 50 Mbps\\\"\",\"migratedCount\":1,\"radiusSynced\":0,\"radiusFailed\":0,\"sourcePlan\":\"Basic 30 Mbps\",\"targetPlan\":\"Standard 50 Mbps\"}"
+  },
+  {
+    "id": "T4.8",
+    "desc": "Simultaneous-Use after migrate (B11 check)",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"attribute\":\"Simultaneous-Use\",\"value\":\"1\"}]"
+  },
+  {
+    "id": "T4.9",
+    "desc": "radusergroup after migrate back",
+    "expected": "basic-30-mbps",
+    "actual": "basic-30-mbps",
+    "pass": true,
+    "evidence": "[{\"groupname\":\"basic-30-mbps\"}]"
+  },
+  {
+    "id": "T5.1",
+    "desc": "POST create invoice → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"29986248-795c-494d-9733-fa4465689bd7\",\"invoiceNumber\":\"INV-00094\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-07-01T00:00:00.000Z\",\"dueDate\":\"2026-07-10T00:00:00.000Z\",\"periodStart\":\"2026-07-01T00:00:00.000Z\",\"periodEnd\":\"2026-07-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":1398,\"cgstAmount\":125.82,\"sgstAmount\":125.82,\"igstAmount\":0,\"totalTax\":251.64,\"totalAmount\":1649.64,\"d..."
+  },
+  {
+    "id": "T5.2",
+    "desc": "POST pro-rata invoice → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"3844a161-e6b1-44b4-93f5-01daea460e30\",\"invoiceNumber\":\"INV-00095\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-07-15T00:00:00.000Z\",\"dueDate\":\"2026-07-31T00:00:00.000Z\",\"periodStart\":\"2026-07-15T00:00:00.000Z\",\"periodEnd\":\"2026-07-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":898.5,\"cgstAmount\":80.87,\"sgstAmount\":80.87,\"igstAmount\":0,\"totalTax\":161.74,\"totalAmount\":1060.24,\"di..."
+  },
+  {
+    "id": "T5.3",
+    "desc": "POST invoice PERCENTAGE discount → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"bf6cd0a3-84f9-4659-96a2-4251cd586d00\",\"invoiceNumber\":\"INV-00096\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-08-01T00:00:00.000Z\",\"dueDate\":\"2026-08-31T00:00:00.000Z\",\"periodStart\":\"2026-08-01T00:00:00.000Z\",\"periodEnd\":\"2026-08-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":1398,\"cgstAmount\":125.82,\"sgstAmount\":125.82,\"igstAmount\":0,\"totalTax\":251.64,\"totalAmount\":1649.64,\"d..."
+  },
+  {
+    "id": "T5.4",
+    "desc": "POST invoice FLAT discount → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"3b340e4c-1020-47e2-8a26-c806084c1860\",\"invoiceNumber\":\"INV-00097\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-09-01T00:00:00.000Z\",\"dueDate\":\"2026-09-30T00:00:00.000Z\",\"periodStart\":\"2026-09-01T00:00:00.000Z\",\"periodEnd\":\"2026-10-01T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":1398,\"cgstAmount\":125.82,\"sgstAmount\":125.82,\"igstAmount\":0,\"totalTax\":251.64,\"totalAmount\":1649.64,\"d..."
+  },
+  {
+    "id": "T5.5",
+    "desc": "POST invoice multiple items → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"f2a564be-b39e-489d-9587-23f2adfa6619\",\"invoiceNumber\":\"INV-00098\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-10-01T00:00:00.000Z\",\"dueDate\":\"2026-10-31T00:00:00.000Z\",\"periodStart\":\"2026-10-01T00:00:00.000Z\",\"periodEnd\":\"2026-10-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":1598,\"cgstAmount\":143.82,\"sgstAmount\":143.82,\"igstAmount\":0,\"totalTax\":287.64,\"totalAmount\":1885.64,\"d..."
+  },
+  {
+    "id": "T5.6",
+    "desc": "POST bulk generate invoices → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Bulk generation complete\",\"created\":30,\"failed\":0,\"results\":[{\"invoiceNumber\":\"INV-MS9F1EC1-00047\",\"subscriberId\":\"9c1e0341-1476-4262-a122-46f36293247d\",\"subscriberName\":\"Ananya Ghosh\"},{\"invoiceNumber\":\"INV-MS9F1EC1-00048\",\"subscriberId\":\"ebea6ae4-ce00-4525-9a47-1be4552c166c\",\"subscriberName\":\"imp1_1785530910790\"},{\"invoiceNumber\":\"INV-MS9F1EC1-00049\",\"subscriberId\":\"3490e425-9f18-46ae-97fe-e06143354830\",\"subscriberName\":\"imp2_1785530910790\"},{\"invoiceNumber\":\"INV-MS9F1EC1-00050\",\"s..."
+  },
+  {
+    "id": "T5.7",
+    "desc": "POST billing generate → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Generated 16 invoices\",\"count\":16,\"invoices\":[{\"id\":\"43c1b707-de25-49a2-b988-e96678ca6c32\",\"invoiceNumber\":\"INV000077\",\"subscriberId\":\"9c1e0341-1476-4262-a122-46f36293247d\",\"planId\":\"802878d7-e3d1-456c-bdcc-8dddbc153043\",\"issueDate\":\"2026-12-01T00:00:00.000Z\",\"dueDate\":\"2026-12-31T00:00:00.000Z\",\"periodStart\":\"2026-12-01T00:00:00.000Z\",\"periodEnd\":\"2026-12-31T00:00:00.000Z\",\"description\":\"Internet subscription - Standard 50 Mbps for July 2026\",\"subtotal\":599,\"cgstAmount\":53.91,\"sgstA..."
+  },
+  {
+    "id": "T5.8",
+    "desc": "Duplicate period prevention → 409",
+    "expected": 409,
+    "actual": 409,
+    "pass": true,
+    "evidence": "{\"error\":\"Invoices already exist for period 2026-12-01 to 2026-12-31. 16 invoice(s) found.\",\"existingCount\":16}"
+  },
+  {
+    "id": "T5.9",
+    "desc": "Cancel paid invoice → 400/403",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Cannot cancel a paid invoice\"}"
+  },
+  {
+    "id": "T5.10",
+    "desc": "Delete paid invoice → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Cannot delete a paid or partially paid invoice\"}"
+  },
+  {
+    "id": "T5.11",
+    "desc": "GET invoices OVERDUE → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"invoices\":[{\"id\":\"3844a161-e6b1-44b4-93f5-01daea460e30\",\"invoiceNumber\":\"INV-00095\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-07-15T00:00:00.000Z\",\"dueDate\":\"2026-07-31T00:00:00.000Z\",\"periodStart\":\"2026-07-15T00:00:00.000Z\",\"periodEnd\":\"2026-07-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":898.5,\"cgstAmount\":80.87,\"sgstAmount\":80.87,\"igstAmount\":0,\"totalTax\":161.74,\"totalAmount\":1060.24,\"..."
+  },
+  {
+    "id": "T5.12",
+    "desc": "Invoice number uniqueness",
+    "expected": "UNIQUE",
+    "actual": "UNIQUE",
+    "pass": true,
+    "evidence": "[]"
+  },
+  {
+    "id": "T5.13",
+    "desc": "GET invoice by ID → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"invoice\":{\"id\":\"29986248-795c-494d-9733-fa4465689bd7\",\"invoiceNumber\":\"INV-00094\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"issueDate\":\"2026-07-01T00:00:00.000Z\",\"dueDate\":\"2026-07-10T00:00:00.000Z\",\"periodStart\":\"2026-07-01T00:00:00.000Z\",\"periodEnd\":\"2026-07-31T00:00:00.000Z\",\"description\":\"Invoice for Test M4 NoRadius\",\"subtotal\":1398,\"cgstAmount\":125.82,\"sgstAmount\":125.82,\"igstAmount\":0,\"totalTax\":251.64,\"totalAmount\":1649.64,\"d..."
+  },
+  {
+    "id": "T5.14",
+    "desc": "GET export invoices CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T6.1",
+    "desc": "POST payment → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"f1f11457-bfa0-45b8-aa36-08f86f9a01b3\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"invoiceId\":\"cdb29539-14a9-439a-bf59-9af615aa4d71\",\"amount\":500,\"paymentMode\":\"CASH\",\"transactionRef\":\"\",\"bankName\":\"\",\"chequeNumber\":\"\",\"status\":\"PENDING\",\"collectedById\":null,\"verifiedById\":null,\"receiptNumber\":\"RCT000001\",\"notes\":\"Test payment\",\"createdAt\":\"2026-07-31T20:49:30.946Z\",\"updatedAt\":\"2026-07-31T20:49:30.946Z\",\"Subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 N..."
+  },
+  {
+    "id": "T6.2",
+    "desc": "POST verify payment → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Verified 1 payment(s)\",\"count\":1}"
+  },
+  {
+    "id": "T6.3",
+    "desc": "Full payment → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"88bd9f85-b6ab-457d-99a3-4f9e6e88bcd6\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"invoiceId\":\"cdb29539-14a9-439a-bf59-9af615aa4d71\",\"amount\":1150.82,\"paymentMode\":\"BANK_TRANSFER\",\"transactionRef\":\"\",\"bankName\":\"\",\"chequeNumber\":\"\",\"status\":\"PENDING\",\"collectedById\":null,\"verifiedById\":null,\"receiptNumber\":\"RCT000003\",\"notes\":\"\",\"createdAt\":\"2026-07-31T20:49:31.030Z\",\"updatedAt\":\"2026-07-31T20:49:31.030Z\",\"Subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 ..."
+  },
+  {
+    "id": "T6.4",
+    "desc": "Partial payment → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"20688d17-8f4d-4c7c-a823-65bc203e8e12\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"invoiceId\":\"56b90509-0764-44b5-8461-e2f5e660d506\",\"amount\":300,\"paymentMode\":\"CASH\",\"transactionRef\":\"\",\"bankName\":\"\",\"chequeNumber\":\"\",\"status\":\"PENDING\",\"collectedById\":null,\"verifiedById\":null,\"receiptNumber\":\"RCT000004\",\"notes\":\"\",\"createdAt\":\"2026-07-31T20:49:31.066Z\",\"updatedAt\":\"2026-07-31T20:49:31.066Z\",\"Subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 NoRadius\",\"co..."
+  },
+  {
+    "id": "T6.5",
+    "desc": "Overpayment protection → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Payment amount (₹99999) exceeds outstanding balance (₹1150.82). Maximum allowed: ₹1150.82\"}"
+  },
+  {
+    "id": "T6.6",
+    "desc": "Payment via billing endpoint → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"payment\":{\"id\":\"c9c488de-c91d-4fbc-b1d7-fd3aa041ccfe\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"invoiceId\":\"56b90509-0764-44b5-8461-e2f5e660d506\",\"amount\":100,\"paymentMode\":\"UPI\",\"transactionRef\":\"\",\"bankName\":\"\",\"chequeNumber\":\"\",\"status\":\"VERIFIED\",\"collectedById\":null,\"verifiedById\":null,\"receiptNumber\":\"\",\"notes\":\"\",\"createdAt\":\"2026-07-31T20:49:31.106Z\",\"updatedAt\":\"2026-07-31T20:49:31.106Z\"},\"invoice\":{\"id\":\"56b90509-0764-44b5-8461-e2f5e660d506\",\"invoiceNumber\":\"INV-00002\",\"..."
+  },
+  {
+    "id": "T6.7",
+    "desc": "Bulk verify payments → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Verified 1 payment(s)\",\"count\":1}"
+  },
+  {
+    "id": "T6.8",
+    "desc": "Bulk reject payments → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"message\":\"Rejected 1 payment(s)\",\"count\":1}"
+  },
+  {
+    "id": "T6.9",
+    "desc": "Payment refund → 200/201",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"refund\":{\"id\":\"26e7f1bc-fc03-401f-9b1d-665769f3af7d\",\"paymentId\":\"f1f11457-bfa0-45b8-aa36-08f86f9a01b3\",\"amount\":100,\"reason\":\"Test refund\",\"mode\":\"Original\",\"notes\":\"\",\"status\":\"PROCESSED\",\"processedById\":\"usr_admin_001\",\"createdAt\":\"2026-07-31T20:49:31.223Z\",\"updatedAt\":\"2026-07-31T20:49:31.223Z\"},\"message\":\"Refund of 100 processed. Added to subscriber balance.\"}"
+  },
+  {
+    "id": "T6.10",
+    "desc": "GET payments with date range → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"payments\":[{\"id\":\"4a32f737-c85a-4da8-a193-d1c99663d783\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"invoiceId\":\"56b90509-0764-44b5-8461-e2f5e660d506\",\"amount\":50,\"paymentMode\":\"CASH\",\"transactionRef\":\"\",\"bankName\":\"\",\"chequeNumber\":\"\",\"status\":\"FAILED\",\"collectedById\":null,\"verifiedById\":null,\"receiptNumber\":\"RCT000006\",\"notes\":\"\",\"createdAt\":\"2026-07-31T20:49:31.134Z\",\"updatedAt\":\"2026-07-31T20:49:31.146Z\",\"Subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 No..."
+  },
+  {
+    "id": "T6.11",
+    "desc": "GET revenue by mode → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"modes\":[{\"mode\":\"UPI\",\"label\":\"UPI\",\"total\":300,\"count\":2,\"percentage\":100},{\"mode\":\"BANK_TRANSFER\",\"label\":\"Bank Transfer\",\"total\":0,\"count\":0,\"percentage\":0},{\"mode\":\"CASH\",\"label\":\"Cash\",\"total\":0,\"count\":0,\"percentage\":0},{\"mode\":\"CHEQUE\",\"label\":\"Cheque\",\"total\":0,\"count\":0,\"percentage\":0},{\"mode\":\"ONLINE\",\"label\":\"Online\",\"total\":0,\"count\":0,\"percentage\":0},{\"mode\":\"WALLET\",\"label\":\"Wallet\",\"total\":0,\"count\":0,\"percentage\":0}],\"totalRevenue\":300,\"totalPayments\":2,\"timestamp\":\"2026-07-31T..."
+  },
+  {
+    "id": "T7.1",
+    "desc": "Login restriction: all → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"ebea6ae4-ce00-4525-9a47-1be4552c166c\",\"code\":\"CSV-imp1_1785530910790\",\"name\":\"imp1_1785530910790\",\"email\":\"\",\"phone\":\"\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":null,\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"imp1_1785530910790\",\"servicePassword\":\"ImpPass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"panNumber\":\"\",\"kycAadhaarNumber\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":fals..."
+  },
+  {
+    "id": "T7.2",
+    "desc": "Login restriction: subnet → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"ebea6ae4-ce00-4525-9a47-1be4552c166c\",\"code\":\"CSV-imp1_1785530910790\",\"name\":\"imp1_1785530910790\",\"email\":\"\",\"phone\":\"\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":null,\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"imp1_1785530910790\",\"servicePassword\":\"ImpPass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"panNumber\":\"\",\"kycAadhaarNumber\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":fals..."
+  },
+  {
+    "id": "T7.3",
+    "desc": "Login restriction: IP → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"ebea6ae4-ce00-4525-9a47-1be4552c166c\",\"code\":\"CSV-imp1_1785530910790\",\"name\":\"imp1_1785530910790\",\"email\":\"\",\"phone\":\"\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":null,\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"imp1_1785530910790\",\"servicePassword\":\"ImpPass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"panNumber\":\"\",\"kycAadhaarNumber\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":fals..."
+  },
+  {
+    "id": "T7.4",
+    "desc": "Concurrent session limit in radcheck",
+    "expected": "FOUND",
+    "actual": "FOUND",
+    "pass": true,
+    "evidence": "[{\"value\":\"1\"}]"
+  },
+  {
+    "id": "T7.5",
+    "desc": "Session timeout resolution → 503 (engine not running)",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine not running"
+  },
+  {
+    "id": "T7.6",
+    "desc": "Speed limit resolution",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine mini-service not running"
+  },
+  {
+    "id": "T7.7",
+    "desc": "Data limit resolution",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine mini-service not running"
+  },
+  {
+    "id": "T7.8",
+    "desc": "Policy enforcement (session engine)",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine mini-service not running"
+  },
+  {
+    "id": "T7.9",
+    "desc": "Speed limit change via subscriber → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"ebea6ae4-ce00-4525-9a47-1be4552c166c\",\"code\":\"CSV-imp1_1785530910790\",\"name\":\"imp1_1785530910790\",\"email\":\"\",\"phone\":\"\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":null,\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"imp1_1785530910790\",\"servicePassword\":\"ImpPass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"panNumber\":\"\",\"kycAadhaarNumber\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":fals..."
+  },
+  {
+    "id": "T8.1",
+    "desc": "Session auth → 503 (engine not running)",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine mini-service not running"
+  },
+  {
+    "id": "T8.2",
+    "desc": "Session policy evaluation → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.3",
+    "desc": "Session disconnect → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.4",
+    "desc": "CoA → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.5",
+    "desc": "Session accounting → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.6",
+    "desc": "Session stats → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.7",
+    "desc": "Bandwidth stats → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.8",
+    "desc": "Events log → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503"
+  },
+  {
+    "id": "T8.9",
+    "desc": "Session engine unavailable → 503",
+    "expected": 503,
+    "actual": 503,
+    "pass": true,
+    "evidence": "EXPECTED_503: Session engine mini-service not running"
+  },
+  {
+    "id": "T9.1",
+    "desc": "ACTIVE→SUSPENDED → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"a72adb64-6eb1-4518-a29d-91892c2f64de\",\"code\":\"CRY00023\",\"name\":\"Lifecycle User\",\"email\":\"lc_1785530962239@test.com\",\"phone\":\"9000000030\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"SUSPENDED\",\"serviceUsername\":\"lifecycle1_1785530962239\",\"servicePassword\":\"Pass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"p..."
+  },
+  {
+    "id": "T9.1b",
+    "desc": "Auth-Type=Reject added (B12 check)",
+    "expected": 1,
+    "actual": "1",
+    "pass": true,
+    "evidence": "[{\"c\":\"1\"}]"
+  },
+  {
+    "id": "T9.2",
+    "desc": "SUSPENDED self-care login → 403",
+    "expected": 403,
+    "actual": 403,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Account is suspended. Please contact support.\"}"
+  },
+  {
+    "id": "T9.3",
+    "desc": "PENDING self-care login → 403",
+    "expected": 403,
+    "actual": 403,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Account is pending activation. Please contact support.\"}"
+  },
+  {
+    "id": "T9.4",
+    "desc": "DISCONNECTED self-care login → 403",
+    "expected": 403,
+    "actual": 403,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Account has been disconnected. Please contact support.\"}"
+  },
+  {
+    "id": "T9.5",
+    "desc": "Wrong password → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Invalid service username or password\"}"
+  },
+  {
+    "id": "T9.6",
+    "desc": "Password migration login → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"Subscriber\":{\"id\":\"c903c908-a8ad-476e-9703-f4094ece19a9\",\"code\":\"CRY00026\",\"name\":\"Bcrypt User\",\"email\":\"bcrypt_1785530962239@test.com\",\"phone\":\"9000000035\",\"altPhone\":\"\",\"address\":\"\",\"area\":{\"id\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"name\":\"Salt Lake\"},\"landmark\":\"\",\"pincode\":\"\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"bcrypt1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"plan\":{\"id\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"name\":\"Basic ..."
+  },
+  {
+    "id": "T9.6b",
+    "desc": "Password migrated to bcrypt",
+    "expected": "BCRYPT",
+    "actual": "BCRYPT",
+    "pass": true,
+    "evidence": "{\"prefix\":\"$2b$12$cZR\"}"
+  },
+  {
+    "id": "T9.7",
+    "desc": "SUSPENDED→ACTIVE → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"id\":\"a72adb64-6eb1-4518-a29d-91892c2f64de\",\"code\":\"CRY00023\",\"name\":\"Lifecycle User\",\"email\":\"lc_1785530962239@test.com\",\"phone\":\"9000000030\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"lifecycle1_1785530962239\",\"servicePassword\":\"Pass@123\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"panN..."
+  },
+  {
+    "id": "T9.7b",
+    "desc": "Auth-Type=Reject removed on reactivation",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T9.8",
+    "desc": "Rate limiting → 429 on 11th attempt",
+    "expected": 429,
+    "actual": 429,
+    "pass": true,
+    "evidence": "{\"lastStatus\":429}"
+  },
+  {
+    "id": "T10.1",
+    "desc": "Create group with check+reply → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"success\":true,\"RadiusGroup\":{\"groupname\":\"TestGroup100M_1785530962239\",\"checkAttrs\":[{\"id\":203,\"groupname\":\"TestGroup100M_1785530962239\",\"attribute\":\"Auth-Type\",\"op\":\":=\",\"value\":\"Accept\"}],\"replyAttrs\":[{\"id\":146,\"groupname\":\"TestGroup100M_1785530962239\",\"attribute\":\"ChilliSpot-Max-Total-Octets\",\"op\":\":=\",\"value\":\"102400\"},{\"id\":145,\"groupname\":\"TestGroup100M_1785530962239\",\"attribute\":\"Mikrotik-Rate-Limit\",\"op\":\":=\",\"value\":\"100M/50M\"}],\"checkCount\":1,\"replyCount\":2,\"userCount\":0,\"enrichment..."
+  },
+  {
+    "id": "T10.1b",
+    "desc": "radgroupcheck has 1 row",
+    "expected": 1,
+    "actual": "1",
+    "pass": true,
+    "evidence": "[{\"c\":\"1\"}]"
+  },
+  {
+    "id": "T10.1c",
+    "desc": "radgroupreply has 2 rows",
+    "expected": 2,
+    "actual": "2",
+    "pass": true,
+    "evidence": "[{\"c\":\"2\"}]"
+  },
+  {
+    "id": "T10.2",
+    "desc": "Add check attribute → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"action\":\"add-check\",\"attribute\":{\"id\":204,\"groupname\":\"TestGroup100M_1785530962239\",\"attribute\":\"Simultaneous-Use\",\"op\":\":=\",\"value\":\"2\"}}"
+  },
+  {
+    "id": "T10.3",
+    "desc": "Remove reply attribute → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"action\":\"remove-reply\",\"removed\":{\"attribute\":\"ChilliSpot-Max-Total-Octets\",\"deletedCount\":1}}"
+  },
+  {
+    "id": "T10.4",
+    "desc": "Update attribute value → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"action\":\"update-reply\",\"attribute\":{\"id\":145,\"groupname\":\"TestGroup100M_1785530962239\",\"attribute\":\"Mikrotik-Rate-Limit\",\"op\":\":=\",\"value\":\"200M/100M\"}}"
+  },
+  {
+    "id": "T10.5",
+    "desc": "Rename group → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"action\":\"rename\",\"oldGroupname\":\"TestGroup100M_1785530962239\",\"newGroupname\":\"TestGroup200MRenamed_1785530962239\"}"
+  },
+  {
+    "id": "T10.5b",
+    "desc": "Cascaded rename to RADIUS tables",
+    "expected": "YES",
+    "actual": "YES",
+    "pass": true,
+    "evidence": "[{\"c\":\"2\"}]"
+  },
+  {
+    "id": "T10.5c",
+    "desc": "Old name removed from radgroupcheck",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T10.6",
+    "desc": "Duplicate groupname → 409",
+    "expected": 409,
+    "actual": 409,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Group 'TestGroup200MRenamed_1785530962239' already exists in FreeRADIUS tables\"}"
+  },
+  {
+    "id": "T10.7",
+    "desc": "Invalid operator → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Invalid operator 'INVALID_OP' for check attribute 'Test-Attr'. Valid: ==, :=, !=, >, >=, <, <=, =~, !~, =*, !*\"}"
+  },
+  {
+    "id": "T10.8",
+    "desc": "Delete group → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"deleted\":{\"groupname\":\"TestGroup200MRenamed_1785530962239\",\"deletedChecks\":2,\"deletedReplies\":1,\"unassignedUsers\":0}}"
+  },
+  {
+    "id": "T10.8b",
+    "desc": "radgroupcheck cleaned after group delete",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T10.8c",
+    "desc": "radgroupreply cleaned after group delete",
+    "expected": 0,
+    "actual": "0",
+    "pass": true,
+    "evidence": "[{\"c\":\"0\"}]"
+  },
+  {
+    "id": "T10.9",
+    "desc": "GET all AAA groups → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"groups\":[{\"groupname\":\"T36b Test Plan 2\",\"checkAttrs\":[{\"id\":19,\"groupname\":\"T36b Test Plan 2\",\"attribute\":\"Simultaneous-Use\",\"op\":\":=\",\"value\":\"1\"}],\"replyAttrs\":[{\"id\":15,\"groupname\":\"T36b Test Plan 2\",\"attribute\":\"Mikrotik-Rate-Limit\",\"op\":\":=\",\"value\":\"80M/40M\"}],\"userCount\":0,\"checkCount\":1,\"replyCount\":1,\"enrichment\":null,\"description\":\"\",\"priority\":0},{\"groupname\":\"T36b4\",\"checkAttrs\":[{\"id\":23,\"groupname\":\"T36b4\",\"attribute\":\"Simultaneous-Use\",\"op\":\":=\",\"value\":\"1\"}],\"re..."
+  },
+  {
+    "id": "T10.10",
+    "desc": "GET group by name (basic-30-mbps) → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"RadiusGroup\":{\"groupname\":\"basic-30-mbps\",\"checkAttrs\":[],\"replyAttrs\":[],\"checkAttrsMap\":{},\"replyAttrsMap\":{},\"checkCount\":0,\"replyCount\":0,\"userCount\":9,\"assignedUsers\":[{\"username\":\"bcrypt1_1785530962239\",\"group_priority\":1,\"user_group\":\"basic-30-mbps\",\"subscriberId\":\"c903c908-a8ad-476e-9703-f4094ece19a9\",\"subscriberName\":\"Bcrypt User\",\"subscriberCode\":\"CRY00026\",\"subscriberStatus\":\"ACTIVE\",\"planId\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"planName\":\"Basic 30 Mbps\"},{\"usernam..."
+  },
+  {
+    "id": "T11.1",
+    "desc": "Subscriber login → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"Subscriber\":{\"id\":\"3bd2919a-6eba-4104-98ff-788aee6c7a6f\",\"code\":\"CRY00028\",\"name\":\"SelfCare User\",\"email\":\"sc_1785530962239@test.com\",\"phone\":\"9000000040\",\"altPhone\":\"\",\"address\":\"\",\"area\":{\"id\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"name\":\"Salt Lake\"},\"landmark\":\"\",\"pincode\":\"\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"selfcare1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"plan\":{\"id\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"name\":\"Basic ..."
+  },
+  {
+    "id": "T11.2",
+    "desc": "View own usage → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"data\":{\"currentUsed\":0,\"dataLimit\":512000,\"percentage\":0,\"dailyUsage\":[],\"cycleStart\":\"2026-07-31\",\"cycleEnd\":\"2026-08-31\"},\"summary\":{\"totalDownload\":0,\"totalUpload\":0,\"totalUsage\":0,\"avgDailyUsage\":0,\"dataLimitMb\":512000,\"usagePercent\":0,\"remainingMb\":512000,\"daysAnalyzed\":0,\"planName\":\"Basic 30 Mbps\"},\"weeklyUsage\":[]}"
+  },
+  {
+    "id": "T11.3",
+    "desc": "View own invoices → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"invoices\":[],\"pagination\":{\"total\":0,\"limit\":20,\"offset\":0,\"pages\":0},\"summary\":{\"totalBilled\":0,\"totalPaid\":0,\"outstandingBalance\":0}}"
+  },
+  {
+    "id": "T11.4",
+    "desc": "View plan comparison → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"plans\":[{\"id\":\"bb48df29-326c-4079-85cc-6bc5137962ca\",\"name\":\"T36b Test Plan 2\",\"description\":\"\",\"downloadSpeed\":80,\"uploadSpeed\":40,\"speedUnit\":\"MBPS\",\"dataLimitGb\":null,\"priceMonthly\":499,\"priceQuarterly\":null,\"priceHalfYearly\":null,\"priceYearly\":null,\"isPopular\":false,\"category\":\"FTTH\",\"validityDays\":30,\"_count\":{\"Subscriber\":0}},{\"id\":\"8a1c1afc-31a3-4031-8c03-f9b99dd49581\",\"name\":\"T36b4\",\"description\":\"\",\"downloadSpeed\":80,\"uploadSpeed\":40,\"speedUnit\":\"MBPS\",\"dataLimitGb\":nul..."
+  },
+  {
+    "id": "T11.5",
+    "desc": "View own profile → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"Subscriber\":{\"id\":\"3bd2919a-6eba-4104-98ff-788aee6c7a6f\",\"code\":\"CRY00028\",\"name\":\"SelfCare User\",\"email\":\"sc_1785530962239@test.com\",\"phone\":\"9000000040\",\"altPhone\":\"\",\"address\":\"\",\"area\":{\"id\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"name\":\"Salt Lake\"},\"landmark\":\"\",\"pincode\":\"\",\"connectionType\":\"FTTH\",\"status\":\"ACTIVE\",\"serviceUsername\":\"selfcare1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"plan\":{\"id\":\"f44cf808-064e-44e9-9ec2-9107af41ee9a\",\"name\":\"Basic ..."
+  },
+  {
+    "id": "T11.6",
+    "desc": "Change own password → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"message\":\"Password changed successfully\"}"
+  },
+  {
+    "id": "T11.7",
+    "desc": "View own payments → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"payments\":[],\"pagination\":{\"total\":0,\"limit\":20,\"offset\":0,\"pages\":0},\"summary\":{\"totalPaidThisMonth\":0,\"totalPaidThisYear\":0}}"
+  },
+  {
+    "id": "T11.8",
+    "desc": "View service status → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"service\":{\"connectionType\":\"FTTH\",\"accountStatus\":\"ACTIVE\",\"isOnline\":false,\"serviceUsername\":\"selfcare1_1785530962239\",\"ipConfiguration\":{\"type\":\"DYNAMIC\",\"address\":\"Assigned dynamically\",\"macAddress\":\"Not set\"},\"speeds\":{\"currentDown\":0,\"currentUp\":0,\"planDown\":30720,\"planUp\":15360},\"plan\":{\"name\":\"Basic 30 Mbps\",\"speedDown\":30720,\"speedUp\":15360,\"speedUnit\":\"MBPS\",\"dataLimitGb\":null},\"authentication\":{\"lastAuthAt\":null,\"lastAuthResult\":\"\",\"radiusEnabled\":true,\"sessionTimeout\"..."
+  },
+  {
+    "id": "T11.9",
+    "desc": "Self-care logout → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true}"
+  },
+  {
+    "id": "T11.10",
+    "desc": "Unauthorized self-care access → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Not authenticated\"}"
+  },
+  {
+    "id": "T12.1",
+    "desc": "SQL injection in username → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid service username. Only alphanumeric characters, dots, dashes, and underscores are allowed.\"}"
+  },
+  {
+    "id": "T12.1b",
+    "desc": "radcheck table intact after SQL injection",
+    "expected": "INTACT",
+    "actual": "INTACT",
+    "pass": true,
+    "evidence": "[{\"c\":\"44\"}]"
+  },
+  {
+    "id": "T12.2",
+    "desc": "No-auth access → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": "{\"error\":\"Authentication required. Please log in.\"}"
+  },
+  {
+    "id": "T12.3",
+    "desc": "Subscriber cant access admin API → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T12.4",
+    "desc": "Concurrent invoices all 201",
+    "expected": "ALL_201",
+    "actual": "ALL_201",
+    "pass": true,
+    "evidence": "[201,201,201]"
+  },
+  {
+    "id": "T12.4b",
+    "desc": "Invoice numbers unique after concurrent creates",
+    "expected": "UNIQUE",
+    "actual": "UNIQUE",
+    "pass": true,
+    "evidence": "[]"
+  },
+  {
+    "id": "T12.5",
+    "desc": "Empty body → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Name and phone are required\"}"
+  },
+  {
+    "id": "T12.6",
+    "desc": "Invalid UUID → 400/404",
+    "expected": "400",
+    "actual": "400",
+    "pass": true,
+    "evidence": "{\"error\":\"Subscriber not found\"}"
+  },
+  {
+    "id": "T12.7",
+    "desc": "XSS in name → 201/400",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"id\":\"bf4f8618-22be-4dd3-88ee-17729c33fef6\",\"code\":\"CRY00029\",\"name\":\"<script>alert('xss')</script>\",\"email\":\"\",\"phone\":\"9530962239\",\"altPhone\":\"\",\"address\":\"\",\"areaId\":\"389c1ca0-d841-4f3f-b301-e38dac257962\",\"landmark\":\"\",\"pincode\":\"\",\"planId\":null,\"connectionType\":\"FTTH\",\"status\":\"PENDING_ACTIVATION\",\"serviceUsername\":\"xssuser1_1785530962239\",\"ipType\":\"DYNAMIC\",\"ipAddress\":\"\",\"macAddress\":\"\",\"assignedDeviceId\":null,\"gstin\":\"\",\"kycDocPath\":\"\",\"profilePhotoPath\":\"\",\"kycVerified\":false,\"activatio..."
+  },
+  {
+    "id": "T12.8",
+    "desc": "Very long name → not 500",
+    "expected": "NOT_500",
+    "actual": "NOT_500",
+    "pass": true,
+    "evidence": "{\"status\":201}"
+  },
+  {
+    "id": "T12.9",
+    "desc": "Invalid JWT → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.1",
+    "desc": "Create ALLOW policy → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"data\":{\"id\":\"6c168c39-bddc-4b0a-8697-2fce40d8ef41\",\"name\":\"Business Hours 1785530962239\",\"description\":\"Allow during business hours\",\"daysOfWeek\":\"[1,2,3,4,5]\",\"startTime\":\"09:00\",\"endTime\":\"18:00\",\"action\":\"ALLOW\",\"speedDownKbps\":0,\"speedUpKbps\":0,\"enabled\":true,\"createdAt\":\"2026-07-31T20:49:38.963Z\",\"updatedAt\":\"2026-07-31T20:49:38.963Z\"}}"
+  },
+  {
+    "id": "T13.2",
+    "desc": "Create BLOCK policy → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"data\":{\"id\":\"55c0de5a-d5cd-41ab-9067-712a867d9a40\",\"name\":\"Night Block 1785530962239\",\"description\":\"Block access 11pm-6am\",\"daysOfWeek\":\"[0,1,2,3,4,5,6]\",\"startTime\":\"23:00\",\"endTime\":\"06:00\",\"action\":\"BLOCK\",\"speedDownKbps\":0,\"speedUpKbps\":0,\"enabled\":true,\"createdAt\":\"2026-07-31T20:49:39.172Z\",\"updatedAt\":\"2026-07-31T20:49:39.172Z\"}}"
+  },
+  {
+    "id": "T13.3",
+    "desc": "Create RATE_LIMIT policy → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"data\":{\"id\":\"ff188edd-ed29-4438-a61d-042b34f8691c\",\"name\":\"Off-Peak Throttle 1785530962239\",\"description\":\"Throttle during off-peak\",\"daysOfWeek\":\"[0,6]\",\"startTime\":\"00:00\",\"endTime\":\"08:00\",\"action\":\"RATE_LIMIT\",\"speedDownKbps\":10240,\"speedUpKbps\":5120,\"enabled\":true,\"createdAt\":\"2026-07-31T20:49:39.382Z\",\"updatedAt\":\"2026-07-31T20:49:39.382Z\"}}"
+  },
+  {
+    "id": "T13.4",
+    "desc": "Duplicate policy name → 409",
+    "expected": 409,
+    "actual": 409,
+    "pass": true,
+    "evidence": "{\"error\":\"Policy with this name already exists\"}"
+  },
+  {
+    "id": "T13.5",
+    "desc": "Assign policy",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.6",
+    "desc": "Duplicate assignment",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.7",
+    "desc": "Check subscriber access (ALLOW) → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"success\":true,\"data\":{\"subscriberId\":\"3bd2919a-6eba-4104-98ff-788aee6c7a6f\",\"allowed\":true,\"action\":\"ALLOW\",\"speedDownKbps\":0,\"speedUpKbps\":0,\"matchedPolicy\":null,\"checkedAt\":\"2026-07-31T20:49:39.597Z\",\"totalPolicies\":0}}"
+  },
+  {
+    "id": "T13.8",
+    "desc": "Check access BLOCK",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.9",
+    "desc": "Unassign policy",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.10a",
+    "desc": "Update policy",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T13.10b",
+    "desc": "Delete policy",
+    "expected": "SKIP",
+    "actual": "SKIP",
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T14.1",
+    "desc": "Create DATA top-up product → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"product\":{\"id\":\"2c984107-49a5-4968-ab2f-2d5ebb4331e6\",\"name\":\"10GB Data Booster\",\"description\":\"Add 10GB to current cycle\",\"type\":\"DATA\",\"value\":10240,\"validityHours\":168,\"price\":99,\"isActive\":true,\"sortOrder\":1,\"createdAt\":\"2026-07-31T20:49:39.606Z\",\"updatedAt\":\"2026-07-31T20:49:39.606Z\"}}"
+  },
+  {
+    "id": "T14.2",
+    "desc": "Create TIME top-up product → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"product\":{\"id\":\"dd91d744-201c-4fbe-b216-d91451cddbee\",\"name\":\"24 Hour Unlimited\",\"description\":\"\",\"type\":\"TIME\",\"value\":24,\"validityHours\":24,\"price\":49,\"isActive\":true,\"sortOrder\":0,\"createdAt\":\"2026-07-31T20:49:39.615Z\",\"updatedAt\":\"2026-07-31T20:49:39.615Z\"}}"
+  },
+  {
+    "id": "T14.3",
+    "desc": "Create SPEED_BOOST product → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"product\":{\"id\":\"e274ea7a-f2c1-4b3c-a53c-b24d302e99d1\",\"name\":\"2x Speed Boost 4hrs\",\"description\":\"\",\"type\":\"SPEED_BOOST\",\"value\":2,\"validityHours\":4,\"price\":29,\"isActive\":true,\"sortOrder\":0,\"createdAt\":\"2026-07-31T20:49:39.624Z\",\"updatedAt\":\"2026-07-31T20:49:39.624Z\"}}"
+  },
+  {
+    "id": "T14.4",
+    "desc": "Invalid top-up type → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"Invalid type. Must be one of: DATA, TIME, SPEED_BOOST\"}"
+  },
+  {
+    "id": "T14.5",
+    "desc": "Purchase top-up → 201",
+    "expected": 201,
+    "actual": 201,
+    "pass": true,
+    "evidence": "{\"purchase\":{\"id\":\"dd9d8cea-0a6d-434a-8d85-8779858fed29\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"topUpProductId\":\"2c984107-49a5-4968-ab2f-2d5ebb4331e6\",\"purchasedAt\":\"2026-07-31T20:49:39.642Z\",\"expiresAt\":\"2026-08-07T20:49:39.642Z\",\"usedAmount\":0,\"remainingAmount\":10240,\"status\":\"ACTIVE\",\"transactionId\":\"TXN-TEST-1785530962239\",\"createdAt\":\"2026-07-31T20:49:39.643Z\",\"updatedAt\":\"2026-07-31T20:49:39.643Z\",\"TopUpProduct\":{\"id\":\"2c984107-49a5-4968-ab2f-2d5ebb4331e6\",\"name\":\"10GB Data..."
+  },
+  {
+    "id": "T14.6",
+    "desc": "Purchase inactive product → 400",
+    "expected": 400,
+    "actual": 400,
+    "pass": true,
+    "evidence": "{\"error\":\"This top-up product is currently inactive.\"}"
+  },
+  {
+    "id": "T14.7",
+    "desc": "Consume top-up partial → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"topUp\":{\"id\":\"dd9d8cea-0a6d-434a-8d85-8779858fed29\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"topUpProductId\":\"2c984107-49a5-4968-ab2f-2d5ebb4331e6\",\"purchasedAt\":\"2026-07-31T20:49:39.642Z\",\"expiresAt\":\"2026-08-07T20:49:39.642Z\",\"usedAmount\":3072,\"remainingAmount\":7168,\"status\":\"ACTIVE\",\"transactionId\":\"TXN-TEST-1785530962239\",\"createdAt\":\"2026-07-31T20:49:39.643Z\",\"updatedAt\":\"2026-07-31T20:49:39.677Z\"},\"fullyConsumed\":false}"
+  },
+  {
+    "id": "T14.8",
+    "desc": "Consume top-up full → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"topUp\":{\"id\":\"dd9d8cea-0a6d-434a-8d85-8779858fed29\",\"subscriberId\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"topUpProductId\":\"2c984107-49a5-4968-ab2f-2d5ebb4331e6\",\"purchasedAt\":\"2026-07-31T20:49:39.642Z\",\"expiresAt\":\"2026-08-07T20:49:39.642Z\",\"usedAmount\":10240,\"remainingAmount\":0,\"status\":\"USED\",\"transactionId\":\"TXN-TEST-1785530962239\",\"createdAt\":\"2026-07-31T20:49:39.643Z\",\"updatedAt\":\"2026-07-31T20:49:39.687Z\"},\"fullyConsumed\":true}"
+  },
+  {
+    "id": "T14.9",
+    "desc": "List active top-ups → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 NoRadius\",\"code\":\"CRY00022\"},\"activeTopUps\":[],\"expiredCount\":0}"
+  },
+  {
+    "id": "T14.10",
+    "desc": "Get subscriber balance → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"Subscriber\":{\"id\":\"b4129389-2c9b-4899-b382-16187d5ab5a4\",\"name\":\"Test M4 NoRadius\"},\"outstandingBalance\":3779.46,\"pendingInvoiceCount\":11,\"pendingInvoices\":[{\"id\":\"3844a161-e6b1-44b4-93f5-01daea460e30\",\"invoiceNumber\":\"INV-00095\",\"grandTotal\":1060.24,\"paidAmount\":0,\"balanceAmount\":0,\"status\":\"OVERDUE\",\"dueDate\":\"2026-07-31T00:00:00.000Z\"},{\"id\":\"bf6cd0a3-84f9-4659-96a2-4251cd586d00\",\"invoiceNumber\":\"INV-00096\",\"grandTotal\":1509.64,\"paidAmount\":0,\"balanceAmount\":0,\"status\":\"DRAFT\",\"dueDate\":\"20..."
+  },
+  {
+    "id": "T15.1",
+    "desc": "Export subscribers CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T15.2",
+    "desc": "Export subscribers JSON → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"total\":43,\"data\":[{\"code\":\"CRY00030\",\"name\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA..."
+  },
+  {
+    "id": "T15.3",
+    "desc": "Export subscribers with filters → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T15.4",
+    "desc": "Export subscribers with search → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"total\":0,\"data\":[]}"
+  },
+  {
+    "id": "T15.5",
+    "desc": "Export invoices CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T15.6",
+    "desc": "Export invoices JSON → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"total\":82,\"data\":[{\"invoiceNumber\":\"INV-00005\",\"subscriberName\":\"Test M4 NoRadius\",\"plan\":\"Basic 30 Mbps\",\"issueDate\":\"1/3/2027\",\"dueDate\":\"10/3/2027\",\"subtotal\":499,\"tax\":89.82,\"total\":588.82,\"status\":\"DRAFT\",\"paidAmount\":0,\"balance\":0},{\"invoiceNumber\":\"INV-00004\",\"subscriberName\":\"Test M4 NoRadius\",\"plan\":\"Basic 30 Mbps\",\"issueDate\":\"1/3/2027\",\"dueDate\":\"10/3/2027\",\"subtotal\":499,\"tax\":89.82,\"total\":588.82,\"status\":\"DRAFT\",\"paidAmount\":0,\"balance\":0},{\"invoiceNumber\":\"INV-00003\",\"subscriber..."
+  },
+  {
+    "id": "T15.7",
+    "desc": "Export payments CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T15.8",
+    "desc": "Export payments JSON → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"total\":6,\"data\":[{\"receiptNumber\":\"RCT000006\",\"subscriberName\":\"Test M4 NoRadius\",\"amount\":50,\"mode\":\"CASH\",\"transactionRef\":\"\",\"status\":\"FAILED\",\"date\":\"31/7/2026, 8:49:31 pm\",\"invoice\":\"INV-00002\"},{\"receiptNumber\":\"\",\"subscriberName\":\"Test M4 NoRadius\",\"amount\":100,\"mode\":\"UPI\",\"transactionRef\":\"\",\"status\":\"VERIFIED\",\"date\":\"31/7/2026, 8:49:31 pm\",\"invoice\":\"INV-00002\"},{\"receiptNumber\":\"RCT000004\",\"subscriberName\":\"Test M4 NoRadius\",\"amount\":300,\"mode\":\"CASH\",\"transactionRef\":\"\",\"status\":\"..."
+  },
+  {
+    "id": "T15.9",
+    "desc": "Export complaints CSV → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": ""
+  },
+  {
+    "id": "T15.10",
+    "desc": "Export without auth → 401",
+    "expected": 401,
+    "actual": 401,
+    "pass": true,
+    "evidence": "{\"success\":false,\"error\":\"Authentication required. Please log in.\"}"
+  },
+  {
+    "id": "T15.11",
+    "desc": "Revenue report → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"period\":{\"startDate\":\"2026-07-01T00:00:00.000Z\",\"endDate\":\"2026-07-31T23:59:59.000Z\"},\"summary\":{\"totalRevenue\":1650,\"totalSubtotal\":1398,\"totalTax\":252,\"prevRevenue\":0,\"revenueChange\":0,\"arpu\":49,\"collectionEfficiency\":3,\"activeSubscribers\":34,\"totalInvoices\":70,\"paidCount\":1,\"overdueCount\":55},\"monthlyTrend\":[{\"month\":\"Aug 25\",\"revenue\":0},{\"month\":\"Sept 25\",\"revenue\":0},{\"month\":\"Oct 25\",\"revenue\":0},{\"month\":\"Nov 25\",\"revenue\":0},{\"month\":\"Dec 25\",\"revenue\":0},{\"month\":\"Jan 26\",\"revenue\":0..."
+  },
+  {
+    "id": "T15.12",
+    "desc": "Expenses report → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"expenses\":[],\"total\":0,\"totalAmount\":0}"
+  },
+  {
+    "id": "T15.13",
+    "desc": "KPI targets report → 200",
+    "expected": 200,
+    "actual": 200,
+    "pass": true,
+    "evidence": "{\"targets\":{\"dailyCollectionTarget\":50000,\"monthlyCollectionTarget\":1500000,\"newConnectionTarget\":20,\"churnRateTarget\":2,\"uptimeTarget\":99.5,\"complaintResolutionTarget\":4}}"
+  }
+]

@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import { useState, useEffect, useCallback } from "react";
+     4→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { apiFetch, formatINR } from "@/lib/utils";
+     6→import { format } from "date-fns";
+     7→import { useAppStore } from "@/store/app-store";
+     8→import { useModuleStore } from "@/store/module-store";
+     9→import { toast } from "sonner";
+    10→import {
+    11→  Users,
+    12→  IndianRupee,
+    13→  Wifi,
+    14→  AlertTriangle,
+    15→  CreditCard,
+    16→  Activity,
+    17→  TrendingUp,
+    18→  TrendingDown,
+    19→  Bot,
+    20→  RefreshCw,
+    21→  FileText,
+    22→  UserPlus,
+    23→  MessageSquarePlus,
+    24→  Clock,
+    25→  DollarSign,
+    26→  UserMinus,
+    27→  BarChart3,
+    28→  ChevronRight,
+    29→  Download,
+    30→  CalendarClock,
+    31→  Banknote,
+    32→  Bell,
+    33→  Shield,
+    34→  ShieldAlert,
+    35→  Target,
+    36→  Monitor,
+    37→  Receipt,
+    38→  ShieldCheck,
+    39→  Server,
+    40→  Radio,
+    41→  Terminal,
+    42→  Zap,
+    43→  X,
+    44→  Wallet,
+    45→  Gauge,
+    46→  CheckCircle2,
+    47→  ArrowRightLeft,
+    48→  AlertCircle,
+    49→  Info,
+    50→  ArrowUpRight,
+    51→  Globe,
+    52→} from "lucide-react";
+    53→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    54→import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+    55→import ActivityFeed from "@/components/activity-feed";
+    56→import { GettingStartedPanel } from "@/components/getting-started-panel";
+    57→import { NotificationSummaryWidget } from "@/components/notification-summary-widget";
+    58→import { NetworkStatusOverview } from "@/components/network-status-overview";
+    59→import { PerformanceMetricsWidget } from "@/components/performance-metrics-widget";
+    60→import { QuickActionsWidget } from "@/components/quick-actions-widget";
+    61→import { DashboardQuickActionsWidget } from "@/components/dashboard/quick-actions-widget";
+    62→import { NetworkStatusWidget } from "@/components/dashboard/network-status-widget";
+    63→import { SubscriberGrowthWidget } from "@/components/dashboard/subscriber-growth-widget";
+    64→import { RevenueBreakdownWidget } from "@/components/dashboard/revenue-breakdown-widget";
+    65→import { LiveActivityFeedWidget } from "@/components/dashboard/live-activity-feed-widget";
+    66→import { SlaMonitorWidget } from "@/components/dashboard/sla-monitor-widget";
+    67→import { IspHealthScoreWidget } from "@/components/dashboard/isp-health-score-widget";
+    68→import { NetworkHealthEnhancedWidget } from "@/components/dashboard/network-health-enhanced-widget";
+    69→import { BandwidthTrendsWidget } from "@/components/dashboard/bandwidth-trends-widget";
+    70→import { TopAreasWidget } from "@/components/dashboard/top-areas-widget";
+    71→import { AreaDistributionWidget } from "@/components/dashboard/area-distribution-widget";
+    72→import { ConnectionTypeWidget } from "@/components/dashboard/connection-type-widget";
+    73→import { RevenuePaymentModeWidget } from "@/components/dashboard/revenue-payment-mode-widget";
+    74→import { ComplaintsAnalyticsWidget } from "@/components/dashboard/complaints-analytics-widget";
+    75→import { PlanPerformanceWidget } from "@/components/dashboard/plan-performance-widget";
+    76→import { RecentPaymentsTimelineWidget } from "@/components/dashboard/recent-payments-timeline-widget";
+    77→import { SystemAlertsWidget } from "@/components/dashboard/system-alerts-widget";
+    78→import { RetentionChurnWidget } from "@/components/dashboard/retention-churn-widget";
+    79→import { InvoiceAgingWidget } from "@/components/dashboard/invoice-aging-widget";
+    80→import { PaymentAnalyticsWidget } from "@/components/dashboard/payment-analytics-widget";
+    81→import { SubscriberLifecycleWidget } from "@/components/dashboard/subscriber-lifecycle-widget";
+    82→import { TechnicianPerformanceWidget } from "@/components/dashboard/technician-performance-widget";
+    83→import { ExpiringSubscriptionsWidget } from "@/components/dashboard/expiring-subscriptions-widget";
+    84→import { TopSubscribersWidget } from "@/components/dashboard/top-subscribers-widget";
+    85→import { PlanComparisonWidget } from "@/components/dashboard/plan-comparison-widget";
+    86→import { OverduePaymentsWidget } from "@/components/dashboard/overdue-payments-widget";
+    87→import { CollectionPerformanceWidget } from "@/components/dashboard/collection-performance-widget";
+    88→import { ChurnRiskWidget } from "@/components/dashboard/churn-risk-widget";
+    89→import { ChurnPredictionWidget } from "@/components/dashboard/churn-prediction-widget";
+    90→import { ResponseTimeWidget } from "@/components/dashboard/response-time-widget";
+    91→import { RevenueForecastWidget } from "@/components/dashboard/revenue-forecast-widget";
+    92→import { CollectionTargetWidget } from "@/components/dashboard/collection-target-widget";
+    93→import { RadiusSyncStatusWidget } from "@/components/dashboard/radius-sync-status-widget";
+    94→import { PlanRecommendationWidget } from "@/components/dashboard/plan-recommendation-widget";
+    95→import { RecentSignupsWidget } from "@/components/dashboard/recent-signups-widget";
+    96→import { SubscriberAnalyticsWidget } from "@/components/dashboard/subscriber-analytics-widget";
+    97→import { SystemPerformanceWidget } from "@/components/dashboard/system-performance-widget";
+    98→import { SystemAlertBanner } from "@/components/system-alert-banner";
+    99→import DashboardStatusBar from "@/components/dashboard/dashboard-status-bar";
+   100→import SubscriberQuickView from "@/components/subscriber-quick-view";
+   101→import { Badge } from "@/components/ui/badge";
+   102→import { Button } from "@/components/ui/button";
+   103→import { Skeleton } from "@/components/ui/skeleton";
+   104→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+   105→import {
+   106→  Select,
+   107→  SelectContent,
+   108→  SelectItem,
+   109→  SelectTrigger,
+   110→  SelectValue,
+   111→} from "@/components/ui/select";
+   112→import {
+   113→  Table,
+   114→  TableBody,
+   115→  TableCell,
+   116→  TableHead,
+   117→  TableHeader,
+   118→  TableRow,
+   119→} from "@/components/ui/table";
+   120→import { AreaChart, Area, LineChart, Line, PieChart, Pie, Cell, BarChart, Bar,
+   121→  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend,
+   122→} from "recharts";
+   123→
+   124→interface DashboardData {
+   125→  totalActive: number;
+   126→  totalSubscribers: number;
+   127→  newThisMonth: number;
+   128→  newInRange: number;
+   129→  revenueThisMonth: number;
+   130→  revenueInRange: number;
+   131→  revenueLastMonth: number;
+   132→  revenueChangePercent: number;
+   133→  activeConnections: number;
+   134→  offlineCount: number;
+   135→  openComplaints: number;
+   136→  criticalCount: number;
+   137→  collectionToday: number;
+   138→  dailyTarget: number;
+   139→  monthlyTarget: number;
+   140→  networkUptime: number;
+   141→  uptimeTrend: number;
+   142→  onlineDevices: number;
+   143→  totalDevices: number;
+   144→  warningDevices: number;
+   145→  arpu: number;
+   146→  mrr: number;
+   147→  churnRate: number;
+   148→  churnedInRange: number;
+   149→  monthlyRevenueData: { month: string; revenue: number }[];
+   150→  subscriberGrowthData: { month: string; additions: number }[];
+   151→  complaintTrendData: { date: string; complaints: number }[];
+   152→  planDistribution: { plan: string; count: number }[];
+   153→  areaWiseRevenue: { area: string; revenue: number }[];
+   154→  recentComplaints: { id: string; ticketNumber: string; customerName: string; type: string; priority: string; status: string; createdAt: string }[];
+   155→  recentPayments: { id: string; receiptNumber: string; customerName: string; amount: number; paymentMode: string; status: string; createdAt: string }[];
+   156→  overdueInvoices: { id: string; invoiceNumber: string; customerName: string; phone: string; dueDate: string; balanceAmount: number; grandTotal: number }[];
+   157→  overdueTotal: number;
+   158→  overdueCount: number;
+   159→  topRevenueCustomers: { subscriberId: string; name: string; phone: string; area: string; totalPaid: number }[];
+   160→  upcomingRenewals: { id: string; name: string; phone: string; planName: string; planPrice: number; nextRenewalDate: string; daysUntilRenewal: number }[];
+   161→  aiInsight: string;
+   162→  urgentItems: { criticalComplaints: number; overdueInvoices: number; deviceWarnings: number; slaBreaches: number; total: number };
+   163→  bandwidthUsageData: { hour: string; downloadBps: number; uploadBps: number }[];
+   164→  peakBandwidth: number;
+   165→  currentBandwidth: number;
+   166→  slaBreaches: { id: string; ticketNumber: string; customerName: string; priority: string; slaDeadline: string; hoursRemaining: number; status: string }[];
+   167→  deviceHealth: {
+   168→    online: number; offline: number; warning: number; unknown: number;
+   169→    topDevices: { id: string; name: string; type: string; status: string; cpuUsage: number | null; memoryUsage: number | null; lastSeenAt: string | null }[];
+   170→  };
+   171→  cac: number;
+   172→  cacTrend: number;
+   173→  planRevenueBreakdown: { plan: string; revenue: number; subscribers: number; arpu: number }[];
+   174→  range: string;
+   175→  rangeDays: number;
+   176→  generatedAt: string;
+   177→  // IPv6 (optional, gated by ipv6 module)
+   178→  ipv6Subscribers?: number;
+   179→  ipv6AdoptionRate?: number;
+   180→  ipv4OnlyCount?: number;
+   181→  dualStackCount?: number;
+   182→  ipv6OnlyCount?: number;
+   183→  ipv6TrafficPercent?: number;
+   184→}
+   185→
+   186→function formatDate(dateStr: string): string {
+   187→  return new Date(dateStr).toLocaleDateString("en-IN", {
+   188→    day: "2-digit",
+   189→    month: "short",
+   190→    hour: "2-digit",
+   191→    minute: "2-digit",
+   192→  });
+   193→}
+   194→
+   195→function formatShortDate(dateStr: string): string {
+   196→  return new Date(dateStr).toLocaleDateString("en-IN", {
+   197→    day: "2-digit",
+   198→    month: "short",
+   199→  });
+   200→}
+   201→
+   202→const PIE_COLORS = [
+   203→  "#DC2626", "#16A34A", "#D97706", "#7C3AED", "#EC4899", "#14B8A6",
+   204→  "#2563EB", "#F43F5E", "#84CC16", "#06B6D4", "#8B5CF6", "#F97316",
+   205→  "#10B981", "#E11D48", "#A855F7", "#0EA5E9", "#EF4444", "#22C55E",
+   206→  "#F59E0B", "#6366F1",
+   207→];
+   208→
+   209→const PRIORITY_BADGE: Record<string, { label: string; class: string }> = {
+   210→  P1_CRITICAL: { label: "Critical", class: "bg-red-100 text-red-700 border-red-200" },
+   211→  P2_HIGH: { label: "High", class: "bg-orange-100 text-orange-700 border-orange-200" },
+   212→  P3_MEDIUM: { label: "Medium", class: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+   213→  P4_LOW: { label: "Low", class: "bg-green-100 text-green-700 border-green-200" },
+   214→};
+   215→const STATUS_BADGE: Record<string, { label: string; class: string }> = {
+   216→  OPEN: { label: "Open", class: "bg-red-100 text-red-700 border-red-200" },
+   217→  ASSIGNED: { label: "Assigned", class: "bg-teal-100 text-teal-700 border-teal-200" },
+   218→  IN_PROGRESS: { label: "In Progress", class: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+   219→  RESOLVED: { label: "Resolved", class: "bg-green-100 text-green-700 border-green-200" },
+   220→  CLOSED: { label: "Closed", class: "bg-gray-100 text-gray-600 border-gray-200" },
+   221→  REOPENED: { label: "Reopened", class: "bg-red-100 text-red-700 border-red-200" },
+   222→};
+   223→const COMPLAINT_TYPE_LABELS: Record<string, string> = {
+   224→  NO_INTERNET: "No Internet", SLOW_SPEED: "Slow Speed", CABLE_CUT: "Cable Cut",
+   225→  WIFI_ISSUE: "WiFi Issue", PLAN_CHANGE: "Plan Change", BILLING_QUERY: "Billing Query",
+   226→  VOIP_ISSUE: "VoIP Issue", IPTV_ISSUE: "IPTV Issue", NEW_CONNECTION: "New Connection", OTHER: "Other",
+   227→};
+   228→const PAYMENT_STATUS_BADGE: Record<string, { label: string; class: string }> = {
+   229→  PENDING: { label: "Pending", class: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+   230→  VERIFIED: { label: "Verified", class: "bg-green-100 text-green-700 border-green-200" },
+   231→  FAILED: { label: "Failed", class: "bg-red-100 text-red-700 border-red-200" },
+   232→  REFUNDED: { label: "Refunded", class: "bg-gray-100 text-gray-600 border-gray-200" },
+   233→};
+   234→const DEVICE_STATUS_BADGE: Record<string, { label: string; class: string }> = {
+   235→  ONLINE: { label: "Online", class: "bg-green-100 text-green-700 border-green-200" },
+   236→  OFFLINE: { label: "Offline", class: "bg-red-100 text-red-700 border-red-200" },
+   237→  WARNING: { label: "Warning", class: "bg-amber-100 text-amber-700 border-amber-200" },
+   238→  UNKNOWN: { label: "Unknown", class: "bg-gray-100 text-gray-600 border-gray-200" },
+   239→  MAINTENANCE: { label: "Maintenance", class: "bg-slate-100 text-slate-600 border-slate-200" },
+   240→};
+   241→const PAYMENT_MODE_LABELS: Record<string, string> = {
+   242→  CASH: "Cash", UPI: "UPI", ONLINE: "Online", BANK_TRANSFER: "Bank Transfer", CHEQUE: "Cheque", WALLET: "Wallet",
+   243→};
+   244→
+   245→function StatCard({ title, value, subtitle, icon: Icon, gradient, trend, trendValue, delay, pulse }: {
+   246→  title: string; value: string; subtitle: string; icon: React.ElementType;
+   247→  gradient: string; trend?: "up" | "down"; trendValue?: string; delay: number; pulse?: boolean;
+   248→}) {
+   249→  const isWhite = !gradient;
+   250→  return (
+   251→    <Card className={`${gradient} border-0 shadow-lg hover:shadow-2xl hover:scale-[1.03] transition-all duration-200 hover:-translate-y-1 animate-card-enter rounded-xl cursor-default card-glow group`} style={{ animationDelay: `${delay}ms` }}>
+   252→      <CardContent className="p-4 sm:p-5">
+   253→        <div className="flex items-start justify-between">
+   254→          <div className="flex-1 min-w-0">
+   255→            <p className={`text-[10px] sm:text-xs font-medium uppercase tracking-wider ${isWhite ? "text-muted-foreground" : "opacity-80"}`}>{title}</p>
+   256→            <p className={`text-xl sm:text-2xl lg:text-3xl font-bold mt-1.5 sm:mt-2 tabular-nums animate-count-up ${isWhite ? "text-foreground" : ""} ${pulse ? "animate-cryptsk-pulse" : ""}`}>{value}</p>
+   257→            <p className={`text-[10px] sm:text-xs mt-1.5 sm:mt-2 truncate ${isWhite ? "text-muted-foreground" : "opacity-75"}`}>{subtitle}</p>
+   258→          </div>
+   259→          <div className="flex-shrink-0 ml-2 sm:ml-3 flex flex-col items-end gap-1.5 sm:gap-2">
+   260→            <div className={`p-2 sm:p-2.5 rounded-xl transition-all duration-200 group-hover:scale-110 ${isWhite ? "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400" : "bg-white/20 backdrop-blur-sm text-white"}`}><Icon className="h-4 w-4 sm:h-5 sm:w-5" /></div>
+   261→            {trend && trendValue && (
+   262→              <div className={`flex items-center gap-0.5 text-[10px] sm:text-xs font-semibold px-1.5 sm:px-2 py-0.5 rounded-full ${isWhite ? "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300" : "bg-white/20 text-white"}`}>
+   263→                {trend === "up" ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+   264→                {trendValue}
+   265→              </div>
+   266→            )}
+   267→          </div>
+   268→        </div>
+   269→      </CardContent>
+   270→    </Card>
+   271→  );
+   272→}
+   273→
+   274→function CustomTooltip({ active, payload, label, isCurrency = false, isPercent = false, isBandwidth = false }: {
+   275→  active?: boolean; payload?: { value: number; name: string; color: string; dataKey?: string }[];
+   276→  label?: string; isCurrency?: boolean; isPercent?: boolean; isBandwidth?: boolean;
+   277→}) {
+   278→  if (!active || !payload?.length) return null;
+   279→  return (
+   280→    <div className="bg-card/90 border border-border/80 rounded-xl shadow-2xl px-4 py-3 text-xs backdrop-blur-md glass-card">
+   281→      <p className="font-semibold text-foreground mb-2 text-[11px]">{label}</p>
+   282→      {payload.map((item, i) => (
+   283→        <p key={i} className="text-muted-foreground flex items-center justify-between gap-4 py-0.5">
+   284→          <span className="flex items-center gap-1.5">
+   285→            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
+   286→            {item.name}
+   287→          </span>
+   288→          <span className="font-semibold text-foreground tabular-nums">
+   289→            {isBandwidth
+   290→              ? `${(item.value / 1000000).toFixed(1)} Mbps`
+   291→              : isCurrency
+   292→                ? formatINR(item.value)
+   293→                : isPercent
+   294→                  ? `${item.value}%`
+   295→                  : item.value.toLocaleString("en-IN")}
+   296→          </span>
+   297→        </p>
+   298→      ))}
+   299→    </div>
+   300→  );
+   301→}
+   302→
+   303→interface SubscriberGrowthData {
+   304→  totalSubscribers: number;
+   305→  activeSubscribers: number;
+   306→  newThisMonth: number;
+   307→  churnedThisMonth: number;
+   308→  churnRate: number;
+   309→  byStatus: Record<string, number>;
+   310→  byConnectionType: Record<string, number>;
+   311→  byPlan: { planName: string; count: number }[];
+   312→  recentGrowth: { month: string; count: number }[];
+   313→}
+   314→
+   315→const CONNECTION_TYPE_COLORS: Record<string, string> = {
+   316→  FTTH: "from-emerald-400 to-emerald-500",
+   317→  WIRELESS: "from-amber-400 to-amber-500",
+   318→  CABLE: "from-blue-400 to-blue-500",
+   319→  LEASED_LINE: "from-rose-400 to-rose-500",
+   320→  ETHERNET: "from-slate-400 to-slate-500",
+   321→};
+   322→
+   323→export default function DashboardPage() {
+   324→  const [currentTime, setCurrentTime] = useState(new Date());
+   325→
+   326→  useEffect(() => {
+   327→    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+   328→    return () => clearInterval(timer);
+   329→  }, []);
+   330→
+   331→  const hour = currentTime.getHours();
+   332→  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+   333→
+   334→  const formattedDate = currentTime.toLocaleDateString("en-IN", {
+   335→    weekday: "long",
+   336→    year: "numeric",
+   337→    month: "long",
+   338→    day: "numeric",
+   339→  });
+   340→
+   341→  const formattedTime = currentTime.toLocaleTimeString("en-IN", {
+   342→    hour: "2-digit",
+   343→    minute: "2-digit",
+   344→  });
+   345→
+   346→  const [dateRange, setDateRange] = useState("30d");
+   347→  const { setCurrentPage, user } = useAppStore();
+   348→  const { isModuleEnabled } = useModuleStore();
+   349→  const queryClient = useQueryClient();
+   350→
+   351→  // Welcome banner: dismissed per day
+   352→  const WELCOME_DISMISS_KEY = "dashboard-welcome-dismissed";
+   353→  const getTodayKey = () => new Date().toISOString().slice(0, 10);
+   354→  const [quickViewSubscriberId, setQuickViewSubscriberId] = useState<string | null>(null);
+   355→
+   356→  const [showWelcomeBanner, setShowWelcomeBanner] = useState(() => {
+   357→    if (typeof window === "undefined") return true;
+   358→    return localStorage.getItem(WELCOME_DISMISS_KEY) !== getTodayKey();
+   359→  });
+   360→  const dismissWelcomeBanner = useCallback(() => {
+   361→    localStorage.setItem(WELCOME_DISMISS_KEY, getTodayKey());
+   362→    setShowWelcomeBanner(false);
+   363→  }, []);
+   364→
+   365→  // ── System Monitor (gateway-service aggregation) ──
+   366→  interface SystemMonitorData {
+   367→    gateway: { status: string; uptime: number; version: string | null };
+   368→    interfaces: { total: number; wan: { total: number; up: number; down: number }; lan: { total: number; up: number; down: number } };
+   369→    pppoe: { activeSessions: number };
+   370→    ddos: { activePolicies: number; totalPolicies: number };
+   371→    firewall: { activeRules: number };
+   372→    dhcp: { leaseCount: number };
+   373→  }
+   374→
+   375→  const { data: sysMonitor, isLoading: isLoadingSysMonitor } = useQuery<SystemMonitorData>({
+   376→    queryKey: ["system-monitor"],
+   377→    queryFn: () => apiFetch<SystemMonitorData>("/api/system-monitor"),
+   378→    refetchInterval: 15000,
+   379→  });
+   380→
+   381→  const { data: subscriberGrowth, isLoading: isLoadingGrowth } = useQuery<SubscriberGrowthData>({
+   382→    queryKey: ["dashboard-subscriber-growth"],
+   383→    queryFn: () => apiFetch<SubscriberGrowthData>("/api/dashboard/subscriber-growth"),
+   384→    refetchInterval: 120000,
+   385→  });
+   386→
+   387→  const { data, isLoading, isRefetching, refetch } = useQuery<DashboardData>({
+   388→    queryKey: ["dashboard", dateRange],
+   389→    queryFn: () => apiFetch<DashboardData>(`/api/dashboard?range=${dateRange}`),
+   390→    refetchInterval: 60000,
+   391→  });
+   392→
+   393→  const rangeLabel = dateRange === "7d" ? "Last 7 Days" : dateRange === "30d" ? "Last 30 Days" : dateRange === "90d" ? "Last 90 Days" : dateRange === "this_month" ? "This Month" : dateRange === "last_month" ? "Last Month" : "Last 30 Days";
+   394→
+   395→  const handleQuickAction = (page: string, section: string) => {
+   396→    setCurrentPage(page, section);
+   397→  };
+   398→
+   399→  function handleRefresh() {
+   400→    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+   401→    toast.success("Dashboard data refreshed");
+   402→  }
+   403→
+   404→  function handleExportCSV() {
+   405→    if (!data) {
+   406→      toast.error("No data available to export");
+   407→      return;
+   408→    }
+   409→
+   410→    const rows: string[][] = [];
+   411→
+   412→    // Header section
+   413→    rows.push(["Cryptsk ISP — Dashboard Report"]);
+   414→    rows.push(["Generated", new Date().toLocaleString("en-IN")]);
+   415→    rows.push(["Range", rangeLabel]);
+   416→    rows.push([]);
+   417→
+   418→    // KPI Summary
+   419→    rows.push(["=== KEY PERFORMANCE INDICATORS ==="]);
+   420→    rows.push(["Metric", "Value"]);
+   421→    rows.push(["Total Active Subscribers", data.totalActive.toString()]);
+   422→    rows.push(["Total Subscribers", data.totalSubscribers.toString()]);
+   423→    rows.push(["New This Month", data.newThisMonth.toString()]);
+   424→    rows.push(["Revenue This Month", data.revenueThisMonth.toString()]);
+   425→    rows.push(["Revenue Change %", `${data.revenueChangePercent}%`]);
+   426→    rows.push(["Active Connections", data.activeConnections.toString()]);
+   427→    rows.push(["Offline Count", data.offlineCount.toString()]);
+   428→    rows.push(["Open Complaints", data.openComplaints.toString()]);
+   429→    rows.push(["Critical Complaints", data.criticalCount.toString()]);
+   430→    rows.push(["Collection Today", data.collectionToday.toString()]);
+   431→    rows.push(["Daily Target", data.dailyTarget.toString()]);
+   432→    rows.push(["Monthly Target", data.monthlyTarget.toString()]);
+   433→    rows.push(["Network Uptime %", `${data.networkUptime}%`]);
+   434→    rows.push(["Online Devices", `${data.onlineDevices} / ${data.totalDevices}`]);
+   435→    rows.push(["ARPU", data.arpu.toString()]);
+   436→    rows.push(["MRR", data.mrr.toString()]);
+   437→    rows.push(["ARR", (data.mrr * 12).toString()]);
+   438→    rows.push(["Churn Rate %", `${data.churnRate}%`]);
+   439→    rows.push([]);
+   440→
+   441→    // Overdue Invoices
+   442→    rows.push(["=== OVERDUE INVOICES ==="]);
+   443→    rows.push(["Invoice #", "Customer", "Phone", "Due Date", "Balance"]);
+   444→    for (const inv of data.overdueInvoices) {
+   445→      rows.push([inv.invoiceNumber, inv.customerName, inv.phone, inv.dueDate, inv.balanceAmount.toString()]);
+   446→    }
+   447→    rows.push(["Total Overdue", "", "", "", data.overdueTotal.toString()]);
+   448→    rows.push([]);
+   449→
+   450→    // Top Revenue Customers
+   451→    rows.push(["=== TOP REVENUE CUSTOMERS ==="]);
+   452→    rows.push(["#", "Customer", "Phone", "Area", "Total Paid"]);
+   453→    for (const c of data.topRevenueCustomers) {
+   454→      rows.push(["", c.name, c.phone, c.area, c.totalPaid.toString()]);
+   455→    }
+   456→    rows.push([]);
+   457→
+   458→    // Upcoming Renewals
+   459→    rows.push(["=== UPCOMING RENEWALS (7 Days) ==="]);
+   460→    rows.push(["Customer", "Phone", "Plan", "Plan Price", "Renewal Date", "Days Left"]);
+   461→    for (const r of data.upcomingRenewals) {
+   462→      rows.push([r.name, r.phone, r.planName, r.planPrice.toString(), r.nextRenewalDate, r.daysUntilRenewal.toString()]);
+   463→    }
+   464→
+   465→    // Generate CSV string
+   466→    const csvContent = rows.map((row) =>
+   467→      row.map((cell) => {
+   468→        const str = String(cell).replace(/"/g, '""');
+   469→        return str.includes(",") || str.includes("\n") || str.includes('"') ? `"${str}"` : str;
+   470→      }).join(",")
+   471→    ).join("\n");
+   472→
+   473→    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+   474→    const url = URL.createObjectURL(blob);
+   475→    const link = document.createElement("a");
+   476→    link.href = url;
+   477→    link.download = `dashboard-report-${new Date().toISOString().split("T")[0]}.csv`;
+   478→    document.body.appendChild(link);
+   479→    link.click();
+   480→    document.body.removeChild(link);
+   481→    URL.revokeObjectURL(url);
+   482→    toast.success("Report downloaded successfully");
+   483→  }
+   484→
+   485→  if (isLoading) {
+   486→    return (
+   487→      <div className="space-y-6">
+   488→        {/* Header skeleton */}
+   489→        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   490→          <div className="space-y-2">
+   491→            <Skeleton className="skeleton-wave h-8 w-56" />
+   492→            <Skeleton className="skeleton-wave h-4 w-80" />
+   493→            <Skeleton className="skeleton-wave h-3 w-48" />
+   494→          </div>
+   495→          <div className="flex gap-2">
+   496→            <Skeleton className="skeleton-wave h-9 w-32" />
+   497→            <Skeleton className="skeleton-wave h-9 w-28" />
+   498→            <Skeleton className="skeleton-wave h-9 w-9 rounded-full" />
+   499→            <Skeleton className="skeleton-wave h-9 w-9 rounded-full" />
+   500→          </div>
+   501→        </div>
+   502→        {/* Quick actions skeleton */}
+   503→        <div className="flex flex-wrap gap-2">
+   504→          {Array.from({ length: 4 }).map((_, i) => (
+   505→            <Skeleton key={i} className="h-8 w-36 rounded-lg" />
+   506→          ))}
+   507→        </div>
+   508→        {/* Primary stat cards skeleton */}
+   509→        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+   510→          {Array.from({ length: 6 }).map((_, i) => (
+   511→            <Card key={i} className="border shadow-sm rounded-xl"><CardContent className="p-4 sm:p-5"><Skeleton className="skeleton-wave h-3 w-24 mb-3" /><Skeleton className="skeleton-wave h-8 w-32 mb-2" /><Skeleton className="skeleton-wave h-3 w-20" /></CardContent></Card>
+   512→          ))}
+   513→        </div>
+   514→        {/* Secondary stat cards skeleton */}
+   515→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+   516→          {Array.from({ length: 4 }).map((_, i) => (
+   517→            <Card key={i} className="border shadow-sm rounded-xl"><CardContent className="p-4 flex items-center gap-4"><Skeleton className="skeleton-wave h-12 w-12 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="skeleton-wave h-3 w-16" /><Skeleton className="skeleton-wave h-6 w-24" /><Skeleton className="skeleton-wave h-3 w-32" /></div></CardContent></Card>
+   518→          ))}
+   519→        </div>
+   520→        {/* AI insight skeleton */}
+   521→        <div className="rounded-xl border-2 border-red-500/20 p-5">
+   522→          <div className="flex items-start gap-4">
+   523→            <Skeleton className="skeleton-wave h-10 w-10 rounded-xl shrink-0" />
+   524→            <div className="flex-1 space-y-2">
+   525→              <Skeleton className="skeleton-wave h-4 w-24" />
+   526→              <Skeleton className="skeleton-wave h-3 w-full" />
+   527→              <Skeleton className="skeleton-wave h-3 w-4/5" />
+   528→            </div>
+   529→          </div>
+   530→        </div>
+   531→        {/* Chart row skeleton */}
+   532→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+   533→          {Array.from({ length: 2 }).map((_, i) => (
+   534→            <Card key={i} className="border shadow-sm rounded-xl"><CardContent className="p-5"><Skeleton className="skeleton-wave h-5 w-40 mb-4" /><Skeleton className="skeleton-wave h-64 w-full rounded-lg" /></CardContent></Card>
+   535→          ))}
+   536→        </div>
+   537→      </div>
+   538→    );
+   539→  }
+   540→  if (!data) return (
+   541→    <div className="flex flex-col items-center justify-center h-96 gap-4">
+   542→      <div className="p-4 rounded-2xl bg-red-100 dark:bg-red-950/30 text-red-500 dark:text-red-400">
+   543→        <AlertTriangle className="h-10 w-10" />
+   544→      </div>
+   545→      <div className="text-center space-y-1">
+   546→        <p className="text-lg font-semibold text-foreground">Failed to load dashboard</p>
+   547→        <p className="text-sm text-muted-foreground">Unable to fetch dashboard data. Please try again.</p>
+   548→      </div>
+   549→      <Button variant="outline" size="sm" className="gap-2" onClick={handleRefresh}>
+   550→        <RefreshCw className="h-4 w-4" /> Retry
+   551→      </Button>
+   552→    </div>
+   553→  );
+   554→
+   555→  const collectionPercent = data.dailyTarget > 0 ? Math.round((data.collectionToday / data.dailyTarget) * 100) : 0;
+   556→  const monthlyCollectionPercent = data.monthlyTarget > 0 ? Math.round((data.revenueThisMonth / data.monthlyTarget) * 100) : 0;
+   557→  const arr = data.mrr * 12;
+   558→
+   559→  return (
+   560→    <div className="space-y-6">
+   561→      {/* ── Header ── */}
+   562→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   563→        <div>
+   564→          <h1 className="text-2xl font-bold text-foreground">{greeting}</h1>
+   565→          <p className="text-sm text-muted-foreground mt-0.5">Here&apos;s your ISP operations overview.</p>
+   566→          <p className="text-xs text-muted-foreground/70 mt-1 flex items-center gap-1.5">
+   567→            <CalendarClock className="h-3 w-3" />
+   568→            {formattedDate} · {formattedTime}
+   569→          </p>
+   570→        </div>
+   571→        <div className="flex items-center gap-2 flex-wrap">
+   572→          <Select value={dateRange} onValueChange={setDateRange}>
+   573→            <SelectTrigger className="w-[150px] h-9 text-xs"><SelectValue /></SelectTrigger>
+   574→            <SelectContent>
+   575→              <SelectItem value="7d">Last 7 Days</SelectItem>
+   576→              <SelectItem value="30d">Last 30 Days</SelectItem>
+   577→              <SelectItem value="90d">Last 90 Days</SelectItem>
+   578→              <SelectItem value="this_month">This Month</SelectItem>
+   579→              <SelectItem value="last_month">Last Month</SelectItem>
+   580→            </SelectContent>
+   581→          </Select>
+   582→          <Button
+   583→            size="sm" className="h-9 gap-1.5 text-xs btn-download-report"
+   584→            onClick={handleExportCSV}
+   585→          >
+   586→            <Download className="h-3.5 w-3.5" /> Download Report
+   587→          </Button>
+   588→          <Button
+   589→            variant="outline" size="sm" className="h-9 w-9 p-0 btn-shine"
+   590→            onClick={handleRefresh}
+   591→            disabled={isRefetching}
+   592→          >
+   593→            <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
+   594→          </Button>
+   595→          <Popover>
+   596→            <PopoverTrigger asChild>
+   597→              <Button variant="outline" size="sm" className="h-9 w-9 p-0 relative">
+   598→                <Bell className="h-4 w-4" />
+   599→                {data.urgentItems.total > 0 && (
+   600→                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">{data.urgentItems.total}</span>
+   601→                )}
+   602→              </Button>
+   603→            </PopoverTrigger>
+   604→            <PopoverContent className="w-72 p-0" align="end">
+   605→              <div className="p-3 border-b">
+   606→                <h4 className="text-sm font-semibold flex items-center gap-2">
+   607→                  <AlertTriangle className="h-4 w-4 text-red-500" />Urgent Items
+   608→                </h4>
+   609→              </div>
+   610→              <div className="p-2 space-y-1">
+   611→                {data.urgentItems.criticalComplaints > 0 && (
+   612→                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/50">
+   613→                    <div className="flex items-center gap-2 text-xs"><AlertTriangle className="h-3.5 w-3.5 text-red-500" />Critical Complaints</div>
+   614→                    <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">{data.urgentItems.criticalComplaints}</Badge>
+   615→                  </div>
+   616→                )}
+   617→                {data.urgentItems.overdueInvoices > 0 && (
+   618→                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/50">
+   619→                    <div className="flex items-center gap-2 text-xs"><Clock className="h-3.5 w-3.5 text-amber-500" />Overdue Invoices</div>
+   620→                    <Badge className="text-[10px] px-1.5 py-0 h-5 bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100">{data.urgentItems.overdueInvoices}</Badge>
+   621→                  </div>
+   622→                )}
+   623→                {data.urgentItems.deviceWarnings > 0 && (
+   624→                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/50">
+   625→                    <div className="flex items-center gap-2 text-xs"><Activity className="h-3.5 w-3.5 text-orange-500" />Device Warnings</div>
+   626→                    <Badge className="text-[10px] px-1.5 py-0 h-5 bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-100">{data.urgentItems.deviceWarnings}</Badge>
+   627→                  </div>
+   628→                )}
+   629→                {data.urgentItems.slaBreaches > 0 && (
+   630→                  <div className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/50">
+   631→                    <div className="flex items-center gap-2 text-xs"><ShieldAlert className="h-3.5 w-3.5 text-red-600" />SLA Breaches</div>
+   632→                    <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">{data.urgentItems.slaBreaches}</Badge>
+   633→                  </div>
+   634→                )}
+   635→                {data.urgentItems.total === 0 && (
+   636→                  <p className="text-xs text-muted-foreground text-center py-4">All clear! No urgent items.</p>
+   637→                )}
+   638→              </div>
+   639→            </PopoverContent>
+   640→          </Popover>
+   641→          <div className="flex items-center gap-1.5 ml-1"><span className="live-dot" /><span className="text-xs font-medium text-green-600">Live</span></div>
+   642→        </div>
+   643→      </div>
+   644→
+   645→      {/* ── Quick Actions ── */}
+   646→      <div className="flex flex-wrap gap-2">
+   647→        <Button
+   648→          variant="outline" size="sm"
+   649→          className="gap-1.5 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 btn-press btn-shine"
+   650→          onClick={() => handleQuickAction("Billing", "MAIN")}
+   651→        >
+   652→          <FileText className="h-3.5 w-3.5" /> Generate Invoices
+   653→        </Button>
+   654→        <Button
+   655→          variant="outline" size="sm"
+   656→          className="gap-1.5 text-xs border-green-200 text-green-600 hover:bg-green-50 hover:text-green-700 hover:border-green-300 btn-press btn-shine"
+   657→          onClick={() => handleQuickAction("Subscribers", "MAIN")}
+   658→        >
+   659→          <UserPlus className="h-3.5 w-3.5" /> Add Subscriber
+   660→        </Button>
+   661→        <Button
+   662→          variant="outline" size="sm"
+   663→          className="gap-1.5 text-xs border-amber-200 text-amber-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300 btn-press btn-shine"
+   664→          onClick={() => handleQuickAction("Complaints", "OPERATIONS")}
+   665→        >
+   666→          <MessageSquarePlus className="h-3.5 w-3.5" /> Raise Complaint
+   667→        </Button>
+   668→        <Button
+   669→          variant="outline" size="sm"
+   670→          className="gap-1.5 text-xs border-purple-200 text-purple-600 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-300 btn-press btn-shine"
+   671→          onClick={() => handleQuickAction("Payments", "MAIN")}
+   672→        >
+   673→          <Banknote className="h-3.5 w-3.5" /> Collect Payment
+   674→        </Button>
+   675→      </div>
+   676→
+   677→      {/* ── Welcome Banner ── */}
+   678→      {showWelcomeBanner && (() => {
+   679→        const bannerHour = new Date().getHours();
+   680→        const bannerGreeting = bannerHour >= 5 && bannerHour < 12
+   681→          ? "Good Morning"
+   682→          : bannerHour >= 12 && bannerHour < 17
+   683→            ? "Good Afternoon"
+   684→            : bannerHour >= 17 && bannerHour < 21
+   685→              ? "Good Evening"
+   686→              : "Good Night";
+   687→        const bannerDate = format(new Date(), "EEEE, d MMMM yyyy");
+   688→        const dayOfWeek = new Date().getDay();
+   689→        const dailyTips = [
+   690→          `You have ${data.totalActive.toLocaleString("en-IN")} subscribers — consider running a satisfaction survey.`,
+   691→          "Tip: Use the AI Advisor for personalized network optimization insights.",
+   692→          `Revenue collection is at ${data.dailyTarget > 0 ? Math.min(Math.round((data.collectionToday / data.dailyTarget) * 100), 999) : 0}% — check the Collection page for details.`,
+   693→          "Pro tip: Set up automated invoice generation to save time every month.",
+   694→          "Monitor your bandwidth usage patterns to optimize network performance.",
+   695→          "Use the Command Palette (Ctrl+K) for quick navigation to any page.",
+   696→          "Check the Churn Alerts page to identify at-risk subscribers early.",
+   697→        ];
+   698→        const tipOfTheDay = dailyTips[dayOfWeek];
+   699→        const userName = user?.name || "Admin";
+   700→
+   701→        return (
+   702→          <div className="gradient-border-red rounded-xl animate-card-enter">
+   703→            <Card className="rounded-xl border-0 shadow-md overflow-hidden relative">
+   704→              {/* Decorative gradient overlay */}
+   705→              <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 via-transparent to-teal-500/5 dark:from-red-400/5 dark:via-transparent dark:to-teal-400/5 pointer-events-none" />
+   706→              {/* Decorative pattern */}
+   707→              <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-red-500/5 to-transparent rounded-full -translate-y-1/2 translate-x-1/4 pointer-events-none" />
+   708→              <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-teal-500/5 to-transparent rounded-full translate-y-1/2 -translate-x-1/4 pointer-events-none" />
+   709→              <CardContent className="p-4 sm:p-5">
+   710→                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+   711→                  {/* Left side */}
+   712→                  <div className="flex items-start gap-4 flex-1 min-w-0">
+   713→                    <div className="hidden sm:flex flex-col items-center shrink-0">
+   714→                      <div className="w-1 h-full min-h-[80px] rounded-full bg-gradient-to-b from-red-500 to-red-600 dark:from-red-400 dark:to-red-500" />
+   715→                    </div>
+   716→                    <div className="flex-1 min-w-0">
+   717→                      <h2 className="text-lg sm:text-xl font-bold text-foreground">
+   718→                        {bannerGreeting}, <span className="text-red-600 dark:text-red-400">{userName}</span>!
+   719→                      </h2>
+   720→                      <p className="text-sm text-muted-foreground mt-1.5 flex items-start gap-1.5">
+   721→                        <span className="shrink-0 mt-0.5">
+   722→                          <Zap className="h-3.5 w-3.5 text-amber-500" />
+   723→                        </span>
+   724→                        <span>{tipOfTheDay}</span>
+   725→                      </p>
+   726→                    </div>
+   727→                  </div>
+   728→
+   729→                  {/* Right side */}
+   730→                  <div className="flex flex-col items-end gap-3 shrink-0">
+   731→                    <div className="flex items-center gap-2">
+   732→                      <p className="text-xs sm:text-sm text-muted-foreground font-medium">
+   733→                        {bannerDate}
+   734→                      </p>
+   735→                      <button
+   736→                        onClick={dismissWelcomeBanner}
+   737→                        className="p-1 rounded-md hover:bg-muted/80 transition-colors text-muted-foreground hover:text-foreground"
+   738→                        aria-label="Dismiss welcome banner"
+   739→                      >
+   740→                        <X className="h-4 w-4" />
+   741→                      </button>
+   742→                    </div>
+   743→                    <TooltipProvider delayDuration={300}>
+   744→                      <div className="flex items-center gap-2">
+   745→                        <Tooltip>
+   746→                          <TooltipTrigger asChild>
+   747→                            <Button
+   748→                              variant="outline"
+   749→                              size="sm"
+   750→                              className="h-8 w-8 p-0 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
+   751→                              onClick={() => handleQuickAction("Subscribers", "MAIN")}
+   752→                            >
+   753→                              <UserPlus className="h-4 w-4" />
+   754→                            </Button>
+   755→                          </TooltipTrigger>
+   756→                          <TooltipContent>New Subscriber</TooltipContent>
+   757→                        </Tooltip>
+   758→                        <Tooltip>
+   759→                          <TooltipTrigger asChild>
+   760→                            <Button
+   761→                              variant="outline"
+   762→                              size="sm"
+   763→                              className="h-8 w-8 p-0 border-teal-200 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:border-teal-800 dark:text-teal-400 dark:hover:bg-teal-950/40"
+   764→                              onClick={() => handleQuickAction("Payments", "MAIN")}
+   765→                            >
+   766→                              <Wallet className="h-4 w-4" />
+   767→                            </Button>
+   768→                          </TooltipTrigger>
+   769→                          <TooltipContent>Collect Payment</TooltipContent>
+   770→                        </Tooltip>
+   771→                        <Tooltip>
+   772→                          <TooltipTrigger asChild>
+   773→                            <Button
+   774→                              variant="outline"
+   775→                              size="sm"
+   776→                              className="h-8 w-8 p-0 border-amber-200 text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
+   777→                              onClick={() => handleQuickAction("Complaints", "OPERATIONS")}
+   778→                            >
+   779→                              <AlertTriangle className="h-4 w-4" />
+   780→                            </Button>
+   781→                          </TooltipTrigger>
+   782→                          <TooltipContent>Raise Complaint</TooltipContent>
+   783→                        </Tooltip>
+   784→                      </div>
+   785→                    </TooltipProvider>
+   786→                  </div>
+   787→                </div>
+   788→              </CardContent>
+   789→            </Card>
+   790→          </div>
+   791→        );
+   792→      })()}
+   793→
+   794→      {/* ── Dashboard Stats Summary Bar ── */}
+   795→      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 animate-slide-up" style={{ animationDelay: "100ms" }}>
+   796→        {/* Total Subscribers */}
+   797→        <div className="rounded-xl border border-border/50 bg-card shadow-sm p-3 sm:p-4 hover:shadow-md transition-all duration-200 group">
+   798→          <div className="flex items-center gap-2 mb-2">
+   799→            <div className="p-1.5 rounded-lg bg-gradient-to-br from-red-400 to-red-500 text-white shadow-sm">
+   800→              <Users className="h-3.5 w-3.5" />
+   801→            </div>
+   802→            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Subscribers</span>
+   803→          </div>
+   804→          <div className="flex items-end gap-1.5">
+   805→            <p className="text-lg sm:text-xl font-bold tabular-nums text-foreground">{data.totalSubscribers.toLocaleString("en-IN")}</p>
+   806→            {data.newThisMonth > 0 && (
+   807→              <div className="flex items-center gap-0.5 mb-0.5">
+   808→                <TrendingUp className="h-3 w-3 text-green-500" />
+   809→                <span className="text-[9px] font-semibold text-green-600">+{data.newThisMonth}</span>
+   810→              </div>
+   811→            )}
+   812→          </div>
+   813→        </div>
+   814→
+   815→        {/* Active Connections */}
+   816→        <div className="rounded-xl border border-border/50 bg-card shadow-sm p-3 sm:p-4 hover:shadow-md transition-all duration-200 group">
+   817→          <div className="flex items-center gap-2 mb-2">
+   818→            <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-400 to-green-500 text-white shadow-sm">
+   819→              <Wifi className="h-3.5 w-3.5" />
+   820→            </div>
+   821→            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Active</span>
+   822→          </div>
+   823→          <div className="flex items-end gap-1.5">
+   824→            <p className="text-lg sm:text-xl font-bold tabular-nums text-foreground">{data.activeConnections.toLocaleString("en-IN")}</p>
+   825→            <span className="text-[9px] font-semibold text-muted-foreground mb-0.5">
+   826→              {data.totalSubscribers > 0 ? ((data.activeConnections / data.totalSubscribers) * 100).toFixed(0) : 0}%
+   827→            </span>
+   828→          </div>
+   829→        </div>
+   830→
+   831→        {/* Monthly Revenue */}
+   832→        <div className="rounded-xl border border-border/50 bg-card shadow-sm p-3 sm:p-4 hover:shadow-md transition-all duration-200 group">
+   833→          <div className="flex items-center gap-2 mb-2">
+   834→            <div className="p-1.5 rounded-lg bg-gradient-to-br from-amber-400 to-yellow-500 text-white shadow-sm">
+   835→              <IndianRupee className="h-3.5 w-3.5" />
+   836→            </div>
+   837→            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Revenue</span>
+   838→          </div>
+   839→          <div className="flex items-end gap-1.5">
+   840→            <p className="text-lg sm:text-xl font-bold tabular-nums text-foreground">{formatINR(data.revenueThisMonth)}</p>
+   841→            {data.revenueChangePercent !== 0 && (
+   842→              <div className={`flex items-center gap-0.5 mb-0.5 ${data.revenueChangePercent >= 0 ? "text-green-500" : "text-red-500"}`}>
+   843→                {data.revenueChangePercent >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+   844→                <span className="text-[9px] font-semibold">{data.revenueChangePercent >= 0 ? "+" : ""}{data.revenueChangePercent}%</span>
+   845→              </div>
+   846→            )}
+   847→          </div>
+   848→        </div>
+   849→
+   850→        {/* Open Complaints */}
+   851→        <div className="rounded-xl border border-border/50 bg-card shadow-sm p-3 sm:p-4 hover:shadow-md transition-all duration-200 group">
+   852→          <div className="flex items-center gap-2 mb-2">
+   853→            <div className="p-1.5 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 text-white shadow-sm">
+   854→              <AlertTriangle className="h-3.5 w-3.5" />
+   855→            </div>
+   856→            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Complaints</span>
+   857→          </div>
+   858→          <div className="flex items-end gap-1.5">
+   859→            <p className="text-lg sm:text-xl font-bold tabular-nums text-foreground">{data.openComplaints}</p>
+   860→            {data.criticalCount > 0 && (
+   861→              <span className="text-[9px] font-semibold text-red-500 mb-0.5">{data.criticalCount} critical</span>
+   862→            )}
+   863→          </div>
+   864→        </div>
+   865→
+   866→        {/* Network Uptime */}
+   867→        <div className="rounded-xl border border-border/50 bg-card shadow-sm p-3 sm:p-4 hover:shadow-md transition-all duration-200 group col-span-2 sm:col-span-1">
+   868→          <div className="flex items-center gap-2 mb-2">
+   869→            <div className="p-1.5 rounded-lg bg-gradient-to-br from-teal-400 to-emerald-500 text-white shadow-sm">
+   870→              <Activity className="h-3.5 w-3.5" />
+   871→            </div>
+   872→            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Uptime</span>
+   873→          </div>
+   874→          <div className="flex items-end gap-1.5">
+   875→            <p className="text-lg sm:text-xl font-bold tabular-nums text-foreground">
+   876→              {data.totalDevices > 0 ? `${data.networkUptime}%` : <span className="text-muted-foreground text-sm font-medium">N/A</span>}
+   877→            </p>
+   878→            {data.totalDevices > 0 && (
+   879→              <div className={`flex items-center gap-0.5 mb-0.5 ${data.uptimeTrend >= 0 ? "text-green-500" : "text-red-500"}`}>
+   880→                {data.uptimeTrend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+   881→                <span className="text-[9px] font-semibold">{data.uptimeTrend >= 0 ? "+" : ""}{data.uptimeTrend}%</span>
+   882→              </div>
+   883→            )}
+   884→          </div>
+   885→        </div>
+   886→      </div>
+   887→
+   888→      {/* ── System Alert Banner ── */}
+   889→      <SystemAlertBanner />
+   890→
+   891→      {/* ── Getting Started Panel (onboarding for new users) ── */}
+   892→      <GettingStartedPanel />
+   893→
+   894→      {/* ── Quick Actions Card Widget ── */}
+   895→      <DashboardQuickActionsWidget />
+   896→
+   897→      {/* ── Notification Summary Widget ── */}
+   898→      <NotificationSummaryWidget />
+   899→
+   900→      {/* ── Live Activity Feed Widget ── */}
+   901→      <LiveActivityFeedWidget />
+   902→
+   903→      {/* ── Quick Performance Metrics ── */}
+   904→      <PerformanceMetricsWidget />
+   905→
+   906→      {/* ── Quick Actions ── */}
+   907→      <QuickActionsWidget />
+   908→
+   909→      {/* ── Primary Stats ── */}
+   910→      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+   911→        <StatCard
+   912→          title="Total Subscribers" value={data.totalActive.toLocaleString("en-IN")}
+   913→          subtitle={`${data.newThisMonth} new this month`}
+   914→          icon={Users} gradient="stat-gradient-red" delay={0}
+   915→        />
+   916→        <StatCard
+   917→          title="Revenue This Month" value={formatINR(data.revenueThisMonth)}
+   918→          subtitle={`vs last month ${data.revenueChangePercent >= 0 ? "+" : ""}${data.revenueChangePercent}%`}
+   919→          icon={IndianRupee} gradient="stat-gradient-blue"
+   920→          trend={data.revenueChangePercent >= 0 ? "up" : "down"}
+   921→          trendValue={`${data.revenueChangePercent >= 0 ? "+" : ""}${data.revenueChangePercent}%`}
+   922→          delay={75}
+   923→        />
+   924→        <StatCard
+   925→          title="Active Connections" value={data.activeConnections.toLocaleString("en-IN")}
+   926→          subtitle={`${data.offlineCount} offline`}
+   927→          icon={Wifi} gradient="stat-gradient-purple" delay={150}
+   928→        />
+   929→        <StatCard
+   930→          title="Open Complaints" value={data.openComplaints.toString()}
+   931→          subtitle={`${data.criticalCount} critical`}
+   932→          icon={AlertTriangle} gradient="stat-gradient-amber"
+   933→          trend={data.openComplaints > 10 ? "up" : "down"}
+   934→          trendValue={data.openComplaints > 10 ? `${data.openComplaints} open` : "Under control"}
+   935→          delay={225}
+   936→        />
+   937→        <StatCard
+   938→          title="Collection Today" value={formatINR(data.collectionToday)}
+   939→          subtitle={`of ${formatINR(data.dailyTarget)} target`}
+   940→          icon={CreditCard} gradient="stat-gradient-emerald"
+   941→          trend={collectionPercent >= 80 ? "up" : "down"}
+   942→          trendValue={`${collectionPercent}%`}
+   943→          delay={300}
+   944→        />
+   945→        <StatCard
+   946→          title="Network Uptime" value={`${data.networkUptime}%`}
+   947→          subtitle={`${data.onlineDevices} of ${data.totalDevices} devices online`}
+   948→          icon={Activity} gradient="stat-gradient-navy"
+   949→          trend={data.uptimeTrend >= 0 ? "up" : "down"}
+   950→          trendValue={`${data.uptimeTrend >= 0 ? "+" : ""}${data.uptimeTrend}%`}
+   951→          delay={375}
+   952→          pulse
+   953→        />
+   954→      </div>
+   955→
+   956→      {/* ── Secondary Stats Row (ARPU, MRR/ARR, Churn Rate, CAC) ── */}
+   957→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+   958→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "420ms" }}>
+   959→          <CardContent className="p-4 flex items-center gap-4">
+   960→            <div className="p-3 rounded-xl bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0 transition-transform duration-200"><IndianRupee className="h-5 w-5" /></div>
+   961→            <div className="min-w-0">
+   962→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">ARPU</p>
+   963→              <p className="text-xl font-bold tabular-nums animate-count-up">{formatINR(data.arpu)}</p>
+   964→              <p className="text-xs text-muted-foreground">Avg Revenue Per User / month</p>
+   965→            </div>
+   966→          </CardContent>
+   967→        </Card>
+   968→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-green-200 dark:hover:border-green-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "450ms" }}>
+   969→          <CardContent className="p-4 flex items-center gap-4">
+   970→            <div className="p-3 rounded-xl bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400 shrink-0 transition-transform duration-200"><BarChart3 className="h-5 w-5" /></div>
+   971→            <div className="min-w-0">
+   972→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">MRR</p>
+   973→              <p className="text-xl font-bold tabular-nums animate-count-up">{formatINR(data.mrr)}</p>
+   974→              <p className="text-xs text-muted-foreground">
+   975→                ARR <span className="font-semibold text-foreground">{formatINR(arr)}</span>
+   976→              </p>
+   977→            </div>
+   978→          </CardContent>
+   979→        </Card>
+   980→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "480ms" }}>
+   981→          <CardContent className="p-4 flex items-center gap-4">
+   982→            <div className={`p-3 rounded-xl shrink-0 transition-transform duration-200 ${data.churnRate > 5 ? "bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400" : data.churnRate > 2 ? "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400" : "bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400"}`}>
+   983→              <UserMinus className="h-5 w-5" />
+   984→            </div>
+   985→            <div className="min-w-0">
+   986→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Churn Rate</p>
+   987→              <p className="text-xl font-bold tabular-nums animate-count-up">{data.churnRate}%</p>
+   988→              <p className="text-xs text-muted-foreground">{data.churnedInRange} disconnected in {rangeLabel}</p>
+   989→            </div>
+   990→          </CardContent>
+   991→        </Card>
+   992→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-teal-200 dark:hover:border-teal-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "510ms" }}>
+   993→          <CardContent className="p-4 flex items-center gap-4">
+   994→            <div className={`p-3 rounded-xl shrink-0 transition-transform duration-200 ${data.arpu > 0 && data.cac > data.arpu ? "bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400" : "bg-teal-100 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400"}`}><Target className="h-5 w-5" /></div>
+   995→            <div className="min-w-0">
+   996→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">CAC</p>
+   997→              <p className="text-xl font-bold tabular-nums animate-count-up">{formatINR(data.cac)}</p>
+   998→              <p className="text-xs text-muted-foreground">
+   999→                {data.cacTrend !== 0 && <span className={data.cacTrend > 0 ? "text-red-500" : "text-green-500"}>{data.cacTrend > 0 ? "+" : ""}{data.cacTrend}%</span>}
+  1000→                {data.cacTrend === 0 && <span>vs last month</span>}
+  1001→              </p>
+  1002→            </div>
+  1003→          </CardContent>
+  1004→        </Card>
+  1005→        {isModuleEnabled("ipv6") && (
+  1006→          <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-cyan-200 dark:hover:border-cyan-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "530ms" }}>
+  1007→            <CardContent className="p-4 flex items-center gap-4">
+  1008→              <div className="p-3 rounded-xl bg-cyan-100 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 shrink-0 transition-transform duration-200"><Globe className="h-5 w-5" /></div>
+  1009→              <div className="min-w-0">
+  1010→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">IPv6 Subscribers</p>
+  1011→                <p className="text-xl font-bold tabular-nums animate-count-up">{data.ipv6Subscribers || 0}</p>
+  1012→                <p className="text-xs text-muted-foreground">{data.ipv6AdoptionRate || 0}% adoption rate</p>
+  1013→              </div>
+  1014→            </CardContent>
+  1015→          </Card>
+  1016→        )}
+  1017→      </div>
+  1018→
+  1019→      {/* ── AI Insight Panel ── */}
+  1020→      <div className="relative rounded-xl border-2 border-red-500/30 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-950/20 dark:to-orange-950/20 p-4 sm:p-5 animate-card-enter glass-card" style={{ animationDelay: "500ms" }}>
+  1021→        <div className="flex items-start gap-3 sm:gap-4">
+  1022→          <div className="flex-shrink-0 p-2.5 rounded-xl bg-red-600 text-white shadow-lg shadow-red-600/25"><Bot className="h-5 w-5" /></div>
+  1023→          <div className="flex-1 min-w-0">
+  1024→            <div className="flex items-center gap-2 mb-1">
+  1025→              <h3 className="text-sm font-bold text-red-800 dark:text-red-300">AI Insight</h3>
+  1026→              <span className="live-dot-red" />
+  1027→              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-red-200 text-red-600">{rangeLabel}</Badge>
+  1028→            </div>
+  1029→            <p className="text-sm text-red-700/80 dark:text-red-300/80 leading-relaxed">{data.aiInsight}</p>
+  1030→          </div>
+  1031→        </div>
+  1032→      </div>
+  1033→
+  1034→      {/* ── System Health: Collection Progress ── */}
+  1035→      <Card className="border shadow-sm animate-card-enter rounded-xl" style={{ animationDelay: "530ms" }}>
+  1036→        <CardHeader className="pb-3">
+  1037→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1038→            <Activity className="h-4 w-4 text-red-500" />
+  1039→            System Health
+  1040→          </CardTitle>
+  1041→        </CardHeader>
+  1042→        <CardContent className="pt-0 space-y-5">
+  1043→          {/* Daily Collection Progress */}
+  1044→          <div className="space-y-2.5">
+  1045→            <div className="flex items-center justify-between">
+  1046→              <span className="text-sm font-medium">Daily Collection</span>
+  1047→              <span className="text-sm font-bold tabular-nums">
+  1048→                {formatINR(data.collectionToday)} <span className="text-muted-foreground font-normal">/ {formatINR(data.dailyTarget)}</span>
+  1049→              </span>
+  1050→            </div>
+  1051→            <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted">
+  1052→              <div
+  1053→                className="h-full rounded-full animate-progress"
+  1054→                style={{
+  1055→                  "--progress": `${Math.min(collectionPercent, 100)}%`,
+  1056→                  width: `${Math.min(collectionPercent, 100)}%`,
+  1057→                  background: "linear-gradient(90deg, #DC2626, #F87171)",
+  1058→                } as React.CSSProperties}
+  1059→              />
+  1060→            </div>
+  1061→            <p className="text-xs text-muted-foreground">{collectionPercent}% of daily target</p>
+  1062→          </div>
+  1063→          {/* Monthly Collection Progress */}
+  1064→          <div className="space-y-2.5">
+  1065→            <div className="flex items-center justify-between">
+  1066→              <span className="text-sm font-medium">Monthly Collection</span>
+  1067→              <span className="text-sm font-bold tabular-nums">
+  1068→                {formatINR(data.revenueThisMonth)} <span className="text-muted-foreground font-normal">/ {formatINR(data.monthlyTarget)}</span>
+  1069→              </span>
+  1070→            </div>
+  1071→            <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted">
+  1072→              <div
+  1073→                className="h-full rounded-full animate-progress"
+  1074→                style={{
+  1075→                  "--progress": `${Math.min(monthlyCollectionPercent, 100)}%`,
+  1076→                  width: `${Math.min(monthlyCollectionPercent, 100)}%`,
+  1077→                  background: "linear-gradient(90deg, #0D9488, #2DD4BF)",
+  1078→                } as React.CSSProperties}
+  1079→              />
+  1080→            </div>
+  1081→            <p className="text-xs text-muted-foreground">{monthlyCollectionPercent}% of monthly target</p>
+  1082→          </div>
+  1083→        </CardContent>
+  1084→      </Card>
+  1085→
+  1086→      {/* ── System Health: Quick Stats Row ── */}
+  1087→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+  1088→        {/* Total Revenue (All Time) */}
+  1089→        <Card className="border shadow-sm card-hover-lift animate-slide-up rounded-xl border-l-4 border-l-red-500" style={{ animationDelay: "540ms" }}>
+  1090→          <CardContent className="p-4">
+  1091→            <div className="flex items-center gap-3">
+  1092→              <div className="p-2.5 rounded-xl bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+  1093→                <BarChart3 className="h-4 w-4" />
+  1094→              </div>
+  1095→              <div className="min-w-0">
+  1096→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Revenue</p>
+  1097→                <p className="text-lg font-bold tabular-nums animate-count-up">{formatINR(arr)}</p>
+  1098→                <div className="flex items-center gap-1 mt-0.5">
+  1099→                  <TrendingUp className="h-3 w-3 text-green-500" />
+  1100→                  <span className="text-[10px] text-green-600 font-medium">Annualized</span>
+  1101→                </div>
+  1102→              </div>
+  1103→            </div>
+  1104→          </CardContent>
+  1105→        </Card>
+  1106→        {/* Avg Invoice Value */}
+  1107→        <Card className="border shadow-sm card-hover-lift animate-slide-up rounded-xl border-l-4 border-l-teal-500" style={{ animationDelay: "560ms" }}>
+  1108→          <CardContent className="p-4">
+  1109→            <div className="flex items-center gap-3">
+  1110→              <div className="p-2.5 rounded-xl bg-teal-100 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400 shrink-0">
+  1111→                <Receipt className="h-4 w-4" />
+  1112→              </div>
+  1113→              <div className="min-w-0">
+  1114→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Avg Invoice Value</p>
+  1115→                <p className="text-lg font-bold tabular-nums animate-count-up">{formatINR(data.totalActive > 0 ? data.revenueThisMonth / data.totalActive : 0)}</p>
+  1116→                <div className="flex items-center gap-1 mt-0.5">
+  1117→                  <span className="text-[10px] text-muted-foreground font-medium">{data.totalActive} subscribers</span>
+  1118→                </div>
+  1119→              </div>
+  1120→            </div>
+  1121→          </CardContent>
+  1122→        </Card>
+  1123→        {/* Online Devices */}
+  1124→        <Card className="border shadow-sm card-hover-lift animate-slide-up rounded-xl border-l-4 border-l-green-500" style={{ animationDelay: "580ms" }}>
+  1125→          <CardContent className="p-4">
+  1126→            <div className="flex items-center gap-3">
+  1127→              <div className="p-2.5 rounded-xl bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400 shrink-0">
+  1128→                <Wifi className="h-4 w-4" />
+  1129→              </div>
+  1130→              <div className="min-w-0">
+  1131→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Online Devices</p>
+  1132→                <div className="flex items-center gap-1.5">
+  1133→                  <p className="text-lg font-bold tabular-nums animate-count-up">{data.onlineDevices}</p>
+  1134→                  <span className="text-xs text-muted-foreground">/ {data.totalDevices}</span>
+  1135→                  <span className="status-dot-online" />
+  1136→                </div>
+  1137→                <div className="flex items-center gap-1 mt-0.5">
+  1138→                  <span className="text-[10px] text-muted-foreground font-medium">{data.totalDevices > 0 ? ((data.onlineDevices / data.totalDevices) * 100).toFixed(1) : 0}% online</span>
+  1139→                </div>
+  1140→              </div>
+  1141→            </div>
+  1142→          </CardContent>
+  1143→        </Card>
+  1144→        {/* SLA Compliance */}
+  1145→        <Card className="border shadow-sm card-hover-lift animate-slide-up rounded-xl border-l-4 border-l-amber-500" style={{ animationDelay: "600ms" }}>
+  1146→          <CardContent className="p-4">
+  1147→            <div className="flex items-center gap-3">
+  1148→              <div className={`p-2.5 rounded-xl shrink-0 ${data.urgentItems.slaBreaches > 0 ? "bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400" : "bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400"}`}>
+  1149→                <ShieldCheck className="h-4 w-4" />
+  1150→              </div>
+  1151→              <div className="min-w-0">
+  1152→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">SLA Compliance</p>
+  1153→                <p className={`text-lg font-bold ${data.urgentItems.slaBreaches > 0 ? "text-red-600" : "text-green-600"}`}>
+  1154→                  {data.urgentItems.slaBreaches > 0 ? "At Risk" : "On Track"}
+  1155→                </p>
+  1156→                <div className="flex items-center gap-1 mt-0.5">
+  1157→                  <span className={`text-[10px] font-medium ${data.urgentItems.slaBreaches > 0 ? "text-red-500" : "text-green-500"}`}>
+  1158→                    {data.urgentItems.slaBreaches} {data.urgentItems.slaBreaches === 1 ? "breach" : "breaches"}
+  1159→                  </span>
+  1160→                </div>
+  1161→              </div>
+  1162→            </div>
+  1163→          </CardContent>
+  1164→        </Card>
+  1165→      </div>
+  1166→      {isModuleEnabled("ipv6") && (
+  1167→        <div className="flex items-center gap-2 text-xs text-muted-foreground animate-slide-up" style={{ animationDelay: "610ms" }}>
+  1168→          <Globe className="h-3 w-3 text-cyan-500" />
+  1169→          <span>IPv6: <span className="font-medium text-emerald-600">Active</span></span>
+  1170→        </div>
+  1171→      )}
+  1172→
+  1173→      {/* ── Network Status Overview ── */}
+  1174→      <NetworkStatusOverview />
+  1175→
+  1176→      {/* ── Network Status Widget (new) ── */}
+  1177→      <NetworkStatusWidget />
+  1178→
+  1179→      {/* ── Subscriber Growth Chart ── */}
+  1180→      <SubscriberGrowthWidget />
+  1181→
+  1182→      {/* ── Revenue Breakdown ── */}
+  1183→      <RevenueBreakdownWidget />
+  1184→
+  1185→      {/* ── SLA Compliance Monitoring ── */}
+  1186→      <SlaMonitorWidget />
+  1187→
+  1188→      {/* ── SLA Breach Warnings ── */}
+  1189→      <div className="relative rounded-xl border-2 border-amber-500/30 bg-gradient-to-r from-amber-50 to-red-50 dark:from-amber-950/20 dark:to-red-950/20 p-4 sm:p-5 animate-card-enter glass-card" style={{ animationDelay: "520ms" }}>
+  1190→        <div className="flex items-start gap-3 sm:gap-4">
+  1191→          <div className="flex-shrink-0 p-2.5 rounded-xl bg-amber-500 text-white shadow-lg shadow-amber-500/25"><ShieldAlert className="h-5 w-5" /></div>
+  1192→          <div className="flex-1 min-w-0">
+  1193→            <div className="flex items-center gap-2 mb-3">
+  1194→              <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">SLA Warnings</h3>
+  1195→              {data.slaBreaches.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0 badge-glow">{data.slaBreaches.length}</Badge>}
+  1196→            </div>
+  1197→            {data.slaBreaches.length === 0 ? (
+  1198→              <div className="flex items-center gap-2 py-2">
+  1199→                <div className="h-2 w-2 rounded-full bg-green-500" />
+  1200→                <p className="text-sm text-green-700 dark:text-green-400 font-medium">All SLAs on track</p>
+  1201→              </div>
+  1202→            ) : (
+  1203→              <div className="overflow-x-auto max-h-52 overflow-y-auto">
+  1204→                <Table className="cryptsk-table">
+  1205→                  <TableHeader>
+  1206→                    <TableRow>
+  1207→                      <TableHead className="text-xs">Ticket</TableHead>
+  1208→                      <TableHead className="text-xs">Customer</TableHead>
+  1209→                      <TableHead className="text-xs">Priority</TableHead>
+  1210→                      <TableHead className="text-xs">Time Left</TableHead>
+  1211→                    </TableRow>
+  1212→                  </TableHeader>
+  1213→                  <TableBody>
+  1214→                    {data.slaBreaches.map((s, idx) => (
+  1215→                      <TableRow key={s.id} className="cursor-pointer hover:bg-muted/50 transition-colors list-item-stagger" style={{ "--stagger-delay": `${idx * 40}ms` } as React.CSSProperties} onClick={() => handleQuickAction("Complaints", "OPERATIONS")}>
+  1216→                        <TableCell className="font-mono text-xs font-medium">{s.ticketNumber}</TableCell>
+  1217→                        <TableCell className="text-xs font-medium">{s.customerName}</TableCell>
+  1218→                        <TableCell className="text-xs">
+  1219→                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 badge-bounce ${PRIORITY_BADGE[s.priority]?.class || ""}`}>{PRIORITY_BADGE[s.priority]?.label || s.priority}</Badge>
+  1220→                        </TableCell>
+  1221→                        <TableCell className="text-xs font-semibold">
+  1222→                          <span className={s.hoursRemaining < 0 ? "text-red-600" : s.hoursRemaining < 4 ? "text-amber-600" : s.hoursRemaining < 12 ? "text-yellow-600" : "text-green-600"}>
+  1223→                            {s.hoursRemaining < 0 ? `${Math.abs(s.hoursRemaining)}h overdue` : `${s.hoursRemaining}h left`}
+  1224→                          </span>
+  1225→                        </TableCell>
+  1226→                      </TableRow>
+  1227→                    ))}
+  1228→                  </TableBody>
+  1229→                </Table>
+  1230→              </div>
+  1231→            )}
+  1232→          </div>
+  1233→        </div>
+  1234→      </div>
+  1235→
+  1236→      {/* ── Bandwidth Usage Indicator ── */}
+  1237→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-teal-200 dark:hover:border-teal-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "535ms" }}>
+  1238→        <CardHeader className="pb-2">
+  1239→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1240→            <Zap className="h-4 w-4 text-teal-500" />
+  1241→            Bandwidth Utilization
+  1242→            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-teal-200 text-teal-600">
+  1243→              Current: {(data.currentBandwidth / 1000000).toFixed(1)} Mbps
+  1244→            </Badge>
+  1245→          </CardTitle>
+  1246→        </CardHeader>
+  1247→        <CardContent className="pt-0 space-y-4">
+  1248→          {/* Utilization bar */}
+  1249→          <div className="space-y-2">
+  1250→            <div className="flex items-center justify-between">
+  1251→              <span className="text-xs text-muted-foreground">
+  1252→                {(data.currentBandwidth / 1000000).toFixed(1)} Mbps <span className="mx-1">/</span> {(data.peakBandwidth / 1000000).toFixed(1)} Mbps Peak
+  1253→              </span>
+  1254→              <span className={`text-xs font-bold tabular-nums ${data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.85 ? "text-red-600" : data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.6 ? "text-yellow-600" : "text-green-600"}`}>
+  1255→                {data.peakBandwidth > 0 ? ((data.currentBandwidth / data.peakBandwidth) * 100).toFixed(1) : 0}%
+  1256→              </span>
+  1257→            </div>
+  1258→            <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted">
+  1259→              <div
+  1260→                className="h-full rounded-full animate-progress transition-colors duration-500"
+  1261→                style={{
+  1262→                  "--progress": `${data.peakBandwidth > 0 ? Math.min((data.currentBandwidth / data.peakBandwidth) * 100, 100) : 0}%`,
+  1263→                  width: `${data.peakBandwidth > 0 ? Math.min((data.currentBandwidth / data.peakBandwidth) * 100, 100) : 0}%`,
+  1264→                  background: data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.85
+  1265→                    ? "linear-gradient(90deg, #DC2626, #F87171)"
+  1266→                    : data.peakBandwidth > 0 && (data.currentBandwidth / data.peakBandwidth) > 0.6
+  1267→                      ? "linear-gradient(90deg, #D97706, #FBBF24)"
+  1268→                      : "linear-gradient(90deg, #16A34A, #4ADE80)",
+  1269→                } as React.CSSProperties}
+  1270→              />
+  1271→            </div>
+  1272→          </div>
+  1273→          {/* Bandwidth area chart */}
+  1274→          {data.bandwidthUsageData.length > 0 ? (
+  1275→            <div className="h-36">
+  1276→              <ResponsiveContainer width="100%" height="100%">
+  1277→                <AreaChart data={data.bandwidthUsageData}>
+  1278→                  <defs>
+  1279→                    <linearGradient id="bwCurrentGradient" x1="0" y1="0" x2="0" y2="1">
+  1280→                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.25} />
+  1281→                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
+  1282→                    </linearGradient>
+  1283→                  </defs>
+  1284→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+  1285→                  <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 10 }} />
+  1286→                  <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickFormatter={(v) => `${(v / 1000000).toFixed(0)}`} />
+  1287→                  <RechartsTooltip content={<CustomTooltip isBandwidth />} />
+  1288→                  <Area type="monotone" dataKey="downloadBps" name="Download" stroke="#0D9488" strokeWidth={1.5} fill="url(#bwCurrentGradient)" dot={false} />
+  1289→                </AreaChart>
+  1290→              </ResponsiveContainer>
+  1291→            </div>
+  1292→          ) : (
+  1293→            <div className="flex items-center justify-center h-36 text-xs text-muted-foreground">No bandwidth data</div>
+  1294→          )}
+  1295→          {isModuleEnabled("ipv6") && (
+  1296→            <div className="flex items-center gap-3 text-xs">
+  1297→              <div className="flex items-center gap-1">
+  1298→                <span className="h-2 w-2 rounded-full bg-cyan-500"></span>
+  1299→                <span>IPv6 Traffic</span>
+  1300→              </div>
+  1301→              <span className="text-muted-foreground">{data.ipv6TrafficPercent || 0}% of total</span>
+  1302→            </div>
+  1303→          )}
+  1304→        </CardContent>
+  1305→      </Card>
+  1306→
+  1307→      {/* ── New Dashboard Widgets Row ── */}
+  1308→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+  1309→        <IspHealthScoreWidget />
+  1310→        <NetworkHealthEnhancedWidget />
+  1311→        <BandwidthTrendsWidget
+  1312→          bandwidthUsageData={data.bandwidthUsageData}
+  1313→          peakBandwidth={data.peakBandwidth}
+  1314→          currentBandwidth={data.currentBandwidth}
+  1315→        />
+  1316→        <TopAreasWidget areaWiseRevenue={data.areaWiseRevenue} />
+  1317→      </div>
+  1318→
+  1319→      {/* ── Area Distribution & Connection Type Row ── */}
+  1320→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1321→        <AreaDistributionWidget />
+  1322→        <ConnectionTypeWidget />
+  1323→      </div>
+  1324→
+  1325→      {/* ── Revenue Analytics Row ── */}
+  1326→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1327→        <RevenuePaymentModeWidget />
+  1328→      </div>
+  1329→
+  1330→      {/* ── Top Revenue Subscribers & Plan Comparison Row ── */}
+  1331→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1332→        <TopSubscribersWidget />
+  1333→        <PlanComparisonWidget />
+  1334→      </div>
+  1335→
+  1336→      {/* ── Collection Performance Widget ── */}
+  1337→      <CollectionPerformanceWidget />
+  1338→
+  1339→      {/* ── Revenue & Complaints Analytics Row ── */}
+  1340→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1341→        <ComplaintsAnalyticsWidget />
+  1342→      </div>
+  1343→
+  1344→      {/* ── System Alerts & Plan Performance Row ── */}
+  1345→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1346→        <SystemAlertsWidget />
+  1347→        <PlanPerformanceWidget />
+  1348→      </div>
+  1349→
+  1350→      {/* ── Recent Payments Timeline ── */}
+  1351→      <RecentPaymentsTimelineWidget />
+  1352→
+  1353→      {/* ── Expiring Subscriptions & Overdue Payments Row ── */}
+  1354→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  1355→        <ExpiringSubscriptionsWidget />
+  1356→        <OverduePaymentsWidget />
+  1357→      </div>
+  1358→
+  1359→      {/* ── Retention & Financial Health Row ── */}
+  1360→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1361→        <RetentionChurnWidget />
+  1362→        <InvoiceAgingWidget />
+  1363→      </div>
+  1364→
+  1365→      {/* ── Churn Risk Alerts ── */}
+  1366→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1367→        <ChurnRiskWidget />
+  1368→        <ChurnPredictionWidget />
+  1369→      </div>
+  1370→
+  1371→      {/* ── Payment Analytics & Subscriber Lifecycle Row ── */}
+  1372→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1373→        <PaymentAnalyticsWidget />
+  1374→        <SubscriberLifecycleWidget />
+  1375→      </div>
+  1376→
+  1377→      {/* ── Technician Performance ── */}
+  1378→      <TechnicianPerformanceWidget />
+  1379→
+  1380→      {/* ── Subscriber Analytics & System Performance Row ── */}
+  1381→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1382→        <SubscriberAnalyticsWidget />
+  1383→        <SystemPerformanceWidget />
+  1384→      </div>
+  1385→
+  1386→      {/* ── Smart Plan Recommendations ── */}
+  1387→      <PlanRecommendationWidget />
+  1388→
+  1389→      {/* ── Response Time, Collection Target, RADIUS Sync & Recent Signups Row ── */}
+  1390→      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+  1391→        <ResponseTimeWidget />
+  1392→        <CollectionTargetWidget />
+  1393→        <RadiusSyncStatusWidget />
+  1394→        <RecentSignupsWidget />
+  1395→      </div>
+  1396→
+  1397→      {/* ── Revenue Forecast Widget ── */}
+  1398→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1399→        <RevenueForecastWidget />
+  1400→      </div>
+  1401→
+  1402→      {/* ── Charts Row 1: Revenue + Subscriber Growth ── */}
+  1403→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1404→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "550ms" }}>
+  1405→          <CardHeader className="pb-2">
+  1406→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1407→              <IndianRupee className="h-4 w-4 text-chart-1" />
+  1408→              Revenue Trend (6 Months)
+  1409→            </CardTitle>
+  1410→          </CardHeader>
+  1411→          <CardContent className="pt-0">
+  1412→            <div className="h-64">
+  1413→              <ResponsiveContainer width="100%" height="100%">
+  1414→                <AreaChart data={data.monthlyRevenueData}>
+  1415→                  <defs>
+  1416→                    <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
+  1417→                      <stop offset="5%" stopColor="#DC2626" stopOpacity={0.3} />
+  1418→                      <stop offset="95%" stopColor="#DC2626" stopOpacity={0} />
+  1419→                    </linearGradient>
+  1420→                  </defs>
+  1421→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+  1422→                  <XAxis dataKey="month" tick={{ fill: "#94A3B8", fontSize: 12 }} />
+  1423→                  <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
+  1424→                  <RechartsTooltip content={<CustomTooltip isCurrency />} />
+  1425→                  <Area type="monotone" dataKey="revenue" stroke="#DC2626" strokeWidth={2.5} fill="url(#revGradient)" dot={{ r: 4, fill: "#DC2626", strokeWidth: 2, stroke: "#fff" }} />
+  1426→                </AreaChart>
+  1427→              </ResponsiveContainer>
+  1428→            </div>
+  1429→          </CardContent>
+  1430→        </Card>
+  1431→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-green-200 dark:hover:border-green-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "600ms" }}>
+  1432→          <CardHeader className="pb-2">
+  1433→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1434→              <Users className="h-4 w-4 text-chart-2" />
+  1435→              Subscriber Additions ({rangeLabel})
+  1436→            </CardTitle>
+  1437→          </CardHeader>
+  1438→          <CardContent className="pt-0">
+  1439→            <div className="h-64">
+  1440→              <ResponsiveContainer width="100%" height="100%">
+  1441→                <BarChart data={data.subscriberGrowthData}>
+  1442→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+  1443→                  <XAxis dataKey="month" tick={{ fill: "#94A3B8", fontSize: 11 }} angle={-20} textAnchor="end" height={50} />
+  1444→                  <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} allowDecimals={false} />
+  1445→                  <RechartsTooltip content={<CustomTooltip />} />
+  1446→                  <Bar dataKey="additions" name="New Subscribers" fill="#16A34A" radius={[4, 4, 0, 0]} barSize={20} />
+  1447→                </BarChart>
+  1448→              </ResponsiveContainer>
+  1449→            </div>
+  1450→          </CardContent>
+  1451→        </Card>
+  1452→      </div>
+  1453→
+  1454→      {/* ── Charts Row 2: Plan Distribution + Collection + Area Revenue ── */}
+  1455→      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+  1456→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "650ms" }}>
+  1457→          <CardHeader className="pb-2">
+  1458→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1459→              <Wifi className="h-4 w-4 text-chart-3" />Plan Distribution
+  1460→            </CardTitle>
+  1461→          </CardHeader>
+  1462→          <CardContent className="pt-0">
+  1463→            <div className="h-56">
+  1464→              <ResponsiveContainer width="100%" height="100%">
+  1465→                <PieChart>
+  1466→                  <Pie data={data.planDistribution} cx="50%" cy="50%" innerRadius={50} outerRadius={85} paddingAngle={2} dataKey="count" nameKey="plan" strokeWidth={2} stroke="#fff">
+  1467→                    {data.planDistribution.map((_, index) => (
+  1468→                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+  1469→                    ))}
+  1470→                  </Pie>
+  1471→                  <RechartsTooltip formatter={(value: number, name: string) => [`${value} users`, name]} />
+  1472→                  <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: "11px" }} formatter={(value: string) => <span className="text-muted-foreground">{value}</span>} />
+  1473→                </PieChart>
+  1474→              </ResponsiveContainer>
+  1475→            </div>
+  1476→          </CardContent>
+  1477→        </Card>
+  1478→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "700ms" }}>
+  1479→          <CardHeader className="pb-2">
+  1480→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1481→              <CreditCard className="h-4 w-4 text-chart-4" />Payment Collection
+  1482→            </CardTitle>
+  1483→          </CardHeader>
+  1484→          <CardContent className="pt-0 space-y-5">
+  1485→            <div className="space-y-3">
+  1486→              <div className="flex items-center justify-between">
+  1487→                <span className="text-sm font-medium">Today&apos;s Target</span>
+  1488→                <span className="text-sm font-bold tabular-nums">
+  1489→                  {formatINR(data.collectionToday)} <span className="text-muted-foreground font-normal">/ {formatINR(data.dailyTarget)}</span>
+  1490→                </span>
+  1491→              </div>
+  1492→              <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted">
+  1493→                <div className={`h-full rounded-full transition-all duration-700 ${collectionPercent >= 80 ? "bg-green-500" : collectionPercent >= 50 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${Math.min(collectionPercent, 100)}%` }} />
+  1494→              </div>
+  1495→              <p className="text-xs text-muted-foreground">{collectionPercent}% of daily target achieved</p>
+  1496→            </div>
+  1497→            <div className="space-y-3">
+  1498→              <div className="flex items-center justify-between">
+  1499→                <span className="text-sm font-medium">Monthly Target</span>
+  1500→                <span className="text-sm font-bold tabular-nums">
+  1501→                  {formatINR(data.revenueThisMonth)} <span className="text-muted-foreground font-normal">/ {formatINR(data.monthlyTarget)}</span>
+  1502→                </span>
+  1503→              </div>
+  1504→              <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted">
+  1505→                <div className={`h-full rounded-full transition-all duration-700 ${monthlyCollectionPercent >= 80 ? "bg-green-500" : monthlyCollectionPercent >= 50 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${Math.min(monthlyCollectionPercent, 100)}%` }} />
+  1506→              </div>
+  1507→              <p className="text-xs text-muted-foreground">{monthlyCollectionPercent}% of monthly target achieved</p>
+  1508→            </div>
+  1509→            <div className="grid grid-cols-2 gap-3 pt-1">
+  1510→              <div className="rounded-lg bg-muted/50 p-3 text-center">
+  1511→                <p className="text-lg font-bold">{data.totalActive}</p>
+  1512→                <p className="text-xs text-muted-foreground">Active Users</p>
+  1513→              </div>
+  1514→              <div className="rounded-lg bg-muted/50 p-3 text-center">
+  1515→                <p className="text-lg font-bold">{data.totalSubscribers}</p>
+  1516→                <p className="text-xs text-muted-foreground">Total Users</p>
+  1517→              </div>
+  1518→            </div>
+  1519→          </CardContent>
+  1520→        </Card>
+  1521→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "750ms" }}>
+  1522→          <CardHeader className="pb-2">
+  1523→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1524→              <Activity className="h-4 w-4 text-chart-5" />Area-wise Revenue
+  1525→            </CardTitle>
+  1526→          </CardHeader>
+  1527→          <CardContent className="pt-0">
+  1528→            <div className="h-72">
+  1529→              <ResponsiveContainer width="100%" height="100%">
+  1530→                <BarChart data={data.areaWiseRevenue} layout="vertical" margin={{ left: 20 }}>
+  1531→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal={false} />
+  1532→                  <XAxis type="number" tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
+  1533→                  <YAxis dataKey="area" type="category" tick={{ fill: "#64748B", fontSize: 11 }} width={85} />
+  1534→                  <RechartsTooltip content={<CustomTooltip isCurrency />} />
+  1535→                  <Bar dataKey="revenue" name="Revenue" fill="#DC2626" radius={[0, 4, 4, 0]} barSize={18}>
+  1536→                    {data.areaWiseRevenue.map((_, index) => (
+  1537→                      <Cell key={`bar-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+  1538→                    ))}
+  1539→                  </Bar>
+  1540→                </BarChart>
+  1541→              </ResponsiveContainer>
+  1542→            </div>
+  1543→          </CardContent>
+  1544→        </Card>
+  1545→      </div>
+  1546→
+  1547→      {/* ── Recent Activity Feed ── */}
+  1548→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "800ms" }}>
+  1549→        <CardHeader className="pb-2 border-b border-border/50">
+  1550→          <div className="flex items-center justify-between">
+  1551→            <div className="flex items-center gap-2">
+  1552→              <div className="p-1.5 rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400">
+  1553→                <Activity className="h-4 w-4" />
+  1554→              </div>
+  1555→              <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
+  1556→              {/* Live indicator with pulsing dot */}
+  1557→              <span className="flex items-center gap-1.5 ml-1">
+  1558→                <span className="relative flex h-2 w-2">
+  1559→                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+  1560→                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+  1561→                </span>
+  1562→                <span className="text-[10px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">Live</span>
+  1563→              </span>
+  1564→            </div>
+  1565→            <div className="flex items-center gap-2">
+  1566→              {/* Unread activity count badge */}
+  1567→              {data.urgentItems.total > 0 && (
+  1568→                <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5 min-w-[1.25rem] rounded-full">
+  1569→                  {data.urgentItems.total} new
+  1570→                </Badge>
+  1571→              )}
+  1572→              <Button
+  1573→                variant="ghost"
+  1574→                size="sm"
+  1575→                className="gap-1 text-xs text-muted-foreground hover:text-foreground h-7 px-2"
+  1576→                onClick={() => setCurrentPage("Audit Log", "SETTINGS")}
+  1577→              >
+  1578→                View All
+  1579→                <ChevronRight className="h-3 w-3" />
+  1580→              </Button>
+  1581→            </div>
+  1582→          </div>
+  1583→        </CardHeader>
+  1584→        <CardContent className="pt-0">
+  1585→          <ActivityFeed maxItems={8} showHeader={false} />
+  1586→        </CardContent>
+  1587→      </Card>
+  1588→
+  1589→      {/* ── Complaint Trend Chart ── */}
+  1590→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "800ms" }}>
+  1591→        <CardHeader className="pb-2">
+  1592→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1593→            <AlertTriangle className="h-4 w-4 text-red-500" />
+  1594→            Complaint Trend ({rangeLabel})
+  1595→            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-red-200 text-red-600">
+  1596→              {data.openComplaints} open
+  1597→            </Badge>
+  1598→          </CardTitle>
+  1599→        </CardHeader>
+  1600→        <CardContent className="pt-0">
+  1601→          <div className="h-48">
+  1602→            <ResponsiveContainer width="100%" height="100%">
+  1603→              <LineChart data={data.complaintTrendData}>
+  1604→                <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+  1605→                <XAxis dataKey="date" tick={{ fill: "#94A3B8", fontSize: 11 }} angle={-20} textAnchor="end" height={50} />
+  1606→                <YAxis tick={{ fill: "#94A3B8", fontSize: 12 }} allowDecimals={false} />
+  1607→                <RechartsTooltip content={<CustomTooltip />} />
+  1608→                <Line type="monotone" dataKey="complaints" name="Complaints" stroke="#DC2626" strokeWidth={2.5} dot={{ r: 3, fill: "#DC2626", strokeWidth: 2, stroke: "#fff" }} />
+  1609→              </LineChart>
+  1610→            </ResponsiveContainer>
+  1611→          </div>
+  1612→        </CardContent>
+  1613→      </Card>
+  1614→
+  1615→      {/* ── Bandwidth Usage Chart (24h) ── */}
+  1616→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-green-200 dark:hover:border-green-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "810ms" }}>
+  1617→        <CardHeader className="pb-2">
+  1618→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1619→            <Monitor className="h-4 w-4 text-green-500" />
+  1620→            Bandwidth Usage (24h)
+  1621→            {data.peakBandwidth > 0 && (
+  1622→              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-200 text-green-600">
+  1623→                Peak: {(data.peakBandwidth / 1000000).toFixed(1)} Mbps
+  1624→              </Badge>
+  1625→            )}
+  1626→          </CardTitle>
+  1627→        </CardHeader>
+  1628→        <CardContent className="pt-0">
+  1629→          {data.bandwidthUsageData.length === 0 ? (
+  1630→            <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">No bandwidth data available</div>
+  1631→          ) : (
+  1632→            <div className="h-56">
+  1633→              <ResponsiveContainer width="100%" height="100%">
+  1634→                <AreaChart data={data.bandwidthUsageData}>
+  1635→                  <defs>
+  1636→                    <linearGradient id="dlGradient" x1="0" y1="0" x2="0" y2="1">
+  1637→                      <stop offset="5%" stopColor="#16A34A" stopOpacity={0.3} />
+  1638→                      <stop offset="95%" stopColor="#16A34A" stopOpacity={0} />
+  1639→                    </linearGradient>
+  1640→                    <linearGradient id="ulGradient" x1="0" y1="0" x2="0" y2="1">
+  1641→                      <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3} />
+  1642→                      <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
+  1643→                    </linearGradient>
+  1644→                  </defs>
+  1645→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+  1646→                  <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 11 }} />
+  1647→                  <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `${(v / 1000000).toFixed(0)}`} />
+  1648→                  <RechartsTooltip content={<CustomTooltip isBandwidth />} />
+  1649→                  <Legend wrapperStyle={{ fontSize: "11px" }} formatter={(value: string) => <span className="text-muted-foreground">{value}</span>} />
+  1650→                  <Area type="monotone" dataKey="downloadBps" name="Download" stroke="#16A34A" strokeWidth={2} fill="url(#dlGradient)" />
+  1651→                  <Area type="monotone" dataKey="uploadBps" name="Upload" stroke="#0D9488" strokeWidth={2} fill="url(#ulGradient)" />
+  1652→                </AreaChart>
+  1653→              </ResponsiveContainer>
+  1654→            </div>
+  1655→          )}
+  1656→        </CardContent>
+  1657→      </Card>
+  1658→
+  1659→      {/* ── Plan Revenue Breakdown ── */}
+  1660→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "820ms" }}>
+  1661→        <CardHeader className="pb-2">
+  1662→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1663→            <BarChart3 className="h-4 w-4 text-amber-500" />
+  1664→            Plan Revenue Breakdown
+  1665→          </CardTitle>
+  1666→        </CardHeader>
+  1667→        <CardContent className="pt-0">
+  1668→          {data.planRevenueBreakdown.length === 0 ? (
+  1669→            <div className="flex flex-col items-center justify-center h-56 gap-3 text-muted-foreground">
+  1670→              <div className="p-3 rounded-2xl bg-amber-100 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400">
+  1671→                <BarChart3 className="h-8 w-8" />
+  1672→              </div>
+  1673→              <p className="text-sm">No revenue data available</p>
+  1674→            </div>
+  1675→          ) : (
+  1676→            <div className="h-72">
+  1677→              <ResponsiveContainer width="100%" height="100%">
+  1678→                <BarChart data={data.planRevenueBreakdown} layout="vertical" margin={{ left: 10 }}>
+  1679→                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal={false} />
+  1680→                  <XAxis type="number" tick={{ fill: "#94A3B8", fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
+  1681→                  <YAxis dataKey="plan" type="category" tick={{ fill: "#64748B", fontSize: 11 }} width={90} />
+  1682→                  <RechartsTooltip
+  1683→                    content={({ active, payload, label }) => {
+  1684→                      if (!active || !payload?.length) return null;
+  1685→                      const item = payload[0];
+  1686→                      const planData = data.planRevenueBreakdown.find((p) => p.plan === label);
+  1687→                      return (
+  1688→                        <div className="bg-card border border-border rounded-lg shadow-xl px-3 py-2 text-xs">
+  1689→                          <p className="font-medium text-foreground mb-1">{label}</p>
+  1690→                          <p className="text-muted-foreground">Revenue: {formatINR(item.value != null ? Number(item.value) : 0)}</p>
+  1691→                          {planData && <p className="text-muted-foreground">{planData.subscribers} subscribers</p>}
+  1692→                        </div>
+  1693→                      );
+  1694→                    }}
+  1695→                  />
+  1696→                  <Bar dataKey="revenue" name="Revenue" radius={[0, 4, 4, 0]} barSize={20}>
+  1697→                    {data.planRevenueBreakdown.map((_, index) => (
+  1698→                      <Cell key={`plan-bar-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+  1699→                    ))}
+  1700→                  </Bar>
+  1701→                </BarChart>
+  1702→              </ResponsiveContainer>
+  1703→            </div>
+  1704→          )}
+  1705→        </CardContent>
+  1706→      </Card>
+  1707→
+  1708→      {/* ── Network Device Health Overview ── */}
+  1709→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "830ms" }}>
+  1710→        <CardHeader className="pb-2">
+  1711→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1712→            <Activity className="h-4 w-4 text-emerald-500" />
+  1713→            Network Device Health
+  1714→          </CardTitle>
+  1715→        </CardHeader>
+  1716→        <CardContent className="pt-0 space-y-4">
+  1717→          <div className="flex flex-wrap gap-3 sm:gap-4">
+  1718→            {[
+  1719→              { label: "Online", count: data.deviceHealth.online, color: "bg-green-500" },
+  1720→              { label: "Offline", count: data.deviceHealth.offline, color: "bg-red-500" },
+  1721→              { label: "Warning", count: data.deviceHealth.warning, color: "bg-amber-500" },
+  1722→              { label: "Unknown", count: data.deviceHealth.unknown, color: "bg-gray-400" },
+  1723→            ].map((s) => (
+  1724→              <div key={s.label} className="flex items-center gap-1.5">
+  1725→                <div className={`h-2.5 w-2.5 rounded-full ${s.color}`} />
+  1726→                <span className="text-xs text-muted-foreground">{s.label}</span>
+  1727→                <span className="text-xs font-bold">{s.count}</span>
+  1728→              </div>
+  1729→            ))}
+  1730→          </div>
+  1731→          {data.deviceHealth.topDevices.length === 0 ? (
+  1732→            <div className="flex flex-col items-center justify-center py-6 gap-3 text-muted-foreground">
+  1733→              <div className="p-3 rounded-2xl bg-emerald-100 dark:bg-emerald-950/30 text-emerald-500 dark:text-emerald-400">
+  1734→                <Activity className="h-8 w-8" />
+  1735→              </div>
+  1736→              <p className="text-sm">No devices found</p>
+  1737→            </div>
+  1738→          ) : (
+  1739→            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+  1740→              <Table className="cryptsk-table">
+  1741→                <TableHeader>
+  1742→                  <TableRow>
+  1743→                    <TableHead className="text-xs">Name</TableHead>
+  1744→                    <TableHead className="text-xs">Type</TableHead>
+  1745→                    <TableHead className="text-xs">Status</TableHead>
+  1746→                    <TableHead className="text-xs">CPU</TableHead>
+  1747→                    <TableHead className="text-xs">Memory</TableHead>
+  1748→                    <TableHead className="text-xs">Last Seen</TableHead>
+  1749→                  </TableRow>
+  1750→                </TableHeader>
+  1751→                <TableBody>
+  1752→                  {data.deviceHealth.topDevices.map((d, idx) => (
+  1753→                    <TableRow key={d.id} className="list-item-stagger" style={{ "--stagger-delay": `${idx * 40}ms` } as React.CSSProperties}>
+  1754→                      <TableCell className="text-xs font-medium">{d.name}</TableCell>
+  1755→                      <TableCell className="text-xs text-muted-foreground">{d.type}</TableCell>
+  1756→                      <TableCell className="text-xs\">
+  1757→                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 badge-bounce ${DEVICE_STATUS_BADGE[d.status]?.class || ""}`}>
+  1758→                          {DEVICE_STATUS_BADGE[d.status]?.label || d.status}
+  1759→                        </Badge>
+  1760→                      </TableCell>
+  1761→                      <TableCell className="text-xs\">
+  1762→                        {d.cpuUsage !== null && d.cpuUsage !== undefined ? (
+  1763→                          <div className="flex items-center gap-1.5">
+  1764→                            <div className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+  1765→                              <div className={`h-full rounded-full ${d.cpuUsage >= 80 ? "bg-red-500" : d.cpuUsage >= 60 ? "bg-yellow-500" : "bg-green-500"}`} style={{ width: `${Math.min(d.cpuUsage, 100)}%` }} />
+  1766→                            </div>
+  1767→                            <span className="text-[10px] tabular-nums w-7">{d.cpuUsage.toFixed(0)}%</span>
+  1768→                          </div>
+  1769→                        ) : <span className="text-muted-foreground text-[10px]">N/A</span>}
+  1770→                      </TableCell>
+  1771→                      <TableCell className="text-xs\">
+  1772→                        {d.memoryUsage !== null && d.memoryUsage !== undefined ? (
+  1773→                          <div className="flex items-center gap-1.5">
+  1774→                            <div className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+  1775→                              <div className={`h-full rounded-full ${d.memoryUsage >= 80 ? "bg-red-500" : d.memoryUsage >= 60 ? "bg-yellow-500" : "bg-green-500"}`} style={{ width: `${Math.min(d.memoryUsage, 100)}%` }} />
+  1776→                            </div>
+  1777→                            <span className="text-[10px] tabular-nums w-7">{d.memoryUsage.toFixed(0)}%</span>
+  1778→                          </div>
+  1779→                        ) : <span className="text-muted-foreground text-[10px]">N/A</span>}
+  1780→                      </TableCell>
+  1781→                      <TableCell className="text-[10px] text-muted-foreground tabular-nums">
+  1782→                        {d.lastSeenAt ? formatDate(d.lastSeenAt) : "Never"}
+  1783→                      </TableCell>
+  1784→                    </TableRow>
+  1785→                  ))}
+  1786→                </TableBody>
+  1787→              </Table>
+  1788→            </div>
+  1789→          )}
+  1790→        </CardContent>
+  1791→      </Card>
+  1792→
+  1793→      {/* ── Recent Complaints ── */}
+  1794→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "850ms" }}>
+  1795→        <CardHeader className="pb-3">
+  1796→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1797→              <AlertTriangle className="h-4 w-4 text-red-500" />Recent Complaints
+  1798→              <Button
+  1799→                variant="ghost" size="sm" className="ml-auto text-xs text-muted-foreground gap-1 h-7"
+  1800→                onClick={() => handleQuickAction("Complaints", "OPERATIONS")}
+  1801→              >
+  1802→                View All <ChevronRight className="h-3 w-3" />
+  1803→              </Button>
+  1804→            </CardTitle>
+  1805→          </CardHeader>
+  1806→          <CardContent className="pt-0">
+  1807→            {data.recentComplaints.length === 0 ? (
+  1808→              <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground">
+  1809→                <div className="p-3 rounded-2xl bg-green-100 dark:bg-green-950/30 text-green-500 dark:text-green-400">
+  1810→                  <ShieldAlert className="h-8 w-8" />
+  1811→                </div>
+  1812→                <p className="text-sm">No complaints found</p>
+  1813→                <p className="text-xs">Everything is running smoothly!</p>
+  1814→              </div>
+  1815→            ) : (
+  1816→              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+  1817→                <Table className="cryptsk-table">
+  1818→                  <TableHeader>
+  1819→                    <TableRow>
+  1820→                      <TableHead className="text-xs">Ticket #</TableHead>
+  1821→                      <TableHead className="text-xs">Customer</TableHead>
+  1822→                      <TableHead className="text-xs">Type</TableHead>
+  1823→                      <TableHead className="text-xs">Priority</TableHead>
+  1824→                      <TableHead className="text-xs">Status</TableHead>
+  1825→                    </TableRow>
+  1826→                  </TableHeader>
+  1827→                  <TableBody>
+  1828→                    {data.recentComplaints.map((c, idx) => (
+  1829→                      <TableRow
+  1830→                        key={c.id}
+  1831→                        className="cursor-pointer hover:bg-muted/50 transition-colors list-item-stagger"
+  1832→                        style={{ "--stagger-delay": `${idx * 40}ms` } as React.CSSProperties}
+  1833→                        onClick={() => handleQuickAction("Complaints", "OPERATIONS")}
+  1834→                      >
+  1835→                        <TableCell className="font-mono text-xs font-medium">{c.ticketNumber}</TableCell>
+  1836→                        <TableCell className="text-xs font-medium">{c.customerName}</TableCell>
+  1837→                        <TableCell className="text-xs">{COMPLAINT_TYPE_LABELS[c.type] || c.type}</TableCell>
+  1838→                        <TableCell className="text-xs">
+  1839→                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 badge-bounce ${PRIORITY_BADGE[c.priority]?.class || ""}`}>
+  1840→                            {PRIORITY_BADGE[c.priority]?.label || c.priority}
+  1841→                          </Badge>
+  1842→                        </TableCell>
+  1843→                        <TableCell className="text-xs">
+  1844→                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 badge-bounce ${STATUS_BADGE[c.status]?.class || ""}`}>
+  1845→                            {STATUS_BADGE[c.status]?.label || c.status}
+  1846→                          </Badge>
+  1847→                        </TableCell>
+  1848→                      </TableRow>
+  1849→                    ))}
+  1850→                  </TableBody>
+  1851→                </Table>
+  1852→              </div>
+  1853→            )}
+  1854→          </CardContent>
+  1855→        </Card>
+  1856→
+  1857→      {/* ── Overdue Invoices + Upcoming Renewals ── */}
+  1858→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1859→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-red-200 dark:hover:border-red-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "950ms" }}>
+  1860→          <CardHeader className="pb-3">
+  1861→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1862→              <Clock className="h-4 w-4 text-red-500" />
+  1863→              Overdue Invoices
+  1864→              <Badge variant="destructive" className="text-[10px] px-1.5 py-0 badge-glow">{data.overdueCount}</Badge>
+  1865→              <Button
+  1866→                variant="ghost" size="sm" className="ml-auto text-xs text-muted-foreground gap-1 h-7"
+  1867→                onClick={() => handleQuickAction("Invoices", "FINANCE")}
+  1868→              >
+  1869→                View All <ChevronRight className="h-3 w-3" />
+  1870→              </Button>
+  1871→            </CardTitle>
+  1872→          </CardHeader>
+  1873→          <CardContent className="pt-0">
+  1874→            {data.overdueCount === 0 ? (
+  1875→              <div className="flex flex-col items-center justify-center py-6 gap-3 text-muted-foreground">
+  1876→                <div className="p-3 rounded-2xl bg-green-100 dark:bg-green-950/30 text-green-500 dark:text-green-400">
+  1877→                  <FileText className="h-8 w-8" />
+  1878→                </div>
+  1879→                <p className="text-sm">No overdue invoices — great job!</p>
+  1880→              </div>
+  1881→            ) : (
+  1882→              <>
+  1883→                <div className="flex items-center justify-between mb-3 px-1">
+  1884→                  <span className="text-xs text-muted-foreground">Total Outstanding</span>
+  1885→                  <span className="text-sm font-bold text-red-600 tabular-nums">{formatINR(data.overdueTotal)}</span>
+  1886→                </div>
+  1887→                <div className="overflow-x-auto max-h-72 overflow-y-auto">
+  1888→                  <Table className="cryptsk-table">
+  1889→                    <TableHeader>
+  1890→                      <TableRow>
+  1891→                        <TableHead className="text-xs">Invoice #</TableHead>
+  1892→                        <TableHead className="text-xs">Customer</TableHead>
+  1893→                        <TableHead className="text-xs">Due Date</TableHead>
+  1894→                        <TableHead className="text-xs text-right">Balance</TableHead>
+  1895→                      </TableRow>
+  1896→                    </TableHeader>
+  1897→                    <TableBody>
+  1898→                      {data.overdueInvoices.map((inv, idx) => (
+  1899→                        <TableRow
+  1900→                          key={inv.id}
+  1901→                          className="cursor-pointer hover:bg-muted/50 transition-colors list-item-stagger"
+  1902→                          style={{ "--stagger-delay": `${idx * 50}ms` } as React.CSSProperties}
+  1903→                          onClick={() => handleQuickAction("Invoices", "FINANCE")}
+  1904→                        >
+  1905→                          <TableCell className="font-mono text-xs font-medium">{inv.invoiceNumber}</TableCell>
+  1906→                          <TableCell className="text-xs font-medium">
+  1907→                            <div>{inv.customerName}</div>
+  1908→                            {inv.phone && <div className="text-muted-foreground text-[10px]">{inv.phone}</div>}
+  1909→                          </TableCell>
+  1910→                          <TableCell className="text-xs text-red-600">{formatShortDate(inv.dueDate)}</TableCell>
+  1911→                          <TableCell className="text-xs font-semibold tabular-nums text-right">{formatINR(inv.balanceAmount)}</TableCell>
+  1912→                        </TableRow>
+  1913→                      ))}
+  1914→                    </TableBody>
+  1915→                  </Table>
+  1916→                </div>
+  1917→              </>
+  1918→            )}
+  1919→          </CardContent>
+  1920→        </Card>
+  1921→        <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-amber-200 dark:hover:border-amber-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "1000ms" }}>
+  1922→          <CardHeader className="pb-3">
+  1923→            <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1924→              <CalendarClock className="h-4 w-4 text-amber-500" />
+  1925→              Upcoming Renewals
+  1926→              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-200 text-amber-600">
+  1927→                Next 7 days
+  1928→              </Badge>
+  1929→            </CardTitle>
+  1930→          </CardHeader>
+  1931→          <CardContent className="pt-0">
+  1932→            {data.upcomingRenewals.length === 0 ? (
+  1933→              <div className="flex flex-col items-center justify-center py-6 gap-3 text-muted-foreground">
+  1934→                <div className="p-3 rounded-2xl bg-amber-100 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400">
+  1935→                  <CalendarClock className="h-8 w-8" />
+  1936→                </div>
+  1937→                <p className="text-sm">No renewals in the next 7 days</p>
+  1938→              </div>
+  1939→            ) : (
+  1940→              <div className="overflow-x-auto max-h-72 overflow-y-auto">
+  1941→                <Table className="cryptsk-table">
+  1942→                  <TableHeader>
+  1943→                    <TableRow>
+  1944→                      <TableHead className="text-xs">Customer</TableHead>
+  1945→                      <TableHead className="text-xs">Plan</TableHead>
+  1946→                      <TableHead className="text-xs">Renewal</TableHead>
+  1947→                      <TableHead className="text-xs text-right">Price</TableHead>
+  1948→                    </TableRow>
+  1949→                  </TableHeader>
+  1950→                  <TableBody>
+  1951→                    {data.upcomingRenewals.map((r, idx) => (
+  1952→                      <TableRow
+  1953→                        key={r.id}
+  1954→                        className="cursor-pointer hover:bg-muted/50 transition-colors list-item-stagger"
+  1955→                        style={{ "--stagger-delay": `${idx * 50}ms` } as React.CSSProperties}
+  1956→                        onClick={() => handleQuickAction("Subscribers", "MAIN")}
+  1957→                      >
+  1958→                        <TableCell className="text-xs font-medium">
+  1959→                          <div>{r.name}</div>
+  1960→                          {r.phone && <div className="text-muted-foreground text-[10px]">{r.phone}</div>}
+  1961→                        </TableCell>
+  1962→                        <TableCell className="text-xs text-muted-foreground">{r.planName}</TableCell>
+  1963→                        <TableCell className="text-xs">
+  1964→                          <div className="flex items-center gap-1.5">
+  1965→                            <Badge
+  1966→                              variant="outline"
+  1967→                              className={`text-[10px] px-1.5 py-0 ${
+  1968→                                r.daysUntilRenewal <= 1
+  1969→                                  ? "bg-red-100 text-red-700 border-red-200"
+  1970→                                  : r.daysUntilRenewal <= 3
+  1971→                                    ? "bg-amber-100 text-amber-700 border-amber-200"
+  1972→                                    : "bg-green-100 text-green-700 border-green-200"
+  1973→                              }`}
+  1974→                            >
+  1975→                              {r.daysUntilRenewal === 0 ? "Today" : `${r.daysUntilRenewal}d left`}
+  1976→                            </Badge>
+  1977→                            <span className="text-muted-foreground">{formatShortDate(r.nextRenewalDate)}</span>
+  1978→                          </div>
+  1979→                        </TableCell>
+  1980→                        <TableCell className="text-xs font-semibold tabular-nums text-right">{formatINR(r.planPrice)}</TableCell>
+  1981→                      </TableRow>
+  1982→                    ))}
+  1983→                  </TableBody>
+  1984→                </Table>
+  1985→              </div>
+  1986→            )}
+  1987→          </CardContent>
+  1988→        </Card>
+  1989→      </div>
+  1990→
+  1991→      {/* ── Top Revenue Customers ── */}
+  1992→      <Card className="border shadow-sm animate-card-enter hover:shadow-md hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-all duration-200 rounded-xl" style={{ animationDelay: "1050ms" }}>
+  1993→        <CardHeader className="pb-3">
+  1994→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+  1995→            <DollarSign className="h-4 w-4 text-green-500" />
+  1996→            Top Revenue Customers
+  1997→            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-200 text-green-600">This Month</Badge>
+  1998→          </CardTitle>
+  1999→        </CardHeader>
+  2000→        <CardContent className="pt-0">
+
+[showing lines 1-2000 of 2829; use offset=2001 with limit to continue reading]

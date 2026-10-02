@@ -24,7 +24,6 @@ export async function GET(request: NextRequest) {
 
     // Build where clause
     const where: Record<string, unknown> = {
-      tenantId: user.tenantId,
       status: 'checked_in',
       checkIn: {
         gte: startOfDay,

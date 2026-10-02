@@ -96,12 +96,15 @@ export function QuickNotesWidget() {
 
   return (
     <>
-      {/* Floating Toggle Button */}
+      {/* Floating Toggle Button — unified FAB stack (middle slot):
+          anchored right-5, above Voice Assistant (bottom-5) and below
+          Quick Actions (bottom-[8.25rem]/sm:[8.75rem]); z-40 shared stack */}
       <button
         onClick={togglePanel}
+        title={isOpen ? "Close quick notes" : "Quick notes"}
         className={cn(
-          "fixed bottom-20 right-6 z-50 flex items-center justify-center",
-          "size-12 rounded-full shadow-lg transition-all duration-200",
+          "fixed bottom-[4.75rem] right-5 z-40 sm:bottom-20 flex items-center justify-center",
+          "h-11 w-11 sm:h-12 sm:w-12 rounded-full shadow-lg transition-all duration-200",
           "bg-[#DC2626] text-white hover:bg-[#B91C1C]",
           "hover:scale-105 active:scale-95",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626] focus-visible:ring-offset-2",
@@ -116,10 +119,12 @@ export function QuickNotesWidget() {
         )}
       </button>
 
-      {/* Notes Panel */}
+      {/* Notes Panel — opens to the LEFT of the FAB stack (bottom-aligned
+          with the column) so it never covers the Quick Actions / Voice
+          Assistant buttons; right offset = right-5 + 48px button + 12px gap */}
       <div
         className={cn(
-          "fixed bottom-36 right-6 z-50 w-80 max-w-[90vw] transition-all duration-300 ease-out",
+          "fixed bottom-5 right-[4.75rem] z-50 sm:right-20 w-80 max-w-[calc(100vw-5.75rem)] sm:max-w-[24rem] transition-all duration-300 ease-out",
           isOpen
             ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
             : "pointer-events-none translate-y-4 scale-95 opacity-0"
@@ -129,7 +134,10 @@ export function QuickNotesWidget() {
           className={cn(
             "rounded-xl border p-4 shadow-xl",
             "bg-background/80 backdrop-blur-xl border-border/60",
-            "dark:bg-card/80"
+            "dark:bg-card/80",
+            // Keep the card inside short viewports (it now floats above the
+            // bottom edge instead of hugging it)
+            "max-h-[calc(100vh-2.5rem)] overflow-y-auto"
           )}
         >
           {/* Header */}

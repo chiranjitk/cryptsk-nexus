@@ -10,7 +10,8 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, optionalAuth, requirePermission, AuthError } from "@/lib/api-auth";
-import { auditLog } from "@/lib/services/audit-service";
+import { auditLog, auditExport } from "@/lib/services/audit-service";
+import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -384,6 +385,27 @@ async function GET_export_all(request: NextRequest) {
       take: 10000,
       include: { User: { select: { id: true, name: true, email: true } } },
     });
+
+    // ?type=export-all&format=csv — direct CSV download (Export Manager card).
+    // The plain export-all JSON branch stays for the audit-log page's client export.
+    const format = new URL(request.url).searchParams.get("format");
+    if (format === "csv") {
+      const headers = [
+        "Timestamp", "User", "Action", "Entity", "Entity ID", "Endpoint", "IP", "Details",
+      ];
+      const rows = logs.map((l) => [
+        l.timestamp.toISOString(),
+        l.User?.name || l.userName || "System",
+        l.action,
+        l.entity,
+        l.entityId,
+        l.endpoint,
+        l.ipAddress,
+        (l.details || "").slice(0, 500),
+      ]);
+      await auditExport(request, "AuditLog", "csv", rows.length);
+      return csvResponse(headers, rows, generateExportFilename("audit-log"));
+    }
 
     return NextResponse.json({ logs, total: logs.length });
   } catch (error) {

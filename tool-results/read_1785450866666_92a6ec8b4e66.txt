@@ -1,0 +1,967 @@
+     1→/**
+     2→ * CRYPTSKINTELLIGENT — /api/aaa/users
+     3→ *
+     4→ * Full CRUD against FreeRADIUS user tables (radcheck, radreply, radusergroup)
+     5→ * with Prisma-model enrichment (Subscriber, RadiusGroup).
+     6→ *
+     7→ * All SQL uses $queryRawUnsafe with parameterized $N placeholders for PostgreSQL.
+     8→ */
+     9→
+    10→import { NextRequest, NextResponse } from "next/server";
+    11→import { db } from "@/lib/db";
+    12→import { requireAuth, AuthError } from "@/lib/api-auth";
+    13→import { auditCreate } from "@/lib/services/audit-service";
+    14→
+    15→// ---------------------------------------------------------------------------
+    16→// Helper: SQL-escape a string for use inside DML (INSERT/UPDATE/DELETE)
+    17→// ---------------------------------------------------------------------------
+    18→function esc(val: string | null | undefined): string {
+    19→  if (val == null) return "NULL";
+    20→  return `'${String(val).replace(/'/g, "''")}'`;
+    21→}
+    22→
+    23→// ---------------------------------------------------------------------------
+    24→// GET /api/aaa/users — List all AAA users (unique usernames from radcheck)
+    25→// ---------------------------------------------------------------------------
+    26→export async function GET(request: NextRequest) {
+    27→  try {
+    28→    await requireAuth(request);
+    29→
+    30→    const sp = request.nextUrl.searchParams;
+    31→    const search = sp.get("search") || "";
+    32→    const group = sp.get("group") || "";
+    33→    const status = sp.get("status") || "";
+    34→    const page = Math.max(1, parseInt(sp.get("page") || "1"));
+    35→    const limit = Math.min(200, Math.max(10, parseInt(sp.get("limit") || "50")));
+    36→    const offset = (page - 1) * limit;
+    37→
+    38→    // ---------- dynamic WHERE ----------
+    39→    const conditions: string[] = [];
+    40→    const params: unknown[] = [];
+    41→
+    42→    if (search) {
+    43→      conditions.push(`rc.username ILIKE $${params.length + 1}`);
+    44→      params.push(`%${search}%`);
+    45→    }
+    46→    if (group) {
+    47→      conditions.push(`ug.groupname = $${params.length + 1}`);
+    48→      params.push(group);
+    49→    }
+    50→    if (status) {
+    51→      const validStatuses = ["ACTIVE", "SUSPENDED", "INACTIVE", "DISCONNECTED", "TRIAL", "PENDING_ACTIVATION"];
+    52→      const upper = status.toUpperCase();
+    53→      if (validStatuses.includes(upper)) {
+    54→        conditions.push(`s.status = $${params.length + 1}`);
+    55→        params.push(upper);
+    56→      }
+    57→    }
+    58→
+    59→    const where =
+    60→      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    61→
+    62→    // ---------- COUNT ----------
+    63→    const countRes = await db.$queryRawUnsafe<{ total: number }[]>(
+    64→      `SELECT COUNT(*)::int AS total
+    65→       FROM (SELECT DISTINCT rc.username FROM radcheck rc
+    66→             LEFT JOIN radusergroup ug ON ug.username = rc.username
+    67→             LEFT JOIN "Subscriber" s ON s."serviceUsername" = rc.username
+    68→             ${where}) _q`,
+    69→      ...params
+    70→    );
+    71→    const total = countRes[0]?.total ?? 0;
+    72→
+    73→    // ---------- ROWS ----------
+    74→    const rows = await db.$queryRawUnsafe<
+    75→      {
+    76→        username: string;
+    77→        password: string | null;
+    78→        groupname: string | null;
+    79→        priority: number | null;
+    80→        sub_id: string | null;
+    81→        sub_name: string | null;
+    82→        sub_code: string | null;
+    83→        sub_phone: string | null;
+    84→        sub_email: string | null;
+    85→        sub_status: string | null;
+    86→        sub_enabled: boolean | null;
+    87→        sub_ip: string | null;
+    88→        sub_mac: string | null;
+    89→        sub_connection_type: string | null;
+    90→        rg_id: string | null;
+    91→        rg_name: string | null;
+    92→        rg_speed_down: number | null;
+    93→        rg_speed_up: number | null;
+    94→        rg_data_limit: number | null;
+    95→        rg_session_timeout: number | null;
+    96→      }[]
+    97→    >(
+    98→      `SELECT
+    99→         rc.username,
+   100→         (SELECT value FROM radcheck WHERE username = rc.username AND attribute = 'Cleartext-Password' LIMIT 1) AS password,
+   101→         ug.groupname,
+   102→         ug.priority,
+   103→         s.id AS sub_id,
+   104→         s.name AS sub_name,
+   105→         s.code AS sub_code,
+   106→         s.phone AS sub_phone,
+   107→         s.email AS sub_email,
+   108→         s.status AS sub_status,
+   109→         s."radiusEnabled" AS sub_enabled,
+   110→         s."ipAddress" AS sub_ip,
+   111→         s."macAddress" AS sub_mac,
+   112→         s."connectionType" AS sub_connection_type,
+   113→         rg.id AS rg_id,
+   114→         rg.name AS rg_name,
+   115→         rg."speedLimitDown" AS rg_speed_down,
+   116→         rg."speedLimitUp" AS rg_speed_up,
+   117→         rg."dataLimit" AS rg_data_limit,
+   118→         rg."sessionTimeout" AS rg_session_timeout
+   119→       FROM radcheck rc
+   120→       LEFT JOIN radusergroup ug ON ug.username = rc.username
+   121→       LEFT JOIN "Subscriber" s ON s."serviceUsername" = rc.username
+   122→       LEFT JOIN "RadiusGroup" rg ON rg.id = s."radiusGroupId"
+   123→       ${where}
+   124→       GROUP BY rc.username, ug.groupname, ug.priority,
+   125→                s.id, s.name, s.code, s.phone, s.email, s.status,
+   126→                s."radiusEnabled", s."ipAddress", s."macAddress", s."connectionType",
+   127→                rg.id, rg.name, rg."speedLimitDown", rg."speedLimitUp", rg."dataLimit", rg."sessionTimeout"
+   128→       ORDER BY rc.username
+   129→       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+   130→      ...params,
+   131→      limit,
+   132→      offset
+   133→    );
+   134→
+   135→    // For each user, also fetch all radcheck and radreply attribute rows
+   136→    const usernames = rows.map((r) => r.username);
+   137→
+   138→    // Batch-fetch radcheck attributes for these users
+   139→    let radcheckMap: Record<string, { attribute: string; op: string; value: string }[]> = {};
+   140→    if (usernames.length > 0) {
+   141→      const rcAttrs = await db.$queryRawUnsafe<
+   142→        { username: string; attribute: string; op: string; value: string }[]
+   143→      >(
+   144→        `SELECT username, attribute, op, value FROM radcheck WHERE username = ANY($1) ORDER BY username, attribute`,
+   145→        usernames
+   146→      );
+   147→      for (const attr of rcAttrs) {
+   148→        if (!radcheckMap[attr.username]) radcheckMap[attr.username] = [];
+   149→        radcheckMap[attr.username].push({
+   150→          attribute: attr.attribute,
+   151→          op: attr.op,
+   152→          value: attr.value,
+   153→        });
+   154→      }
+   155→    }
+   156→
+   157→    // Batch-fetch radreply attributes for these users
+   158→    let radreplyMap: Record<string, { attribute: string; op: string; value: string }[]> = {};
+   159→    if (usernames.length > 0) {
+   160→      const rrAttrs = await db.$queryRawUnsafe<
+   161→        { username: string; attribute: string; op: string; value: string }[]
+   162→      >(
+   163→        `SELECT username, attribute, op, value FROM radreply WHERE username = ANY($1) ORDER BY username, attribute`,
+   164→        usernames
+   165→      );
+   166→      for (const attr of rrAttrs) {
+   167→        if (!radreplyMap[attr.username]) radreplyMap[attr.username] = [];
+   168→        radreplyMap[attr.username].push({
+   169→          attribute: attr.attribute,
+   170→          op: attr.op,
+   171→          value: attr.value,
+   172→        });
+   173→      }
+   174→    }
+   175→
+   176→    // Map the response
+   177→    const users = rows.map((r) => ({
+   178→      username: r.username,
+   179→      password: r.password,
+   180→      checkAttributes: radcheckMap[r.username] || [],
+   181→      replyAttributes: radreplyMap[r.username] || [],
+   182→      group: r.groupname ? { name: r.groupname, priority: r.priority } : null,
+   183→      subscriber: r.sub_id
+   184→        ? {
+   185→            id: r.sub_id,
+   186→            name: r.sub_name,
+   187→            code: r.sub_code,
+   188→            phone: r.sub_phone,
+   189→            email: r.sub_email,
+   190→            status: r.sub_status,
+   191→            radiusEnabled: r.sub_enabled ?? false,
+   192→            ipAddress: r.sub_ip,
+   193→            macAddress: r.sub_mac,
+   194→            connectionType: r.sub_connection_type,
+   195→          }
+   196→        : null,
+   197→      radiusGroup: r.rg_id
+   198→        ? {
+   199→            id: r.rg_id,
+   200→            name: r.rg_name,
+   201→            speedLimitDown: r.rg_speed_down,
+   202→            speedLimitUp: r.rg_speed_up,
+   203→            dataLimit: r.rg_data_limit,
+   204→            sessionTimeout: r.rg_session_timeout,
+   205→          }
+   206→        : null,
+   207→    }));
+   208→
+   209→    // ---------- STATS ----------
+   210→    const statsRows = await db.$queryRawUnsafe<
+   211→      {
+   212→        total_users: number;
+   213→        active_subscribers: number;
+   214→        radius_enabled: number;
+   215→      }[]
+   216→    >(`
+   217→      SELECT
+   218→        (SELECT COUNT(DISTINCT username)::int FROM radcheck) AS total_users,
+   219→        (SELECT COUNT(*)::int FROM "Subscriber" s WHERE s."serviceUsername" IN (SELECT DISTINCT username FROM radcheck) AND s.status = 'ACTIVE') AS active_subscribers,
+   220→        (SELECT COUNT(*)::int FROM "Subscriber" s WHERE s."serviceUsername" IN (SELECT DISTINCT username FROM radcheck) AND s."radiusEnabled" = true) AS radius_enabled
+   221→    `);
+   222→    const baseStats = statsRows[0] ?? {
+   223→      total_users: 0,
+   224→      active_subscribers: 0,
+   225→      radius_enabled: 0,
+   226→    };
+   227→
+   228→    // Per-group counts
+   229→    const groupCounts = await db.$queryRawUnsafe<
+   230→      { groupname: string; count: number }[]
+   231→    >(
+   232→      `SELECT ug.groupname, COUNT(DISTINCT ug.username)::int AS count
+   233→       FROM radusergroup ug
+   234→       GROUP BY ug.groupname
+   235→       ORDER BY count DESC`
+   236→    );
+   237→
+   238→    // Per-status counts (from Subscriber)
+   239→    const statusCounts = await db.$queryRawUnsafe<
+   240→      { status: string; count: number }[]
+   241→    >(
+   242→      `SELECT s.status, COUNT(*)::int AS count
+   243→       FROM "Subscriber" s
+   244→       WHERE s."serviceUsername" IN (SELECT DISTINCT username FROM radcheck)
+   245→       GROUP BY s.status
+   246→       ORDER BY count DESC`
+   247→    );
+   248→
+   249→    return NextResponse.json({
+   250→      success: true,
+   251→      data: users,
+   252→      pagination: {
+   253→        page,
+   254→        limit,
+   255→        total,
+   256→        pages: Math.ceil(total / limit),
+   257→      },
+   258→      stats: {
+   259→        totalUsers: baseStats.total_users,
+   260→        activeSubscribers: baseStats.active_subscribers,
+   261→        radiusEnabled: baseStats.radius_enabled,
+   262→        byGroup: groupCounts.map((g) => ({
+   263→          group: g.groupname,
+   264→          count: g.count,
+   265→        })),
+   266→        byStatus: statusCounts.map((s) => ({
+   267→          status: s.status,
+   268→          count: s.count,
+   269→        })),
+   270→      },
+   271→    });
+   272→  } catch (error) {
+   273→    if (error instanceof AuthError) {
+   274→      return NextResponse.json(
+   275→        { success: false, error: error.message },
+   276→        { status: error.statusCode }
+   277→      );
+   278→    }
+   279→    console.error("[aaa/users] GET error:", error);
+   280→    return NextResponse.json(
+   281→      { success: false, error: "Failed to list AAA users" },
+   282→      { status: 500 }
+   283→    );
+   284→  }
+   285→}
+   286→
+   287→// ---------------------------------------------------------------------------
+   288→// POST /api/aaa/users — Create a new AAA user
+   289→// ---------------------------------------------------------------------------
+   290→export async function POST(request: NextRequest) {
+   291→  try {
+   292→    const userId = await requireAuth(request);
+   293→    const body = await request.json();
+   294→
+   295→    const {
+   296→      username,
+   297→      password,
+   298→      groupname,
+   299→      priority,
+   300→      checkAttributes,
+   301→      replyAttributes,
+   302→      subscriberData,
+   303→    } = body as {
+   304→      username: string;
+   305→      password: string;
+   306→      groupname?: string;
+   307→      priority?: number;
+   308→      checkAttributes?: { attribute: string; op?: string; value: string }[];
+   309→      replyAttributes?: { attribute: string; op?: string; value: string }[];
+   310→      subscriberData?: {
+   311→        name: string;
+   312→        code?: string;
+   313→        phone?: string;
+   314→        email?: string;
+   315→        planId?: string;
+   316→        areaId?: string;
+   317→        radiusGroupId?: string;
+   318→        ipAddress?: string;
+   319→        macAddress?: string;
+   320→        connectionType?: string;
+   321→      };
+   322→    };
+   323→
+   324→    // ---------- validation ----------
+   325→    const errors: string[] = [];
+   326→    if (!username?.trim()) errors.push("username is required");
+   327→    if (!password?.trim()) errors.push("password is required");
+   328→    if (username && username.length > 64) errors.push("username must be ≤ 64 characters");
+   329→    if (password && password.length > 253) errors.push("password must be ≤ 253 characters");
+   330→    if (errors.length > 0) {
+   331→      return NextResponse.json(
+   332→        { success: false, error: errors.join("; ") },
+   333→        { status: 400 }
+   334→      );
+   335→    }
+   336→
+   337→    // Check if user already exists in radcheck
+   338→    const existing = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   339→      `SELECT EXISTS(SELECT 1 FROM radcheck WHERE username = $1) AS exists`,
+   340→      username
+   341→    );
+   342→    if (existing[0]?.exists) {
+   343→      return NextResponse.json(
+   344→        { success: false, error: `User '${username}' already exists in radcheck` },
+   345→        { status: 409 }
+   346→      );
+   347→    }
+   348→
+   349→    // Validate groupname if provided
+   350→    if (groupname) {
+   351→      const groupExists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   352→        `SELECT EXISTS(SELECT 1 FROM "RadiusGroup" WHERE name = $1) AS exists`,
+   353→        groupname
+   354→      );
+   355→      if (!groupExists[0]?.exists) {
+   356→        return NextResponse.json(
+   357→          { success: false, error: `RADIUS group '${groupname}' does not exist` },
+   358→          { status: 400 }
+   359→        );
+   360→      }
+   361→    }
+   362→
+   363→    // ---------- Insert into radcheck ----------
+   364→
+   365→    // Primary password entry
+   366→    await db.$queryRawUnsafe(
+   367→      `INSERT INTO radcheck (username, attribute, op, value)
+   368→       VALUES ($1, 'Cleartext-Password', ':=', $2)`,
+   369→      username,
+   370→      password
+   371→    );
+   372→
+   373→    // Extra check attributes
+   374→    if (checkAttributes?.length) {
+   375→      for (const attr of checkAttributes) {
+   376→        if (!attr.attribute || attr.value === undefined) continue;
+   377→        const op = attr.op || "==";
+   378→        await db.$queryRawUnsafe(
+   379→          `INSERT INTO radcheck (username, attribute, op, value)
+   380→           VALUES ($1, $2, $3, $4)`,
+   381→          username,
+   382→          attr.attribute,
+   383→          op,
+   384→          String(attr.value)
+   385→        );
+   386→      }
+   387→    }
+   388→
+   389→    // ---------- Insert into radreply ----------
+   390→    if (replyAttributes?.length) {
+   391→      for (const attr of replyAttributes) {
+   392→        if (!attr.attribute || attr.value === undefined) continue;
+   393→        const op = attr.op || "=";
+   394→        await db.$queryRawUnsafe(
+   395→          `INSERT INTO radreply (username, attribute, op, value, "createdAt")
+   396→           VALUES ($1, $2, $3, $4, ${safeNow})`,
+   397→          username,
+   398→          attr.attribute,
+   399→          op,
+   400→          String(attr.value)
+   401→        );
+   402→      }
+   403→    }
+   404→
+   405→    // ---------- Insert into radusergroup ----------
+   406→    if (groupname) {
+   407→      const prio = priority ?? 1;
+   408→      await db.$queryRawUnsafe(
+   409→        `INSERT INTO radusergroup (username, groupname, priority)
+   410→         VALUES ($1, $2, $3)`,
+   411→        username,
+   412→        groupname,
+   413→        prio
+   414→      );
+   415→    }
+   416→
+   417→    // ---------- Optionally create Subscriber ----------
+   418→    let subscriber: Record<string, unknown> | null = null;
+   419→    if (subscriberData) {
+   420→      const sd = subscriberData;
+   421→
+   422→      // Validate planId if provided
+   423→      if (sd.planId) {
+   424→        const planExists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   425→          `SELECT EXISTS(SELECT 1 FROM "Plan" WHERE id = $1) AS exists`,
+   426→          sd.planId
+   427→        );
+   428→        if (!planExists[0]?.exists) {
+   429→          return NextResponse.json(
+   430→            { success: false, error: `Plan with id '${sd.planId}' not found` },
+   431→            { status: 400 }
+   432→          );
+   433→        }
+   434→      }
+   435→
+   436→      // Generate subscriber code if not provided
+   437→      const code = sd.code || `CRY-${Date.now().toString(36).toUpperCase()}`;
+   438→
+   439→      // Check code uniqueness
+   440→      const codeExists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   441→        `SELECT EXISTS(SELECT 1 FROM "Subscriber" WHERE code = $1) AS exists`,
+   442→        code
+   443→      );
+   444→      if (codeExists[0]?.exists) {
+   445→        return NextResponse.json(
+   446→          { success: false, error: `Subscriber code '${code}' already in use` },
+   447→          { status: 409 }
+   448→        );
+   449→      }
+   450→
+   451→      const id = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+   452→
+   453→      await db.$queryRawUnsafe(
+   454→        `INSERT INTO "Subscriber" (
+   455→           id, code, name, phone, email,
+   456→           "serviceUsername", "servicePassword",
+   457→           "planId", "areaId", "radiusGroupId",
+   458→           "ipAddress", "macAddress", "connectionType",
+   459→           "radiusEnabled", status
+   460→         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,'PENDING_ACTIVATION')`,
+   461→        id,
+   462→        code,
+   463→        sd.name || username,
+   464→        sd.phone || "",
+   465→        sd.email || "",
+   466→        username,
+   467→        password,
+   468→        sd.planId || null,
+   469→        sd.areaId || null,
+   470→        sd.radiusGroupId || null,
+   471→        sd.ipAddress || "",
+   472→        sd.macAddress || "",
+   473→        sd.connectionType || "FTTH"
+   474→      );
+   475→
+   476→      subscriber = {
+   477→        id,
+   478→        code,
+   479→        name: sd.name || username,
+   480→        phone: sd.phone || "",
+   481→        email: sd.email || "",
+   482→        serviceUsername: username,
+   483→        status: "PENDING_ACTIVATION",
+   484→        radiusEnabled: true,
+   485→      };
+   486→    }
+   487→
+   488→    await auditCreate(request, "AAAUser", username, {
+   489→      action: "create",
+   490→      username,
+   491→      groupname,
+   492→      hasSubscriber: !!subscriberData,
+   493→    });
+   494→
+   495→    return NextResponse.json(
+   496→      {
+   497→        success: true,
+   498→        data: {
+   499→          username,
+   500→          password,
+   501→          group: groupname ? { name: groupname, priority: priority ?? 1 } : null,
+   502→          subscriber,
+   503→        },
+   504→      },
+   505→      { status: 201 }
+   506→    );
+   507→  } catch (error) {
+   508→    if (error instanceof AuthError) {
+   509→      return NextResponse.json(
+   510→        { success: false, error: error.message },
+   511→        { status: error.statusCode }
+   512→      );
+   513→    }
+   514→    console.error("[aaa/users] POST error:", error);
+   515→    return NextResponse.json(
+   516→      { success: false, error: "Failed to create AAA user" },
+   517→      { status: 500 }
+   518→    );
+   519→  }
+   520→}
+   521→
+   522→// ---------------------------------------------------------------------------
+   523→// PUT /api/aaa/users — Update an AAA user (action-based)
+   524→// ---------------------------------------------------------------------------
+   525→export async function PUT(request: NextRequest) {
+   526→  try {
+   527→    const userId = await requireAuth(request);
+   528→    const body = await request.json();
+   529→
+   530→    const { username, action } = body as { username: string; action: string };
+   531→    if (!username?.trim() || !action?.trim()) {
+   532→      return NextResponse.json(
+   533→        { success: false, error: "username and action are required" },
+   534→        { status: 400 }
+   535→      );
+   536→    }
+   537→
+   538→    // Verify user exists
+   539→    const exists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   540→      `SELECT EXISTS(SELECT 1 FROM radcheck WHERE username = $1) AS exists`,
+   541→      username
+   542→    );
+   543→    if (!exists[0]?.exists) {
+   544→      return NextResponse.json(
+   545→        { success: false, error: `User '${username}' not found in radcheck` },
+   546→        { status: 404 }
+   547→      );
+   548→    }
+   549→
+   550→    switch (action) {
+   551→      // ── Change password ──────────────────────────────────
+   552→      case "change-password": {
+   553→        const { newPassword } = body as { newPassword: string };
+   554→        if (!newPassword?.trim()) {
+   555→          return NextResponse.json(
+   556→            { success: false, error: "newPassword is required" },
+   557→            { status: 400 }
+   558→          );
+   559→        }
+   560→
+   561→        await db.$queryRawUnsafe(
+   562→          `UPDATE radcheck SET value = $1 WHERE username = $2 AND attribute = 'Cleartext-Password'`,
+   563→          newPassword,
+   564→          username
+   565→        );
+   566→
+   567→        // Also update Subscriber.servicePassword if linked
+   568→        await db.$queryRawUnsafe(
+   569→          `UPDATE "Subscriber" SET "servicePassword" = $1 WHERE "serviceUsername" = $2`,
+   570→          newPassword,
+   571→          username
+   572→        );
+   573→
+   574→        await auditCreate(request, "AAAUser", username, { action: "change-password" });
+   575→        return NextResponse.json({ success: true, message: "Password updated" });
+   576→      }
+   577→
+   578→      // ── Change group ─────────────────────────────────────
+   579→      case "change-group": {
+   580→        const { groupname, priority } = body as {
+   581→          groupname: string;
+   582→          priority?: number;
+   583→        };
+   584→        if (!groupname?.trim()) {
+   585→          return NextResponse.json(
+   586→            { success: false, error: "groupname is required" },
+   587→            { status: 400 }
+   588→          );
+   589→        }
+   590→
+   591→        // Validate group
+   592→        const groupExists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   593→          `SELECT EXISTS(SELECT 1 FROM "RadiusGroup" WHERE name = $1) AS exists`,
+   594→          groupname
+   595→        );
+   596→        if (!groupExists[0]?.exists) {
+   597→          return NextResponse.json(
+   598→            { success: false, error: `RADIUS group '${groupname}' does not exist` },
+   599→            { status: 400 }
+   600→          );
+   601→        }
+   602→
+   603→        // Remove existing group assignments
+   604→        await db.$queryRawUnsafe(
+   605→          `DELETE FROM radusergroup WHERE username = $1`,
+   606→          username
+   607→        );
+   608→
+   609→        // Insert new
+   610→        await db.$queryRawUnsafe(
+   611→          `INSERT INTO radusergroup (username, groupname, priority) VALUES ($1, $2, $3)`,
+   612→          username,
+   613→          groupname,
+   614→          priority ?? 1
+   615→        );
+   616→
+   617→        // Sync rate-limit from group to radreply
+   618→        const rateLimit = await db.$queryRawUnsafe<{ value: string }[]>(
+   619→          `SELECT value FROM radgroupreply WHERE groupname = $1 AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`,
+   620→          groupname
+   621→        );
+   622→        if (rateLimit[0]?.value) {
+   623→          await db.$queryRawUnsafe(
+   624→            `INSERT INTO radreply (username, attribute, op, value, "createdAt") VALUES ($1, 'Mikrotik-Rate-Limit', ':=', $2, NOW())
+   625→             ON CONFLICT DO NOTHING`,
+   626→            username,
+   627→            rateLimit[0].value
+   628→          );
+   629→        }
+   630→
+   631→        // Update subscriber.radiusGroupId if linked
+   632→        const rgId = await db.$queryRawUnsafe<{ id: string }[]>(
+   633→          `SELECT id FROM "RadiusGroup" WHERE name = $1 LIMIT 1`,
+   634→          groupname
+   635→        );
+   636→        if (rgId[0]?.id) {
+   637→          await db.$queryRawUnsafe(
+   638→            `UPDATE "Subscriber" SET "radiusGroupId" = $1 WHERE "serviceUsername" = $2`,
+   639→            rgId[0].id,
+   640→            username
+   641→          );
+   642→        }
+   643→
+   644→        await auditCreate(request, "AAAUser", username, {
+   645→          action: "change-group",
+   646→          groupname,
+   647→        });
+   648→        return NextResponse.json({ success: true, message: "Group updated" });
+   649→      }
+   650→
+   651→      // ── Set user-specific reply attribute ────────────────
+   652→      case "set-reply-attr": {
+   653→        const { attribute, op, value } = body as {
+   654→          attribute: string;
+   655→          op?: string;
+   656→          value: string;
+   657→        };
+   658→        if (!attribute?.trim() || value === undefined || value === null) {
+   659→          return NextResponse.json(
+   660→            { success: false, error: "attribute and value are required" },
+   661→            { status: 400 }
+   662→          );
+   663→        }
+   664→
+   665→        const attrOp = op || "=";
+   666→
+   667→        // Upsert: delete existing attribute then re-insert
+   668→        await db.$queryRawUnsafe(
+   669→          `DELETE FROM radreply WHERE username = $1 AND attribute = $2`,
+   670→          username,
+   671→          attribute
+   672→        );
+   673→        await db.$queryRawUnsafe(
+   674→          `INSERT INTO radreply (username, attribute, op, value, "createdAt")
+   675→           VALUES ($1, $2, $3, $4, NOW())`,
+   676→          username,
+   677→          attribute,
+   678→          attrOp,
+   679→          String(value)
+   680→        );
+   681→
+   682→        await auditCreate(request, "AAAUser", username, {
+   683→          action: "set-reply-attr",
+   684→          attribute,
+   685→          value,
+   686→        });
+   687→        return NextResponse.json({ success: true, message: "Reply attribute set" });
+   688→      }
+   689→
+   690→      // ── Remove user-specific reply attribute ─────────────
+   691→      case "remove-reply-attr": {
+   692→        const { attribute } = body as { attribute: string };
+   693→        if (!attribute?.trim()) {
+   694→          return NextResponse.json(
+   695→            { success: false, error: "attribute is required" },
+   696→            { status: 400 }
+   697→          );
+   698→        }
+   699→
+   700→        await db.$queryRawUnsafe(
+   701→          `DELETE FROM radreply WHERE username = $1 AND attribute = $2`,
+   702→          username,
+   703→          attribute
+   704→        );
+   705→
+   706→        await auditCreate(request, "AAAUser", username, {
+   707→          action: "remove-reply-attr",
+   708→          attribute,
+   709→        });
+   710→        return NextResponse.json({ success: true, message: "Reply attribute removed" });
+   711→      }
+   712→
+   713→      // ── Set user-specific check attribute ────────────────
+   714→      case "set-check-attr": {
+   715→        const { attribute, op, value } = body as {
+   716→          attribute: string;
+   717→          op?: string;
+   718→          value: string;
+   719→        };
+   720→        if (!attribute?.trim() || value === undefined || value === null) {
+   721→          return NextResponse.json(
+   722→            { success: false, error: "attribute and value are required" },
+   723→            { status: 400 }
+   724→          );
+   725→        }
+   726→
+   727→        const attrOp = op || "==";
+   728→
+   729→        // Don't allow overwriting Cleartext-Password via this action (use change-password)
+   730→        if (attribute === "Cleartext-Password") {
+   731→          return NextResponse.json(
+   732→            { success: false, error: "Use action 'change-password' to update password" },
+   733→            { status: 400 }
+   734→          );
+   735→        }
+   736→
+   737→        await db.$queryRawUnsafe(
+   738→          `DELETE FROM radcheck WHERE username = $1 AND attribute = $2`,
+   739→          username,
+   740→          attribute
+   741→        );
+   742→        await db.$queryRawUnsafe(
+   743→          `INSERT INTO radcheck (username, attribute, op, value, "createdAt")
+   744→           VALUES ($1, $2, $3, $4, NOW())`,
+   745→          username,
+   746→          attribute,
+   747→          attrOp,
+   748→          String(value)
+   749→        );
+   750→
+   751→        await auditCreate(request, "AAAUser", username, {
+   752→          action: "set-check-attr",
+   753→          attribute,
+   754→          value,
+   755→        });
+   756→        return NextResponse.json({ success: true, message: "Check attribute set" });
+   757→      }
+   758→
+   759→      // ── Toggle RADIUS enabled on linked subscriber ───────
+   760→      case "toggle-enabled": {
+   761→        const { enabled } = body as { enabled: boolean };
+   762→        if (typeof enabled !== "boolean") {
+   763→          return NextResponse.json(
+   764→            { success: false, error: "enabled (boolean) is required" },
+   765→            { status: 400 }
+   766→          );
+   767→        }
+   768→
+   769→        const result = await db.$queryRawUnsafe<{ updated: number }[]>(
+   770→          `UPDATE "Subscriber" SET "radiusEnabled" = $1 WHERE "serviceUsername" = $2 RETURNING 1 AS updated`,
+   771→          enabled,
+   772→          username
+   773→        );
+   774→
+   775→        if ((result as unknown[]).length === 0) {
+   776→          return NextResponse.json(
+   777→            { success: false, error: "No linked subscriber found for this username" },
+   778→            { status: 404 }
+   779→          );
+   780→        }
+   781→
+   782→        // If disabling RADIUS, remove from FreeRADIUS tables
+   783→        if (!enabled) {
+   784→          await db.$queryRawUnsafe(
+   785→            `DELETE FROM radcheck WHERE username = $1`,
+   786→            username
+   787→          );
+   788→          await db.$queryRawUnsafe(
+   789→            `DELETE FROM radreply WHERE username = $1`,
+   790→            username
+   791→          );
+   792→          await db.$queryRawUnsafe(
+   793→            `DELETE FROM radusergroup WHERE username = $1`,
+   794→            username
+   795→          );
+   796→        }
+   797→
+   798→        await auditCreate(request, "AAAUser", username, {
+   799→          action: "toggle-enabled",
+   800→          enabled,
+   801→        });
+   802→        return NextResponse.json({
+   803→          success: true,
+   804→          message: enabled ? "RADIUS enabled" : "RADIUS disabled and credentials removed",
+   805→        });
+   806→      }
+   807→
+   808→      // ── Update subscriber status ─────────────────────────
+   809→      case "set-status": {
+   810→        const { status } = body as { status: string };
+   811→        const validStatuses = [
+   812→          "ACTIVE",
+   813→          "SUSPENDED",
+   814→          "INACTIVE",
+   815→          "DISCONNECTED",
+   816→          "TRIAL",
+   817→          "PENDING_ACTIVATION",
+   818→        ];
+   819→        if (!status || !validStatuses.includes(status.toUpperCase())) {
+   820→          return NextResponse.json(
+   821→            {
+   822→              success: false,
+   823→              error: `status must be one of: ${validStatuses.join(", ")}`,
+   824→            },
+   825→            { status: 400 }
+   826→          );
+   827→        }
+   828→
+   829→        const result = await db.$queryRawUnsafe<{ updated: number }[]>(
+   830→          `UPDATE "Subscriber" SET status = $1 WHERE "serviceUsername" = $2 RETURNING 1 AS updated`,
+   831→          status.toUpperCase(),
+   832→          username
+   833→        );
+   834→
+   835→        if ((result as unknown[]).length === 0) {
+   836→          return NextResponse.json(
+   837→            { success: false, error: "No linked subscriber found for this username" },
+   838→            { status: 404 }
+   839→          );
+   840→        }
+   841→
+   842→        await auditCreate(request, "AAAUser", username, {
+   843→          action: "set-status",
+   844→          status,
+   845→        });
+   846→        return NextResponse.json({ success: true, message: "Subscriber status updated" });
+   847→      }
+   848→
+   849→      default:
+   850→        return NextResponse.json(
+   851→          {
+   852→            success: false,
+   853→            error: `Unknown action: ${action}. Valid actions: change-password, change-group, set-reply-attr, remove-reply-attr, set-check-attr, toggle-enabled, set-status`,
+   854→          },
+   855→          { status: 400 }
+   856→        );
+   857→    }
+   858→  } catch (error) {
+   859→    if (error instanceof AuthError) {
+   860→      return NextResponse.json(
+   861→        { success: false, error: error.message },
+   862→        { status: error.statusCode }
+   863→      );
+   864→    }
+   865→    console.error("[aaa/users] PUT error:", error);
+   866→    return NextResponse.json(
+   867→      { success: false, error: "Failed to update AAA user" },
+   868→      { status: 500 }
+   869→    );
+   870→  }
+   871→}
+   872→
+   873→// ---------------------------------------------------------------------------
+   874→// DELETE /api/aaa/users — Delete an AAA user from FreeRADIUS tables
+   875→// Query params: username
+   876→// Optional body: { disableSubscriber: true }
+   877→// ---------------------------------------------------------------------------
+   878→export async function DELETE(request: NextRequest) {
+   879→  try {
+   880→    const userId = await requireAuth(request);
+   881→
+   882→    const sp = request.nextUrl.searchParams;
+   883→    const username = sp.get("username");
+   884→
+   885→    if (!username?.trim()) {
+   886→      return NextResponse.json(
+   887→        { success: false, error: "username query param is required" },
+   888→        { status: 400 }
+   889→      );
+   890→    }
+   891→
+   892→    // Verify user exists
+   893→    const exists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+   894→      `SELECT EXISTS(SELECT 1 FROM radcheck WHERE username = $1) AS exists`,
+   895→      username
+   896→    );
+   897→    if (!exists[0]?.exists) {
+   898→      return NextResponse.json(
+   899→        { success: false, error: `User '${username}' not found in radcheck` },
+   900→        { status: 404 }
+   901→      );
+   902→    }
+   903→
+   904→    // Check if body has disableSubscriber flag
+   905→    let disableSubscriber = false;
+   906→    try {
+   907→      const body = await request.json();
+   908→      disableSubscriber = body.disableSubscriber === true;
+   909→    } catch {
+   910→      // No body — that's fine
+   911→    }
+   912→
+   913→    // Delete from FreeRADIUS tables
+   914→    const deletedCheck = await db.$queryRawUnsafe<{ count: number }[]>(
+   915→      `DELETE FROM radcheck WHERE username = $1 RETURNING COUNT(*)::int AS count`,
+   916→      username
+   917→    );
+   918→    await db.$queryRawUnsafe(
+   919→      `DELETE FROM radreply WHERE username = $1`,
+   920→      username
+   921→    );
+   922→    await db.$queryRawUnsafe(
+   923→      `DELETE FROM radusergroup WHERE username = $1`,
+   924→      username
+   925→    );
+   926→
+   927→    // Optionally disable the linked subscriber (NOT delete)
+   928→    if (disableSubscriber) {
+   929→      await db.$queryRawUnsafe(
+   930→        `UPDATE "Subscriber"
+   931→         SET "radiusEnabled" = false, status = 'DISCONNECTED', "servicePassword" = ''
+   932→         WHERE "serviceUsername" = $1`,
+   933→        username
+   934→      );
+   935→    }
+   936→
+   937→    await auditCreate(request, "AAAUser", username, {
+   938→      action: "delete",
+   939→      username,
+   940→      disableSubscriber,
+   941→    });
+   942→
+   943→    return NextResponse.json({
+   944→      success: true,
+   945→      message: `User '${username}' deleted from FreeRADIUS tables`,
+   946→      deleted: {
+   947→        radcheck: deletedCheck[0]?.count ?? 0,
+   948→        radreply: true,
+   949→        radusergroup: true,
+   950→        subscriberDisabled: disableSubscriber,
+   951→      },
+   952→    });
+   953→  } catch (error) {
+   954→    if (error instanceof AuthError) {
+   955→      return NextResponse.json(
+   956→        { success: false, error: error.message },
+   957→        { status: error.statusCode }
+   958→      );
+   959→    }
+   960→    console.error("[aaa/users] DELETE error:", error);
+   961→    return NextResponse.json(
+   962→      { success: false, error: "Failed to delete AAA user" },
+   963→      { status: 500 }
+   964→    );
+   965→  }
+   966→}
+   967→

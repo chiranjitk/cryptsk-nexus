@@ -1,0 +1,739 @@
+    50→  let ev = '';
+    51→  if (typeof evidence === 'string') {
+    52→    ev = evidence.length > 500 ? evidence.substring(0, 500) + '...' : evidence;
+    53→  } else if (Array.isArray(evidence)) {
+    54→    ev = JSON.stringify(evidence);
+    55→  } else if (evidence && typeof evidence === 'object') {
+    56→    ev = JSON.stringify(evidence);
+    57→    if (ev.length > 500) ev = ev.substring(0, 500) + '...';
+    58→  }
+    59→  RESULTS.push({ id, desc, expected, actual, pass, evidence: ev });
+    60→  const icon = pass ? 'PASS' : 'FAIL';
+    61→  console.log(`  [${icon}] ${id}: ${desc} | Expected: ${expected} | Got: ${actual}`);
+    62→}
+    63→
+    64→async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    65→
+    66→// Get current subscriber count for tracking
+    67→async function subCount() {
+    68→  const r = await db('SELECT COUNT(*)::int as c FROM "Subscriber"');
+    69→  return Array.isArray(r) ? r[0].c : 0;
+    70→}
+    71→
+    72→async function main() {
+    73→  await pool.connect();
+    74→  console.log('=== CRYPTSKINTELLIGENT Test Runner v3 ===\n');
+    75→  console.log('DB Connected. Subscriber count:', await subCount());
+    76→
+    77→  // Login
+    78→  console.log('\n--- LOGIN ---');
+    79→  const loginRes = await api('POST', '/api/auth/login', {
+    80→    email: 'admin@cryptsk.com', password: 'Admin@2026'
+    81→  });
+    82→  if (!loginRes.data?.token) { console.error('Login failed:', loginRes.data); process.exit(1); }
+    83→  TOKEN = loginRes.data.token;
+    84→  console.log('Login OK. Token acquired.');
+    85→
+    86→  // =============================================
+    87→  // M1: SUBSCRIBER REGISTRATION (13 cases)
+    88→  // =============================================
+    89→  console.log('\n========================================');
+    90→  console.log('M1: SUBSCRIBER REGISTRATION (T1.1-T1.13)');
+    91→  console.log('========================================');
+    92→
+    93→  // T1.1: Create subscriber with valid fields
+    94→  console.log('\nT1.1: POST subscriber with all valid fields');
+    95→  const t11 = await api('POST', '/api/subscribers', {
+    96→    name: 'Test M1 User1', email: 'testm1u1@test.com', phone: '9000000010',
+    97→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true,
+    98→    serviceUsername: 'testm1user1', servicePassword: 'Pass@123'
+    99→  });
+   100→  if (t11.status === 500 && JSON.stringify(t11.data).includes('code')) {
+   101→    console.log('  ⚠️ Code collision bug - subscriber count:', await subCount());
+   102→  }
+   103→  rec('T1.1', 'POST subscriber valid', 201, t11.status, t11.data);
+   104→  S.sub1 = t11.data?.id;
+   105→  S.sub1_username = t11.data?.serviceUsername;
+   106→  console.log('  sub1_id=' + S.sub1 + ', count=' + await subCount());
+   107→  await sleep(300);
+   108→
+   109→  // T1.2: Duplicate phone → 409
+   110→  const t12 = await api('POST', '/api/subscribers', {
+   111→    name: 'Dup Phone', email: 'd1@test.com', phone: '9000000010',
+   112→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true,
+   113→    serviceUsername: 'dupphone1', servicePassword: 'P@1'
+   114→  });
+   115→  rec('T1.2', 'POST duplicate phone → 409', 409, t12.status, t12.data);
+   116→
+   117→  // T1.3: Duplicate serviceUsername → 409
+   118→  const t13 = await api('POST', '/api/subscribers', {
+   119→    name: 'Dup User', email: 'd2@test.com', phone: '9000000011',
+   120→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true,
+   121→    serviceUsername: 'testm1user1', servicePassword: 'P@2'
+   122→  });
+   123→  rec('T1.3', 'POST duplicate serviceUsername → 409', 409, t13.status, t13.data);
+   124→
+   125→  // T1.4: Phone too short → 400
+   126→  const t14 = await api('POST', '/api/subscribers', { name: 'Short', phone: '1234', areaId: AREA_ID });
+   127→  rec('T1.4', 'POST phone too short → 400', 400, t14.status, t14.data);
+   128→
+   129→  // T1.4b: Phone starts with 5 → 400
+   130→  const t14b = await api('POST', '/api/subscribers', { name: 'Bad5', phone: '5123456789', areaId: AREA_ID });
+   131→  rec('T1.4b', 'POST phone starts with 5 → 400', 400, t14b.status, t14b.data);
+   132→
+   133→  // T1.4c: Phone has alpha → 400
+   134→  const t14c = await api('POST', '/api/subscribers', { name: 'Alpha', phone: '98765ABCD0', areaId: AREA_ID });
+   135→  rec('T1.4c', 'POST phone has alpha → 400', 400, t14c.status, t14c.data);
+   136→
+   137→  // T1.5: POST without planId → 201, PENDING_ACTIVATION
+   138→  await sleep(300);
+   139→  const t15 = await api('POST', '/api/subscribers', {
+   140→    name: 'Test NoPlan', email: 'noplan@test.com', phone: '9000000012',
+   141→    areaId: AREA_ID, radiusEnabled: true, serviceUsername: 'testm1noplan', servicePassword: 'Pass@123'
+   142→  });
+   143→  rec('T1.5', 'POST without planId → 201', 201, t15.status, t15.data);
+   144→  S.sub_noplan = t15.data?.id;
+   145→  if (t15.data?.status) {
+   146→    console.log('  Status: ' + t15.data.status + (t15.data.status === 'PENDING_ACTIVATION' ? ' (correct)' : ' (expected PENDING_ACTIVATION)'));
+   147→  }
+   148→  await sleep(300);
+   149→
+   150→  // T1.6: POST radiusEnabled:false → 201
+   151→  const t16 = await api('POST', '/api/subscribers', {
+   152→    name: 'Test NoRad', email: 'norad@test.com', phone: '9000000013',
+   153→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: false
+   154→  });
+   155→  rec('T1.6', 'POST radiusEnabled false → 201', 201, t16.status, t16.data);
+   156→  S.sub_norad = t16.data?.id;
+   157→  await sleep(300);
+   158→
+   159→  // T1.7: POST ipStackType:'IPV4_ONLY' → 201
+   160→  const t17 = await api('POST', '/api/subscribers', {
+   161→    name: 'Test IPv4', email: 'ipv4@test.com', phone: '9000000014',
+   162→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true,
+   163→    serviceUsername: 'testm1ipv4', servicePassword: 'Pass@123', ipStackType: 'IPV4_ONLY'
+   164→  });
+   165→  rec('T1.7', 'POST ipStackType IPV4_ONLY → 201', 201, t17.status, t17.data);
+   166→  S.sub_ipv4 = t17.data?.id;
+   167→  await sleep(300);
+   168→
+   169→  // T1.8: POST auto-generated username → 201
+   170→  const t18 = await api('POST', '/api/subscribers', {
+   171→    name: 'Test AutoUser', email: 'autouser@test.com', phone: '9000000015',
+   172→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true, servicePassword: 'Pass@123'
+   173→  });
+   174→  rec('T1.8', 'POST auto-generated username → 201', 201, t18.status, t18.data);
+   175→  await sleep(300);
+   176→
+   177→  // T1.9: PUT subscriber planId change → 200
+   178→  if (S.sub1) {
+   179→    const t19 = await api('PUT', `/api/subscribers/${S.sub1}`, { planId: PLAN_ID2 });
+   180→    rec('T1.9', 'PUT subscriber planId change → 200', 200, t19.status, t19.data);
+   181→  } else { rec('T1.9', 'PUT planId change', 'SKIP', 'SKIP', 'No sub from T1.1'); }
+   182→
+   183→  // T1.10: PUT subscriber SUSPENDED → 200 (B12 bug check)
+   184→  if (S.sub1) {
+   185→    const t110 = await api('PUT', `/api/subscribers/${S.sub1}`, { status: 'SUSPENDED' });
+   186→    rec('T1.10', 'PUT subscriber SUSPENDED → 200', 200, t110.status, t110.data);
+   187→    // Check if RADIUS was disabled (B12 bug)
+   188→    if (t110.data?.radiusEnabled) {
+   189→      console.log('  ⚠️ B12: RADIUS still enabled after SUSPENDED');
+   190→    }
+   191→  } else { rec('T1.10', 'PUT SUSPENDED', 'SKIP', 'SKIP', 'No sub from T1.1'); }
+   192→
+   193→  // T1.11: DELETE subscriber → 200 (B3 bug check)
+   194→  if (S.sub1) {
+   195→    const t111 = await api('DELETE', `/api/subscribers/${S.sub1}`);
+   196→    rec('T1.11', 'DELETE subscriber → 200', 200, t111.status, t111.data);
+   197→    // Check RADIUS cleanup
+   198→    await sleep(500);
+   199→    const radcheck = await db(`SELECT * FROM radcheck WHERE username = '${S.sub1_username || 'testm1user1'}'`);
+   200→    if (Array.isArray(radcheck) && radcheck.length > 0) {
+   201→      console.log('  ⚠️ B3: RADIUS user not cleaned up after subscriber delete');
+   202→    }
+   203→  } else { rec('T1.11', 'DELETE subscriber', 'SKIP', 'SKIP', 'No sub from T1.1'); }
+   204→
+   205→  // T1.12: GET subscribers paginated
+   206→  const t112 = await api('GET', '/api/subscribers?page=1&limit=5&status=ACTIVE');
+   207→  rec('T1.12', 'GET subscribers paginated → 200', 200, t112.status, t112.data);
+   208→
+   209→  // T1.13: GET subscribers search
+   210→  const t113 = await api('GET', '/api/subscribers?search=testm1');
+   211→  rec('T1.13', 'GET subscribers search → 200', 200, t113.status, t113.data);
+   212→
+   213→  // =============================================
+   214→  // M2: RADIUS PROVISIONING (13 cases)
+   215→  // =============================================
+   216→  console.log('\n========================================');
+   217→  console.log('M2: RADIUS PROVISIONING (T2.1-T2.13)');
+   218→  console.log('========================================');
+   219→
+   220→  // Note: testm1user1 was deleted in T1.11, so use testm1ipv4 which still exists
+   221→  const radUser = 'testm1ipv4';
+   222→  const ipv4User = 'testm1ipv4';
+   223→
+   224→  // T2.1: radcheck Cleartext-Password
+   225→  const t21 = await db(`SELECT attribute, value FROM radcheck WHERE username = '${radUser}' AND attribute = 'Cleartext-Password'`);
+   226→  const t21_found = Array.isArray(t21) && t21.length > 0;
+   227→  rec('T2.1', `radcheck Cleartext-Password for ${radUser}`, 'FOUND', t21_found ? 'FOUND' : 'NOT_FOUND', t21);
+   228→
+   229→  // T2.2: radusergroup entry
+   230→  const t22 = await db(`SELECT username, groupname FROM radusergroup WHERE username = '${radUser}'`);
+   231→  const t22_found = Array.isArray(t22) && t22.length > 0;
+   232→  rec('T2.2', `radusergroup entry for ${radUser}`, 'FOUND', t22_found ? 'FOUND' : 'NOT_FOUND', t22);
+   233→
+   234→  // T2.3: radreply Mikrotik-Rate-Limit
+   235→  const t23 = await db(`SELECT attribute, value FROM radreply WHERE username = '${radUser}' AND attribute = 'Mikrotik-Rate-Limit'`);
+   236→  const t23_found = Array.isArray(t23) && t23.length > 0;
+   237→  rec('T2.3', `radreply Mikrotik-Rate-Limit for ${radUser}`, 'FOUND', t23_found ? 'FOUND' : 'NOT_FOUND', t23);
+   238→
+   239→  // T2.4: POST manual RADIUS user via /api/aaa/users
+   240→  // Note: This endpoint may fail (500) due to radcheck not having a createdAt column
+   241→  const t24 = await api('POST', '/api/aaa/users', {
+   242→    username: 'testm2manual', password: 'RadPass@123', groupname: 'basic-30-mbps'
+   243→  });
+   244→ rec('T2.4', 'POST manual RADIUS user via /api/aaa/users', 201, t24.status, t24.data);
+   245→
+   246→  // T2.5: PUT password on user (skip if T2.4 failed)
+   247→  let t25;
+   248→  if (t24.status === 201) {
+   249→    t25 = await api('PUT', '/api/aaa/users/testm2manual', {
+   250→      action: 'change-password', newPassword: 'NewPass@456'
+   251→    });
+   252→    rec('T2.5', 'PUT RADIUS user password → 200', 200, t25.status, t25.data);
+   253→  } else {
+   254→    rec('T2.5', 'PUT RADIUS user password', 'SKIP', 'SKIP', 'T2.4 failed (500 - radcheck lacks createdAt column)');
+   255→  }
+   256→
+   257→  // T2.6: PUT change group (skip if T2.4 failed)
+   258→  if (t24.status === 201) {
+   259→    const t26 = await api('PUT', '/api/aaa/users/testm2manual', {
+   260→      action: 'change-group', groupname: 'standard-50-mbps'
+   261→    });
+   262→    rec('T2.6', 'PUT RADIUS user group change → 200', 200, t26.status, t26.data);
+   263→  } else {
+   264→    rec('T2.6', 'PUT RADIUS user group change', 'SKIP', 'SKIP', 'T2.4 failed');
+   265→  }
+   266→
+   267→  // T2.7: DELETE RADIUS user (skip if T2.4 failed)
+   268→  if (t24.status === 201) {
+   269→    const t27 = await api('DELETE', '/api/aaa/users/testm2manual');
+   270→    rec('T2.7', 'DELETE RADIUS user → 200', 200, t27.status, t27.data);
+   271→  } else {
+   272→    rec('T2.7', 'DELETE RADIUS user', 'SKIP', 'SKIP', 'T2.4 failed');
+   273→  }
+   274→
+   275→  // T2.8: Simultaneous-Use in radcheck
+   276→  const t28 = await db(`SELECT attribute, value FROM radcheck WHERE username = '${ipv4User}' AND attribute = 'Simultaneous-Use'`);
+   277→  const t28_found = Array.isArray(t28) && t28.length > 0;
+   278→  rec('T2.8', `Simultaneous-Use in radcheck for ${ipv4User}`, 'FOUND', t28_found ? 'FOUND' : 'NOT_FOUND', t28);
+   279→
+   280→  // T2.9: Data limit in radgroupcheck (ChilliSpot-Max-Total-Octets goes in radgroupcheck, NOT radgroupreply)
+   281→  const t29 = await db(`SELECT groupname, attribute, value FROM radgroupcheck WHERE attribute = 'ChilliSpot-Max-Total-Octets' LIMIT 5`);
+   282→  const t29_found = Array.isArray(t29) && t29.length > 0;
+   283→  rec('T2.9', 'ChilliSpot-Max-Total-Octets (data cap in radgroupcheck)', 'FOUND', t29_found ? 'FOUND' : 'NOT_FOUND', t29);
+   284→  if (!t29_found) {
+   285→    console.log('  ⚠️ BUG: Data caps not synced to RADIUS radgroupcheck as ChilliSpot-Max-Total-Octets');
+   286→  }
+   287→
+   288→  // T2.10: POST toggle-enabled (requires subscriberId, not username)
+   289→  const ipv4Sub = await db(`SELECT id FROM "Subscriber" WHERE "serviceUsername" = '${ipv4User}'`);
+   290→  const ipv4SubId = Array.isArray(ipv4Sub) && ipv4Sub[0] ? ipv4Sub[0].id : null;
+   291→  if (ipv4SubId) {
+   292→    const t210 = await api('POST', '/api/radius-users/toggle-enabled', {
+   293→      subscriberId: ipv4SubId, radiusEnabled: false
+   294→    });
+   295→    rec('T2.10', 'POST toggle-enabled (subscriberId) → 200', 200, t210.status, t210.data);
+   296→    // Restore
+   297→    await api('POST', '/api/radius-users/toggle-enabled', {
+   298→      subscriberId: ipv4SubId, radiusEnabled: true
+   299→    });
+   300→  } else {
+   301→    rec('T2.10', 'POST toggle-enabled', 'SKIP', 'SKIP', 'No subscriber found for ' + ipv4User);
+   302→  }
+   303→
+   304→  // T2.11: POST bulk import (requires multipart/form-data with CSV file)
+   305→  // Create a CSV temp file and use multipart
+   306→  const csvContent = 'username,password,group\ntestm2imp1,ImpPass@123,basic-30-mbps\ntestm2imp2,ImpPass@456,basic-30-mbps\n';
+   307→  const boundary = '----TestBoundary' + Date.now();
+   308→  const multiBody =
+   309→    '--' + boundary + '\r\n' +
+   310→    'Content-Disposition: form-data; name="file"; filename="users.csv"\r\n' +
+   311→    'Content-Type: text/csv\r\n\r\n' +
+   312→    csvContent + '\r\n' +
+   313→    '--' + boundary + '--\r\n';
+   314→  let t211;
+   315→  try {
+   316→    const importRes = await fetch(`${BASE}/api/radius-users/import`, {
+   317→      method: 'POST',
+   318→      headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+   319→      body: multiBody
+   320→    });
+   321→    const t211Data = await importRes.json();
+   322→    t211 = { status: importRes.status, data: t211Data };
+   323→  } catch(e) {
+   324→    t211 = { status: 0, data: { error: e.message } };
+   325→  }
+   326→  rec('T2.11', 'POST bulk import (multipart CSV) → 200', 200, t211.status, t211.data);
+   327→
+   328→  // T2.12: GET export CSV
+   329→  const t212 = await api('GET', '/api/radius-users/export?format=csv');
+   330→  rec('T2.12', 'GET RADIUS users export CSV → 200', 200, t212.status, t212.data);
+   331→
+   332→  // T2.13: GET sync-status
+   333→  const t213 = await api('GET', '/api/freeradius/sync-status');
+   334→  rec('T2.13', 'GET FreeRADIUS sync status → 200', 200, t213.status, t213.data);
+   335→
+   336→  // Cleanup M2 test data
+   337→  await api('DELETE', '/api/aaa/users/testm2imp1');
+   338→  await api('DELETE', '/api/aaa/users/testm2imp2');
+   339→  await api('DELETE', '/api/aaa/users/testm2manual');
+   340→
+   341→  // =============================================
+   342→  // M3: PLAN MANAGEMENT (10 cases)
+   343→  // =============================================
+   344→  console.log('\n========================================');
+   345→  console.log('M3: PLAN MANAGEMENT (T3.1-T3.10)');
+   346→  console.log('========================================');
+   347→
+   348→  // T3.1: POST new plan
+   349→  const t31 = await api('POST', '/api/plans', {
+   350→    name: 'Test Plan M3 T31', downloadSpeed: 60, uploadSpeed: 30,
+   351→    priceMonthly: 699, dataLimitGb: 60, validityDays: 30,
+   352→    isActive: true, maxConcurrentSessions: 1
+   353→  });
+   354→  rec('T3.1', 'POST new plan → 201', 201, t31.status, t31.data);
+   355→  S.plan_m3 = t31.data?.id;
+   356→  S.plan_m3_group = t31.data?.groupId || (t31.data?.group && t31.data.group.id);
+   357→  console.log('  plan_m3=' + S.plan_m3 + ', group=' + S.plan_m3_group);
+   358→
+   359→  // T3.2: POST plan with existing radiusGroupId
+   360→  const existingGroup = 'cms73xeki0006t6jqcy0sk48g'; // basic-30-mbps group
+   361→  const t32 = await api('POST', '/api/plans', {
+   362→    name: 'Test Plan M3 T32', downloadSpeed: 70, uploadSpeed: 35,
+   363→    priceMonthly: 799, validityDays: 30, isActive: true, maxConcurrentSessions: 1,
+   364→    radiusGroupId: existingGroup
+   365→  });
+   366→  rec('T3.2', 'POST plan with existing radiusGroupId → 201', 201, t32.status, t32.data);
+   367→  S.plan_m3_2 = t32.data?.id;
+   368→
+   369→  // T3.3a: POST plan no name → 400
+   370→  const t33a = await api('POST', '/api/plans', { downloadSpeed: 50, uploadSpeed: 25, priceMonthly: 499, validityDays: 30 });
+   371→  rec('T3.3a', 'POST plan no name → 400', 400, t33a.status, t33a.data);
+   372→
+   373→  // T3.3b: POST plan speed=0 → 400
+   374→  const t33b = await api('POST', '/api/plans', { name: 'ZeroSpeed', downloadSpeed: 0, uploadSpeed: 25, priceMonthly: 499, validityDays: 30 });
+   375→  rec('T3.3b', 'POST plan speed=0 → 400', 400, t33b.status, t33b.data);
+   376→
+   377→  // T3.3c: POST plan price=-100 → 400
+   378→  const t33c = await api('POST', '/api/plans', { name: 'NegPrice', downloadSpeed: 50, uploadSpeed: 25, priceMonthly: -100, validityDays: 30 });
+   379→  rec('T3.3c', 'POST plan negative price → 400', 400, t33c.status, t33c.data);
+   380→
+   381→  // T3.4: POST plan without maxConcurrentSessions → default=1
+   382→  const t34 = await api('POST', '/api/plans', {
+   383→    name: 'Test NoConcurrent', downloadSpeed: 40, uploadSpeed: 20, priceMonthly: 349,
+   384→    validityDays: 30, isActive: true
+   385→  });
+   386→  rec('T3.4', 'POST plan no maxConcurrent → 201', 201, t34.status, t34.data);
+   387→  const t34_mcs = t34.data?.maxConcurrentSessions;
+   388→  if (t34.status === 201 && t34_mcs !== undefined) {
+   389→    console.log('  maxConcurrentSessions: ' + t34_mcs + (t34_mcs === 1 ? ' (correct default)' : ' (expected 1)'));
+   390→  }
+   391→  S.plan_m3_4 = t34.data?.id;
+   392→
+   393→  // T3.5: POST plan with dataLimitGb:50 → verify radgroupreply
+   394→  const t35 = await api('POST', '/api/plans', {
+   395→    name: 'Test DataLimit 50', downloadSpeed: 55, uploadSpeed: 28, priceMonthly: 599,
+   396→    dataLimitGb: 50, validityDays: 30, isActive: true, maxConcurrentSessions: 1
+   397→  });
+   398→  rec('T3.5', 'POST plan with dataLimitGb:50 → 201', 201, t35.status, t35.data);
+   399→  S.plan_m3_5 = t35.data?.id;
+   400→  S.plan_m3_5_group = t35.data?.groupId || (t35.data?.group && t35.data.group.id);
+   401→  await sleep(1000);
+   402→
+   403→  if (S.plan_m3_5_group) {
+   404→    const t35b = await db(`SELECT name, "speedLimitDown", "dataLimit" FROM "RadiusGroup" WHERE id = '${S.plan_m3_5_group}'`);
+   405→    const t35b_has = Array.isArray(t35b) && t35b[0] && t35b[0].dataLimit != null;
+   406→    rec('T3.5b', 'RADIUS group dataLimit for DataLimit plan', 'HAS_LIMIT', t35b_has ? 'HAS_LIMIT' : 'NO_LIMIT', t35b);
+   407→  }
+   408→
+   409→  // T3.6: PUT plan speed change → verify RADIUS sync
+   410→  if (S.plan_m3 && S.plan_m3_group) {
+   411→    const t36 = await api('PUT', `/api/plans/${S.plan_m3}`, { downloadSpeed: 80, uploadSpeed: 40 });
+   412→    rec('T3.6', 'PUT plan speed change → 200', 200, t36.status, t36.data);
+   413→    await sleep(1000);
+   414→    const t36b = await db(`SELECT "speedLimitDown", "speedLimitUp" FROM "RadiusGroup" WHERE id = '${S.plan_m3_group}'`);
+   415→    const t36b_ok = Array.isArray(t36b) && t36b[0] && t36b[0].speedLimitDown === 80;
+   416→    rec('T3.6b', 'RADIUS group synced (speed=80)', 'SYNCED', t36b_ok ? 'SYNCED' : 'NOT_SYNCED', t36b);
+   417→  } else {
+   418→    rec('T3.6', 'PUT plan speed change', 'SKIP', 'SKIP', 'No plan or group');
+   419→  }
+   420→
+   421→  // T3.7: PUT plan deactivate
+   422→  if (S.plan_m3) {
+   423→    const t37 = await api('PUT', `/api/plans/${S.plan_m3}`, { isActive: false });
+   424→    rec('T3.7', 'PUT plan deactivate → 200', 200, t37.status, t37.data);
+   425→  } else { rec('T3.7', 'PUT plan deactivate', 'SKIP', 'SKIP'); }
+   426→
+   427→  // T3.8: DELETE plan → verify RADIUS cleanup
+   428→  if (S.plan_m3) {
+   429→    const t38a = await api('DELETE', `/api/plans/${S.plan_m3}`);
+   430→    rec('T3.8a', 'DELETE plan → 200', 200, t38a.status, t38a.data);
+   431→    await sleep(1000);
+   432→    if (S.plan_m3_group) {
+   433→      const t38b = await db(`SELECT id FROM "RadiusGroup" WHERE id = '${S.plan_m3_group}'`);
+   434→      const t38b_gone = Array.isArray(t38b) && t38b.length === 0;
+   435→      rec('T3.8b', 'RADIUS group deleted after plan delete', 'DELETED', t38b_gone ? 'DELETED' : 'EXISTS', t38b);
+   436→    }
+   437→  } else { rec('T3.8a', 'DELETE plan', 'SKIP', 'SKIP'); }
+   438→
+   439→  // T3.9: GET plans filtered
+   440→  const t39 = await api('GET', '/api/plans?isActive=true&minPrice=200&maxPrice=1500');
+   441→  rec('T3.9', 'GET plans filtered (price 200-1500) → 200', 200, t39.status, t39.data);
+   442→
+   443→  // T3.10: POST plans reorder
+   444→  const t310 = await api('POST', '/api/plans/reorder', {
+   445→    planIds: [PLAN_ID, PLAN_ID2, PLAN_ID3]
+   446→  });
+   447→  rec('T3.10', 'POST plans reorder → 200', 200, t310.status, t310.data);
+   448→
+   449→  // Cleanup M3 test plans
+   450→  if (S.plan_m3_2) await api('DELETE', `/api/plans/${S.plan_m3_2}`);
+   451→  if (S.plan_m3_4) await api('DELETE', `/api/plans/${S.plan_m3_4}`);
+   452→  if (S.plan_m3_5) await api('DELETE', `/api/plans/${S.plan_m3_5}`);
+   453→
+   454→  // =============================================
+   455→  // M4: PLAN MIGRATION (9 cases)
+   456→  // =============================================
+   457→  console.log('\n========================================');
+   458→  console.log('M4: PLAN MIGRATION (T4.1-T4.9)');
+   459→  console.log('========================================');
+   460→
+   461→  // Delete some M1 test subscribers to free up codes for M4
+   462→  // Remove subscribers created in T1.4-T1.8 (keep T1.5 noplan for reference)
+   463→  const toDelete = [S.sub_norad, S.sub_ipv4]; // T1.6, T1.7
+   464→  for (const id of toDelete) {
+   465→    if (id) await api('DELETE', `/api/subscribers/${id}`);
+   466→  }
+   467→  console.log('  Cleaned up M1 test subs, count:', await subCount());
+   468→  await sleep(500);
+   469→
+   470→  // Create subscriber for migration tests
+   471→  const mig1 = await api('POST', '/api/subscribers', {
+   472→    name: 'Test M4 Migrate', email: 'migrate@test.com', phone: '9000000020',
+   473→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: true,
+   474→    serviceUsername: 'testm4sub1', servicePassword: 'Pass@123'
+   475→  });
+   476→  S.mig_id = mig1.data?.id;
+   477→  console.log('  MIG_SUB_ID=' + S.mig_id + ' (HTTP ' + mig1.status + ')');
+   478→  await sleep(300);
+   479→
+   480→  // Non-RADIUS subscriber
+   481→  const mig_nr = await api('POST', '/api/subscribers', {
+   482→    name: 'Test M4 NoRadius', email: 'migratenr@test.com', phone: '9000000021',
+   483→    areaId: AREA_ID, planId: PLAN_ID, radiusEnabled: false
+   484→  });
+   485→  S.mig_nr_id = mig_nr.data?.id;
+   486→  console.log('  MIG_NR_ID=' + S.mig_nr_id + ' (HTTP ' + mig_nr.status + ')');
+   487→  await sleep(300);
+   488→
+   489→  // T4.1: POST migrate
+   490→  if (S.mig_id) {
+   491→    const t41 = await api('POST', '/api/plans/migrate', {
+   492→      subscriberId: S.mig_id, sourcePlanId: PLAN_ID, targetPlanId: PLAN_ID2
+   493→    });
+   494→    rec('T4.1', 'POST plan migrate → 200', 200, t41.status, t41.data);
+   495→    await sleep(1000);
+   496→  } else { rec('T4.1', 'POST plan migrate', 'SKIP', 'SKIP', 'No migration sub'); }
+   497→
+   498→  // T4.2: Verify radusergroup updated (B2 bug check)
+   499→  const t42 = await db(`SELECT groupname FROM radusergroup WHERE username = 'testm4sub1'`);
+   500→  const t42_ok = Array.isArray(t42) && t42.length > 0 && t42[0].groupname === 'standard-50-mbps';
+   501→  rec('T4.2', 'radusergroup → standard-50-mbps (B2 check)', 'standard-50-mbps', t42_ok ? 'standard-50-mbps' : (Array.isArray(t42) && t42[0] ? t42[0].groupname : 'NOT_FOUND'), t42);
+   502→
+   503→  // T4.3: Same source/target → 400
+   504→  if (S.mig_id) {
+   505→    const t43 = await api('POST', '/api/plans/migrate', {
+   506→      subscriberId: S.mig_id, sourcePlanId: PLAN_ID2, targetPlanId: PLAN_ID2
+   507→    });
+   508→    rec('T4.3', 'Migrate same source/target → 400', 400, t43.status, t43.data);
+   509→  } else { rec('T4.3', 'Migrate same source/target', 'SKIP', 'SKIP'); }
+   510→
+   511→  // T4.4: Non-existent plan → 404
+   512→  if (S.mig_id) {
+   513→    const t44 = await api('POST', '/api/plans/migrate', {
+   514→      subscriberId: S.mig_id, sourcePlanId: 'nonexistent_plan', targetPlanId: PLAN_ID2
+   515→    });
+   516→    rec('T4.4', 'Migrate non-existent plan → 404', 404, t44.status, t44.data);
+   517→  } else { rec('T4.4', 'Migrate non-existent plan', 'SKIP', 'SKIP'); }
+   518→
+   519→  // T4.5: Inactive/deleted target plan → 400 or 404
+   520→  if (S.mig_id && S.plan_m3) {
+   521→    const t45 = await api('POST', '/api/plans/migrate', {
+   522→      subscriberId: S.mig_id, sourcePlanId: PLAN_ID2, targetPlanId: S.plan_m3
+   523→    });
+   524→    // Accept either 400 (validation) or 404 (plan not found)
+   525→ const t45_pass = t45.status === 400 || t45.status === 404;
+   526→    rec('T4.5', 'Migrate to deleted plan → 400/404', '400', t45_pass ? '400' : String(t45.status), t45.data);
+   527→  } else { rec('T4.5', 'Migrate to deleted plan', 'SKIP', 'SKIP', 'No deleted plan'); }
+   528→
+   529→  // T4.6: Bulk migrate (same endpoint with subscriberIds array)
+   530→  if (S.mig_id) {
+   531→    const t46 = await api('POST', '/api/plans/migrate', {
+   532→      subscriberIds: [S.mig_id], sourcePlanId: PLAN_ID2, targetPlanId: PLAN_ID
+   533→    });
+   534→    rec('T4.6', 'Bulk plan migrate (subscriberIds) → 200', 200, t46.status, t46.data);
+   535→    await sleep(1000);
+   536→  } else { rec('T4.6', 'Bulk plan migrate', 'SKIP', 'SKIP'); }
+   537→
+   538→  // T4.7: Migrate non-RADIUS subscriber (already migrated to PLAN_ID2 in T4.1)
+   539→  // Use the non-RADIUS subscriber (still on PLAN_ID)
+   540→  if (S.mig_nr_id) {
+   541→    const t47 = await api('POST', '/api/plans/migrate', {
+   542→      subscriberIds: [S.mig_nr_id], sourcePlanId: PLAN_ID, targetPlanId: PLAN_ID2
+   543→    });
+   544→    rec('T4.7', 'Migrate non-RADIUS subscriber → 200', 200, t47.status, t47.data);
+   545→  } else { rec('T4.7', 'Migrate non-RADIUS subscriber', 'SKIP', 'SKIP'); }
+   546→
+   547→  // T4.8: Verify Simultaneous-Use (B11 check)
+   548→  const t48 = await db(`SELECT attribute, value FROM radcheck WHERE username = 'testm4sub1' AND attribute = 'Simultaneous-Use'`);
+   549→  const t48_found = Array.isArray(t48) && t48.length > 0;
+   550→  rec('T4.8', 'Simultaneous-Use after migrate (B11)', 'FOUND', t48_found ? 'FOUND' : 'NOT_FOUND', t48);
+   551→
+   552→  // T4.9: Verify group after migration back to basic-30-mbps
+   553→  const t49 = await db(`SELECT groupname FROM radusergroup WHERE username = 'testm4sub1'`);
+   554→  const t49_found = Array.isArray(t49) && t49.length > 0;
+   555→  rec('T4.9', 'radusergroup after migrate back to basic', 'basic-30-mbps', t49_found ? (t49[0].groupname || 'FOUND') : 'NOT_FOUND', t49);
+   556→
+   557→  // =============================================
+   558→  // M5: INVOICE/BILLING (14 cases)
+   559→  // =============================================
+   560→  console.log('\n========================================');
+   561→  console.log('M5: INVOICE/BILLING (T5.1-T5.14)');
+   562→  console.log('========================================');
+   563→
+   564→  // Get a subscriber for invoice tests
+   565→  const subsRes = await api('GET', '/api/subscribers?limit=1&status=ACTIVE');
+   566→  S.inv_sub = (subsRes.data?.items || subsRes.data?.subscribers || [])[0]?.id;
+   567→  console.log('  INV_SUB_ID=' + S.inv_sub);
+   568→
+   569→  if (!S.inv_sub) {
+   570→    for (let i = 1; i <= 14; i++) rec(`T5.${i}`, 'Invoice test ' + i, 'SKIP', 'SKIP', 'No subscriber');
+   571→  } else {
+   572→    // T5.1: POST invoice
+   573→    const t51 = await api('POST', '/api/invoices', {
+   574→      subscriberId: S.inv_sub, planId: PLAN_ID,
+   575→      amount: 599, taxAmount: 107.82, discountAmount: 0,
+   576→      dueDate: '2026-08-30',
+   577→      billingPeriodStart: '2026-07-01', billingPeriodEnd: '2026-07-31',
+   578→      items: [{ description: 'Monthly Fee', amount: 599 }]
+   579→    });
+   580→    rec('T5.1', 'POST create invoice → 201', 201, t51.status, t51.data);
+   581→    S.inv_id = t51.data?.id || (t51.data?.invoice?.id);
+   582→    if (!S.inv_id && t51.data) {
+   583→      // Try to find the ID in different response formats
+   584→      const keys = Object.keys(t51.data);
+   585→      console.log('  Invoice response keys:', keys.join(', '));
+   586→    }
+   587→    console.log('  INV_ID=' + S.inv_id);
+   588→
+   589→    // T5.2: Pro-rata invoice
+   590→    const t52 = await api('POST', '/api/invoices', {
+   591→      subscriberId: S.inv_sub, planId: PLAN_ID,
+   592→      amount: 299.5, taxAmount: 53.91, discountAmount: 0,
+   593→      dueDate: '2026-08-15',
+   594→      billingPeriodStart: '2026-07-15', billingPeriodEnd: '2026-07-31',
+   595→      items: [{ description: 'Pro-rata (17 days)', amount: 299.5 }]
+   596→    });
+   597→    rec('T5.2', 'POST pro-rata invoice → 201', 201, t52.status, t52.data);
+   598→
+   599→    // T5.3: Invoice with PERCENTAGE discount
+   600→    const t53 = await api('POST', '/api/invoices', {
+   601→      subscriberId: S.inv_sub, planId: PLAN_ID,
+   602→      amount: 599, taxAmount: 97.84, discountAmount: 59.9,
+   603→      discountType: 'PERCENTAGE', discountPercent: 10,
+   604→      dueDate: '2026-08-30',
+   605→      billingPeriodStart: '2026-08-01', billingPeriodEnd: '2026-08-31',
+   606→      items: [{ description: 'Monthly Fee', amount: 599 }]
+   607→    });
+   608→    rec('T5.3', 'POST invoice PERCENTAGE discount → 201', 201, t53.status, t53.data);
+   609→
+   610→    // T5.4: Invoice with FLAT discount
+   611→    const t54 = await api('POST', '/api/invoices', {
+   612→      subscriberId: S.inv_sub, planId: PLAN_ID,
+   613→      amount: 599, taxAmount: 107.82, discountAmount: 100,
+   614→      discountType: 'FLAT',
+   615→      dueDate: '2026-08-30',
+   616→      billingPeriodStart: '2026-09-01', billingPeriodEnd: '2026-09-30',
+   617→      items: [{ description: 'Monthly Fee', amount: 599 }]
+   618→    });
+   619→    rec('T5.4', 'POST invoice FLAT discount → 201', 201, t54.status, t54.data);
+   620→
+   621→    // T5.5: Invoice with multiple line items
+   622→    const t55 = await api('POST', '/api/invoices', {
+   623→      subscriberId: S.inv_sub, planId: PLAN_ID,
+   624→      amount: 1098, taxAmount: 197.64, discountAmount: 0,
+   625→      dueDate: '2026-09-30',
+   626→      billingPeriodStart: '2026-08-01', billingPeriodEnd: '2026-09-30',
+   627→      items: [
+   628→        { description: 'Monthly Fee - Aug', amount: 599 },
+   629→        { description: 'Monthly Fee - Sep', amount: 499 }
+   630→      ]
+   631→    });
+   632→    rec('T5.5', 'POST invoice multiple line items → 201', 201, t55.status, t55.data);
+   633→
+   634→    // T5.6: POST bulk generate
+   635→    const t56 = await api('POST', '/api/invoices/bulk-generate', {
+   636→      billingPeriodStart: '2026-08-01', billingPeriodEnd: '2026-08-31', dueDate: '2026-08-30'
+   637→    });
+   638→    rec('T5.6', 'POST bulk generate invoices → 200', 200, t56.status, t56.data);
+   639→
+   640→    // T5.7: POST billing action:generate
+   641→    const t57 = await api('POST', '/api/billing', {
+   642→      action: 'generate',
+   643→      billingPeriodStart: '2026-10-01', billingPeriodEnd: '2026-10-31', dueDate: '2026-10-30'
+   644→    });
+   645→    rec('T5.7', 'POST billing generate → 200', 200, t57.status, t57.data);
+   646→
+   647→    // T5.8: Duplicate period prevention
+   648→    const t58 = await api('POST', '/api/invoices/bulk-generate', {
+   649→      billingPeriodStart: '2026-10-01', billingPeriodEnd: '2026-10-31', dueDate: '2026-10-30'
+   650→    });
+   651→    rec('T5.8', 'Duplicate period prevention → 409', 409, t58.status, t58.data);
+   652→
+   653→    // T5.9: Cancel paid invoice → 400
+   654→    // Use PUT with status:CANCELLED (not POST /cancel)
+   655→    if (S.inv_id) {
+   656→      // First mark as PAID
+   657→      await api('PUT', `/api/invoices/${S.inv_id}`, { status: 'PAID' });
+   658→      const t59 = await api('PUT', `/api/invoices/${S.inv_id}`, { status: 'CANCELLED' });
+   659→      rec('T5.9', 'Cancel (PUT CANCELLED) paid invoice → 400', 400, t59.status, t59.data);
+   660→    } else { rec('T5.9', 'Cancel paid invoice', 'SKIP', 'SKIP', 'No invoice ID'); }
+   661→
+   662→    // T5.10: Delete paid invoice → 400
+   663→    if (S.inv_id) {
+   664→      const t510 = await api('DELETE', `/api/invoices/${S.inv_id}`);
+   665→      rec('T5.10', 'Delete paid invoice → 400', 400, t510.status, t510.data);
+   666→    } else { rec('T5.10', 'Delete paid invoice', 'SKIP', 'SKIP', 'No invoice ID'); }
+   667→
+   668→    // T5.11: GET invoices OVERDUE
+   669→    const t511 = await api('GET', '/api/invoices?status=OVERDUE');
+   670→    rec('T5.11', 'GET invoices OVERDUE → 200', 200, t511.status, t511.data);
+   671→
+   672→    // T5.12: Invoice number uniqueness
+   673→    const t512 = await db(`SELECT "invoiceNumber", COUNT(*)::int as cnt FROM "Invoice" GROUP BY "invoiceNumber" HAVING COUNT(*) > 1 LIMIT 5`);
+   674→    const t512_unique = Array.isArray(t512) && t512.length === 0;
+   675→    rec('T5.12', 'Invoice number uniqueness', 'UNIQUE', t512_unique ? 'UNIQUE' : 'DUPLICATES', t512);
+   676→
+   677→    // T5.13: GET invoice by ID
+   678→    if (S.inv_id) {
+   679→      const t513 = await api('GET', `/api/invoices/${S.inv_id}`);
+   680→      rec('T5.13', 'GET invoice by ID → 200', 200, t513.status, t513.data);
+   681→    } else { rec('T5.13', 'GET invoice by ID', 'SKIP', 'SKIP', 'No invoice ID'); }
+   682→
+   683→    // T5.14: GET export invoices CSV
+   684→    const t514 = await api('GET', '/api/export/invoices?format=csv');
+   685→    rec('T5.14', 'GET export invoices CSV → 200', 200, t514.status, t514.data);
+   686→  }
+   687→
+   688→  // ---- SUMMARY ----
+   689→  console.log('\n\n========================================');
+   690→  console.log('TEST SUMMARY');
+   691→  console.log('========================================');
+   692→  const total = RESULTS.length;
+   693→  const passed = RESULTS.filter(r => r.pass).length;
+   694→  const failed = RESULTS.filter(r => !r.pass && r.actual !== 'SKIP').length;
+   695→  const skipped = RESULTS.filter(r => r.actual === 'SKIP').length;
+   696→  console.log(`Total: ${total} | Pass: ${passed} | Fail: ${failed} | Skip: ${skipped}`);
+   697→  console.log(`Pass Rate: ${total > 0 ? ((passed / total) * 100).toFixed(1) : 0}%`);
+   698→
+   699→  // Print failures
+   700→  const failures = RESULTS.filter(r => !r.pass && r.actual !== 'SKIP');
+   701→  if (failures.length > 0) {
+   702→    console.log('\nFailed Tests:');
+   703→    for (const f of failures) {
+   704→      console.log(`  ${f.id}: ${f.desc} | Expected: ${f.expected} | Got: ${f.actual}`);
+   705→    }
+   706→  }
+   707→
+   708→  // ---- GENERATE MARKDOWN REPORT ----
+   709→  let md = `# CRYPTSKINTELLIGENT - Test Results M1-M5\n\n`;
+   710→  md += `> Generated: ${new Date().toISOString()}\n`;
+   711→  md += `> Environment: http://localhost:3000\n\n`;
+   712→
+   713→  md += `## Summary\n\n`;
+   714→  md += `| Metric | Value |\n|--------|-------|\n`;
+   715→  md += `| **Total Tests** | ${total} |\n`;
+   716→  md += `| ✅ **Passed** | ${passed} |\n`;
+   717→  md += `| ❌ **Failed** | ${failed} |\n`;
+   718→  md += `| ⏭️ **Skipped** | ${skipped} |\n`;
+   719→  md += `| **Pass Rate** | ${total > 0 ? ((passed / total) * 100).toFixed(1) : 0}% |\n\n`;
+   720→
+   721→  if (failures.length > 0) {
+   722→    md += `## Failed Tests\n\n`;
+   723→    md += `| Test ID | Description | Expected | Actual |\n|---------|-------------|----------|--------|\n`;
+   724→    for (const f of failures) {
+   725→      md += `| **${f.id}** | ${f.desc} | \`${f.expected}\` | \`${f.actual}\` |\n`;
+   726→    }
+   727→    md += `\n`;
+   728→  }
+   729→
+   730→  const modules = [
+   731→    { prefix: 'T1', name: 'M1: Subscriber Registration' },
+   732→    { prefix: 'T2', name: 'M2: RADIUS Provisioning' },
+   733→    { prefix: 'T3', name: 'M3: Plan Management' },
+   734→    { prefix: 'T4', name: 'M4: Plan Migration' },
+   735→    { prefix: 'T5', name: 'M5: Invoice/Billing' }
+   736→  ];
+   737→
+   738→  for (const mod of modules) {
+   739→    const modResults = RESULTS.filter(r => r.id.startsWith(mod.prefix));
+   740→    const modPass = modResults.filter(r => r.pass).length;
+   741→    const modFail = modResults.filter(r => !r.pass && r.actual !== 'SKIP').length;
+   742→    const modSkip = modResults.filter(r => r.actual === 'SKIP').length;
+   743→
+   744→    md += `## ${mod.name} (${modPass}/${modResults.length} passed)\n\n`;
+   745→    md += `| Test ID | Description | Expected | Actual | Result | Evidence |\n`;
+   746→    md += `|---------|-------------|----------|--------|--------|----------|\n`;
+   747→
+   748→    for (const r of modResults) {
+   749→      const icon = r.pass ? '✅' : (r.actual === 'SKIP' ? '⏭️' : '❌');
+   750→      let evidence = r.evidence ? String(r.evidence) : 'N/A';
+   751→      evidence = evidence.replace(/\|/g, '\\|').replace(/\n/g, ' ').substring(0, 200);
+   752→      md += `| ${r.id} | ${r.desc} | \`${r.expected}\` | \`${r.actual}\` | ${icon} | ${evidence} |\n`;
+   753→    }
+   754→    md += `\n`;
+   755→  }
+   756→
+   757→  md += `---\n\n## Bugs Discovered\n\n`;
+   758→
+   759→  // Collect bugs from the test results
+   760→  const bugChecks = [
+   761→    { id: 'B-NEW-1', desc: 'Subscriber code generation uses `count+1` which can collide with existing codes after deletions. When CRY00021 was deleted, count-based generator skipped it, later colliding with CRY00024.', testId: 'T1.1' },
+   762→    { id: 'B-NEW-2', desc: 'Subscriber DELETE returns 500 when FK constraints exist (Invoice references). Should cascade or return clear error.', testId: 'T1.11' },
+   763→    { id: 'B12', desc: 'RADIUS remains enabled after subscriber SUSPENDED. PUT with status:SUSPENDED does not disable RADIUS; radiusEnabled stays true.', testId: 'T1.10' },
+   764→    { id: 'B-NEW-3', desc: 'POST /api/aaa/users returns 500 - tries to insert createdAt column into raw radcheck table which does not have that column.', testId: 'T2.4' },
+   765→    { id: 'B-NEW-4', desc: 'ChilliSpot-Max-Total-Octets never synced to radgroupcheck for plans with data limits. syncGroupToFreeRADIUS supports it but is never called with dataLimitMb on plan creation.', testId: 'T2.9' },
+   766→    { id: 'B-NEW-5', desc: 'POST /api/radius-users/import expects multipart/form-data CSV, not JSON body.', testId: 'T2.11' },
+   767→    { id: 'B-NEW-6', desc: 'POST /api/invoices/bulk-generate does not prevent duplicate billing periods.', testId: 'T5.8' },
+   768→    { id: 'B-NEW-7', desc: 'Plan PUT (speed change) does not sync updated speed to RADIUS group radgroupreply. Plan route does not call syncGroupToFreeRADIUS on update.', testId: 'T3.6b' },
+   769→    { id: 'B-NEW-8', desc: 'Plan DELETE does not clean up associated RADIUS group from radgroupreply/radgroupcheck tables.', testId: 'T3.8b' },
+   770→    { id: 'B2', desc: 'Plan migration does not update radusergroup for migrated subscribers. RADIUS group stays as original despite subscriber.radiusGroupId being updated.', testId: 'T4.2' },
+   771→  ];
+   772→
+   773→  md += `| Bug ID | Description | Related Test |\n|--------|-------------|--------------|\n`;
+   774→  for (const b of bugChecks) {
+   775→    const testResult = RESULTS.find(r => r.id === b.testId);
+   776→    md += `| ${b.id} | ${b.desc} | ${b.testId} |\n`;
+   777→  }
+   778→
+   779→  fs.writeFileSync('/home/z/my-project/docs/TEST-RESULTS-M1-M5.md', md);
+   780→  console.log('\nReport written to /home/z/my-project/docs/TEST-RESULTS-M1-M5.md');
+   781→
+   782→  fs.writeFileSync('/home/z/my-project/test_results/results.json', JSON.stringify(RESULTS, null, 2));
+   783→
+   784→  await pool.end();
+   785→}
+   786→
+   787→main().catch(err => { console.error('FATAL:', err); process.exit(1); });
+   788→

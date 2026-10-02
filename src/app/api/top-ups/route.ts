@@ -33,6 +33,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ products });
     }
 
+    // ── List all top-up purchases (global feed for the admin page) ──
+    if (action === "list-purchases") {
+      const purchases = await db.subscriberTopUp.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 200,
+        include: {
+          Subscriber: { select: { id: true, name: true, code: true } },
+          TopUpProduct: { select: { id: true, name: true, type: true, value: true, price: true } },
+        },
+      });
+
+      return NextResponse.json({
+        purchases: purchases.map((p) => ({
+          id: p.id,
+          productId: p.topUpProductId,
+          subscriberCode: p.Subscriber?.code ?? "",
+          subscriberName: p.Subscriber?.name ?? "Unknown",
+          product: p.TopUpProduct?.name ?? "Unknown product",
+          productType: p.TopUpProduct?.type ?? "DATA",
+          purchasedAt: p.purchasedAt,
+          expiresAt: p.expiresAt,
+          totalValue: p.TopUpProduct?.value ?? 0,
+          usedValue: p.usedAmount,
+          remainingValue: p.remainingAmount,
+          status: p.status,
+          price: p.TopUpProduct?.price ?? 0,
+        })),
+      });
+    }
+
     // ── List subscriber's top-up purchases ─────────────────
     if (action === "list-subscriber") {
       const subscriberId = searchParams.get("subscriberId");
@@ -237,7 +267,7 @@ export async function POST(req: NextRequest) {
       const existing = await db.topUpProduct.findUnique({
         where: { id },
         include: {
-          purchases: {
+          SubscriberTopUp: {
             where: { status: "ACTIVE" },
             select: { id: true },
           },
@@ -248,11 +278,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });
       }
 
-      if (existing.purchases.length > 0) {
+      if (existing.SubscriberTopUp.length > 0) {
         return NextResponse.json(
           {
             error: "Cannot delete product with active purchases. Deactivate it instead.",
-            activePurchases: existing.purchases.length,
+            activePurchases: existing.SubscriberTopUp.length,
           },
           { status: 409 }
         );

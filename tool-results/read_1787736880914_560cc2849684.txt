@@ -1,0 +1,2002 @@
+     1→// ============================================================================
+     2→// Cryptsk — ISP Gateway Management Service
+     3→// Port: 3005 | All endpoints require auth except /api/health
+     4→// Uses real shell commands via Bun.spawn, real Prisma queries
+     5→// ============================================================================
+     6→
+     7→import { PrismaClient } from "@prisma/client";
+     8→import { requireAuth, corsHeaders, optionalAuth } from "../shared/auth.js";
+     9→import { createLogger } from "../shared/logger.js";
+    10→
+    11→// ─── Logger & Prisma Setup ────────────────────────────────────────────────
+    12→const log = createLogger("gateway-service");
+    13→const prisma = new PrismaClient({
+    14→  datasourceUrl:
+    15→    process.env.DATABASE_URL || "postgresql://z:Cryptsk2026@localhost:5432/ispplatform",
+    16→});
+    17→
+    18→const SERVICE_PORT = 3005;
+    19→
+    20→// ─── Shell Command Helper ─────────────────────────────────────────────────
+    21→interface ShellResult {
+    22→  success: boolean;
+    23→  stdout: string;
+    24→  stderr: string;
+    25→  exitCode: number;
+    26→}
+    27→
+    28→async function runShell(
+    29→  cmd: string,
+    30→  args: string[],
+    31→  timeoutMs = 10000
+    32→): Promise<ShellResult> {
+    33→  try {
+    34→    const proc = Bun.spawn([cmd, ...args], {
+    35→      stdout: "pipe",
+    36→      stderr: "pipe",
+    37→    });
+    38→    const timeout = setTimeout(() => proc.kill(), timeoutMs);
+    39→    const [stdout, stderr] = await Promise.all([
+    40→      new Response(proc.stdout).text(),
+    41→      new Response(proc.stderr).text(),
+    42→    ]);
+    43→    clearTimeout(timeout);
+    44→    const exitCode = await proc.exited;
+    45→    return { success: exitCode === 0, stdout, stderr, exitCode };
+    46→  } catch (err: any) {
+    47→    return {
+    48→      success: false,
+    49→      stdout: "",
+    50→      stderr: err.message || "Command not found or failed",
+    51→      exitCode: -1,
+    52→    };
+    53→  }
+    54→}
+    55→
+    56→// ─── JSON Helpers ─────────────────────────────────────────────────────────
+    57→function json(data: unknown, status = 200) {
+    58→  return new Response(JSON.stringify(data, (_, v) => typeof v === 'bigint' ? v.toString() : v), {
+    59→    status,
+    60→    headers: { "Content-Type": "application/json", ...corsHeaders },
+    61→  });
+    62→}
+    63→
+    64→function jsonErr(message: string, status = 400) {
+    65→  return json({ success: false, error: message }, status);
+    66→}
+    67→
+    68→// ─── Audit Logger ─────────────────────────────────────────────────────────
+    69→async function auditLog(
+    70→  userId: string,
+    71→  action: string,
+    72→  entity: string,
+    73→  entityId: string,
+    74→  details: Record<string, unknown> = {},
+    75→  req?: Request
+    76→) {
+    77→  try {
+    78→    await prisma.auditLog.create({
+    79→      data: {
+    80→        userId,
+    81→        userName: "",
+    82→        action,
+    83→        entity,
+    84→        entityId,
+    85→        details: JSON.stringify(details, (_, v) => typeof v === 'bigint' ? v.toString() : v),
+    86→        endpoint: req?.url || "",
+    87→        method: req?.method || "",
+    88→        ipAddress: req?.headers.get("x-forwarded-for") || "",
+    89→        userAgent: req?.headers.get("user-agent") || "",
+    90→      },
+    91→    });
+    92→  } catch (e) {
+    93→    log.error("auditLog failed", { error: String(e) });
+    94→  }
+    95→}
+    96→
+    97→// ─── Route Matcher ────────────────────────────────────────────────────────
+    98→function matchRoute(
+    99→  url: URL,
+   100→  method: string
+   101→): { handler: (req: Request, params: Record<string, string>) => Promise<Response>; params: Record<string, string> } | null {
+   102→  const path = url.pathname;
+   103→  const urlPath = path.replace(/\/+/g, "/"); // normalize slashes
+   104→
+   105→  // Health — no auth
+   106→  if (method === "GET" && urlPath === "/api/health") {
+   107→    return { handler: handleHealth, params: {} };
+   108→  }
+   109→
+   110→  // ─── System Interface Routes ─────────────────────────────────────────
+   111→  // GET /api/interfaces
+   112→  if (method === "GET" && urlPath === "/api/interfaces") {
+   113→    return { handler: handleGetInterfaces, params: {} };
+   114→  }
+   115→  // PUT /api/interfaces/:id
+   116→  let m = urlPath.match(/^\/api\/interfaces\/([^/]+)$/);
+   117→  if (method === "PUT" && m) {
+   118→    return { handler: handleUpdateInterface, params: { id: m[1] } };
+   119→  }
+   120→  // POST /api/interfaces/vlan
+   121→  if (method === "POST" && urlPath === "/api/interfaces/vlan") {
+   122→    return { handler: handleCreateVlan, params: {} };
+   123→  }
+   124→  // DELETE /api/interfaces/vlan/:name
+   125→  m = urlPath.match(/^\/api\/interfaces\/vlan\/([^/]+)$/);
+   126→  if (method === "DELETE" && m) {
+   127→    return { handler: handleDeleteVlan, params: { name: m[1] } };
+   128→  }
+   129→  // POST /api/interfaces/bridge
+   130→  if (method === "POST" && urlPath === "/api/interfaces/bridge") {
+   131→    return { handler: handleCreateBridge, params: {} };
+   132→  }
+   133→  // DELETE /api/interfaces/bridge/:name
+   134→  m = urlPath.match(/^\/api\/interfaces\/bridge\/([^/]+)$/);
+   135→  if (method === "DELETE" && m) {
+   136→    return { handler: handleDeleteBridge, params: { name: m[1] } };
+   137→  }
+   138→  // POST /api/interfaces/bond
+   139→  if (method === "POST" && urlPath === "/api/interfaces/bond") {
+   140→    return { handler: handleCreateBond, params: {} };
+   141→  }
+   142→  // DELETE /api/interfaces/bond/:name
+   143→  m = urlPath.match(/^\/api\/interfaces\/bond\/([^/]+)$/);
+   144→  if (method === "DELETE" && m) {
+   145→    return { handler: handleDeleteBond, params: { name: m[1] } };
+   146→  }
+   147→  // POST /api/interfaces/:name/up
+   148→  m = urlPath.match(/^\/api\/interfaces\/([^/]+)\/up$/);
+   149→  if (method === "POST" && m) {
+   150→    return { handler: handleIfaceUp, params: { name: m[1] } };
+   151→  }
+   152→  // POST /api/interfaces/:name/down
+   153→  m = urlPath.match(/^\/api\/interfaces\/([^/]+)\/down$/);
+   154→  if (method === "POST" && m) {
+   155→    return { handler: handleIfaceDown, params: { name: m[1] } };
+   156→  }
+   157→  // POST /api/interfaces/:name/flush
+   158→  m = urlPath.match(/^\/api\/interfaces\/([^/]+)\/flush$/);
+   159→  if (method === "POST" && m) {
+   160→    return { handler: handleIfaceFlush, params: { name: m[1] } };
+   161→  }
+   162→
+   163→  // ─── DHCP Routes ────────────────────────────────────────────────────
+   164→  // GET /api/dhcp/subnets
+   165→  if (method === "GET" && urlPath === "/api/dhcp/subnets") {
+   166→    return { handler: handleGetDhcpSubnets, params: {} };
+   167→  }
+   168→  // POST /api/dhcp/subnets
+   169→  if (method === "POST" && urlPath === "/api/dhcp/subnets") {
+   170→    return { handler: handleCreateDhcpSubnet, params: {} };
+   171→  }
+   172→  // PUT /api/dhcp/subnets/:id
+   173→  m = urlPath.match(/^\/api\/dhcp\/subnets\/([^/]+)$/);
+   174→  if (method === "PUT" && m) {
+   175→    return { handler: handleUpdateDhcpSubnet, params: { id: m[1] } };
+   176→  }
+   177→  // DELETE /api/dhcp/subnets/:id
+   178→  m = urlPath.match(/^\/api\/dhcp\/subnets\/([^/]+)$/);
+   179→  if (method === "DELETE" && m) {
+   180→    return { handler: handleDeleteDhcpSubnet, params: { id: m[1] } };
+   181→  }
+   182→  // GET /api/dhcp/reservations
+   183→  if (method === "GET" && urlPath === "/api/dhcp/reservations") {
+   184→    return { handler: handleGetDhcpReservations, params: {} };
+   185→  }
+   186→  // POST /api/dhcp/reservations
+   187→  if (method === "POST" && urlPath === "/api/dhcp/reservations") {
+   188→    return { handler: handleCreateDhcpReservation, params: {} };
+   189→  }
+   190→  // PUT /api/dhcp/reservations/:id
+   191→  m = urlPath.match(/^\/api\/dhcp\/reservations\/([^/]+)$/);
+   192→  if (method === "PUT" && m) {
+   193→    return { handler: handleUpdateDhcpReservation, params: { id: m[1] } };
+   194→  }
+   195→  // DELETE /api/dhcp/reservations/:id
+   196→  m = urlPath.match(/^\/api\/dhcp\/reservations\/([^/]+)$/);
+   197→  if (method === "DELETE" && m) {
+   198→    return { handler: handleDeleteDhcpReservation, params: { id: m[1] } };
+   199→  }
+   200→  // GET /api/dhcp/leases
+   201→  if (method === "GET" && urlPath === "/api/dhcp/leases") {
+   202→    return { handler: handleGetDhcpLeases, params: {} };
+   203→  }
+   204→  // POST /api/dhcp/kea/reload
+   205→  if (method === "POST" && urlPath === "/api/dhcp/kea/reload") {
+   206→    return { handler: handleKeaReload, params: {} };
+   207→  }
+   208→  // GET /api/dhcp/kea/status
+   209→  if (method === "GET" && urlPath === "/api/dhcp/kea/status") {
+   210→    return { handler: handleKeaStatus, params: {} };
+   211→  }
+   212→  // POST /api/dhcp/kea/test
+   213→  if (method === "POST" && urlPath === "/api/dhcp/kea/test") {
+   214→    return { handler: handleKeaTest, params: {} };
+   215→  }
+   216→
+   217→  // ─── DNS Routes ─────────────────────────────────────────────────────
+   218→  if (method === "GET" && urlPath === "/api/dns/records") {
+   219→    return { handler: handleGetDnsRecords, params: {} };
+   220→  }
+   221→  if (method === "POST" && urlPath === "/api/dns/records") {
+   222→    return { handler: handleCreateDnsRecord, params: {} };
+   223→  }
+   224→  m = urlPath.match(/^\/api\/dns\/records\/([^/]+)$/);
+   225→  if (method === "PUT" && m) {
+   226→    return { handler: handleUpdateDnsRecord, params: { id: m[1] } };
+   227→  }
+   228→  m = urlPath.match(/^\/api\/dns\/records\/([^/]+)$/);
+   229→  if (method === "DELETE" && m) {
+   230→    return { handler: handleDeleteDnsRecord, params: { id: m[1] } };
+   231→  }
+   232→  if (method === "POST" && urlPath === "/api/dns/reload") {
+   233→    return { handler: handleDnsReload, params: {} };
+   234→  }
+   235→  if (method === "GET" && urlPath === "/api/dns/config") {
+   236→    return { handler: handleDnsConfig, params: {} };
+   237→  }
+   238→  if (method === "POST" && urlPath === "/api/dns/test") {
+   239→    return { handler: handleDnsTest, params: {} };
+   240→  }
+   241→
+   242→  // ─── Gateway Config Routes ──────────────────────────────────────────
+   243→  if (method === "GET" && urlPath === "/api/gateway/config") {
+   244→    return { handler: handleGetGatewayConfig, params: {} };
+   245→  }
+   246→  if (method === "PUT" && urlPath === "/api/gateway/config") {
+   247→    return { handler: handleUpdateGatewayConfig, params: {} };
+   248→  }
+   249→  if (method === "POST" && urlPath === "/api/gateway/init") {
+   250→    return { handler: handleGatewayInit, params: {} };
+   251→  }
+   252→
+   253→  // ─── Service Status Routes ────────────────────────────────────────
+   254→  if (method === "GET" && urlPath === "/api/services/status") {
+   255→    return { handler: handleGetServicesStatus, params: {} };
+   256→  }
+   257→  if (method === "GET" && urlPath === "/api/services/radius/status") {
+   258→    return { handler: handleGetRadiusStatus, params: {} };
+   259→  }
+   260→
+   261→  // ─── Firewall Routes ────────────────────────────────────────────────
+   262→  if (method === "GET" && urlPath === "/api/firewall/rules") {
+   263→    return { handler: handleGetFirewallRules, params: {} };
+   264→  }
+   265→  if (method === "POST" && urlPath === "/api/firewall/rules") {
+   266→    return { handler: handleCreateFirewallRule, params: {} };
+   267→  }
+   268→  m = urlPath.match(/^\/api\/firewall\/rules\/([^/]+)$/);
+   269→  if (method === "PUT" && m) {
+   270→    return { handler: handleUpdateFirewallRule, params: { id: m[1] } };
+   271→  }
+   272→  m = urlPath.match(/^\/api\/firewall\/rules\/([^/]+)$/);
+   273→  if (method === "DELETE" && m) {
+   274→    return { handler: handleDeleteFirewallRule, params: { id: m[1] } };
+   275→  }
+   276→  if (method === "POST" && urlPath === "/api/firewall/apply") {
+   277→    return { handler: handleFirewallApply, params: {} };
+   278→  }
+   279→  if (method === "GET" && urlPath === "/api/firewall/nftables-status") {
+   280→    return { handler: handleNftablesStatus, params: {} };
+   281→  }
+   282→
+   283→  // ─── QoS Routes (Subnet-based TC) ────────────────────────────────────
+   284→  if (method === "GET" && urlPath === "/api/qos/status") {
+   285→    return { handler: handleQosStatus, params: {} };
+   286→  }
+   287→  if (method === "GET" && urlPath === "/api/qos/config") {
+   288→    return { handler: handleQosGetConfig, params: {} };
+   289→  }
+   290→  if (method === "PUT" && urlPath === "/api/qos/config") {
+   291→    return { handler: handleQosSetConfig, params: {} };
+   292→  }
+   293→  if (method === "POST" && urlPath === "/api/qos/init") {
+   294→    return { handler: handleQosInit, params: {} };
+   295→  }
+   296→  if (method === "POST" && urlPath === "/api/qos/teardown") {
+   297→    return { handler: handleQosTeardown, params: {} };
+   298→  }
+   299→  if (method === "POST" && urlPath === "/api/qos/restore") {
+   300→    return { handler: handleQosBatchRestore, params: {} };
+   301→  }
+   302→  if (method === "GET" && urlPath === "/api/qos/subnets") {
+   303→    return { handler: handleQosGetSubnets, params: {} };
+   304→  }
+   305→  if (method === "POST" && urlPath === "/api/qos/subnet/add") {
+   306→    return { handler: handleQosSubnetAdd, params: {} };
+   307→  }
+   308→  if (method === "POST" && urlPath === "/api/qos/subnet/del") {
+   309→    return { handler: handleQosSubnetDel, params: {} };
+   310→  }
+   311→  if (method === "POST" && urlPath === "/api/qos/subnet/rate") {
+   312→    return { handler: handleQosSubnetRate, params: {} };
+   313→  }
+   314→  if (method === "GET" && urlPath === "/api/qos/subscribers") {
+   315→    return { handler: handleQosGetSubscribers, params: {} };
+   316→  }
+   317→  if (method === "POST" && urlPath === "/api/qos/subscriber/add") {
+   318→    return { handler: handleQosSubscriberAdd, params: {} };
+   319→  }
+   320→  if (method === "POST" && urlPath === "/api/qos/subscriber/del") {
+   321→    return { handler: handleQosSubscriberDel, params: {} };
+   322→  }
+   323→  if (method === "POST" && urlPath === "/api/qos/subscriber/rate") {
+   324→    return { handler: handleQosSubscriberRate, params: {} };
+   325→  }
+   326→  if (method === "POST" && urlPath === "/api/qos/subscriber/block") {
+   327→    return { handler: handleQosSubscriberBlock, params: {} };
+   328→  }
+   329→  // ─── Bandwidth/TC Routes (Legacy) ──────────────────────────────────
+   330→  if (method === "GET" && urlPath === "/api/tc/policies") {
+   331→    return { handler: handleGetTcPolicies, params: {} };
+   332→  }
+   333→  if (method === "POST" && urlPath === "/api/tc/policies") {
+   334→    return { handler: handleCreateTcPolicy, params: {} };
+   335→  }
+   336→  m = urlPath.match(/^\/api\/tc\/policies\/([^/]+)$/);
+   337→  if (method === "PUT" && m) {
+   338→    return { handler: handleUpdateTcPolicy, params: { id: m[1] } };
+   339→  }
+   340→  m = urlPath.match(/^\/api\/tc\/policies\/([^/]+)$/);
+   341→  if (method === "DELETE" && m) {
+   342→    return { handler: handleDeleteTcPolicy, params: { id: m[1] } };
+   343→  }
+   344→  if (method === "POST" && urlPath === "/api/tc/apply-user") {
+   345→    return { handler: handleTcApplyUser, params: {} };
+   346→  }
+   347→  if (method === "DELETE" && urlPath === "/api/tc/remove-user") {
+   348→    return { handler: handleTcRemoveUser, params: {} };
+   349→  }
+   350→  if (method === "POST" && urlPath === "/api/tc/init") {
+   351→    return { handler: handleTcInit, params: {} };
+   352→  }
+   353→  if (method === "GET" && urlPath === "/api/tc/status") {
+   354→    return { handler: handleTcStatus, params: {} };
+   355→  }
+   356→  if (method === "GET" && urlPath === "/api/gateway/bandwidth/fap-status") {
+   357→    return { handler: handleFapStatus, params: {} };
+   358→  }
+   359→
+   360→  // ─── Captive Portal Routes ──────────────────────────────────────────
+   361→  if (method === "GET" && urlPath === "/api/captive-portals") {
+   362→    return { handler: handleGetCaptivePortals, params: {} };
+   363→  }
+   364→  if (method === "POST" && urlPath === "/api/captive-portals") {
+   365→    return { handler: handleCreateCaptivePortal, params: {} };
+   366→  }
+   367→  m = urlPath.match(/^\/api\/captive-portals\/([^/]+)$/);
+   368→  if (method === "PUT" && m) {
+   369→    return { handler: handleUpdateCaptivePortal, params: { id: m[1] } };
+   370→  }
+   371→  m = urlPath.match(/^\/api\/captive-portals\/([^/]+)$/);
+   372→  if (method === "DELETE" && m) {
+   373→    return { handler: handleDeleteCaptivePortal, params: { id: m[1] } };
+   374→  }
+   375→  if (method === "GET" && urlPath === "/api/captive-portals/sessions") {
+   376→    return { handler: handleGetPortalSessions, params: {} };
+   377→  }
+   378→  m = urlPath.match(/^\/api\/captive-portals\/sessions\/([^/]+)\/disconnect$/);
+   379→  if (method === "POST" && m) {
+   380→    return { handler: handleDisconnectPortalSession, params: { id: m[1] } };
+   381→  }
+   382→  if (method === "POST" && urlPath === "/api/captive-portals/apply") {
+   383→    return { handler: handleCaptivePortalApply, params: {} };
+   384→  }
+   385→
+   386→  // ─── Security Routes ────────────────────────────────────────────────
+   387→  if (method === "GET" && urlPath === "/api/security/profiles") {
+   388→    return { handler: handleGetSecurityProfiles, params: {} };
+   389→  }
+   390→  if (method === "POST" && urlPath === "/api/security/profiles") {
+   391→    return { handler: handleCreateSecurityProfile, params: {} };
+   392→  }
+   393→  m = urlPath.match(/^\/api\/security\/profiles\/([^/]+)$/);
+   394→  if (method === "PUT" && m) {
+   395→    return { handler: handleUpdateSecurityProfile, params: { id: m[1] } };
+   396→  }
+   397→  m = urlPath.match(/^\/api\/security\/profiles\/([^/]+)$/);
+   398→  if (method === "DELETE" && m) {
+   399→    return { handler: handleDeleteSecurityProfile, params: { id: m[1] } };
+   400→  }
+   401→  if (method === "POST" && urlPath === "/api/security/apply") {
+   402→    return { handler: handleSecurityApply, params: {} };
+   403→  }
+   404→
+   405→  // ─── NAT Log Routes ─────────────────────────────────────────────────
+   406→  if (method === "GET" && urlPath === "/api/nat-logs") {
+   407→    return { handler: handleGetNatLogs, params: {} };
+   408→  }
+   409→  if (method === "DELETE" && urlPath === "/api/nat-logs/cleanup") {
+   410→    return { handler: handleNatLogCleanup, params: {} };
+   411→  }
+   412→  if (method === "GET" && urlPath === "/api/nat-logs/stats") {
+   413→    return { handler: handleNatLogStats, params: {} };
+   414→  }
+   415→
+   416→  // ─── Syslog Routes ──────────────────────────────────────────────────
+   417→  if (method === "GET" && urlPath === "/api/syslog/configs") {
+   418→    return { handler: handleGetSyslogConfigs, params: {} };
+   419→  }
+   420→  if (method === "POST" && urlPath === "/api/syslog/configs") {
+   421→    return { handler: handleCreateSyslogConfig, params: {} };
+   422→  }
+   423→  m = urlPath.match(/^\/api\/syslog\/configs\/([^/]+)$/);
+   424→  if (method === "PUT" && m) {
+   425→    return { handler: handleUpdateSyslogConfig, params: { id: m[1] } };
+   426→  }
+   427→  m = urlPath.match(/^\/api\/syslog\/configs\/([^/]+)$/);
+   428→  if (method === "DELETE" && m) {
+   429→    return { handler: handleDeleteSyslogConfig, params: { id: m[1] } };
+   430→  }
+   431→  m = urlPath.match(/^\/api\/syslog\/test\/([^/]+)$/);
+   432→  if (method === "POST" && m) {
+   433→    return { handler: handleSyslogTest, params: { id: m[1] } };
+   434→  }
+   435→
+   436→  // ─── RADIUS Accounting / Concurrent Sessions ─────────────────────────
+   437→  if (method === "GET" && urlPath === "/api/radius/accounting/active") {
+   438→    return { handler: handleGetActiveRadiusSessions, params: {} };
+   439→  }
+   440→  if (method === "GET" && urlPath === "/api/radius/accounting/interim") {
+   441→    return { handler: handleGetInterimAccounting, params: {} };
+   442→  }
+   443→  if (method === "POST" && urlPath === "/api/radius/accounting/interim") {
+   444→    return { handler: handlePostInterimUpdate, params: {} };
+   445→  }
+   446→  if (method === "POST" && urlPath === "/api/radius/accounting/enforce-concurrent") {
+   447→    return { handler: handleEnforceConcurrentSessions, params: {} };
+   448→  }
+   449→  if (method === "GET" && urlPath === "/api/radius/accounting/stats") {
+   450→    return { handler: handleGetAccountingStats, params: {} };
+   451→  }
+   452→  // ─── Login/Logout Scripts ─────────────────────────────────────────────
+   453→  if (method === "POST" && urlPath === "/api/radius/post-auth") {
+   454→    return { handler: handlePostAuthScript, params: {} };
+   455→  }
+   456→  if (method === "POST" && urlPath === "/api/radius/post-logout") {
+   457→    return { handler: handlePostLogoutScript, params: {} };
+   458→  }
+   459→
+   460→  // ─── DDoS Protection Routes ─────────────────────────────────────
+   461→  if (method === "GET" && urlPath === "/api/ddos/policies") {
+   462→    return { handler: handleGetDdosPolicies, params: {} };
+   463→  }
+   464→  if (method === "POST" && urlPath === "/api/ddos/policies") {
+   465→    return { handler: handleCreateDdosPolicy, params: {} };
+   466→  }
+   467→  m = urlPath.match(/^\/api\/ddos\/policies\/([^/]+)$/);
+   468→  if (method === "PUT" && m) {
+   469→    return { handler: handleUpdateDdosPolicy, params: { id: m[1] } };
+   470→  }
+   471→  m = urlPath.match(/^\/api\/ddos\/policies\/([^/]+)$/);
+   472→  if (method === "DELETE" && m) {
+   473→    return { handler: handleDeleteDdosPolicy, params: { id: m[1] } };
+   474→  }
+   475→  if (method === "POST" && urlPath === "/api/ddos/apply") {
+   476→    return { handler: handleDdosApply, params: {} };
+   477→  }
+   478→  if (method === "POST" && urlPath === "/api/ddos/reset-counters") {
+   479→    return { handler: handleDdosResetCounters, params: {} };
+   480→  }
+   481→  if (method === "GET" && urlPath === "/api/ddos/counters") {
+   482→    return { handler: handleDdosCounters, params: {} };
+   483→  }
+   484→
+   485→  // ─── PPPoE Routes ───────────────────────────────────────────────
+   486→  if (method === "GET" && urlPath === "/api/pppoe/profiles") {
+   487→    return { handler: handleGetPppoeProfiles, params: {} };
+   488→  }
+   489→  if (method === "POST" && urlPath === "/api/pppoe/profiles") {
+   490→    return { handler: handleCreatePppoeProfile, params: {} };
+   491→  }
+   492→  m = urlPath.match(/^\/api\/pppoe\/profiles\/([^/]+)$/);
+   493→  if (method === "PUT" && m) {
+   494→    return { handler: handleUpdatePppoeProfile, params: { id: m[1] } };
+   495→  }
+   496→  m = urlPath.match(/^\/api\/pppoe\/profiles\/([^/]+)$/);
+   497→  if (method === "DELETE" && m) {
+   498→    return { handler: handleDeletePppoeProfile, params: { id: m[1] } };
+   499→  }
+   500→  if (method === "GET" && urlPath === "/api/pppoe/sessions") {
+   501→    return { handler: handleGetPppoeSessions, params: {} };
+   502→  }
+   503→  m = urlPath.match(/^\/api\/pppoe\/sessions\/([^/]+)$/);
+   504→  if (method === "DELETE" && m) {
+   505→    return { handler: handleDisconnectPppoeSession, params: { id: m[1] } };
+   506→  }
+   507→  if (method === "POST" && urlPath === "/api/pppoe/apply") {
+   508→    return { handler: handlePppoeApply, params: {} };
+   509→  }
+   510→  if (method === "GET" && urlPath === "/api/pppoe/realtime-bw") {
+   511→    return { handler: handlePppoeRealtimeBw, params: {} };
+   512→  }
+   513→  if (method === "GET" && urlPath === "/api/pppoe/config") {
+   514→    return { handler: handleGetPppoeConfig, params: {} };
+   515→  }
+   516→  if (method === "PUT" && urlPath === "/api/pppoe/config") {
+   517→    return { handler: handleSavePppoeConfig, params: {} };
+   518→  }
+   519→  if (method === "POST" && urlPath === "/api/pppoe/sessions/bulk-disconnect") {
+   520→    return { handler: handleBulkDisconnectPppoeSessions, params: {} };
+   521→  }
+   522→
+   523→  // ─── Bandwidth Sample / Reports Routes ──────────────────────────
+   524→  if (method === "POST" && urlPath === "/api/bw/samples") {
+   525→    return { handler: handleRecordBwSample, params: {} };
+   526→  }
+   527→  if (method === "GET" && urlPath === "/api/bw/samples") {
+   528→    return { handler: handleGetBwSamples, params: {} };
+   529→  }
+   530→  if (method === "GET" && urlPath === "/api/bw/report/summary") {
+   531→    return { handler: handleBwReportSummary, params: {} };
+   532→  }
+   533→  if (method === "GET" && urlPath === "/api/bw/report/timeseries") {
+   534→    return { handler: handleBwReportTimeseries, params: {} };
+   535→  }
+   536→  if (method === "GET" && urlPath === "/api/bw/report/top-users") {
+   537→    return { handler: handleBwReportTopUsers, params: {} };
+   538→  }
+   539→  if (method === "DELETE" && urlPath === "/api/bw/samples/cleanup") {
+   540→    return { handler: handleBwSampleCleanup, params: {} };
+   541→  }
+   542→
+   543→  // ─── Diagnostic Tools Routes ────────────────────────────────────
+   544→  if (method === "POST" && urlPath === "/api/diag/tcpdump/start") {
+   545→    return { handler: handleTcpdumpStart, params: {} };
+   546→  }
+   547→  if (method === "POST" && urlPath === "/api/diag/tcpdump/stop") {
+   548→    return { handler: handleTcpdumpStop, params: {} };
+   549→  }
+   550→  if (method === "GET" && urlPath === "/api/diag/tcpdump/status") {
+   551→    return { handler: handleTcpdumpStatus, params: {} };
+   552→  }
+   553→  if (method === "GET" && urlPath === "/api/diag/tcpdump/captures") {
+   554→    return { handler: handleTcpdumpList, params: {} };
+   555→  }
+   556→  if (method === "DELETE" && urlPath.match(/^\/api\/diag\/tcpdump\/captures\/([^/]+)$/)) {
+   557→    const m = urlPath.match(/^\/api\/diag\/tcpdump\/captures\/([^/]+)$/);
+   558→    return { handler: handleTcpdumpDeleteSingle, params: { id: m![1] } };
+   559→  }
+   560→  if (method === "DELETE" && urlPath === "/api/diag/tcpdump/captures") {
+   561→    return { handler: handleTcpdumpCleanup, params: {} };
+   562→  }
+   563→  if (method === "GET" && urlPath.match(/^\/api\/diag\/tcpdump\/download\/([^/]+)$/)) {
+   564→    const m = urlPath.match(/^\/api\/diag\/tcpdump\/download\/([^/]+)$/);
+   565→    return { handler: handleTcpdumpDownload, params: { id: m![1] } };
+   566→  }
+   567→  if (method === "POST" && urlPath === "/api/diag/ping") {
+   568→    return { handler: handlePing, params: {} };
+   569→  }
+   570→  if (method === "POST" && urlPath === "/api/diag/traceroute") {
+   571→    return { handler: handleTraceroute, params: {} };
+   572→  }
+   573→  if (method === "POST" && urlPath === "/api/diag/nslookup") {
+   574→    return { handler: handleNslookup, params: {} };
+   575→  }
+   576→  if (method === "GET" && urlPath === "/api/diag/arp-table") {
+   577→    return { handler: handleArpTable, params: {} };
+   578→  }
+   579→  if (method === "POST" && urlPath === "/api/diag/arp-flush") {
+   580→    return { handler: handleArpFlush, params: {} };
+   581→  }
+   582→  if (method === "POST" && urlPath === "/api/diag/dig") {
+   583→    return { handler: handleDig, params: {} };
+   584→  }
+   585→  if (method === "GET" && urlPath === "/api/diag/captures") {
+   586→    return { handler: handleGetAllCaptures, params: {} };
+   587→  }
+   588→
+   589→  return null;
+   590→}
+   591→
+   592→// ═══════════════════════════════════════════════════════════════════════════
+   593→//  HANDLERS — Health
+   594→// ═══════════════════════════════════════════════════════════════════════════
+   595→async function handleHealth() {
+   596→  return json({
+   597→    status: "ok",
+   598→    service: "cryptsk-gateway-service",
+   599→    port: SERVICE_PORT,
+   600→    uptime: process.uptime(),
+   601→    timestamp: new Date().toISOString(),
+   602→  });
+   603→}
+   604→
+   605→// ═══════════════════════════════════════════════════════════════════════════
+   606→//  HANDLERS — System Interfaces
+   607→// ═══════════════════════════════════════════════════════════════════════════
+   608→async function handleGetInterfaces(req: Request) {
+   609→  const auth = requireAuth(req);
+   610→  try {
+   611→    // Run shell commands to discover interfaces
+   612→    const [linkResult, addrResult] = await Promise.all([
+   613→      runShell("ip", ["link", "show"]),
+   614→      runShell("ip", ["addr", "show"]),
+   615→    ]);
+   616→
+   617→    // Read /sys/class/net/ for physical interface info
+   618→    let sysInterfaces: string[] = [];
+   619→    try {
+   620→      const lsResult = await runShell("ls", ["/sys/class/net/"]);
+   621→      sysInterfaces = lsResult.stdout
+   622→        .split("\n")
+   623→        .map((s) => s.trim())
+   624→        .filter(Boolean);
+   625→    } catch {
+   626→      // ignore
+   627→    }
+   628→
+   629→    // Parse interfaces from ip output
+   630→    const interfaces: Record<string, any> = {};
+   631→
+   632→    // Parse ip link show
+   633→    const linkLines = linkResult.stdout.split("\n");
+   634→    let currentIface = "";
+   635→    for (const line of linkLines) {
+   636→      const ifaceMatch = line.match(/^\d+:\s+([^:@]+)/);
+   637→      if (ifaceMatch) {
+   638→        currentIface = ifaceMatch[1].trim();
+   639→        interfaces[currentIface] = { name: currentIface };
+   640→      }
+   641→      if (currentIface && interfaces[currentIface]) {
+   642→        if (line.includes("link/ether")) {
+   643→          const macMatch = line.match(/link\/ether\s+([0-9a-f:]+)/i);
+   644→          if (macMatch) interfaces[currentIface].macAddress = macMatch[1];
+   645→        }
+   646→        const mtuMatch = line.match(/mtu\s+(\d+)/);
+   647→        if (mtuMatch) interfaces[currentIface].mtu = parseInt(mtuMatch[1]);
+   648→        const stateMatch = line.match(/state\s+(\w+)/);
+   649→        if (stateMatch) {
+   650→          interfaces[currentIface].carrierStatus =
+   651→            stateMatch[1].toUpperCase() === "UP";
+   652→        }
+   653→      }
+   654→    }
+   655→
+   656→    // Parse ip addr show for addresses
+   657→    const addrLines = addrResult.stdout.split("\n");
+   658→    currentIface = "";
+   659→    const ifaceAddrs: Record<string, { ipv4: string[]; ipv6: string[] }> = {};
+   660→    for (const line of addrLines) {
+   661→      const ifaceMatch = line.match(/^\d+:\s+([^:@]+)/);
+   662→      if (ifaceMatch) {
+   663→        currentIface = ifaceMatch[1].trim();
+   664→        if (!ifaceAddrs[currentIface])
+   665→          ifaceAddrs[currentIface] = { ipv4: [], ipv6: [] };
+   666→      }
+   667→      if (currentIface && ifaceAddrs[currentIface]) {
+   668→        const inetMatch = line.match(
+   669→          /inet\s+(\S+)/
+   670→        );
+   671→        if (inetMatch) {
+   672→          ifaceAddrs[currentIface].ipv4.push(inetMatch[1]);
+   673→        }
+   674→        const inet6Match = line.match(
+   675→          /inet6\s+(\S+)/
+   676→        );
+   677→        if (inet6Match) {
+   678→          ifaceAddrs[currentIface].ipv6.push(inet6Match[1]);
+   679→        }
+   680→      }
+   681→    }
+   682→
+   683→    // Build final interface list
+   684→    const result = [];
+   685→    for (const [name, info] of Object.entries(interfaces)) {
+   686→      const addrs = ifaceAddrs[name] || { ipv4: [], ipv6: [] };
+   687→      const isPhysical = sysInterfaces.includes(name);
+   688→      const ifaceData = {
+   689→        name,
+   690→        type: isPhysical ? "PHYSICAL" : "VIRTUAL",
+   691→        macAddress: (info as any).macAddress || "",
+   692→        mtu: (info as any).mtu || 1500,
+   693→        carrierStatus: (info as any).carrierStatus || false,
+   694→        ipv4Addresses: addrs.ipv4,
+   695→        ipv6Addresses: addrs.ipv6,
+   696→      };
+   697→      result.push(ifaceData);
+   698→
+   699→      // Sync to DB
+   700→      try {
+   701→        await prisma.systemInterface.upsert({
+   702→          where: { name },
+   703→          update: {
+   704→            macAddress: ifaceData.macAddress,
+   705→            mtu: ifaceData.mtu,
+   706→            carrierStatus: ifaceData.carrierStatus,
+   707→            ipv4Address: addrs.ipv4[0]?.split("/")[0] || "",
+   708→            ipv6Address: addrs.ipv6[0]?.split("/")[0] || "",
+   709→          },
+   710→          create: {
+   711→            name,
+   712→            type: isPhysical ? "PHYSICAL" : "VIRTUAL",
+   713→            macAddress: ifaceData.macAddress,
+   714→            mtu: ifaceData.mtu,
+   715→            carrierStatus: ifaceData.carrierStatus,
+   716→            ipv4Address: addrs.ipv4[0]?.split("/")[0] || "",
+   717→            ipv6Address: addrs.ipv6[0]?.split("/")[0] || "",
+   718→          },
+   719→        });
+   720→      } catch (dbErr) {
+   721→        log.warn("Failed to sync interface to DB", { name, error: String(dbErr) });
+   722→      }
+   723→    }
+   724→
+   725→    return json({ success: true, data: result, total: result.length });
+   726→  } catch (err: any) {
+   727→    log.error("handleGetInterfaces failed", { error: String(err) });
+   728→    return jsonErr("Failed to discover interfaces: " + String(err.message), 500);
+   729→  }
+   730→}
+   731→
+   732→async function handleUpdateInterface(req: Request, params: Record<string, string>) {
+   733→  const auth = requireAuth(req);
+   734→  try {
+   735→    const body = await req.json();
+   736→    const { role, enabled, ipv4Address, ipv4Netmask, ipv4Gateway, ipv4Dns } = body;
+   737→    const iface = await prisma.systemInterface.findUnique({
+   738→      where: { id: params.id },
+   739→    });
+   740→    if (!iface) return jsonErr("Interface not found", 404);
+   741→
+   742→    const updateData: any = {};
+   743→    if (role !== undefined) updateData.role = role;
+   744→    if (enabled !== undefined) updateData.enabled = enabled;
+   745→    if (ipv4Address !== undefined) updateData.ipv4Address = ipv4Address;
+   746→    if (ipv4Netmask !== undefined) updateData.ipv4Netmask = ipv4Netmask;
+   747→    if (ipv4Gateway !== undefined) updateData.ipv4Gateway = ipv4Gateway;
+   748→    if (ipv4Dns !== undefined) updateData.ipv4Dns = ipv4Dns;
+   749→
+   750→    // Apply system changes
+   751→    if (enabled !== undefined) {
+   752→      const cmd = enabled ? "up" : "down";
+   753→      await runShell("ip", ["link", "set", iface.name, cmd]);
+   754→    }
+   755→    if (ipv4Address && ipv4Netmask) {
+   756→      const cidr = `${ipv4Address}/${ipv4Netmask}`;
+   757→      await runShell("ip", ["addr", "add", cidr, "dev", iface.name]);
+   758→    }
+   759→    if (ipv4Gateway) {
+   760→      await runShell("ip", ["route", "add", "default", "via", ipv4Gateway, "dev", iface.name]);
+   761→    }
+   762→
+   763→    const updated = await prisma.systemInterface.update({
+   764→      where: { id: params.id },
+   765→      data: updateData,
+   766→    });
+   767→
+   768→    await auditLog(auth.userId, "UPDATE", "SystemInterface", params.id, updateData, req);
+   769→    log.info("Interface updated", { name: iface.name, ...updateData });
+   770→    return json({ success: true, data: updated });
+   771→  } catch (err: any) {
+   772→    return jsonErr(err.message || "Update failed", 500);
+   773→  }
+   774→}
+   775→
+   776→async function handleCreateVlan(req: Request) {
+   777→  const auth = requireAuth(req);
+   778→  try {
+   779→    const body = await req.json();
+   780→    const { parentInterface, vlanId, ip } = body;
+   781→    if (!parentInterface || !vlanId) return jsonErr("parentInterface and vlanId required");
+   782→
+   783→    const vlanName = `${parentInterface}.${vlanId}`;
+   784→    const result = await runShell("ip", [
+   785→      "link", "add", "link", parentInterface,
+   786→      "name", vlanName, "type", "vlan", "id", String(vlanId),
+   787→    ]);
+   788→    if (!result.success) return jsonErr("Failed to create VLAN: " + result.stderr);
+   789→
+   790→    // Bring it up
+   791→    await runShell("ip", ["link", "set", vlanName, "up"]);
+   792→
+   793→    // Optionally add IP
+   794→    if (ip) {
+   795→      await runShell("ip", ["addr", "add", ip, "dev", vlanName]);
+   796→    }
+   797→
+   798→    // Sync to DB
+   799→    const parent = await prisma.systemInterface.findUnique({ where: { name: parentInterface } });
+   800→    const dbRecord = await prisma.systemInterface.create({
+   801→      data: {
+   802→        name: vlanName,
+   803→        type: "VLAN",
+   804→        parentInterfaceId: parent?.id || null,
+   805→        vlanId,
+   806→        ipv4Address: ip?.split("/")[0] || "",
+   807→        enabled: true,
+   808→      },
+   809→    });
+   810→
+   811→    await auditLog(auth.userId, "CREATE", "SystemInterface", dbRecord.id, { parentInterface, vlanId }, req);
+   812→    log.info("VLAN created", { vlanName });
+   813→    return json({ success: true, data: dbRecord });
+   814→  } catch (err: any) {
+   815→    return jsonErr(err.message || "Create VLAN failed", 500);
+   816→  }
+   817→}
+   818→
+   819→async function handleDeleteVlan(req: Request, params: Record<string, string>) {
+   820→  const auth = requireAuth(req);
+   821→  try {
+   822→    const result = await runShell("ip", ["link", "del", params.name]);
+   823→    if (!result.success) return jsonErr("Failed to delete VLAN: " + result.stderr);
+   824→
+   825→    await prisma.systemInterface.deleteMany({ where: { name: params.name } });
+   826→
+   827→    await auditLog(auth.userId, "DELETE", "SystemInterface", params.name, { type: "VLAN" }, req);
+   828→    log.info("VLAN deleted", { name: params.name });
+   829→    return json({ success: true });
+   830→  } catch (err: any) {
+   831→    return jsonErr(err.message || "Delete VLAN failed", 500);
+   832→  }
+   833→}
+   834→
+   835→async function handleCreateBridge(req: Request) {
+   836→  const auth = requireAuth(req);
+   837→  try {
+   838→    const body = await req.json();
+   839→    const { name, members } = body;
+   840→    if (!name) return jsonErr("name required");
+   841→
+   842→    const result = await runShell("ip", ["link", "add", name, "type", "bridge"]);
+   843→    if (!result.success) return jsonErr("Failed to create bridge: " + result.stderr);
+   844→
+   845→    await runShell("ip", ["link", "set", name, "up"]);
+   846→
+   847→    // Add members
+   848→    if (Array.isArray(members)) {
+   849→      for (const member of members) {
+   850→        await runShell("ip", ["link", "set", member, "master", name]);
+   851→      }
+   852→    }
+   853→
+   854→    const dbRecord = await prisma.systemInterface.create({
+   855→      data: {
+   856→        name,
+   857→        type: "BRIDGE",
+   858→        bridgeMembers: JSON.stringify(members || []),
+   859→        enabled: true,
+   860→      },
+   861→    });
+   862→
+   863→    await auditLog(auth.userId, "CREATE", "SystemInterface", dbRecord.id, { type: "BRIDGE", name, members }, req);
+   864→    log.info("Bridge created", { name });
+   865→    return json({ success: true, data: dbRecord });
+   866→  } catch (err: any) {
+   867→    return jsonErr(err.message || "Create bridge failed", 500);
+   868→  }
+   869→}
+   870→
+   871→async function handleDeleteBridge(req: Request, params: Record<string, string>) {
+   872→  const auth = requireAuth(req);
+   873→  try {
+   874→    const result = await runShell("ip", ["link", "del", params.name]);
+   875→    if (!result.success) return jsonErr("Failed to delete bridge: " + result.stderr);
+   876→
+   877→    await prisma.systemInterface.deleteMany({ where: { name: params.name } });
+   878→
+   879→    await auditLog(auth.userId, "DELETE", "SystemInterface", params.name, { type: "BRIDGE" }, req);
+   880→    log.info("Bridge deleted", { name: params.name });
+   881→    return json({ success: true });
+   882→  } catch (err: any) {
+   883→    return jsonErr(err.message || "Delete bridge failed", 500);
+   884→  }
+   885→}
+   886→
+   887→async function handleCreateBond(req: Request) {
+   888→  const auth = requireAuth(req);
+   889→  try {
+   890→    const body = await req.json();
+   891→    const { name, mode, members } = body;
+   892→    if (!name || !mode) return jsonErr("name and mode required");
+   893→
+   894→    const result = await runShell("ip", ["link", "add", name, "type", "bond", "mode", mode]);
+   895→    if (!result.success) return jsonErr("Failed to create bond: " + result.stderr);
+   896→
+   897→    await runShell("ip", ["link", "set", name, "up"]);
+   898→
+   899→    if (Array.isArray(members)) {
+   900→      for (const member of members) {
+   901→        await runShell("ip", ["link", "set", member, "master", name]);
+   902→      }
+   903→    }
+   904→
+   905→    const dbRecord = await prisma.systemInterface.create({
+   906→      data: {
+   907→        name,
+   908→        type: "BOND",
+   909→        bondMode: mode,
+   910→        bondMembers: JSON.stringify(members || []),
+   911→        enabled: true,
+   912→      },
+   913→    });
+   914→
+   915→    await auditLog(auth.userId, "CREATE", "SystemInterface", dbRecord.id, { type: "BOND", name, mode }, req);
+   916→    log.info("Bond created", { name, mode });
+   917→    return json({ success: true, data: dbRecord });
+   918→  } catch (err: any) {
+   919→    return jsonErr(err.message || "Create bond failed", 500);
+   920→  }
+   921→}
+   922→
+   923→async function handleDeleteBond(req: Request, params: Record<string, string>) {
+   924→  const auth = requireAuth(req);
+   925→  try {
+   926→    const result = await runShell("ip", ["link", "del", params.name]);
+   927→    if (!result.success) return jsonErr("Failed to delete bond: " + result.stderr);
+   928→
+   929→    await prisma.systemInterface.deleteMany({ where: { name: params.name } });
+   930→
+   931→    await auditLog(auth.userId, "DELETE", "SystemInterface", params.name, { type: "BOND" }, req);
+   932→    log.info("Bond deleted", { name: params.name });
+   933→    return json({ success: true });
+   934→  } catch (err: any) {
+   935→    return jsonErr(err.message || "Delete bond failed", 500);
+   936→  }
+   937→}
+   938→
+   939→async function handleIfaceUp(req: Request, params: Record<string, string>) {
+   940→  const auth = requireAuth(req);
+   941→  try {
+   942→    const result = await runShell("ip", ["link", "set", params.name, "up"]);
+   943→    if (!result.success) return jsonErr("Failed to bring up interface: " + result.stderr);
+   944→
+   945→    await prisma.systemInterface.updateMany({
+   946→      where: { name: params.name },
+   947→      data: { enabled: true },
+   948→    });
+   949→
+   950→    await auditLog(auth.userId, "UPDATE", "SystemInterface", params.name, { action: "up" }, req);
+   951→    return json({ success: true });
+   952→  } catch (err: any) {
+   953→    return jsonErr(err.message || "Interface up failed", 500);
+   954→  }
+   955→}
+   956→
+   957→async function handleIfaceDown(req: Request, params: Record<string, string>) {
+   958→  const auth = requireAuth(req);
+   959→  try {
+   960→    const result = await runShell("ip", ["link", "set", params.name, "down"]);
+   961→    if (!result.success) return jsonErr("Failed to bring down interface: " + result.stderr);
+   962→
+   963→    await prisma.systemInterface.updateMany({
+   964→      where: { name: params.name },
+   965→      data: { enabled: false },
+   966→    });
+   967→
+   968→    await auditLog(auth.userId, "UPDATE", "SystemInterface", params.name, { action: "down" }, req);
+   969→    return json({ success: true });
+   970→  } catch (err: any) {
+   971→    return jsonErr(err.message || "Interface down failed", 500);
+   972→  }
+   973→}
+   974→
+   975→async function handleIfaceFlush(req: Request, params: Record<string, string>) {
+   976→  const auth = requireAuth(req);
+   977→  try {
+   978→    const result = await runShell("ip", ["addr", "flush", "dev", params.name]);
+   979→    if (!result.success) return jsonErr("Failed to flush IPs: " + result.stderr);
+   980→
+   981→    await prisma.systemInterface.updateMany({
+   982→      where: { name: params.name },
+   983→      data: { ipv4Address: "", ipv6Address: "" },
+   984→    });
+   985→
+   986→    await auditLog(auth.userId, "UPDATE", "SystemInterface", params.name, { action: "flush" }, req);
+   987→    return json({ success: true });
+   988→  } catch (err: any) {
+   989→    return jsonErr(err.message || "Flush failed", 500);
+   990→  }
+   991→}
+   992→
+   993→// ═══════════════════════════════════════════════════════════════════════════
+   994→//  HANDLERS — DHCP (KEA REST API proxy + DB)
+   995→// ═══════════════════════════════════════════════════════════════════════════
+   996→async function handleGetDhcpSubnets(req: Request) {
+   997→  requireAuth(req);
+   998→  try {
+   999→    const subnets = await prisma.dhcpSubnet.findMany({
+  1000→      include: { reservations: true },
+  1001→      orderBy: { createdAt: "desc" },
+  1002→    });
+  1003→    return json({ success: true, data: subnets });
+  1004→  } catch (err: any) {
+  1005→    return jsonErr(err.message, 500);
+  1006→  }
+  1007→}
+  1008→
+  1009→async function handleCreateDhcpSubnet(req: Request) {
+  1010→  const auth = requireAuth(req);
+  1011→  try {
+  1012→    const body = await req.json();
+  1013→    const {
+  1014→      name, interfaceName, subnet, netmask, rangeStart, rangeEnd,
+  1015→      leaseTimeSec, gateway, dnsServers, domainName, enabled,
+  1016→    } = body;
+  1017→
+  1018→    if (!name || !subnet || !rangeStart || !rangeEnd) {
+  1019→      return jsonErr("name, subnet, rangeStart, rangeEnd are required");
+  1020→    }
+  1021→
+  1022→    const record = await prisma.dhcpSubnet.create({
+  1023→      data: {
+  1024→        name, interfaceName, subnet,
+  1025→        netmask: netmask || "255.255.255.0",
+  1026→        rangeStart, rangeEnd,
+  1027→        leaseTimeSec: leaseTimeSec || 86400,
+  1028→        gateway: gateway || "",
+  1029→        dnsServers: dnsServers || "",
+  1030→        domainName: domainName || "",
+  1031→        enabled: enabled !== false,
+  1032→      },
+  1033→    });
+  1034→
+  1035→    // Send to KEA REST API
+  1036→    try {
+  1037→      const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1038→      const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1039→      await fetch(`${keaUrl}/dhcp4/subnets`, {
+  1040→        method: "POST",
+  1041→        headers: { "Content-Type": "application/json" },
+  1042→        body: JSON.stringify({
+  1043→          command: "subnet4-add",
+  1044→          service: ["dhcp4"],
+  1045→          arguments: {
+  1046→            subnets: [{
+  1047→              id: parseInt(record.id.slice(-8), 36) || 1,
+  1048→              subnet: `${subnet}/${netmask || "255.255.255.0"}`,
+  1049→              pools: [{ pool: `${rangeStart}-${rangeEnd}` }],
+  1050→              "valid-lifetime": leaseTimeSec || 86400,
+  1051→              ...(gateway && { "option-data": [{ "name": "routers", "data": gateway }] }),
+  1052→            }],
+  1053→          },
+  1054→        }),
+  1055→      });
+  1056→    } catch (keaErr) {
+  1057→      log.warn("KEA config push failed (subnet created in DB)", { error: String(keaErr) });
+  1058→    }
+  1059→
+  1060→    await auditLog(auth.userId, "CREATE", "DhcpSubnet", record.id, body, req);
+  1061→    return json({ success: true, data: record }, 201);
+  1062→  } catch (err: any) {
+  1063→    return jsonErr(err.message, 500);
+  1064→  }
+  1065→}
+  1066→
+  1067→async function handleUpdateDhcpSubnet(req: Request, params: Record<string, string>) {
+  1068→  const auth = requireAuth(req);
+  1069→  try {
+  1070→    const body = await req.json();
+  1071→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1072→    const record = await prisma.dhcpSubnet.update({
+  1073→      where: { id: params.id },
+  1074→      data: safeBody,
+  1075→    });
+  1076→
+  1077→    await auditLog(auth.userId, "UPDATE", "DhcpSubnet", params.id, body, req);
+  1078→    return json({ success: true, data: record });
+  1079→  } catch (err: any) {
+  1080→    return jsonErr(err.message, 500);
+  1081→  }
+  1082→}
+  1083→
+  1084→async function handleDeleteDhcpSubnet(req: Request, params: Record<string, string>) {
+  1085→  const auth = requireAuth(req);
+  1086→  try {
+  1087→    await prisma.dhcpSubnet.delete({ where: { id: params.id } });
+  1088→
+  1089→    // Remove from KEA
+  1090→    try {
+  1091→      const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1092→      const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1093→      await fetch(`${keaUrl}/dhcp4/subnets`, {
+  1094→        method: "POST",
+  1095→        headers: { "Content-Type": "application/json" },
+  1096→        body: JSON.stringify({
+  1097→          command: "subnet4-del",
+  1098→          service: ["dhcp4"],
+  1099→          arguments: { id: parseInt(params.id.slice(-8), 36) || 1 },
+  1100→        }),
+  1101→      });
+  1102→    } catch {}
+  1103→
+  1104→    await auditLog(auth.userId, "DELETE", "DhcpSubnet", params.id, {}, req);
+  1105→    return json({ success: true });
+  1106→  } catch (err: any) {
+  1107→    return jsonErr(err.message, 500);
+  1108→  }
+  1109→}
+  1110→
+  1111→async function handleGetDhcpReservations(req: Request) {
+  1112→  requireAuth(req);
+  1113→  try {
+  1114→    const reservations = await prisma.dhcpReservation.findMany({
+  1115→      include: { dhcpSubnet: true },
+  1116→      orderBy: { createdAt: "desc" },
+  1117→    });
+  1118→    return json({ success: true, data: reservations });
+  1119→  } catch (err: any) {
+  1120→    return jsonErr(err.message, 500);
+  1121→  }
+  1122→}
+  1123→
+  1124→async function handleCreateDhcpReservation(req: Request) {
+  1125→  const auth = requireAuth(req);
+  1126→  try {
+  1127→    const body = await req.json();
+  1128→    const { dhcpSubnetId, macAddress, ipAddress, hostname, subscriberId } = body;
+  1129→    if (!dhcpSubnetId || !macAddress || !ipAddress) {
+  1130→      return jsonErr("dhcpSubnetId, macAddress, ipAddress are required");
+  1131→    }
+  1132→
+  1133→    const record = await prisma.dhcpReservation.create({
+  1134→      data: {
+  1135→        dhcpSubnetId, macAddress, ipAddress,
+  1136→        hostname: hostname || "",
+  1137→        subscriberId: subscriberId || null,
+  1138→      },
+  1139→    });
+  1140→
+  1141→    await auditLog(auth.userId, "CREATE", "DhcpReservation", record.id, body, req);
+  1142→    return json({ success: true, data: record }, 201);
+  1143→  } catch (err: any) {
+  1144→    return jsonErr(err.message, 500);
+  1145→  }
+  1146→}
+  1147→
+  1148→async function handleUpdateDhcpReservation(req: Request, params: Record<string, string>) {
+  1149→  const auth = requireAuth(req);
+  1150→  try {
+  1151→    const body = await req.json();
+  1152→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1153→    const record = await prisma.dhcpReservation.update({
+  1154→      where: { id: params.id },
+  1155→      data: safeBody,
+  1156→    });
+  1157→
+  1158→    await auditLog(auth.userId, "UPDATE", "DhcpReservation", params.id, body, req);
+  1159→    return json({ success: true, data: record });
+  1160→  } catch (err: any) {
+  1161→    return jsonErr(err.message, 500);
+  1162→  }
+  1163→}
+  1164→
+  1165→async function handleDeleteDhcpReservation(req: Request, params: Record<string, string>) {
+  1166→  const auth = requireAuth(req);
+  1167→  try {
+  1168→    await prisma.dhcpReservation.delete({ where: { id: params.id } });
+  1169→    await auditLog(auth.userId, "DELETE", "DhcpReservation", params.id, {}, req);
+  1170→    return json({ success: true });
+  1171→  } catch (err: any) {
+  1172→    return jsonErr(err.message, 500);
+  1173→  }
+  1174→}
+  1175→
+  1176→async function handleGetDhcpLeases(req: Request) {
+  1177→  requireAuth(req);
+  1178→  try {
+  1179→    const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1180→    const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1181→
+  1182→    const response = await fetch(`${keaUrl}/leases`, { signal: AbortSignal.timeout(5000) });
+  1183→    if (!response.ok) {
+  1184→      return jsonErr(`KEA returned ${response.status}`, 502);
+  1185→    }
+  1186→    const data = await response.json();
+  1187→    return json({ success: true, data });
+  1188→  } catch (err: any) {
+  1189→    return jsonErr("Failed to fetch KEA leases: " + String(err.message), 502);
+  1190→  }
+  1191→}
+  1192→
+  1193→async function handleKeaReload(req: Request) {
+  1194→  const auth = requireAuth(req);
+  1195→  try {
+  1196→    const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1197→    const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1198→
+  1199→    const response = await fetch(`${keaUrl}/control-agent`, {
+  1200→      method: "POST",
+  1201→      headers: { "Content-Type": "application/json" },
+  1202→      body: JSON.stringify({
+  1203→        command: "config-reload",
+  1204→        service: ["dhcp4"],
+  1205→      }),
+  1206→    });
+  1207→    const data = await response.json();
+  1208→
+  1209→    await auditLog(auth.userId, "RELOAD", "KEA", "server", data, req);
+  1210→    return json({ success: true, data });
+  1211→  } catch (err: any) {
+  1212→    return jsonErr("KEA reload failed: " + String(err.message), 502);
+  1213→  }
+  1214→}
+  1215→
+  1216→async function handleKeaStatus(req: Request) {
+  1217→  requireAuth(req);
+  1218→  try {
+  1219→    const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1220→    const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1221→
+  1222→    const response = await fetch(`${keaUrl}/control-agent`, {
+  1223→      method: "POST",
+  1224→      headers: { "Content-Type": "application/json" },
+  1225→      body: JSON.stringify({
+  1226→        command: "status-get",
+  1227→        service: ["dhcp4"],
+  1228→      }),
+  1229→    });
+  1230→    const data = await response.json();
+  1231→    return json({ success: true, data });
+  1232→  } catch (err: any) {
+  1233→    return json({ success: false, status: "unreachable", error: String(err.message) });
+  1234→  }
+  1235→}
+  1236→
+  1237→async function handleKeaTest(req: Request) {
+  1238→  requireAuth(req);
+  1239→  try {
+  1240→    const keaConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1241→    const keaUrl = keaConfig?.dhcpServerUrl || "http://localhost:8080";
+  1242→
+  1243→    const response = await fetch(`${keaUrl}/control-agent`, {
+  1244→      method: "POST",
+  1245→      headers: { "Content-Type": "application/json" },
+  1246→      body: JSON.stringify({
+  1247→        command: "status-get",
+  1248→        service: ["dhcp4"],
+  1249→      }),
+  1250→      signal: AbortSignal.timeout(5000),
+  1251→    });
+  1252→
+  1253→    if (response.ok) {
+  1254→      const data = await response.json();
+  1255→      return json({ success: true, connected: true, message: "KEA server is reachable", data });
+  1256→    } else {
+  1257→      return json({ success: false, connected: false, message: `KEA responded with ${response.status}` });
+  1258→    }
+  1259→  } catch (err: any) {
+  1260→    return json({ success: false, connected: false, message: `KEA not reachable: ${err.message}` });
+  1261→  }
+  1262→}
+  1263→
+  1264→// ═══════════════════════════════════════════════════════════════════════════
+  1265→//  HANDLERS — DNS (dnsmasq)
+  1266→// ═══════════════════════════════════════════════════════════════════════════
+  1267→async function handleGetDnsRecords(req: Request) {
+  1268→  requireAuth(req);
+  1269→  try {
+  1270→    const records = await prisma.dnsRecord.findMany({ orderBy: { name: "asc" } });
+  1271→    return json({ success: true, data: records });
+  1272→  } catch (err: any) {
+  1273→    return jsonErr(err.message, 500);
+  1274→  }
+  1275→}
+  1276→
+  1277→async function handleCreateDnsRecord(req: Request) {
+  1278→  const auth = requireAuth(req);
+  1279→  try {
+  1280→    const body = await req.json();
+  1281→    const { type, name, value, priority, ttl, interfaceId, enabled } = body;
+  1282→    if (!type || !name || !value) return jsonErr("type, name, value are required");
+  1283→
+  1284→    const record = await prisma.dnsRecord.create({
+  1285→      data: {
+  1286→        type, name, value,
+  1287→        priority: priority || 0,
+  1288→        ttl: ttl || 300,
+  1289→        interfaceId: interfaceId || null,
+  1290→        enabled: enabled !== false,
+  1291→      },
+  1292→    });
+  1293→
+  1294→    await regenerateDnsmasqConfig();
+  1295→    await auditLog(auth.userId, "CREATE", "DnsRecord", record.id, body, req);
+  1296→    return json({ success: true, data: record }, 201);
+  1297→  } catch (err: any) {
+  1298→    return jsonErr(err.message, 500);
+  1299→  }
+  1300→}
+  1301→
+  1302→async function handleUpdateDnsRecord(req: Request, params: Record<string, string>) {
+  1303→  const auth = requireAuth(req);
+  1304→  try {
+  1305→    const body = await req.json();
+  1306→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1307→    const record = await prisma.dnsRecord.update({
+  1308→      where: { id: params.id },
+  1309→      data: safeBody,
+  1310→    });
+  1311→
+  1312→    await regenerateDnsmasqConfig();
+  1313→    await auditLog(auth.userId, "UPDATE", "DnsRecord", params.id, body, req);
+  1314→    return json({ success: true, data: record });
+  1315→  } catch (err: any) {
+  1316→    return jsonErr(err.message, 500);
+  1317→  }
+  1318→}
+  1319→
+  1320→async function handleDeleteDnsRecord(req: Request, params: Record<string, string>) {
+  1321→  const auth = requireAuth(req);
+  1322→  try {
+  1323→    await prisma.dnsRecord.delete({ where: { id: params.id } });
+  1324→    await regenerateDnsmasqConfig();
+  1325→    await auditLog(auth.userId, "DELETE", "DnsRecord", params.id, {}, req);
+  1326→    return json({ success: true });
+  1327→  } catch (err: any) {
+  1328→    return jsonErr(err.message, 500);
+  1329→  }
+  1330→}
+  1331→
+  1332→async function handleDnsReload(req: Request) {
+  1333→  const auth = requireAuth(req);
+  1334→  try {
+  1335→    const result = await runShell("killall", ["-HUP", "dnsmasq"]);
+  1336→    if (!result.success) {
+  1337→      // Try pidof approach
+  1338→      const pidResult = await runShell("pidof", ["dnsmasq"]);
+  1339→      if (pidResult.success && pidResult.stdout.trim()) {
+  1340→        const pid = pidResult.stdout.trim().split(" ")[0];
+  1341→        await runShell("kill", ["-HUP", pid]);
+  1342→      } else {
+  1343→        log.warn("dnsmasq not running, cannot reload");
+  1344→      }
+  1345→    }
+  1346→    await auditLog(auth.userId, "RELOAD", "DNS", "dnsmasq", {}, req);
+  1347→    return json({ success: true });
+  1348→  } catch (err: any) {
+  1349→    return jsonErr(err.message, 500);
+  1350→  }
+  1351→}
+  1352→
+  1353→async function handleDnsConfig(req: Request) {
+  1354→  requireAuth(req);
+  1355→  try {
+  1356→    const config = await generateDnsmasqConfigPreview();
+  1357→    return json({ success: true, data: { config } });
+  1358→  } catch (err: any) {
+  1359→    return jsonErr(err.message, 500);
+  1360→  }
+  1361→}
+  1362→
+  1363→async function handleDnsTest(req: Request) {
+  1364→  const auth = requireAuth(req);
+  1365→  try {
+  1366→    const body = await req.json();
+  1367→    const { domain, server } = body;
+  1368→    if (!domain) return jsonErr("domain is required");
+  1369→
+  1370→    // Try dig first
+  1371→    let result = await runShell("dig", [
+  1372→      ...(server ? [`@${server}`] : []),
+  1373→      domain, "+short", "+timeout=5",
+  1374→    ], 10000);
+  1375→
+  1376→    if (!result.success) {
+  1377→      // Fallback to nslookup
+  1378→      result = await runShell("nslookup", [
+  1379→        domain,
+  1380→        ...(server ? [server] : []),
+  1381→      ], 10000);
+  1382→    }
+  1383→
+  1384→    return json({
+  1385→      success: result.success,
+  1386→      domain,
+  1387→      server: server || "system default",
+  1388→      output: result.stdout,
+  1389→      stderr: result.stderr,
+  1390→    });
+  1391→  } catch (err: any) {
+  1392→    return jsonErr(err.message, 500);
+  1393→  }
+  1394→}
+  1395→
+  1396→// ─── dnsmasq Config Generation Helpers ─────────────────────────────────
+  1397→async function regenerateDnsmasqConfig(): Promise<string> {
+  1398→  const records = await prisma.dnsRecord.findMany({ where: { enabled: true } });
+  1399→  const gwConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1400→
+  1401→  let config = `# Auto-generated by Cryptsk Gateway Service\n`;
+  1402→  config += `# DO NOT EDIT MANUALLY\n\n`;
+  1403→  config += `listen-address=127.0.0.1\n`;
+  1404→  if (gwConfig?.enableDnsCache !== false) {
+  1405→    config += `cache-size=1000\n`;
+  1406→  }
+  1407→  if (gwConfig?.dnsForwarders) {
+  1408→    for (const dns of gwConfig.dnsForwarders.split(",")) {
+  1409→      const trimmed = dns.trim();
+  1410→      if (trimmed) config += `server=${trimmed}\n`;
+  1411→    }
+  1412→  }
+  1413→  config += `\n# DNS Records\n`;
+  1414→
+  1415→  for (const rec of records) {
+  1416→    switch (rec.type) {
+  1417→      case "A":
+  1418→        config += `address=/${rec.name}/${rec.value}\n`;
+  1419→        break;
+  1420→      case "AAAA":
+  1421→        config += `address=/${rec.name}/${rec.value}\n`;
+  1422→        break;
+  1423→      case "CNAME":
+  1424→        config += `cname=${rec.name},${rec.value}\n`;
+  1425→        break;
+  1426→      case "MX":
+  1427→        config += `mx-host=${rec.name},${rec.value},${rec.priority || 10}\n`;
+  1428→        break;
+  1429→      case "TXT":
+  1430→        config += `txt-record=${rec.name},${rec.value}\n`;
+  1431→        break;
+  1432→      case "SRV":
+  1433→        config += `srv-host=${rec.name},${rec.value},${rec.priority || 0}\n`;
+  1434→        break;
+  1435→    }
+  1436→  }
+  1437→
+  1438→  // Write config file
+  1439→  const writeResult = await runShell("sh", [
+  1440→    "-c", `mkdir -p /etc/dnsmasq.d && echo '${config.replace(/'/g, "'\"'\"'")}' > /etc/dnsmasq.d/cryptsk-hosts.conf`,
+  1441→  ]);
+  1442→  if (!writeResult.success) {
+  1443→    log.warn("Failed to write dnsmasq config", { stderr: writeResult.stderr });
+  1444→  }
+  1445→
+  1446→  return config;
+  1447→}
+  1448→
+  1449→async function generateDnsmasqConfigPreview(): Promise<string> {
+  1450→  try {
+  1451→    const records = await prisma.dnsRecord.findMany({ where: { enabled: true } });
+  1452→    const gwConfig = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1453→
+  1454→    let config = `# Cryptsk dnsmasq Configuration Preview\n\n`;
+  1455→    config += `listen-address=127.0.0.1\n`;
+  1456→    if (gwConfig?.enableDnsCache !== false) {
+  1457→      config += `cache-size=1000\n`;
+  1458→    }
+  1459→    if (gwConfig?.dnsForwarders) {
+  1460→      for (const dns of gwConfig.dnsForwarders.split(",")) {
+  1461→        const trimmed = dns.trim();
+  1462→        if (trimmed) config += `server=${trimmed}\n`;
+  1463→      }
+  1464→    }
+  1465→    config += `\n# DNS Records (${records.length} total)\n`;
+  1466→    for (const rec of records) {
+  1467→      config += `# ${rec.type} ${rec.name} -> ${rec.value}\n`;
+  1468→    }
+  1469→    return config;
+  1470→  } catch {
+  1471→    return "# Unable to generate config preview";
+  1472→  }
+  1473→}
+  1474→
+  1475→// ═══════════════════════════════════════════════════════════════════════════
+  1476→//  HANDLERS — Service Status Detection
+  1477→// ═══════════════════════════════════════════════════════════════════════════
+  1478→async function handleGetServicesStatus(req: Request) {
+  1479→  requireAuth(req);
+  1480→  try {
+  1481→    const services: Record<string, { installed: boolean; running: boolean; version?: string; port?: number }> = {};
+  1482→
+  1483→    // Check dnsmasq
+  1484→    const dnsmasqWhich = await runShell("which", ["dnsmasq"]);
+  1485→    const dnsmasqPid = await runShell("pidof", ["dnsmasq"]);
+  1486→    const dnsmasqVer = await runShell("dnsmasq", ["--version"]);
+  1487→    services.dnsmasq = {
+  1488→      installed: dnsmasqWhich.success,
+  1489→      running: dnsmasqPid.success && !!dnsmasqPid.stdout.trim(),
+  1490→      version: dnsmasqVer.success ? dnsmasqVer.stdout.split("\n")[0] : undefined,
+  1491→      port: 53,
+  1492→    };
+  1493→
+  1494→    // Check Kea DHCP
+  1495→    const keaWhich = await runShell("which", ["kea-dhcp4"]);
+  1496→    const keaPid = await runShell("pidof", ["kea-dhcp4"]);
+  1497→    services.kea = {
+  1498→      installed: keaWhich.success,
+  1499→      running: keaPid.success && !!keaPid.stdout.trim(),
+  1500→      port: 67,
+  1501→    };
+  1502→
+  1503→    // Check FreeRADIUS
+  1504→    const radiusWhich = await runShell("which", ["freeradius"]);
+  1505→    const radiusPid = await runShell("pidof", ["freeradius"]);
+  1506→    const radiusVer = await runShell("freeradius", ["-v"]);
+  1507→    services.freeradius = {
+  1508→      installed: radiusWhich.success,
+  1509→      running: radiusPid.success && !!radiusPid.stdout.trim(),
+  1510→      version: radiusVer.success ? radiusVer.stdout.split("\n")[0] : undefined,
+  1511→      port: 1812,
+  1512→    };
+  1513→
+  1514→    // Check accel-ppp
+  1515→    const accelWhich = await runShell("which", ["accel-pppd"]);
+  1516→    const accelPid = await runShell("pidof", ["accel-pppd"]);
+  1517→    services.accel_ppp = {
+  1518→      installed: accelWhich.success,
+  1519→      running: accelPid.success && !!accelPid.stdout.trim(),
+  1520→      port: 0,
+  1521→    };
+  1522→
+  1523→    return json({ success: true, data: services });
+  1524→  } catch (err: any) {
+  1525→    return jsonErr(err.message, 500);
+  1526→  }
+  1527→}
+  1528→
+  1529→async function handleGetRadiusStatus(req: Request) {
+  1530→  requireAuth(req);
+  1531→  try {
+  1532→    // Check radius-service mini-service on port 3001
+  1533→    const radiusRes = await fetch("http://localhost:3001/api/health", { signal: AbortSignal.timeout(3000) });
+  1534→    const data = await radiusRes.json();
+  1535→
+  1536→    // Check actual FreeRADIUS daemon
+  1537→    const frWhich = await runShell("which", ["freeradius"]);
+  1538→    const frPid = await runShell("pidof", ["freeradius"]);
+  1539→    const frVer = await runShell("freeradius", ["-v"]);
+  1540→
+  1541→    return json({
+  1542→      success: true,
+  1543→      data: {
+  1544→        radiusService: { connected: radiusRes.ok, ...data },
+  1545→        freeradiusDaemon: {
+  1546→          installed: frWhich.success,
+  1547→          running: frPid.success && !!frPid.stdout.trim(),
+  1548→          version: frVer.success ? frVer.stdout.split("\n")[0] : undefined,
+  1549→        },
+  1550→      },
+  1551→    });
+  1552→  } catch (err: any) {
+  1553→    return json({
+  1554→      success: true,
+  1555→      data: {
+  1556→        radiusService: { connected: false, error: String(err.message) },
+  1557→        freeradiusDaemon: { installed: false, running: false },
+  1558→      },
+  1559→    });
+  1560→  }
+  1561→}
+  1562→
+  1563→// ═══════════════════════════════════════════════════════════════════════════
+  1564→//  HANDLERS — Gateway Config
+  1565→// ═══════════════════════════════════════════════════════════════════════════
+  1566→async function handleGetGatewayConfig(req: Request) {
+  1567→  requireAuth(req);
+  1568→  try {
+  1569→    const config = await prisma.gatewayConfig.findUnique({ where: { id: "default" } });
+  1570→    return json({ success: true, data: config });
+  1571→  } catch (err: any) {
+  1572→    return jsonErr(err.message, 500);
+  1573→  }
+  1574→}
+  1575→
+  1576→async function handleUpdateGatewayConfig(req: Request) {
+  1577→  const auth = requireAuth(req);
+  1578→  try {
+  1579→    const body = await req.json();
+  1580→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1581→    const config = await prisma.gatewayConfig.upsert({
+  1582→      where: { id: "default" },
+  1583→      update: safeBody,
+  1584→      create: { id: "default", ...safeBody },
+  1585→    });
+  1586→
+  1587→    await auditLog(auth.userId, "UPDATE", "GatewayConfig", "default", body, req);
+  1588→    return json({ success: true, data: config });
+  1589→  } catch (err: any) {
+  1590→    return jsonErr(err.message, 500);
+  1591→  }
+  1592→}
+  1593→
+  1594→async function handleGatewayInit(req: Request) {
+  1595→  const auth = requireAuth(req);
+  1596→  // Check gateway mode before executing gateway operations
+  1597→  const gwSettings = await prisma.ispSettings.findFirst();
+  1598→  if (!gwSettings?.gatewayModeEnabled) {
+  1599→    return jsonErr("Gateway mode is not enabled");
+  1600→  }
+  1601→  try {
+  1602→    const results: Record<string, any> = {};
+  1603→
+  1604→    // 1. Apply interface configs
+  1605→    const interfaces = await prisma.systemInterface.findMany({ where: { enabled: true, isManaged: true } });
+  1606→    for (const iface of interfaces) {
+  1607→      await runShell("ip", ["link", "set", iface.name, "up"]);
+  1608→      if (iface.ipv4Address && iface.ipv4Netmask) {
+  1609→        await runShell("ip", ["addr", "add", `${iface.ipv4Address}/${iface.ipv4Netmask}`, "dev", iface.name]).catch(() => {});
+  1610→      }
+  1611→    }
+  1612→    results.interfaces = { configured: interfaces.length };
+  1613→
+  1614→    // 2. Enable IP forwarding
+  1615→    await runShell("sh", ["-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"]).catch(() => {});
+  1616→    await runShell("sh", ["-c", "echo 1 > /proc/sys/net/ipv6/conf/all/forwarding"]).catch(() => {});
+  1617→
+  1618→    // 3. Setup nftables basics
+  1619→    await runShell("nft", ["flush", "ruleset"]).catch(() => {});
+  1620→    await runShell("nft", ["add", "table", "inet", "cryptsk"]).catch(() => {});
+  1621→    await runShell("nft", ["add", "chain", "inet", "cryptsk", "filter", "{ type filter hook forward priority 0 \\; policy drop \\;}"]).catch(() => {});
+  1622→    await runShell("nft", ["add", "chain", "inet", "cryptsk", "nat", "{ type nat hook postrouting priority 100 \\;}"]).catch(() => {});
+  1623→    // Allow established/related
+  1624→    await runShell("nft", ["add", "rule", "inet", "cryptsk", "filter", "ct", "state", "established,related", "accept"]).catch(() => {});
+  1625→    // MASQUERADE on WAN
+  1626→    const wanIface = interfaces.find((i) => i.role === "WAN");
+  1627→    if (wanIface) {
+  1628→      await runShell("nft", ["add", "rule", "inet", "cryptsk", "nat", "outdev", wanIface.name, "masquerade"]).catch(() => {});
+  1629→    }
+  1630→    // Allow LAN forward
+  1631→    const lanIface = interfaces.find((i) => i.role === "LAN");
+  1632→    if (lanIface) {
+  1633→      await runShell("nft", ["add", "rule", "inet", "cryptsk", "filter", "iifname", lanIface.name, "accept"]).catch(() => {});
+  1634→    }
+  1635→
+  1636→    // 4. Setup TC on WAN
+  1637→    if (wanIface) {
+  1638→      await runShell("tc", ["qdisc", "add", "dev", wanIface.name, "root", "handle", "1:", "htb"]).catch(() => {});
+  1639→      await runShell("tc", ["class", "add", "dev", wanIface.name, "parent", "1:", "classid", "1:1", "htb", "rate", "1gbit"]).catch(() => {});
+  1640→      results.tc = { wanInterface: wanIface.name, initialized: true };
+  1641→    }
+  1642→
+  1643→    results.status = "initialized";
+  1644→    await auditLog(auth.userId, "INIT", "Gateway", "system", results, req);
+  1645→    log.info("Gateway initialized", results);
+  1646→    return json({ success: true, data: results });
+  1647→  } catch (err: any) {
+  1648→    return jsonErr("Gateway init failed: " + String(err.message), 500);
+  1649→  }
+  1650→}
+  1651→
+  1652→// ═══════════════════════════════════════════════════════════════════════════
+  1653→//  HANDLERS — Firewall (nftables)
+  1654→// ═══════════════════════════════════════════════════════════════════════════
+  1655→async function handleGetFirewallRules(req: Request) {
+  1656→  requireAuth(req);
+  1657→  try {
+  1658→    const rules = await prisma.firewallRule.findMany({
+  1659→      orderBy: { priority: "asc" },
+  1660→    });
+  1661→    return json({ success: true, data: rules });
+  1662→  } catch (err: any) {
+  1663→    return jsonErr(err.message, 500);
+  1664→  }
+  1665→}
+  1666→
+  1667→async function handleCreateFirewallRule(req: Request) {
+  1668→  const auth = requireAuth(req);
+  1669→  try {
+  1670→    const body = await req.json();
+  1671→    const { name, description, chain, table, action, matchCriteria, natTarget, logEnabled, enabled, priority } = body;
+  1672→    if (!name) return jsonErr("name is required");
+  1673→
+  1674→    const record = await prisma.firewallRule.create({
+  1675→      data: {
+  1676→        name, description: description || "",
+  1677→        chain: chain || "forward", table: table || "filter",
+  1678→        action: action || "ACCEPT",
+  1679→        matchCriteria: JSON.stringify(matchCriteria || {}),
+  1680→        natTarget: natTarget || "",
+  1681→        logEnabled: logEnabled || false,
+  1682→        enabled: enabled !== false,
+  1683→        priority: priority || 0,
+  1684→      },
+  1685→    });
+  1686→
+  1687→    // Apply to nftables
+  1688→    if (record.enabled) {
+  1689→      await applySingleNftRule(record);
+  1690→    }
+  1691→
+  1692→    await auditLog(auth.userId, "CREATE", "FirewallRule", record.id, body, req);
+  1693→    return json({ success: true, data: record }, 201);
+  1694→  } catch (err: any) {
+  1695→    return jsonErr(err.message, 500);
+  1696→  }
+  1697→}
+  1698→
+  1699→async function handleUpdateFirewallRule(req: Request, params: Record<string, string>) {
+  1700→  const auth = requireAuth(req);
+  1701→  try {
+  1702→    const body = await req.json();
+  1703→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1704→    const record = await prisma.firewallRule.update({
+  1705→      where: { id: params.id },
+  1706→      data: safeBody,
+  1707→    });
+  1708→    await auditLog(auth.userId, "UPDATE", "FirewallRule", params.id, body, req);
+  1709→    return json({ success: true, data: record });
+  1710→  } catch (err: any) {
+  1711→    return jsonErr(err.message, 500);
+  1712→  }
+  1713→}
+  1714→
+  1715→async function handleDeleteFirewallRule(req: Request, params: Record<string, string>) {
+  1716→  const auth = requireAuth(req);
+  1717→  try {
+  1718→    await prisma.firewallRule.delete({ where: { id: params.id } });
+  1719→    await auditLog(auth.userId, "DELETE", "FirewallRule", params.id, {}, req);
+  1720→    return json({ success: true });
+  1721→  } catch (err: any) {
+  1722→    return jsonErr(err.message, 500);
+  1723→  }
+  1724→}
+  1725→
+  1726→async function handleFirewallApply(req: Request) {
+  1727→  const auth = requireAuth(req);
+  1728→  try {
+  1729→    // Generate full nftables ruleset from DB
+  1730→    const rules = await prisma.firewallRule.findMany({
+  1731→      where: { enabled: true },
+  1732→      orderBy: { priority: "asc" },
+  1733→    });
+  1734→
+  1735→    // Clear existing ruleset
+  1736→    await runShell("nft", ["flush", "ruleset"]).catch(() => {});
+  1737→
+  1738→    // Create tables
+  1739→    await runShell("nft", ["add", "table", "inet", "cryptsk"]).catch(() => {});
+  1740→    await runShell("nft", ["add", "chain", "inet", "cryptsk", "filter", "{ type filter hook forward priority 0 \\; policy drop \\;}"]).catch(() => {});
+  1741→    await runShell("nft", ["add", "chain", "inet", "cryptsk", "nat", "{ type nat hook postrouting priority 100 \\;}"]).catch(() => {});
+  1742→    await runShell("nft", ["add", "chain", "inet", "cryptsk", "input", "{ type filter hook input priority 0 \\; policy accept \\;}"]).catch(() => {});
+  1743→
+  1744→    // Allow established/related first
+  1745→    await runShell("nft", ["add", "rule", "inet", "cryptsk", "filter", "ct", "state", "established,related", "accept"]).catch(() => {});
+  1746→
+  1747→    // Apply each rule
+  1748→    let applied = 0;
+  1749→    for (const rule of rules) {
+  1750→      try {
+  1751→        await applySingleNftRule(rule);
+  1752→        applied++;
+  1753→      } catch (e) {
+  1754→        log.warn("Failed to apply firewall rule", { id: rule.id, error: String(e) });
+  1755→      }
+  1756→    }
+  1757→
+  1758→    await auditLog(auth.userId, "APPLY", "FirewallRule", "all", { total: rules.length, applied }, req);
+  1759→    return json({ success: true, data: { total: rules.length, applied } });
+  1760→  } catch (err: any) {
+  1761→    return jsonErr("Firewall apply failed: " + String(err.message), 500);
+  1762→  }
+  1763→}
+  1764→
+  1765→async function applySingleNftRule(rule: any) {
+  1766→  const criteria = JSON.parse(rule.matchCriteria || "{}");
+  1767→  const chain = rule.chain || "forward";
+  1768→  const base = ["nft", "add", "rule", "inet", "cryptsk", chain];
+  1769→
+  1770→  const parts: string[] = [];
+  1771→
+  1772→  if (criteria.protocol) parts.push("ip", "protocol", criteria.protocol);
+  1773→  if (criteria.srcIp) parts.push("ip", "saddr", criteria.srcIp);
+  1774→  if (criteria.dstIp) parts.push("ip", "daddr", criteria.dstIp);
+  1775→  if (criteria.srcPort) parts.push(...(criteria.protocol === "tcp" || criteria.protocol === "udp" ? ["th", "sport"] : ["sport"]), criteria.srcPort);
+  1776→  if (criteria.dstPort) parts.push(...(criteria.protocol === "tcp" || criteria.protocol === "udp" ? ["th", "dport"] : ["dport"]), criteria.dstPort);
+  1777→  if (criteria.ifaceIn) parts.push("iifname", criteria.ifaceIn);
+  1778→  if (criteria.ifaceOut) parts.push("oifname", criteria.ifaceOut);
+  1779→
+  1780→  // Action
+  1781→  const action = (rule.action || "ACCEPT").toLowerCase();
+  1782→  if (action === "snat" || action === "dnat") {
+  1783→    if (rule.natTarget) {
+  1784→      parts.push(action, rule.natTarget);
+  1785→    }
+  1786→  } else {
+  1787→    parts.push(action);
+  1788→  }
+  1789→
+  1790→  if (rule.logEnabled) {
+  1791→    parts.push("log");
+  1792→    if (rule.logPrefix) parts.push(`prefix "${rule.logPrefix}"`);
+  1793→  }
+  1794→
+  1795→  await runShell(base[0], [...base.slice(1), ...parts]);
+  1796→}
+  1797→
+  1798→async function handleNftablesStatus(req: Request) {
+  1799→  requireAuth(req);
+  1800→  try {
+  1801→    const result = await runShell("nft", ["list", "ruleset"], 15000);
+  1802→    return json({
+  1803→      success: result.success,
+  1804→      exitCode: result.exitCode,
+  1805→      ruleset: result.stdout,
+  1806→      error: result.stderr,
+  1807→    });
+  1808→  } catch (err: any) {
+  1809→    return json({ success: false, error: String(err.message), ruleset: "" });
+  1810→  }
+  1811→}
+  1812→
+  1813→// ═══════════════════════════════════════════════════════════════════════════
+  1814→//  HANDLERS — Bandwidth/TC
+  1815→// ═══════════════════════════════════════════════════════════════════════════
+  1816→async function handleGetTcPolicies(req: Request) {
+  1817→  requireAuth(req);
+  1818→  try {
+  1819→    const policies = await prisma.bandwidthPolicy.findMany({ orderBy: { priority: "asc" } });
+  1820→    return json({ success: true, data: policies });
+  1821→  } catch (err: any) {
+  1822→    return jsonErr(err.message, 500);
+  1823→  }
+  1824→}
+  1825→
+  1826→async function handleCreateTcPolicy(req: Request) {
+  1827→  const auth = requireAuth(req);
+  1828→  try {
+  1829→    const body = await req.json();
+  1830→    const { name, description, downloadKbps, uploadKbps, priority, planId, radiusGroupId } = body;
+  1831→    if (!name || downloadKbps === undefined || uploadKbps === undefined) {
+  1832→      return jsonErr("name, downloadKbps, uploadKbps are required");
+  1833→    }
+  1834→
+  1835→    const record = await prisma.bandwidthPolicy.create({
+  1836→      data: {
+  1837→        name, description: description || "",
+  1838→        downloadKbps, uploadKbps,
+  1839→        priority: priority || 5,
+  1840→        planId: planId || null,
+  1841→        radiusGroupId: radiusGroupId || null,
+  1842→        ...(body.ceilingDownloadKbps && { ceilingDownloadKbps: body.ceilingDownloadKbps }),
+  1843→        ...(body.ceilingUploadKbps && { ceilingUploadKbps: body.ceilingUploadKbps }),
+  1844→      },
+  1845→    });
+  1846→
+  1847→    await auditLog(auth.userId, "CREATE", "BandwidthPolicy", record.id, body, req);
+  1848→    return json({ success: true, data: record }, 201);
+  1849→  } catch (err: any) {
+  1850→    return jsonErr(err.message, 500);
+  1851→  }
+  1852→}
+  1853→
+  1854→async function handleUpdateTcPolicy(req: Request, params: Record<string, string>) {
+  1855→  const auth = requireAuth(req);
+  1856→  try {
+  1857→    const body = await req.json();
+  1858→    const { id, createdAt, updatedAt, ...safeBody } = body;
+  1859→    const record = await prisma.bandwidthPolicy.update({
+  1860→      where: { id: params.id },
+  1861→      data: safeBody,
+  1862→    });
+  1863→
+  1864→    await auditLog(auth.userId, "UPDATE", "BandwidthPolicy", params.id, body, req);
+  1865→    return json({ success: true, data: record });
+  1866→  } catch (err: any) {
+  1867→    return jsonErr(err.message, 500);
+  1868→  }
+  1869→}
+  1870→
+  1871→async function handleDeleteTcPolicy(req: Request, params: Record<string, string>) {
+  1872→  const auth = requireAuth(req);
+  1873→  try {
+  1874→    await prisma.bandwidthPolicy.delete({ where: { id: params.id } });
+  1875→    await auditLog(auth.userId, "DELETE", "BandwidthPolicy", params.id, {}, req);
+  1876→    return json({ success: true });
+  1877→  } catch (err: any) {
+  1878→    return jsonErr(err.message, 500);
+  1879→  }
+  1880→}
+  1881→
+  1882→async function handleTcApplyUser(req: Request) {
+  1883→  const auth = requireAuth(req);
+  1884→  // Check gateway mode before executing TC operations
+  1885→  const settings = await prisma.ispSettings.findFirst();
+  1886→  if (!settings?.gatewayModeEnabled) {
+  1887→    return jsonErr("Gateway mode is not enabled");
+  1888→  }
+  1889→  try {
+  1890→    const body = await req.json();
+  1891→    const { subscriberId, ip, policyId } = body;
+  1892→    if (!subscriberId || !ip || !policyId) {
+  1893→      return jsonErr("subscriberId, ip, policyId are required");
+  1894→    }
+  1895→
+  1896→    const policy = await prisma.bandwidthPolicy.findUnique({ where: { id: policyId } });
+  1897→    if (!policy) return jsonErr("Policy not found", 404);
+  1898→
+  1899→    // Find WAN interface
+  1900→    const wanIface = await prisma.systemInterface.findFirst({ where: { role: "WAN" } });
+  1901→    if (!wanIface) return jsonErr("No WAN interface configured");
+  1902→
+  1903→    const classId = `1:${parseInt(subscriberId.slice(-4), 36) % 9999 + 10}`;
+  1904→
+  1905→    // Create HTB class
+  1906→    await runShell("tc", ["class", "add", "dev", wanIface.name, "parent", "1:1", "classid", classId, "htb",
+  1907→      "rate", `${policy.downloadKbps}kbit`,
+  1908→      ...(policy.ceilingDownloadKbps ? ["ceil", `${policy.ceilingDownloadKbps}kbit`] : []),
+  1909→      ...(policy.burstDownloadKbps ? ["burst", `${policy.burstDownloadKbps}kbit`] : []),
+  1910→      `prio`, `${policy.priority}`,
+  1911→    ]).catch(() => {});
+  1912→
+  1913→    // Add filter to match IP
+  1914→    await runShell("tc", ["filter", "add", "dev", wanIface.name, "protocol", "ip", "parent", "1:0", "prio", "1", "u32", "match", "ip", "dst", ip, "flowid", classId]).catch(() => {});
+  1915→
+  1916→    await auditLog(auth.userId, "APPLY_TC", "BandwidthPolicy", policyId, { subscriberId, ip }, req);
+  1917→    return json({ success: true, data: { classId, ip, policyName: policy.name } });
+  1918→  } catch (err: any) {
+  1919→    return jsonErr(err.message, 500);
+  1920→  }
+  1921→}
+  1922→
+  1923→async function handleTcRemoveUser(req: Request) {
+  1924→  const auth = requireAuth(req);
+  1925→  // Check gateway mode before executing TC operations
+  1926→  const settings = await prisma.ispSettings.findFirst();
+  1927→  if (!settings?.gatewayModeEnabled) {
+  1928→    return jsonErr("Gateway mode is not enabled");
+  1929→  }
+  1930→  try {
+  1931→    const url = new URL(req.url);
+  1932→    const subscriberId = url.searchParams.get("subscriberId");
+  1933→    const ip = url.searchParams.get("ip");
+  1934→    if (!subscriberId && !ip) return jsonErr("subscriberId or ip query param required");
+  1935→
+  1936→    const wanIface = await prisma.systemInterface.findFirst({ where: { role: "WAN" } });
+  1937→    if (!wanIface) return jsonErr("No WAN interface configured");
+  1938→
+  1939→    const classId = `1:${parseInt((subscriberId || "0").slice(-4), 36) % 9999 + 10}`;
+  1940→
+  1941→    await runShell("tc", ["class", "del", "dev", wanIface.name, "classid", classId]).catch(() => {});
+  1942→    await runShell("tc", ["filter", "del", "dev", wanIface.name, "protocol", "ip", "parent", "1:0", "prio", "1"]).catch(() => {});
+  1943→
+  1944→    await auditLog(auth.userId, "REMOVE_TC", "BandwidthPolicy", "", { subscriberId, ip }, req);
+  1945→    return json({ success: true });
+  1946→  } catch (err: any) {
+  1947→    return jsonErr(err.message, 500);
+  1948→  }
+  1949→}
+  1950→
+  1951→async function handleTcInit(req: Request) {
+  1952→  const auth = requireAuth(req);
+  1953→  // Check gateway mode before executing TC operations
+  1954→  const settings = await prisma.ispSettings.findFirst();
+  1955→  if (!settings?.gatewayModeEnabled) {
+  1956→    return jsonErr("Gateway mode is not enabled");
+  1957→  }
+  1958→  try {
+  1959→    const wanIface = await prisma.systemInterface.findFirst({ where: { role: "WAN" } });
+  1960→    if (!wanIface) return jsonErr("No WAN interface configured");
+  1961→
+  1962→    // Clear existing
+  1963→    await runShell("tc", ["qdisc", "del", "dev", wanIface.name, "root"]).catch(() => {});
+  1964→
+  1965→    // Create HTB root
+  1966→    await runShell("tc", ["qdisc", "add", "dev", wanIface.name, "root", "handle", "1:", "htb", "default", "9999"]);
+  1967→    // Default class (bulk/unclassified)
+  1968→    await runShell("tc", ["class", "add", "dev", wanIface.name, "parent", "1:", "classid", "1:1", "htb", "rate", "1gbit", "ceil", "1gbit"]);
+  1969→    await runShell("tc", ["class", "add", "dev", wanIface.name, "parent", "1:", "classid", "1:9999", "htb", "rate", "10mbit", "ceil", "100mbit"]);
+  1970→
+  1971→    await auditLog(auth.userId, "INIT_TC", "Gateway", wanIface.name, {}, req);
+  1972→    log.info("TC hierarchy initialized on", { interface: wanIface.name });
+  1973→    return json({ success: true, interface: wanIface.name });
+  1974→  } catch (err: any) {
+  1975→    return jsonErr(err.message, 500);
+  1976→  }
+  1977→}
+  1978→
+  1979→async function handleTcStatus(req: Request) {
+  1980→  requireAuth(req);
+  1981→  // Check gateway mode before executing TC operations
+  1982→  const settings = await prisma.ispSettings.findFirst();
+  1983→  if (!settings?.gatewayModeEnabled) {
+  1984→    return jsonErr("Gateway mode is not enabled");
+  1985→  }
+  1986→  try {
+  1987→    const [qdiscResult, classResult] = await Promise.all([
+  1988→      runShell("tc", ["-s", "qdisc", "show"]),
+  1989→      runShell("tc", ["-s", "class", "show"]),
+  1990→    ]);
+  1991→
+  1992→    return json({
+  1993→      success: true,
+  1994→      data: {
+  1995→        qdiscs: qdiscResult.stdout,
+  1996→        classes: classResult.stdout,
+  1997→      },
+  1998→    });
+  1999→  } catch (err: any) {
+  2000→    return jsonErr(err.message, 500);
+
+[showing lines 1-2000 of 4970; use offset=2001 with limit to continue reading]

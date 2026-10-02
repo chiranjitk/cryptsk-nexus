@@ -69,8 +69,8 @@ export async function GET(request: NextRequest) {
       db.networkAlert.findMany({
         where,
         include: {
-          rule: { select: { id: true, name: true } },
-          assignedTo: { select: { id: true, name: true, email: true } },
+          AlertRule: { select: { id: true, name: true } },
+          User: { select: { id: true, name: true, email: true } },
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
@@ -82,21 +82,21 @@ export async function GET(request: NextRequest) {
     const transformed = history.map((h) => ({
       id: h.id,
       severity: mapSeverity(h.severity),
-      type: h.rule?.name || h.title || "Custom",
+      type: h.AlertRule?.name || h.title || "Custom",
       title: h.title || "",
       message: h.message,
       device: h.deviceId || h.source || "",
       triggeredAt: h.createdAt.toISOString(),
       resolvedAt: h.resolvedAt?.toISOString() || null,
       resolution: h.resolution || "",
-      acknowledgedBy: h.assignedTo?.name || h.acknowledgedBy || "",
+      acknowledgedBy: h.User?.name || h.acknowledgedBy || "",
       status: mapAlertStatus(h.status),
       duration: h.resolvedAt && h.createdAt
         ? Math.round((h.resolvedAt.getTime() - h.createdAt.getTime()) / 60000)
         : null,
       duplicateCount: h.duplicateCount || 1,
       escalationLevel: h.escalationLevel || 0,
-      assignedTo: h.assignedTo?.name || null,
+      assignedTo: h.User?.name || null,
     }));
 
     return NextResponse.json({

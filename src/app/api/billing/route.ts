@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, permissionFor, AuthError } from "@/lib/api-auth";
 import { nextInvoiceNumber } from "@/lib/invoice-number";
+import { newReceiptNumber, AUTO_VERIFIED_MARKER } from "@/lib/services/receipt";
 
 // GET /api/billing — list invoices with filters + total status counts
 export async function GET(req: NextRequest) {
@@ -173,6 +174,12 @@ export async function POST(req: NextRequest) {
             paymentMode: paymentMode || "CASH",
             transactionRef: transactionRef || "",
             status: "VERIFIED",
+            // [PAYMENTS-NOLEAK] Receipt was never generated here — counter
+            // collections were untraceable in the receipts ledger.
+            receiptNumber: newReceiptNumber(),
+            collectedById: userId,
+            verifiedById: userId,
+            notes: AUTO_VERIFIED_MARKER,
           },
         }),
         db.invoice.update({

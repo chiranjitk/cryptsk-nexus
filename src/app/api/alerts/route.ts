@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
 
     const alerts = await db.networkAlert.findMany({
       where: Object.keys(finalAlertsWhere).length > 0 ? finalAlertsWhere : undefined,
-      include: { rule: true, assignedTo: { select: { id: true, name: true, email: true } } },
+      include: { AlertRule: true, User: { select: { id: true, name: true, email: true } } },
       orderBy: { createdAt: "desc" },
     });
 
@@ -170,7 +170,7 @@ export async function GET(request: NextRequest) {
     const transformedAlerts = alerts.map((a) => ({
       id: a.id,
       severity: mapSeverity(a.severity),
-      type: a.rule?.name || a.title || "Custom",
+      type: a.AlertRule?.name || a.title || "Custom",
       title: a.title || "",
       message: a.message,
       device: a.deviceId || a.source || "",
@@ -180,16 +180,16 @@ export async function GET(request: NextRequest) {
       resolvedAt: a.resolvedAt?.toISOString() || null,
       resolution: a.resolution || "",
       status: mapAlertStatus(a.status),
-      assignedTo: a.assignedTo?.name || a.acknowledgedBy || "",
+      assignedTo: a.User?.name || a.acknowledgedBy || "",
       assignedToId: a.assignedToId || null,
-      assignedToEmail: a.assignedTo?.email || "",
+      assignedToEmail: a.User?.email || "",
       ruleId: a.ruleId || "",
       duplicateCount: a.duplicateCount || 1,
       isDuplicate: markedDuplicates.has(a.id),
       escalationLevel: a.escalationLevel || 0,
       isSuppressed: a.ruleId ? suppressedRuleIds.has(a.ruleId) : false,
-      escalationEnabled: a.rule?.escalationEnabled || false,
-      escalationLevels: a.rule?.escalationLevels ? JSON.parse(a.rule.escalationLevels) : [],
+      escalationEnabled: a.AlertRule?.escalationEnabled || false,
+      escalationLevels: a.AlertRule?.escalationLevels ? JSON.parse(a.AlertRule.escalationLevels) : [],
     }));
 
     // Transform rules
@@ -262,13 +262,17 @@ export async function POST(request: NextRequest) {
         if (!name) {
           return NextResponse.json({ error: "Rule name is required" }, { status: 400 });
         }
+        // Accept array OR comma-separated string; always store as JSON array
+        const channelList: string[] = Array.isArray(notifyChannels)
+          ? notifyChannels.map((c: unknown) => String(c).trim()).filter(Boolean)
+          : notifyChannels ? String(notifyChannels).split(",").map((c) => c.trim()).filter(Boolean) : [];
         const rule = await db.alertRule.create({
           data: {
             name,
             condition: condition || "",
             threshold: threshold ? parseFloat(String(threshold)) : 0,
             severity: (severity || "MEDIUM").toUpperCase(),
-            notifyChannels: notifyChannels ? JSON.stringify(notifyChannels) : "[]",
+            notifyChannels: JSON.stringify(channelList),
             cooldownMinutes: cooldownMinutes || 5,
             enabled: enabled ?? true,
             escalationEnabled: escalationEnabled ?? false,
@@ -298,7 +302,11 @@ export async function POST(request: NextRequest) {
             condition: condition !== undefined ? condition : current.condition,
             threshold: threshold !== undefined ? parseFloat(String(threshold)) : current.threshold,
             severity: severity !== undefined ? String(severity).toUpperCase() : current.severity,
-            notifyChannels: notifyChannels !== undefined ? JSON.stringify(notifyChannels) : current.notifyChannels,
+            notifyChannels: notifyChannels !== undefined ? JSON.stringify(
+              Array.isArray(notifyChannels)
+                ? notifyChannels.map((c: unknown) => String(c).trim()).filter(Boolean)
+                : String(notifyChannels).split(",").map((c) => c.trim()).filter(Boolean)
+            ) : current.notifyChannels,
             cooldownMinutes: cooldownMinutes !== undefined ? cooldownMinutes : current.cooldownMinutes,
             enabled: enabled !== undefined ? enabled : current.enabled,
             escalationEnabled: escalationEnabled !== undefined ? escalationEnabled : current.escalationEnabled,
@@ -374,14 +382,14 @@ export async function POST(request: NextRequest) {
         if (!id) {
           return NextResponse.json({ error: "Alert ID is required" }, { status: 400 });
         }
-        const current = await db.networkAlert.findUnique({ where: { id }, include: { rule: true } });
+        const current = await db.networkAlert.findUnique({ where: { id }, include: { AlertRule: true } });
         if (!current) {
           return NextResponse.json({ error: "Alert not found" }, { status: 404 });
         }
 
         // Determine next escalation level
-        const maxLevel = current.rule?.escalationEnabled
-          ? (() => { try { return JSON.parse(current.rule.escalationLevels || "[]").length; } catch { return 0; } })()
+        const maxLevel = current.AlertRule?.escalationEnabled
+          ? (() => { try { return JSON.parse(current.AlertRule.escalationLevels || "[]").length; } catch { return 0; } })()
           : 3;
         const nextLevel = Math.min((current.escalationLevel || 0) + 1, maxLevel);
 
@@ -390,11 +398,11 @@ export async function POST(request: NextRequest) {
 
         // Determine max severity cap from rule
         let cappedSeverity = newSeverity;
-        if (current.rule?.autoEscalate && current.rule.maxSeverity) {
-          const maxIdx = SEVERITY_ORDER.indexOf(current.rule.maxSeverity.toUpperCase());
+        if (current.AlertRule?.autoEscalate && current.AlertRule.maxSeverity) {
+          const maxIdx = SEVERITY_ORDER.indexOf(current.AlertRule.maxSeverity.toUpperCase());
           const newIdx = SEVERITY_ORDER.indexOf(newSeverity);
           if (maxIdx >= 0 && newIdx > maxIdx) {
-            cappedSeverity = current.rule.maxSeverity.toUpperCase();
+            cappedSeverity = current.AlertRule.maxSeverity.toUpperCase();
           }
         }
 
@@ -491,7 +499,7 @@ export async function POST(request: NextRequest) {
         const alert = await db.networkAlert.update({
           where: { id },
           data: { assignedToId },
-          include: { assignedTo: { select: { id: true, name: true } } },
+          include: { User: { select: { id: true, name: true } } },
         });
         return NextResponse.json({ success: true, data: alert });
       }
@@ -509,17 +517,19 @@ export async function POST(request: NextRequest) {
       }
 
       case "suppress-rule": {
-        const { alertRuleId, reason, endsAt } = body;
-        if (!alertRuleId) {
+        // Accept alertRuleId OR ruleId (older clients send ruleId)
+        const ruleKeyId: string | undefined = body.alertRuleId || body.ruleId;
+        const { reason, endsAt, startsAt } = body;
+        if (!ruleKeyId) {
           return NextResponse.json({ error: "Rule ID is required" }, { status: 400 });
         }
         const user = await db.user.findUnique({ where: { id: userId }, select: { name: true } });
         const suppression = await db.alertSuppression.create({
           data: {
-            alertRuleId,
+            alertRuleId: ruleKeyId,
             reason: reason || "",
-            suppressedBy: user?.name || "Unknown",
-            startsAt: new Date(),
+            suppressedBy: user?.name || body.suppressedBy || "Unknown",
+            startsAt: startsAt ? new Date(startsAt) : new Date(),
             endsAt: endsAt ? new Date(endsAt) : null,
           },
         });
@@ -527,20 +537,53 @@ export async function POST(request: NextRequest) {
       }
 
       case "unsuppress-rule": {
-        const { alertRuleId } = body;
-        if (!alertRuleId) {
-          return NextResponse.json({ error: "Rule ID is required" }, { status: 400 });
+        // Accept suppressionId (lift exactly one) OR alertRuleId/ruleId (lift all active for rule)
+        const suppressionId: string | undefined = body.suppressionId;
+        const ruleIdKey: string | undefined = body.alertRuleId || body.ruleId;
+        if (!suppressionId && !ruleIdKey) {
+          return NextResponse.json({ error: "suppressionId or ruleId is required" }, { status: 400 });
         }
-        await db.alertSuppression.deleteMany({
-          where: {
-            alertRuleId,
-            AND: [
-              { startsAt: { lte: new Date() } },
-              { OR: [{ endsAt: null }, { endsAt: { gte: new Date() } }] },
-            ],
+        if (suppressionId) {
+          await db.alertSuppression.delete({ where: { id: suppressionId } }).catch(() => null);
+        } else {
+          await db.alertSuppression.deleteMany({
+            where: {
+              alertRuleId: ruleIdKey,
+              AND: [
+                { startsAt: { lte: new Date() } },
+                { OR: [{ endsAt: null }, { endsAt: { gte: new Date() } }] },
+              ],
+            },
+          });
+        }
+        return NextResponse.json({ success: true, message: "Suppression removed" });
+      }
+
+      case "extend-suppression": {
+        const { suppressionId, endsAt, reason } = body;
+        if (!suppressionId) {
+          return NextResponse.json({ error: "suppressionId is required" }, { status: 400 });
+        }
+        const existing = await db.alertSuppression.findUnique({ where: { id: suppressionId } });
+        if (!existing) {
+          return NextResponse.json({ error: "Suppression not found" }, { status: 404 });
+        }
+        const extended = await db.alertSuppression.update({
+          where: { id: suppressionId },
+          data: {
+            endsAt: endsAt ? new Date(endsAt) : null,
+            reason: reason !== undefined ? reason : existing.reason,
           },
         });
-        return NextResponse.json({ success: true, message: "Suppression removed" });
+        return NextResponse.json({ success: true, data: extended });
+      }
+
+      case "cleanup-suppressions": {
+        // Delete suppressions whose window has already ended
+        const result = await db.alertSuppression.deleteMany({
+          where: { endsAt: { not: null, lt: new Date() } },
+        });
+        return NextResponse.json({ success: true, count: result.count });
       }
 
       case "add-comment": {

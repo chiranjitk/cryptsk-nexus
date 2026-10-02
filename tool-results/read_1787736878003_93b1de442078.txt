@@ -1,0 +1,1672 @@
+     1→// ============================================================================
+     2→// Cryptsk — IPS (Intrusion Prevention System) Detection Daemon
+     3→// Port: 3030 | Detection engine runs every 5 seconds
+     4→// Uses conntrack parsing, nftables integration, threat scoring, WebSocket alerts
+     5→// ============================================================================
+     6→
+     7→import { PrismaClient } from "@prisma/client";
+     8→import { requireAuth, corsHeaders, optionalAuth } from "../shared/auth.js";
+     9→import { createLogger } from "../shared/logger.js";
+    10→
+    11→// ─── Logger & Prisma Setup ────────────────────────────────────────────────
+    12→const log = createLogger("ips-daemon");
+    13→const prisma = new PrismaClient({
+    14→  datasourceUrl:
+    15→    process.env.DATABASE_URL || "postgresql://z:Cryptsk2026@localhost:5432/ispplatform",
+    16→});
+    17→
+    18→const SERVICE_PORT = 3030;
+    19→
+    20→// ─── Shell Command Helper ─────────────────────────────────────────────────
+    21→interface ShellResult {
+    22→  success: boolean;
+    23→  stdout: string;
+    24→  stderr: string;
+    25→  exitCode: number;
+    26→}
+    27→
+    28→async function runShell(
+    29→  cmd: string,
+    30→  args: string[],
+    31→  timeoutMs = 10000
+    32→): Promise<ShellResult> {
+    33→  try {
+    34→    const proc = Bun.spawn([cmd, ...args], {
+    35→      stdout: "pipe",
+    36→      stderr: "pipe",
+    37→    });
+    38→    const timeout = setTimeout(() => proc.kill(), timeoutMs);
+    39→    const [stdout, stderr] = await Promise.all([
+    40→      new Response(proc.stdout).text(),
+    41→      new Response(proc.stderr).text(),
+    42→    ]);
+    43→    clearTimeout(timeout);
+    44→    const exitCode = await proc.exited;
+    45→    return { success: exitCode === 0, stdout, stderr, exitCode };
+    46→  } catch (err: any) {
+    47→    return {
+    48→      success: false,
+    49→      stdout: "",
+    50→      stderr: err.message || "Command not found or failed",
+    51→      exitCode: -1,
+    52→    };
+    53→  }
+    54→}
+    55→
+    56→// ─── JSON Helpers ─────────────────────────────────────────────────────────
+    57→function json(data: unknown, status = 200) {
+    58→  return new Response(JSON.stringify(data, (_, v) => typeof v === "bigint" ? v.toString() : v), {
+    59→    status,
+    60→    headers: { "Content-Type": "application/json", ...corsHeaders },
+    61→  });
+    62→}
+    63→
+    64→function jsonErr(message: string, status = 400) {
+    65→  return json({ success: false, error: message }, status);
+    66→}
+    67→
+    68→// ─── Daemon State ─────────────────────────────────────────────────────────
+    69→const startTime = Date.now();
+    70→let lastDetectionRun: Date | null = null;
+    71→let detectionInterval: ReturnType<typeof setInterval> | null = null;
+    72→let isShuttingDown = false;
+    73→
+    74→// WebSocket clients
+    75→const wsClients: Set<any> = new Set();
+    76→
+    77→function broadcastAlert(event: any) {
+    78→  const msg = JSON.stringify({ type: "alert", data: event });
+    79→  for (const client of wsClients) {
+    80→    try {
+    81→      client.send(msg);
+    82→    } catch {
+    83→      wsClients.delete(client);
+    84→    }
+    85→  }
+    86→}
+    87→
+    88→// ─── In-Memory Threat Scores ─────────────────────────────────────────────
+    89→const threatScores: Map<string, number> = new Map();
+    90→
+    91→function addThreatScore(ip: string, points: number): number {
+    92→  const current = threatScores.get(ip) || 0;
+    93→  const newScore = Math.min(100, current + points);
+    94→  threatScores.set(ip, newScore);
+    95→  return newScore;
+    96→}
+    97→
+    98→function getThreatScore(ip: string): number {
+    99→  return threatScores.get(ip) || 0;
+   100→}
+   101→
+   102→// ─── Sliding Window Tracking ──────────────────────────────────────────────
+   103→interface ConnectionEntry {
+   104→  srcIp: string;
+   105→  dstIp: string;
+   106→  dstPort: number;
+   107→  protocol: string;
+   108→  state: string;
+   109→  bytes: number;
+   110→  packets: number;
+   111→  timestamp: number;
+   112→}
+   113→
+   114→// Per-IP port scan tracking
+   115→const portScanTracker: Map<string, { ports: Set<number>; timestamps: number[] }> = new Map();
+   116→
+   117→// Per-IP connection tracking
+   118→const connectionTracker: Map<string, Set<string>> = new Map();
+   119→
+   120→// Per-IP bandwidth tracking
+   121→const bandwidthTracker: Map<string, { bytes: number; timestamps: number[] }> = new Map();
+   122→
+   123→// Per-IP DNS query tracking
+   124→const dnsTracker: Map<string, { count: number; timestamps: number[] }> = new Map();
+   125→
+   126→// Per-IP SYN tracking
+   127→const synTracker: Map<string, { count: number; timestamps: number[] }> = new Map();
+   128→
+   129→// Per-IP UDP tracking
+   130→const udpTracker: Map<string, { count: number; timestamps: number[] }> = new Map();
+   131→
+   132→// Per-IP ICMP tracking
+   133→const icmpTracker: Map<string, { count: number; timestamps: number[] }> = new Map();
+   134→
+   135→// Per-IP brute force tracking
+   136→const bruteForceTracker: Map<string, { count: number; timestamps: number[] }> = new Map();
+   137→
+   138→// ARP tracking
+   139→const arpTracker: Map<string, { macs: Set<string>; timestamps: number[] }> = new Map();
+   140→
+   141→// ─── nftables Helpers ─────────────────────────────────────────────────────
+   142→const NFT_TABLE = "ips";
+   143→const NFT_BLOCKED_SET = "blocked_ips";
+   144→const NFT_MONITORED_SET = "monitored_ips";
+   145→const NFT_WHITELISTED_SET = "whitelisted_ips";
+   146→
+   147→async function nftRun(args: string[], timeoutMs = 5000): Promise<ShellResult> {
+   148→  return runShell("nft", args, timeoutMs);
+   149→}
+   150→
+   151→async function nftAddElement(setName: string, element: string, timeoutSec?: number): Promise<void> {
+   152→  const args = ["add", "element", "inet", NFT_TABLE, setName, `{ ${element} }`];
+   153→  if (timeoutSec) {
+   154→    args.splice(-2, 0, `timeout ${timeoutSec}s`);
+   155→  }
+   156→  const result = await nftRun(args);
+   157→  if (!result.success) {
+   158→    log.warn("nft add element failed", { setName, element, stderr: result.stderr });
+   159→  }
+   160→}
+   161→
+   162→async function nftDeleteElement(setName: string, element: string): Promise<void> {
+   163→  const result = await nftRun(["delete", "element", "inet", NFT_TABLE, setName, `{ ${element} }`]);
+   164→  if (!result.success) {
+   165→    log.warn("nft delete element failed", { setName, element, stderr: result.stderr });
+   166→  }
+   167→}
+   168→
+   169→async function nftAddRule(table: string, chain: string, rule: string): Promise<number> {
+   170→  const result = await nftRun(["add", "rule", "inet", table, chain, ...rule.split(" ")]);
+   171→  if (!result.success) {
+   172→    log.warn("nft add rule failed", { table, chain, rule, stderr: result.stderr });
+   173→    return -1;
+   174→  }
+   175→  // Get handle of last added rule
+   176→  const listResult = await nftRun(["-a", "list", "chain", "inet", table, chain]);
+   177→  if (listResult.success) {
+   178→    const lines = listResult.stdout.split("\n");
+   179→    for (let i = lines.length - 1; i >= 0; i--) {
+   180→      const handleMatch = lines[i].match(/handle (\d+)/);
+   181→      if (handleMatch) return parseInt(handleMatch[1]);
+   182→    }
+   183→  }
+   184→  return 0;
+   185→}
+   186→
+   187→async function nftDeleteRule(table: string, chain: string, handle: number): Promise<void> {
+   188→  await nftRun(["delete", "rule", "inet", table, chain, "handle", String(handle)]);
+   189→}
+   190→
+   191→async function nftListSet(setName: string): Promise<string[]> {
+   192→  const result = await nftRun(["list", "set", "inet", NFT_TABLE, setName]);
+   193→  if (!result.success) return [];
+   194→  const elements: string[] = [];
+   195→  const lines = result.stdout.split("\n");
+   196→  for (const line of lines) {
+   197→    const match = line.match(/^\s+([0-9.]+)/);
+   198→    if (match) elements.push(match[1]);
+   199→  }
+   200→  return elements;
+   201→}
+   202→
+   203→async function nftInitTable(): Promise<{ success: boolean; output: string }> {
+   204→  const fullScript = `
+   205→table inet ips {
+   206→  set blocked_ips { type ipv4_addr; flags timeout; }
+   207→  set monitored_ips { type ipv4_addr; }
+   208→  set whitelisted_ips { type ipv4_addr; }
+   209→
+   210→  chain input {
+   211→    type filter hook input priority 0; policy accept;
+   212→    ip saddr @blocked_ips drop
+   213→  }
+   214→
+   215→  chain forward {
+   216→    type filter hook forward priority 0; policy accept;
+   217→    ip saddr @blocked_ips drop
+   218→    ip daddr @blocked_ips drop
+   219→  }
+   220→}`;
+   221→  // Flush existing table first
+   222→  await nftRun(["flush", "table", "inet", NFT_TABLE]).catch(() => {});
+   223→  await nftRun(["delete", "table", "inet", NFT_TABLE]).catch(() => {});
+   224→  const result = await runShell("nft", ["-f", "-"], 5000);
+   225→  // Use echo to pipe the script
+   226→  const echoResult = await runShell("bash", ["-c", `echo '${fullScript}' | nft -f -`], 10000);
+   227→  if (echoResult.success) {
+   228→    log.info("nftables IPS table initialized successfully");
+   229→    return { success: true, output: echoResult.stdout };
+   230→  } else {
+   231→    log.warn("nftables init failed (may need root)", { stderr: echoResult.stderr });
+   232→    return { success: false, output: echoResult.stderr };
+   233→  }
+   234→}
+   235→
+   236→// ─── Block Duration to Seconds ────────────────────────────────────────────
+   237→function blockDurationToSeconds(duration: string): number {
+   238→  const map: Record<string, number> = {
+   239→    TEMP_5M: 300,
+   240→    TEMP_15M: 900,
+   241→    TEMP_30M: 1800,
+   242→    TEMP_1H: 3600,
+   243→    TEMP_6H: 21600,
+   244→    TEMP_24H: 86400,
+   245→    PERMANENT: 0,
+   246→  };
+   247→  return map[duration] || 1800;
+   248→}
+   249→
+   250→// ─── Auto-Block Engine ────────────────────────────────────────────────────
+   251→async function autoBlockIp(
+   252→  sourceIp: string,
+   253→  reason: string,
+   254→  action: string,
+   255→  duration: string,
+   256→  alertId: string
+   257→): Promise<string | null> {
+   258→  try {
+   259→    const timeoutSec = blockDurationToSeconds(duration);
+   260→    const expiresAt = timeoutSec > 0 ? new Date(Date.now() + timeoutSec * 1000) : null;
+   261→
+   262→    // Add to nftables
+   263→    if (timeoutSec > 0) {
+   264→      await nftAddElement(NFT_BLOCKED_SET, sourceIp, timeoutSec);
+   265→    } else {
+   266→      await nftAddElement(NFT_BLOCKED_SET, sourceIp);
+   267→    }
+   268→
+   269→    // Create DB record
+   270→    const blockRule = await prisma.ipsBlockRule.create({
+   271→      data: {
+   272→        sourceIp,
+   273→        reason,
+   274→        action: action as any,
+   275→        duration: duration as any,
+   276→        alertId,
+   277→        expiresAt,
+   278→        isActive: true,
+   279→        createdBy: "system",
+   280→      },
+   281→    });
+   282→
+   283→    // Update alert
+   284→    await prisma.ipsAlert.update({
+   285→      where: { id: alertId },
+   286→      data: {
+   287→        actionTaken: `BLOCKED_${action}`,
+   288→        blockRuleId: blockRule.id,
+   289→      },
+   290→    });
+   291→
+   292→    log.warn("AUTO-BLOCK: IP blocked", {
+   293→      ip: sourceIp,
+   294→      reason,
+   295→      action,
+   296→      duration,
+   297→      blockRuleId: blockRule.id,
+   298→    });
+   299→
+   300→    return blockRule.id;
+   301→  } catch (err: any) {
+   302→    log.error("autoBlockIp failed", { ip: sourceIp, error: String(err) });
+   303→    return null;
+   304→  }
+   305→}
+   306→
+   307→// ─── Threat Score Action ──────────────────────────────────────────────────
+   308→async function applyThreatScoreAction(ip: string, score: number, reason: string, eventType: string): Promise<void> {
+   309→  if (score <= 20) {
+   310→    // Monitor only
+   311→    await nftAddElement(NFT_MONITORED_SET, ip).catch(() => {});
+   312→    log.info(`Threat monitor: ${ip} score ${score} (${eventType})`);
+   313→  } else if (score <= 40) {
+   314→    // Rate limit + notify
+   315→    await nftAddElement(NFT_MONITORED_SET, ip).catch(() => {});
+   316→    log.warn(`Threat rate-limit: ${ip} score ${score} (${eventType})`);
+   317→  } else if (score <= 70) {
+   318→    // Temp block 30 min
+   319→    const alert = await prisma.ipsAlert.findFirst({
+   320→      where: { sourceIp: ip, eventType: eventType as any },
+   321→      orderBy: { createdAt: "desc" },
+   322→    });
+   323→    if (alert) {
+   324→      await autoBlockIp(ip, `Threat score ${score} - ${reason}`, "DROP", "TEMP_30M", alert.id);
+   325→    }
+   326→  } else {
+   327→    // Permanent block
+   328→    const alert = await prisma.ipsAlert.findFirst({
+   329→      where: { sourceIp: ip, eventType: eventType as any },
+   330→      orderBy: { createdAt: "desc" },
+   331→    });
+   332→    if (alert) {
+   333→      await autoBlockIp(ip, `Critical threat score ${score} - ${reason}`, "DROP", "PERMANENT", alert.id);
+   334→    }
+   335→  }
+   336→}
+   337→
+   338→// ─── Conntrack Parser ─────────────────────────────────────────────────────
+   339→interface ConntrackEntry {
+   340→  srcIp: string;
+   341→  dstIp: string;
+   342→  srcPort: number;
+   343→  dstPort: number;
+   344→  protocol: number;
+   345→  state: string;
+   346→  bytes: number;
+   347→  packets: number;
+   348→}
+   349→
+   350→function parseConntrackLine(line: string): ConntrackEntry | null {
+   351→  try {
+   352→    const srcMatch = line.match(/src=(\S+)/g);
+   353→    const dstMatch = line.match(/dst=(\S+)/g);
+   354→    const sportMatch = line.match(/sport=(\d+)/g);
+   355→    const dportMatch = line.match(/dport=(\d+)/g);
+   356→    const bytesMatch = line.match(/bytes=(\d+)/g);
+   357→    const packetsMatch = line.match(/packets=(\d+)/g);
+   358→    const protoMatch = line.match(/^\s*\w+\s+\d+\s+(\w+)/);
+   359→    const stateMatch = line.match(/(\w+)\s+src=/);
+   360→
+   361→    if (!srcMatch || srcMatch.length < 2 || !dstMatch || dstMatch.length < 2) return null;
+   362→
+   363→    return {
+   364→      srcIp: srcMatch[0].replace("src=", ""),
+   365→      dstIp: dstMatch[0].replace("dst=", ""),
+   366→      srcPort: sportMatch && sportMatch.length > 0 ? parseInt(sportMatch[0].replace("sport=", "")) : 0,
+   367→      dstPort: dportMatch && dportMatch.length > 0 ? parseInt(dportMatch[0].replace("dport=", "")) : 0,
+   368→      protocol: protoMatch ? (protoMatch[1] === "tcp" ? 6 : protoMatch[1] === "udp" ? 17 : protoMatch[1] === "icmp" ? 1 : 0) : 0,
+   369→      state: stateMatch ? stateMatch[1] : "",
+   370→      bytes: bytesMatch && bytesMatch.length > 1 ? parseInt(bytesMatch[1].replace("bytes=", "")) : 0,
+   371→      packets: packetsMatch && packetsMatch.length > 1 ? parseInt(packetsMatch[1].replace("packets=", "")) : 0,
+   372→    };
+   373→  } catch {
+   374→    return null;
+   375→  }
+   376→}
+   377→
+   378→async function readConntrack(): Promise<ConntrackEntry[]> {
+   379→  // Try /proc/net/nf_conntrack first
+   380→  try {
+   381→    const result = await runShell("cat", ["/proc/net/nf_conntrack"], 3000);
+   382→    if (result.success && result.stdout.trim()) {
+   383→      const entries: ConntrackEntry[] = [];
+   384→      for (const line of result.stdout.split("\n")) {
+   385→        const entry = parseConntrackLine(line);
+   386→        if (entry) entries.push(entry);
+   387→      }
+   388→      return entries;
+   389→    }
+   390→  } catch {}
+   391→
+   392→  // Fallback: conntrack -L command
+   393→  try {
+   394→    const result = await runShell("conntrack", ["-L"], 5000);
+   395→    if (result.success && result.stdout.trim()) {
+   396→      const entries: ConntrackEntry[] = [];
+   397→      for (const line of result.stdout.split("\n")) {
+   398→        const entry = parseConntrackLine(line);
+   399→        if (entry) entries.push(entry);
+   400→      }
+   401→      return entries;
+   402→    }
+   403→  } catch {}
+   404→
+   405→  // Fallback: generate simulated data for demo
+   406→  log.info("Using simulated conntrack data (no access to /proc/net/nf_conntrack or conntrack command)");
+   407→  return generateSimulatedData();
+   408→}
+   409→
+   410→function generateSimulatedData(): ConntrackEntry[] {
+   411→  const entries: ConntrackEntry[] = [];
+   412→  const now = Date.now();
+   413→  const sampleIps = [
+   414→    "192.168.1.100", "10.0.0.5", "172.16.0.50", "192.168.1.200",
+   415→    "10.0.0.10", "203.0.113.45", "198.51.100.22", "192.168.1.150",
+   416→    "10.0.0.99", "172.16.0.1"
+   417→  ];
+   418→  const destIps = ["8.8.8.8", "1.1.1.1", "142.250.80.46", "157.240.1.35", "52.85.132.99"];
+   419→  const states = ["ESTABLISHED", "TIME_WAIT", "CLOSE_WAIT", "SYN_SENT", "SYN_RECV", "FIN_WAIT2"];
+   420→
+   421→  // Normal traffic
+   422→  for (let i = 0; i < 50; i++) {
+   423→    const srcIp = sampleIps[Math.floor(Math.random() * 5)];
+   424→    entries.push({
+   425→      srcIp,
+   426→      dstIp: destIps[Math.floor(Math.random() * destIps.length)],
+   427→      srcPort: 30000 + Math.floor(Math.random() * 30000),
+   428→      dstPort: [80, 443, 53, 8080][Math.floor(Math.random() * 4)],
+   429→      protocol: Math.random() > 0.3 ? 6 : 17,
+   430→      state: states[Math.floor(Math.random() * 3)],
+   431→      bytes: Math.floor(Math.random() * 100000),
+   432→      packets: Math.floor(Math.random() * 500),
+   433→    });
+   434→  }
+   435→
+   436→  // Simulated port scan (src=10.0.0.99)
+   437→  for (let port = 1; port <= 25; port++) {
+   438→    entries.push({
+   439→      srcIp: "10.0.0.99",
+   440→      dstIp: "192.168.1.1",
+   441→      srcPort: 50000 + port,
+   442→      dstPort: port,
+   443→      protocol: 6,
+   444→      state: Math.random() > 0.5 ? "SYN_SENT" : "ESTABLISHED",
+   445→      bytes: 60,
+   446→      packets: 1,
+   447→    });
+   448→  }
+   449→
+   450→  // Simulated SYN flood (src=203.0.113.45)
+   451→  for (let i = 0; i < 200; i++) {
+   452→    entries.push({
+   453→      srcIp: "203.0.113.45",
+   454→      dstIp: "192.168.1.1",
+   455→      srcPort: 40000 + i,
+   456→      dstPort: 80,
+   457→      protocol: 6,
+   458→      state: "SYN_SENT",
+   459→      bytes: 60,
+   460→      packets: 1,
+   461→    });
+   462→  }
+   463→
+   464→  // Simulated DNS amplification (src=198.51.100.22)
+   465→  for (let i = 0; i < 150; i++) {
+   466→    entries.push({
+   467→      srcIp: "198.51.100.22",
+   468→      dstIp: "8.8.8.8",
+   469→      srcPort: 50000 + (i % 100),
+   470→      dstPort: 53,
+   471→      protocol: 17,
+   472→      state: "",
+   473→      bytes: 512,
+   474→      packets: 1,
+   475→    });
+   476→  }
+   477→
+   478→  // Simulated malware C2 (src=172.16.0.50)
+   479→  entries.push({
+   480→    srcIp: "172.16.0.50",
+   481→    dstIp: "10.10.10.10",
+   482→    srcPort: 55555,
+   483→    dstPort: 4444,
+   484→    protocol: 6,
+   485→    state: "ESTABLISHED",
+   486→    bytes: 5000,
+   487→    packets: 20,
+   488→  });
+   489→
+   490→  // Simulated bandwidth abuse (src=10.0.0.10)
+   491→  for (let i = 0; i < 30; i++) {
+   492→    entries.push({
+   493→      srcIp: "10.0.0.10",
+   494→      dstIp: destIps[Math.floor(Math.random() * destIps.length)],
+   495→      srcPort: 30000 + i,
+   496→      dstPort: 443,
+   497→      protocol: 6,
+   498→      state: "ESTABLISHED",
+   499→      bytes: 5000000 + Math.floor(Math.random() * 5000000),
+   500→      packets: 5000 + Math.floor(Math.random() * 5000),
+   501→    });
+   502→  }
+   503→
+   504→  return entries;
+   505→}
+   506→
+   507→// ─── ARP Table Parser ─────────────────────────────────────────────────────
+   508→async function readArpTable(): Promise<{ ip: string; mac: string }[]> {
+   509→  try {
+   510→    const result = await runShell("cat", ["/proc/net/arp"], 3000);
+   511→    if (result.success && result.stdout.trim()) {
+   512→      const entries: { ip: string; mac: string }[] = [];
+   513→      const lines = result.stdout.split("\n");
+   514→      for (let i = 1; i < lines.length; i++) {
+   515→        const parts = lines[i].trim().split(/\s+/);
+   516→        if (parts.length >= 4 && parts[3] !== "00:00:00:00:00:00") {
+   517→          entries.push({ ip: parts[0], mac: parts[3] });
+   518→        }
+   519→      }
+   520→      return entries;
+   521→    }
+   522→  } catch {}
+   523→  return [];
+   524→}
+   525→
+   526→// ─── Detection Rules Cache ────────────────────────────────────────────────
+   527→let cachedRules: any[] = [];
+   528→let rulesCacheTime = 0;
+   529→
+   530→async function getDetectionRules(): Promise<any[]> {
+   531→  const now = Date.now();
+   532→  if (cachedRules.length > 0 && now - rulesCacheTime < 30000) {
+   533→    return cachedRules;
+   534→  }
+   535→  try {
+   536→    const dbRules = await prisma.ipsDetectionRule.findMany({
+   537→      where: { enabled: true },
+   538→      orderBy: { sortOrder: "asc" },
+   539→    });
+   540→    if (dbRules.length > 0) {
+   541→      cachedRules = dbRules;
+   542→    } else if (cachedRules.length === 0) {
+   543→      // Use default rules when DB has none
+   544→      cachedRules = getDefaultRules();
+   545→      log.info("Using default detection rules (no rules in DB)");
+   546→    }
+   547→    rulesCacheTime = now;
+   548→  } catch (err) {
+   549→    log.warn("Failed to load detection rules from DB", { error: String(err) });
+   550→    if (cachedRules.length === 0) {
+   551→      cachedRules = getDefaultRules();
+   552→    }
+   553→    rulesCacheTime = now;
+   554→  }
+   555→  return cachedRules;
+   556→}
+   557→
+   558→function getDefaultRules(): any[] {
+   559→  return [
+   560→    { id: "default-port-scan", name: "Port Scan Detection", eventType: "PORT_SCAN", enabled: true, thresholdConn: 20, windowSeconds: 60, autoBlock: false, blockAction: "DROP", blockDuration: "TEMP_30M", scoreImpact: 25, targetPorts: "", targetProto: "tcp", sourceExclude: "" },
+   561→    { id: "default-syn-flood", name: "SYN Flood Detection", eventType: "SYN_FLOOD", enabled: true, thresholdPps: 1000, windowSeconds: 1, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_30M", scoreImpact: 40, targetPorts: "", targetProto: "tcp", sourceExclude: "" },
+   562→    { id: "default-udp-flood", name: "UDP Flood Detection", eventType: "UDP_FLOOD", enabled: true, thresholdConn: 5000, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_1H", scoreImpact: 40, targetPorts: "", targetProto: "udp", sourceExclude: "" },
+   563→    { id: "default-icmp-flood", name: "ICMP Flood Detection", eventType: "ICMP_FLOOD", enabled: true, thresholdPps: 1000, windowSeconds: 1, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_30M", scoreImpact: 30, targetPorts: "", targetProto: "icmp", sourceExclude: "" },
+   564→    { id: "default-conn-flood", name: "Connection Flood Detection", eventType: "CONNECTION_FLOOD", enabled: true, thresholdConn: 500, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_1H", scoreImpact: 35, targetPorts: "", targetProto: "", sourceExclude: "" },
+   565→    { id: "default-bandwidth", name: "Bandwidth Abuse Detection", eventType: "BANDWIDTH_ABUSE", enabled: true, thresholdBps: 104857600, windowSeconds: 60, autoBlock: false, blockAction: "RATE_LIMIT", blockDuration: "TEMP_6H", scoreImpact: 20, targetPorts: "", targetProto: "", sourceExclude: "" },
+   566→    { id: "default-dns-amp", name: "DNS Amplification Detection", eventType: "DNS_AMPLIFICATION", enabled: true, thresholdConn: 500, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_1H", scoreImpact: 35, targetPorts: "53", targetProto: "udp", sourceExclude: "" },
+   567→    { id: "default-arp-poison", name: "ARP Poisoning Detection", eventType: "ARP_POISON", enabled: true, thresholdConn: 3, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_24H", scoreImpact: 50, targetPorts: "", targetProto: "", sourceExclude: "" },
+   568→    { id: "default-malware-c2", name: "Malware C2 Detection", eventType: "MALWARE_C2", enabled: true, thresholdConn: 1, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_24H", scoreImpact: 60, targetPorts: "4444,5555,6666,6667,8888,31337,12345", targetProto: "tcp", sourceExclude: "" },
+   569→    { id: "default-brute-force", name: "Brute Force Detection", eventType: "BRUTE_FORCE", enabled: true, thresholdConn: 50, windowSeconds: 60, autoBlock: true, blockAction: "DROP", blockDuration: "TEMP_1H", scoreImpact: 30, targetPorts: "", targetProto: "tcp", sourceExclude: "" },
+   570→  ];
+   571→}
+   572→
+   573→// ─── Create Alert Helper ──────────────────────────────────────────────────
+   574→async function createAlert(entry: {
+   575→  eventType: string;
+   576→  severity: string;
+   577→  sourceIp: string;
+   578→  sourceMac?: string;
+   579→  destIp?: string;
+   580→  destPort?: number;
+   581→  protocol?: string;
+   582→  pps?: number;
+   583→  bps?: number;
+   584→  connCount?: number;
+   585→  threatScore: number;
+   586→  ruleId?: string;
+   587→  details?: string;
+   588→}): Promise<any> {
+   589→  try {
+   590→    // Only set ruleId if it refers to a real DB rule (starts with 'c')
+   591→    const ruleId = entry.ruleId && entry.ruleId.startsWith("c") ? entry.ruleId : null;
+   592→
+   593→    const alert = await prisma.ipsAlert.create({
+   594→      data: {
+   595→        eventType: entry.eventType as any,
+   596→        severity: entry.severity as any,
+   597→        status: "NEW",
+   598→        sourceIp: entry.sourceIp,
+   599→        sourceMac: entry.sourceMac || "",
+   600→        destIp: entry.destIp || "",
+   601→        destPort: entry.destPort || 0,
+   602→        protocol: entry.protocol || "",
+   603→        pps: entry.pps || 0,
+   604→        bps: entry.bps || 0,
+   605→        connCount: entry.connCount || 0,
+   606→        threatScore: entry.threatScore,
+   607→        ruleId,
+   608→        details: entry.details || "",
+   609→      },
+   610→    });
+   611→
+   612→    log.info("ALERT", {
+   613→      type: entry.eventType,
+   614→      severity: entry.severity,
+   615→      ip: entry.sourceIp,
+   616→      score: entry.threatScore,
+   617→      alertId: alert.id,
+   618→    });
+   619→
+   620→    // Broadcast via WebSocket
+   621→    broadcastAlert({ ...entry, id: alert.id, createdAt: alert.createdAt });
+   622→
+   623→    return alert;
+   624→  } catch (err: any) {
+   625→    log.error("createAlert failed", { error: String(err) });
+   626→    return null;
+   627→  }
+   628→}
+   629→
+   630→// ─── Detection Engine ─────────────────────────────────────────────────────
+   631→const MALWARE_C2_PORTS = new Set([4444, 5555, 6666, 6667, 8888, 31337, 12345]);
+   632→
+   633→async function runDetectionCycle() {
+   634→  if (isShuttingDown) return;
+   635→
+   636→  const cycleStart = Date.now();
+   637→  try {
+   638→    const entries = await readConntrack();
+   639→    const rules = await getDetectionRules();
+   640→    const ruleMap = new Map(rules.map((r) => [r.eventType, r]));
+   641→    const now = cycleStart;
+   642→    const window60s = now - 60000;
+   643→
+   644→    // ─── 1. Port Scan Detection ─────────────────────────────────
+   645→    const portScanRule = ruleMap.get("PORT_SCAN");
+   646→    if (portScanRule) {
+   647→      const tcpNewConns = entries.filter((e) => e.protocol === 6);
+   648→      for (const entry of tcpNewConns) {
+   649→        if (!portScanTracker.has(entry.srcIp)) {
+   650→          portScanTracker.set(entry.srcIp, { ports: new Set(), timestamps: [] });
+   651→        }
+   652→        const tracker = portScanTracker.get(entry.srcIp)!;
+   653→        tracker.ports.add(entry.dstPort);
+   654→        tracker.timestamps.push(now);
+   655→      }
+   656→      // Clean old entries and check thresholds
+   657→      for (const [ip, tracker] of portScanTracker) {
+   658→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   659→        if (tracker.timestamps.length < 2) {
+   660→          tracker.ports.clear();
+   661→        }
+   662→        if (tracker.ports.size > (portScanRule.thresholdConn || 20)) {
+   663→          const score = addThreatScore(ip, portScanRule.scoreImpact || 25);
+   664→          await createAlert({
+   665→            eventType: "PORT_SCAN",
+   666→            severity: score > 40 ? "HIGH" : "MEDIUM",
+   667→            sourceIp: ip,
+   668→            destPort: 0,
+   669→            protocol: "tcp",
+   670→            connCount: tracker.ports.size,
+   671→            threatScore: score,
+   672→            ruleId: portScanRule.id,
+   673→            details: `${tracker.ports.size} distinct ports scanned in 60s`,
+   674→          });
+   675→          if (portScanRule.autoBlock) {
+   676→            const alert = await prisma.ipsAlert.findFirst({
+   677→              where: { sourceIp: ip, eventType: "PORT_SCAN" as any },
+   678→              orderBy: { createdAt: "desc" },
+   679→            });
+   680→            if (alert) {
+   681→              await autoBlockIp(ip, "Port scan detected", portScanRule.blockAction, portScanRule.blockDuration, alert.id);
+   682→            }
+   683→          }
+   684→          await applyThreatScoreAction(ip, score, "Port scan", "PORT_SCAN");
+   685→          tracker.ports.clear();
+   686→          tracker.timestamps = [];
+   687→        }
+   688→      }
+   689→    }
+   690→
+   691→    // ─── 2. SYN Flood Detection ──────────────────────────────────
+   692→    const synFloodRule = ruleMap.get("SYN_FLOOD");
+   693→    if (synFloodRule) {
+   694→      const synEntries = entries.filter((e) => e.protocol === 6 && (e.state === "SYN_SENT" || e.state === "SYN_RECV"));
+   695→      for (const entry of synEntries) {
+   696→        if (!synTracker.has(entry.srcIp)) {
+   697→          synTracker.set(entry.srcIp, { count: 0, timestamps: [] });
+   698→        }
+   699→        synTracker.get(entry.srcIp)!.count++;
+   700→        synTracker.get(entry.srcIp)!.timestamps.push(now);
+   701→      }
+   702→      for (const [ip, tracker] of synTracker) {
+   703→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   704→        tracker.count = tracker.timestamps.length;
+   705→        if (tracker.count > (synFloodRule.thresholdPps || 1000)) {
+   706→          const score = addThreatScore(ip, synFloodRule.scoreImpact || 40);
+   707→          await createAlert({
+   708→            eventType: "SYN_FLOOD",
+   709→            severity: score > 40 ? "CRITICAL" : "HIGH",
+   710→            sourceIp: ip,
+   711→            destPort: 80,
+   712→            protocol: "tcp",
+   713→            pps: tracker.count,
+   714→            connCount: tracker.count,
+   715→            threatScore: score,
+   716→            ruleId: synFloodRule.id,
+   717→            details: `${tracker.count} SYN packets in window`,
+   718→          });
+   719→          if (synFloodRule.autoBlock) {
+   720→            const alert = await prisma.ipsAlert.findFirst({
+   721→              where: { sourceIp: ip, eventType: "SYN_FLOOD" as any },
+   722→              orderBy: { createdAt: "desc" },
+   723→            });
+   724→            if (alert) {
+   725→              await autoBlockIp(ip, "SYN flood detected", synFloodRule.blockAction, synFloodRule.blockDuration, alert.id);
+   726→            }
+   727→          }
+   728→          await applyThreatScoreAction(ip, score, "SYN flood", "SYN_FLOOD");
+   729→          tracker.count = 0;
+   730→          tracker.timestamps = [];
+   731→        }
+   732→      }
+   733→    }
+   734→
+   735→    // ─── 3. UDP Flood Detection ──────────────────────────────────
+   736→    const udpFloodRule = ruleMap.get("UDP_FLOOD");
+   737→    if (udpFloodRule) {
+   738→      const udpEntries = entries.filter((e) => e.protocol === 17);
+   739→      for (const entry of udpEntries) {
+   740→        if (!udpTracker.has(entry.srcIp)) {
+   741→          udpTracker.set(entry.srcIp, { count: 0, timestamps: [] });
+   742→        }
+   743→        udpTracker.get(entry.srcIp)!.count++;
+   744→        udpTracker.get(entry.srcIp)!.timestamps.push(now);
+   745→      }
+   746→      for (const [ip, tracker] of udpTracker) {
+   747→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   748→        tracker.count = tracker.timestamps.length;
+   749→        if (tracker.count > (udpFloodRule.thresholdConn || 5000)) {
+   750→          const score = addThreatScore(ip, udpFloodRule.scoreImpact || 40);
+   751→          await createAlert({
+   752→            eventType: "UDP_FLOOD",
+   753→            severity: score > 40 ? "CRITICAL" : "HIGH",
+   754→            sourceIp: ip,
+   755→            protocol: "udp",
+   756→            connCount: tracker.count,
+   757→            threatScore: score,
+   758→            ruleId: udpFloodRule.id,
+   759→            details: `${tracker.count} UDP connections`,
+   760→          });
+   761→          if (udpFloodRule.autoBlock) {
+   762→            const alert = await prisma.ipsAlert.findFirst({
+   763→              where: { sourceIp: ip, eventType: "UDP_FLOOD" as any },
+   764→              orderBy: { createdAt: "desc" },
+   765→            });
+   766→            if (alert) {
+   767→              await autoBlockIp(ip, "UDP flood detected", udpFloodRule.blockAction, udpFloodRule.blockDuration, alert.id);
+   768→            }
+   769→          }
+   770→          await applyThreatScoreAction(ip, score, "UDP flood", "UDP_FLOOD");
+   771→          tracker.count = 0;
+   772→          tracker.timestamps = [];
+   773→        }
+   774→      }
+   775→    }
+   776→
+   777→    // ─── 4. ICMP Flood Detection ─────────────────────────────────
+   778→    const icmpFloodRule = ruleMap.get("ICMP_FLOOD");
+   779→    if (icmpFloodRule) {
+   780→      const icmpEntries = entries.filter((e) => e.protocol === 1);
+   781→      for (const entry of icmpEntries) {
+   782→        if (!icmpTracker.has(entry.srcIp)) {
+   783→          icmpTracker.set(entry.srcIp, { count: 0, timestamps: [] });
+   784→        }
+   785→        icmpTracker.get(entry.srcIp)!.count++;
+   786→        icmpTracker.get(entry.srcIp)!.timestamps.push(now);
+   787→      }
+   788→      for (const [ip, tracker] of icmpTracker) {
+   789→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   790→        tracker.count = tracker.timestamps.length;
+   791→        if (tracker.count > (icmpFloodRule.thresholdPps || 1000)) {
+   792→          const score = addThreatScore(ip, icmpFloodRule.scoreImpact || 30);
+   793→          await createAlert({
+   794→            eventType: "ICMP_FLOOD",
+   795→            severity: score > 40 ? "CRITICAL" : "HIGH",
+   796→            sourceIp: ip,
+   797→            protocol: "icmp",
+   798→            pps: tracker.count,
+   799→            connCount: tracker.count,
+   800→            threatScore: score,
+   801→            ruleId: icmpFloodRule.id,
+   802→            details: `${tracker.count} ICMP packets`,
+   803→          });
+   804→          if (icmpFloodRule.autoBlock) {
+   805→            const alert = await prisma.ipsAlert.findFirst({
+   806→              where: { sourceIp: ip, eventType: "ICMP_FLOOD" as any },
+   807→              orderBy: { createdAt: "desc" },
+   808→            });
+   809→            if (alert) {
+   810→              await autoBlockIp(ip, "ICMP flood detected", icmpFloodRule.blockAction, icmpFloodRule.blockDuration, alert.id);
+   811→            }
+   812→          }
+   813→          await applyThreatScoreAction(ip, score, "ICMP flood", "ICMP_FLOOD");
+   814→          tracker.count = 0;
+   815→          tracker.timestamps = [];
+   816→        }
+   817→      }
+   818→    }
+   819→
+   820→    // ─── 5. Connection Flood ─────────────────────────────────────
+   821→    const connFloodRule = ruleMap.get("CONNECTION_FLOOD");
+   822→    if (connFloodRule) {
+   823→      const connByIp = new Map<string, Set<string>>();
+   824→      for (const entry of entries) {
+   825→        const key = `${entry.srcIp}-${entry.dstIp}:${entry.dstPort}`;
+   826→        if (!connByIp.has(entry.srcIp)) {
+   827→          connByIp.set(entry.srcIp, new Set());
+   828→        }
+   829→        connByIp.get(entry.srcIp)!.add(key);
+   830→      }
+   831→      for (const [ip, connSet] of connByIp) {
+   832→        if (connSet.size > (connFloodRule.thresholdConn || 500)) {
+   833→          const score = addThreatScore(ip, connFloodRule.scoreImpact || 35);
+   834→          await createAlert({
+   835→            eventType: "CONNECTION_FLOOD",
+   836→            severity: score > 40 ? "HIGH" : "MEDIUM",
+   837→            sourceIp: ip,
+   838→            connCount: connSet.size,
+   839→            threatScore: score,
+   840→            ruleId: connFloodRule.id,
+   841→            details: `${connSet.size} concurrent connections`,
+   842→          });
+   843→          if (connFloodRule.autoBlock) {
+   844→            const alert = await prisma.ipsAlert.findFirst({
+   845→              where: { sourceIp: ip, eventType: "CONNECTION_FLOOD" as any },
+   846→              orderBy: { createdAt: "desc" },
+   847→            });
+   848→            if (alert) {
+   849→              await autoBlockIp(ip, "Connection flood detected", connFloodRule.blockAction, connFloodRule.blockDuration, alert.id);
+   850→            }
+   851→          }
+   852→          await applyThreatScoreAction(ip, score, "Connection flood", "CONNECTION_FLOOD");
+   853→        }
+   854→      }
+   855→    }
+   856→
+   857→    // ─── 6. Bandwidth Abuse ──────────────────────────────────────
+   858→    const bwRule = ruleMap.get("BANDWIDTH_ABUSE");
+   859→    if (bwRule) {
+   860→      for (const entry of entries) {
+   861→        if (!bandwidthTracker.has(entry.srcIp)) {
+   862→          bandwidthTracker.set(entry.srcIp, { bytes: 0, timestamps: [] });
+   863→        }
+   864→        const tracker = bandwidthTracker.get(entry.srcIp)!;
+   865→        tracker.bytes += entry.bytes;
+   866→        tracker.timestamps.push(now);
+   867→      }
+   868→      for (const [ip, tracker] of bandwidthTracker) {
+   869→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   870→        // Decay bytes proportionally to remaining timestamps
+   871→        if (tracker.timestamps.length < 3) {
+   872→          tracker.bytes = 0;
+   873→        }
+   874→        if (tracker.bytes > (bwRule.thresholdBps || 104857600)) {
+   875→          const score = addThreatScore(ip, bwRule.scoreImpact || 20);
+   876→          await createAlert({
+   877→            eventType: "BANDWIDTH_ABUSE",
+   878→            severity: "MEDIUM",
+   879→            sourceIp: ip,
+   880→            bps: tracker.bytes,
+   881→            threatScore: score,
+   882→            ruleId: bwRule.id,
+   883→            details: `${(tracker.bytes / 1048576).toFixed(1)}MB transferred in 60s`,
+   884→          });
+   885→          await applyThreatScoreAction(ip, score, "Bandwidth abuse", "BANDWIDTH_ABUSE");
+   886→          tracker.bytes = 0;
+   887→          tracker.timestamps = [];
+   888→        }
+   889→      }
+   890→    }
+   891→
+   892→    // ─── 7. DNS Amplification ────────────────────────────────────
+   893→    const dnsRule = ruleMap.get("DNS_AMPLIFICATION");
+   894→    if (dnsRule) {
+   895→      const dnsEntries = entries.filter((e) => e.dstPort === 53 && e.protocol === 17);
+   896→      for (const entry of dnsEntries) {
+   897→        if (!dnsTracker.has(entry.srcIp)) {
+   898→          dnsTracker.set(entry.srcIp, { count: 0, timestamps: [] });
+   899→        }
+   900→        dnsTracker.get(entry.srcIp)!.count++;
+   901→        dnsTracker.get(entry.srcIp)!.timestamps.push(now);
+   902→      }
+   903→      for (const [ip, tracker] of dnsTracker) {
+   904→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   905→        tracker.count = tracker.timestamps.length;
+   906→        if (tracker.count > (dnsRule.thresholdConn || 500)) {
+   907→          const score = addThreatScore(ip, dnsRule.scoreImpact || 35);
+   908→          await createAlert({
+   909→            eventType: "DNS_AMPLIFICATION",
+   910→            severity: score > 40 ? "HIGH" : "MEDIUM",
+   911→            sourceIp: ip,
+   912→            destPort: 53,
+   913→            protocol: "udp",
+   914→            connCount: tracker.count,
+   915→            threatScore: score,
+   916→            ruleId: dnsRule.id,
+   917→            details: `${tracker.count} DNS queries in 60s`,
+   918→          });
+   919→          if (dnsRule.autoBlock) {
+   920→            const alert = await prisma.ipsAlert.findFirst({
+   921→              where: { sourceIp: ip, eventType: "DNS_AMPLIFICATION" as any },
+   922→              orderBy: { createdAt: "desc" },
+   923→            });
+   924→            if (alert) {
+   925→              await autoBlockIp(ip, "DNS amplification detected", dnsRule.blockAction, dnsRule.blockDuration, alert.id);
+   926→            }
+   927→          }
+   928→          await applyThreatScoreAction(ip, score, "DNS amplification", "DNS_AMPLIFICATION");
+   929→          tracker.count = 0;
+   930→          tracker.timestamps = [];
+   931→        }
+   932→      }
+   933→    }
+   934→
+   935→    // ─── 8. ARP Poisoning ────────────────────────────────────────
+   936→    const arpRule = ruleMap.get("ARP_POISON");
+   937→    if (arpRule) {
+   938→      const arpEntries = await readArpTable();
+   939→      for (const entry of arpEntries) {
+   940→        if (!arpTracker.has(entry.ip)) {
+   941→          arpTracker.set(entry.ip, { macs: new Set(), timestamps: [] });
+   942→        }
+   943→        const tracker = arpTracker.get(entry.ip)!;
+   944→        tracker.macs.add(entry.mac);
+   945→        tracker.timestamps.push(now);
+   946→      }
+   947→      for (const [ip, tracker] of arpTracker) {
+   948→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+   949→        if (tracker.timestamps.length < 2) {
+   950→          tracker.macs.clear();
+   951→        }
+   952→        if (tracker.macs.size > (arpRule.thresholdConn || 3)) {
+   953→          const score = addThreatScore(ip, arpRule.scoreImpact || 50);
+   954→          await createAlert({
+   955→            eventType: "ARP_POISON",
+   956→            severity: score > 40 ? "CRITICAL" : "HIGH",
+   957→            sourceIp: ip,
+   958→            connCount: tracker.macs.size,
+   959→            threatScore: score,
+   960→            ruleId: arpRule.id,
+   961→            details: `${tracker.macs.size} different MACs for IP ${ip} in 60s: ${[...tracker.macs].join(", ")}`,
+   962→          });
+   963→          if (arpRule.autoBlock) {
+   964→            const alert = await prisma.ipsAlert.findFirst({
+   965→              where: { sourceIp: ip, eventType: "ARP_POISON" as any },
+   966→              orderBy: { createdAt: "desc" },
+   967→            });
+   968→            if (alert) {
+   969→              await autoBlockIp(ip, "ARP poisoning detected", arpRule.blockAction, arpRule.blockDuration, alert.id);
+   970→            }
+   971→          }
+   972→          await applyThreatScoreAction(ip, score, "ARP poisoning", "ARP_POISON");
+   973→          tracker.macs.clear();
+   974→          tracker.timestamps = [];
+   975→        }
+   976→      }
+   977→    }
+   978→
+   979→    // ─── 9. Malware C2 ───────────────────────────────────────────
+   980→    const c2Rule = ruleMap.get("MALWARE_C2");
+   981→    if (c2Rule) {
+   982→      const c2Entries = entries.filter((e) => MALWARE_C2_PORTS.has(e.dstPort) && e.protocol === 6);
+   983→      for (const entry of c2Entries) {
+   984→        const score = addThreatScore(entry.srcIp, c2Rule.scoreImpact || 60);
+   985→        await createAlert({
+   986→          eventType: "MALWARE_C2",
+   987→          severity: score > 40 ? "CRITICAL" : "HIGH",
+   988→          sourceIp: entry.srcIp,
+   989→          destIp: entry.dstIp,
+   990→          destPort: entry.dstPort,
+   991→          protocol: "tcp",
+   992→          connCount: 1,
+   993→          threatScore: score,
+   994→          ruleId: c2Rule.id,
+   995→          details: `Connection to suspicious port ${entry.dstPort} (C2)`,
+   996→        });
+   997→        if (c2Rule.autoBlock) {
+   998→          const alert = await prisma.ipsAlert.findFirst({
+   999→            where: { sourceIp: entry.srcIp, eventType: "MALWARE_C2" as any, destPort: entry.dstPort },
+  1000→            orderBy: { createdAt: "desc" },
+  1001→          });
+  1002→          if (alert) {
+  1003→            await autoBlockIp(entry.srcIp, `Malware C2 on port ${entry.dstPort}`, c2Rule.blockAction, c2Rule.blockDuration, alert.id);
+  1004→          }
+  1005→        }
+  1006→        await applyThreatScoreAction(entry.srcIp, score, "Malware C2", "MALWARE_C2");
+  1007→      }
+  1008→    }
+  1009→
+  1010→    // ─── 10. Brute Force ─────────────────────────────────────────
+  1011→    const bfRule = ruleMap.get("BRUTE_FORCE");
+  1012→    if (bfRule) {
+  1013→      const synOnly = entries.filter((e) => e.protocol === 6 && e.state === "SYN_SENT");
+  1014→      for (const entry of synOnly) {
+  1015→        if (!bruteForceTracker.has(entry.srcIp)) {
+  1016→          bruteForceTracker.set(entry.srcIp, { count: 0, timestamps: [] });
+  1017→        }
+  1018→        bruteForceTracker.get(entry.srcIp)!.count++;
+  1019→        bruteForceTracker.get(entry.srcIp)!.timestamps.push(now);
+  1020→      }
+  1021→      for (const [ip, tracker] of bruteForceTracker) {
+  1022→        tracker.timestamps = tracker.timestamps.filter((t) => t > window60s);
+  1023→        tracker.count = tracker.timestamps.length;
+  1024→        if (tracker.count > (bfRule.thresholdConn || 50)) {
+  1025→          const score = addThreatScore(ip, bfRule.scoreImpact || 30);
+  1026→          await createAlert({
+  1027→            eventType: "BRUTE_FORCE",
+  1028→            severity: score > 40 ? "HIGH" : "MEDIUM",
+  1029→            sourceIp: ip,
+  1030→            protocol: "tcp",
+  1031→            connCount: tracker.count,
+  1032→            threatScore: score,
+  1033→            ruleId: bfRule.id,
+  1034→            details: `${tracker.count} failed connection attempts in 60s`,
+  1035→          });
+  1036→          if (bfRule.autoBlock) {
+  1037→            const alert = await prisma.ipsAlert.findFirst({
+  1038→              where: { sourceIp: ip, eventType: "BRUTE_FORCE" as any },
+  1039→              orderBy: { createdAt: "desc" },
+  1040→            });
+  1041→            if (alert) {
+  1042→              await autoBlockIp(ip, "Brute force detected", bfRule.blockAction, bfRule.blockDuration, alert.id);
+  1043→            }
+  1044→          }
+  1045→          await applyThreatScoreAction(ip, score, "Brute force", "BRUTE_FORCE");
+  1046→          tracker.count = 0;
+  1047→          tracker.timestamps = [];
+  1048→        }
+  1049→      }
+  1050→    }
+  1051→
+  1052→    lastDetectionRun = new Date();
+  1053→    log.debug("Detection cycle complete", {
+  1054→      entriesProcessed: entries.length,
+  1055→      duration: `${Date.now() - cycleStart}ms`,
+  1056→    });
+  1057→  } catch (err: any) {
+  1058→    log.error("Detection cycle failed", { error: String(err) });
+  1059→  }
+  1060→}
+  1061→
+  1062→// ─── Route Matcher ────────────────────────────────────────────────────────
+  1063→function matchRoute(
+  1064→  url: URL,
+  1065→  method: string
+  1066→): { handler: (req: Request, params: Record<string, string>) => Promise<Response>; params: Record<string, string> } | null {
+  1067→  const path = url.pathname.replace(/\/+/g, "/");
+  1068→
+  1069→  // ─── Daemon Status ────────────────────────────────────────────
+  1070→  if (method === "GET" && path === "/") {
+  1071→    return { handler: handleGetStatus, params: {} };
+  1072→  }
+  1073→
+  1074→  // ─── Alerts ───────────────────────────────────────────────────
+  1075→  if (method === "GET" && path === "/alerts") {
+  1076→    return { handler: handleGetAlerts, params: {} };
+  1077→  }
+  1078→  if (method === "GET" && path === "/alerts/stats") {
+  1079→    return { handler: handleGetAlertStats, params: {} };
+  1080→  }
+  1081→  let m = path.match(/^\/alerts\/([^/]+)\/status$/);
+  1082→  if (method === "PUT" && m) {
+  1083→    return { handler: handleUpdateAlertStatus, params: { id: m[1] } };
+  1084→  }
+  1085→  if (method === "DELETE" && path === "/alerts") {
+  1086→    return { handler: handleDeleteAlerts, params: {} };
+  1087→  }
+  1088→
+  1089→  // ─── Detection Rules ──────────────────────────────────────────
+  1090→  if (method === "GET" && path === "/rules") {
+  1091→    return { handler: handleGetRules, params: {} };
+  1092→  }
+  1093→  if (method === "POST" && path === "/rules") {
+  1094→    return { handler: handleCreateRule, params: {} };
+  1095→  }
+  1096→  m = path.match(/^\/rules\/([^/]+)$/);
+  1097→  if (method === "PUT" && m) {
+  1098→    return { handler: handleUpdateRule, params: { id: m[1] } };
+  1099→  }
+  1100→  if (method === "DELETE" && m) {
+  1101→    return { handler: handleDeleteRule, params: { id: m[1] } };
+  1102→  }
+  1103→
+  1104→  // ─── Block Rules ──────────────────────────────────────────────
+  1105→  if (method === "GET" && path === "/block-rules") {
+  1106→    return { handler: handleGetBlockRules, params: {} };
+  1107→  }
+  1108→  if (method === "POST" && path === "/block-rules") {
+  1109→    return { handler: handleCreateBlockRule, params: {} };
+  1110→  }
+  1111→  m = path.match(/^\/block-rules\/unblock\/([^/]+)$/);
+  1112→  if (method === "POST" && m) {
+  1113→    return { handler: handleUnblockByIp, params: { ip: m[1] } };
+  1114→  }
+  1115→  m = path.match(/^\/block-rules\/([^/]+)$/);
+  1116→  if (method === "DELETE" && m) {
+  1117→    return { handler: handleDeleteBlockRule, params: { id: m[1] } };
+  1118→  }
+  1119→
+  1120→  // ─── Threat Scores ────────────────────────────────────────────
+  1121→  if (method === "GET" && path === "/threat-scores") {
+  1122→    return { handler: handleGetThreatScores, params: {} };
+  1123→  }
+  1124→  if (method === "POST" && path === "/threat-scores/reset") {
+  1125→    return { handler: handleResetThreatScores, params: {} };
+  1126→  }
+  1127→
+  1128→  // ─── Top Offenders ────────────────────────────────────────────
+  1129→  if (method === "GET" && path === "/top-offenders") {
+  1130→    return { handler: handleGetTopOffenders, params: {} };
+  1131→  }
+  1132→
+  1133→  // ─── nftables ─────────────────────────────────────────────────
+  1134→  if (method === "POST" && path === "/nftables/init") {
+  1135→    return { handler: handleNftablesInit, params: {} };
+  1136→  }
+  1137→
+  1138→  return null;
+  1139→}
+  1140→
+  1141→// ═══════════════════════════════════════════════════════════════════════════
+  1142→//  HANDLERS — Daemon Status
+  1143→// ═══════════════════════════════════════════════════════════════════════════
+  1144→async function handleGetStatus() {
+  1145→  const activeBlocks = await prisma.ipsBlockRule.count({
+  1146→    where: { isActive: true },
+  1147→  });
+  1148→  return json({
+  1149→    status: "running",
+  1150→    service: "ips-daemon",
+  1151→    port: SERVICE_PORT,
+  1152→    uptime: Math.floor((Date.now() - startTime) / 1000),
+  1153→    lastDetectionRun: lastDetectionRun?.toISOString() || null,
+  1154→    activeBlockCount: activeBlocks,
+  1155→    threatScoreCount: threatScores.size,
+  1156→    wsClients: wsClients.size,
+  1157→    timestamp: new Date().toISOString(),
+  1158→  });
+  1159→}
+  1160→
+  1161→// ═══════════════════════════════════════════════════════════════════════════
+  1162→//  HANDLERS — Alerts
+  1163→// ═══════════════════════════════════════════════════════════════════════════
+  1164→async function handleGetAlerts(req: Request) {
+  1165→  requireAuth(req);
+  1166→  try {
+  1167→    const url = new URL(req.url);
+  1168→    const status = url.searchParams.get("status") || undefined;
+  1169→    const severity = url.searchParams.get("severity") || undefined;
+  1170→    const eventType = url.searchParams.get("eventType") || undefined;
+  1171→    const limit = parseInt(url.searchParams.get("limit") || "50");
+  1172→    const offset = parseInt(url.searchParams.get("offset") || "0");
+  1173→
+  1174→    const where: any = {};
+  1175→    if (status) where.status = status;
+  1176→    if (severity) where.severity = severity;
+  1177→    if (eventType) where.eventType = eventType;
+  1178→
+  1179→    const [alerts, total] = await Promise.all([
+  1180→      prisma.ipsAlert.findMany({
+  1181→        where,
+  1182→        orderBy: { createdAt: "desc" },
+  1183→        take: limit,
+  1184→        skip: offset,
+  1185→        include: { rule: { select: { name: true } } },
+  1186→      }),
+  1187→      prisma.ipsAlert.count({ where }),
+  1188→    ]);
+  1189→
+  1190→    return json({ success: true, data: alerts, total, limit, offset });
+  1191→  } catch (err: any) {
+  1192→    return jsonErr(err.message || "Failed to fetch alerts", 500);
+  1193→  }
+  1194→}
+  1195→
+  1196→async function handleGetAlertStats(req: Request) {
+  1197→  requireAuth(req);
+  1198→  try {
+  1199→    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  1200→
+  1201→    const [total, newAlerts, criticalAlerts, byType, bySeverity] = await Promise.all([
+  1202→      prisma.ipsAlert.count({ where: { createdAt: { gte: since } } }),
+  1203→      prisma.ipsAlert.count({ where: { createdAt: { gte: since }, status: "NEW" } }),
+  1204→      prisma.ipsAlert.count({ where: { createdAt: { gte: since }, severity: "CRITICAL" } }),
+  1205→      prisma.ipsAlert.groupBy({
+  1206→        by: ["eventType"],
+  1207→        where: { createdAt: { gte: since } },
+  1208→        _count: { id: true },
+  1209→        orderBy: { _count: { id: "desc" } },
+  1210→      }),
+  1211→      prisma.ipsAlert.groupBy({
+  1212→        by: ["severity"],
+  1213→        where: { createdAt: { gte: since } },
+  1214→        _count: { id: true },
+  1215→      }),
+  1216→    ]);
+  1217→
+  1218→    return json({
+  1219→      success: true,
+  1220→      data: {
+  1221→        total,
+  1222→        newAlerts,
+  1223→        criticalAlerts,
+  1224→        byType: byType.map((g) => ({ eventType: g.eventType, count: g._count.id })),
+  1225→        bySeverity: bySeverity.map((g) => ({ severity: g.severity, count: g._count.id })),
+  1226→      },
+  1227→    });
+  1228→  } catch (err: any) {
+  1229→    return jsonErr(err.message || "Failed to fetch alert stats", 500);
+  1230→  }
+  1231→}
+  1232→
+  1233→async function handleUpdateAlertStatus(req: Request, params: Record<string, string>) {
+  1234→  const auth = requireAuth(req);
+  1235→  try {
+  1236→    const body = await req.json();
+  1237→    const { status, resolvedBy } = body;
+  1238→    if (!status || !["ACKNOWLEDGED", "RESOLVED", "FALSE_POSITIVE"].includes(status)) {
+  1239→      return jsonErr("Invalid status. Must be ACKNOWLEDGED, RESOLVED, or FALSE_POSITIVE");
+  1240→    }
+  1241→
+  1242→    const updateData: any = { status };
+  1243→    if (status === "RESOLVED" || status === "FALSE_POSITIVE") {
+  1244→      updateData.resolvedAt = new Date();
+  1245→      updateData.resolvedBy = resolvedBy || auth.userId;
+  1246→    }
+  1247→
+  1248→    const alert = await prisma.ipsAlert.update({
+  1249→      where: { id: params.id },
+  1250→      data: updateData,
+  1251→    });
+  1252→
+  1253→    log.info("Alert status updated", { alertId: params.id, status, by: auth.userId });
+  1254→    return json({ success: true, data: alert });
+  1255→  } catch (err: any) {
+  1256→    if (err.code === "P2025") return jsonErr("Alert not found", 404);
+  1257→    return jsonErr(err.message || "Update failed", 500);
+  1258→  }
+  1259→}
+  1260→
+  1261→async function handleDeleteAlerts(req: Request) {
+  1262→  const auth = requireAuth(req);
+  1263→  try {
+  1264→    const body = await req.json();
+  1265→    const olderThanDays = body.olderThanDays || 30;
+  1266→    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  1267→
+  1268→    const result = await prisma.ipsAlert.deleteMany({
+  1269→      where: {
+  1270→        createdAt: { lt: cutoff },
+  1271→        status: { in: ["RESOLVED", "FALSE_POSITIVE"] },
+  1272→      },
+  1273→    });
+  1274→
+  1275→    log.info("Old alerts cleaned up", { count: result.count, olderThanDays });
+  1276→    return json({ success: true, deleted: result.count });
+  1277→  } catch (err: any) {
+  1278→    return jsonErr(err.message || "Cleanup failed", 500);
+  1279→  }
+  1280→}
+  1281→
+  1282→// ═══════════════════════════════════════════════════════════════════════════
+  1283→//  HANDLERS — Detection Rules
+  1284→// ═══════════════════════════════════════════════════════════════════════════
+  1285→async function handleGetRules(req: Request) {
+  1286→  requireAuth(req);
+  1287→  try {
+  1288→    const rules = await prisma.ipsDetectionRule.findMany({
+  1289→      orderBy: { sortOrder: "asc" },
+  1290→    });
+  1291→    return json({ success: true, data: rules });
+  1292→  } catch (err: any) {
+  1293→    return jsonErr(err.message || "Failed to fetch rules", 500);
+  1294→  }
+  1295→}
+  1296→
+  1297→async function handleCreateRule(req: Request) {
+  1298→  const auth = requireAuth(req);
+  1299→  try {
+  1300→    const body = await req.json();
+  1301→    const {
+  1302→      name, description, eventType, enabled, thresholdPps, thresholdBps,
+  1303→      thresholdConn, windowSeconds, autoBlock, blockAction, blockDuration,
+  1304→      scoreImpact, targetPorts, targetProto, sourceExclude, logEnabled,
+  1305→      notifyEnabled, sortOrder,
+  1306→    } = body;
+  1307→
+  1308→    if (!name || !eventType) return jsonErr("name and eventType are required");
+  1309→
+  1310→    const rule = await prisma.ipsDetectionRule.create({
+  1311→      data: {
+  1312→        name,
+  1313→        description: description || "",
+  1314→        eventType,
+  1315→        enabled: enabled !== false,
+  1316→        thresholdPps: thresholdPps || 0,
+  1317→        thresholdBps: thresholdBps || 0,
+  1318→        thresholdConn: thresholdConn || 0,
+  1319→        windowSeconds: windowSeconds || 60,
+  1320→        autoBlock: autoBlock || false,
+  1321→        blockAction: blockAction || "DROP",
+  1322→        blockDuration: blockDuration || "TEMP_30M",
+  1323→        scoreImpact: scoreImpact || 20,
+  1324→        targetPorts: targetPorts || "",
+  1325→        targetProto: targetProto || "",
+  1326→        sourceExclude: sourceExclude || "",
+  1327→        logEnabled: logEnabled !== false,
+  1328→        notifyEnabled: notifyEnabled || false,
+  1329→        sortOrder: sortOrder || 0,
+  1330→      },
+  1331→    });
+  1332→
+  1333→    // Invalidate cache
+  1334→    rulesCacheTime = 0;
+  1335→
+  1336→    log.info("Detection rule created", { name, eventType, by: auth.userId });
+  1337→    return json({ success: true, data: rule });
+  1338→  } catch (err: any) {
+  1339→    return jsonErr(err.message || "Create rule failed", 500);
+  1340→  }
+  1341→}
+  1342→
+  1343→async function handleUpdateRule(req: Request, params: Record<string, string>) {
+  1344→  const auth = requireAuth(req);
+  1345→  try {
+  1346→    const body = await req.json();
+  1347→    const existing = await prisma.ipsDetectionRule.findUnique({
+  1348→      where: { id: params.id },
+  1349→    });
+  1350→    if (!existing) return jsonErr("Rule not found", 404);
+  1351→
+  1352→    const rule = await prisma.ipsDetectionRule.update({
+  1353→      where: { id: params.id },
+  1354→      data: body,
+  1355→    });
+  1356→
+  1357→    // Invalidate cache
+  1358→    rulesCacheTime = 0;
+  1359→
+  1360→    log.info("Detection rule updated", { id: params.id, by: auth.userId });
+  1361→    return json({ success: true, data: rule });
+  1362→  } catch (err: any) {
+  1363→    if (err.code === "P2025") return jsonErr("Rule not found", 404);
+  1364→    return jsonErr(err.message || "Update rule failed", 500);
+  1365→  }
+  1366→}
+  1367→
+  1368→async function handleDeleteRule(req: Request, params: Record<string, string>) {
+  1369→  const auth = requireAuth(req);
+  1370→  try {
+  1371→    await prisma.ipsDetectionRule.delete({ where: { id: params.id } });
+  1372→    rulesCacheTime = 0;
+  1373→    log.info("Detection rule deleted", { id: params.id, by: auth.userId });
+  1374→    return json({ success: true });
+  1375→  } catch (err: any) {
+  1376→    if (err.code === "P2025") return jsonErr("Rule not found", 404);
+  1377→    return jsonErr(err.message || "Delete rule failed", 500);
+  1378→  }
+  1379→}
+  1380→
+  1381→// ═══════════════════════════════════════════════════════════════════════════
+  1382→//  HANDLERS — Block Rules
+  1383→// ═══════════════════════════════════════════════════════════════════════════
+  1384→async function handleGetBlockRules(req: Request) {
+  1385→  requireAuth(req);
+  1386→  try {
+  1387→    const rules = await prisma.ipsBlockRule.findMany({
+  1388→      where: { isActive: true },
+  1389→      orderBy: { createdAt: "desc" },
+  1390→    });
+  1391→    return json({ success: true, data: rules });
+  1392→  } catch (err: any) {
+  1393→    return jsonErr(err.message || "Failed to fetch block rules", 500);
+  1394→  }
+  1395→}
+  1396→
+  1397→async function handleCreateBlockRule(req: Request) {
+  1398→  const auth = requireAuth(req);
+  1399→  try {
+  1400→    const body = await req.json();
+  1401→    const { sourceIp, reason, action, duration } = body;
+  1402→    if (!sourceIp) return jsonErr("sourceIp is required");
+  1403→
+  1404→    const timeoutSec = blockDurationToSeconds(duration || "TEMP_30M");
+  1405→    const expiresAt = timeoutSec > 0 ? new Date(Date.now() + timeoutSec * 1000) : null;
+  1406→
+  1407→    // Add to nftables
+  1408→    if (timeoutSec > 0) {
+  1409→      await nftAddElement(NFT_BLOCKED_SET, sourceIp, timeoutSec);
+  1410→    } else {
+  1411→      await nftAddElement(NFT_BLOCKED_SET, sourceIp);
+  1412→    }
+  1413→
+  1414→    const blockRule = await prisma.ipsBlockRule.create({
+  1415→      data: {
+  1416→        sourceIp,
+  1417→        reason: reason || "Manual block",
+  1418→        action: (action || "DROP") as any,
+  1419→        duration: (duration || "TEMP_30M") as any,
+  1420→        expiresAt,
+  1421→        isActive: true,
+  1422→        createdBy: auth.userId,
+  1423→      },
+  1424→    });
+  1425→
+  1426→    log.warn("Manual block created", {
+  1427→      ip: sourceIp,
+  1428→      reason,
+  1429→      action,
+  1430→      duration,
+  1431→      by: auth.userId,
+  1432→      blockRuleId: blockRule.id,
+  1433→    });
+  1434→
+  1435→    return json({ success: true, data: blockRule });
+  1436→  } catch (err: any) {
+  1437→    return jsonErr(err.message || "Create block rule failed", 500);
+  1438→  }
+  1439→}
+  1440→
+  1441→async function handleDeleteBlockRule(req: Request, params: Record<string, string>) {
+  1442→  const auth = requireAuth(req);
+  1443→  try {
+  1444→    const blockRule = await prisma.ipsBlockRule.findUnique({
+  1445→      where: { id: params.id },
+  1446→    });
+  1447→    if (!blockRule) return jsonErr("Block rule not found", 404);
+  1448→
+  1449→    // Remove from nftables
+  1450→    await nftDeleteElement(NFT_BLOCKED_SET, blockRule.sourceIp).catch(() => {});
+  1451→
+  1452→    await prisma.ipsBlockRule.update({
+  1453→      where: { id: params.id },
+  1454→      data: { isActive: false },
+  1455→    });
+  1456→
+  1457→    log.info("Block rule removed", { id: params.id, ip: blockRule.sourceIp, by: auth.userId });
+  1458→    return json({ success: true });
+  1459→  } catch (err: any) {
+  1460→    if (err.code === "P2025") return jsonErr("Block rule not found", 404);
+  1461→    return jsonErr(err.message || "Delete block rule failed", 500);
+  1462→  }
+  1463→}
+  1464→
+  1465→async function handleUnblockByIp(req: Request, params: Record<string, string>) {
+  1466→  const auth = requireAuth(req);
+  1467→  try {
+  1468→    const ip = params.ip;
+  1469→
+  1470→    // Remove from nftables
+  1471→    await nftDeleteElement(NFT_BLOCKED_SET, ip).catch(() => {});
+  1472→
+  1473→    // Mark all active blocks for this IP as inactive
+  1474→    const result = await prisma.ipsBlockRule.updateMany({
+  1475→      where: { sourceIp: ip, isActive: true },
+  1476→      data: { isActive: false },
+  1477→    });
+  1478→
+  1479→    log.info("IP unblocked", { ip, blocksDeactivated: result.count, by: auth.userId });
+  1480→    return json({ success: true, ip, blocksDeactivated: result.count });
+  1481→  } catch (err: any) {
+  1482→    return jsonErr(err.message || "Unblock failed", 500);
+  1483→  }
+  1484→}
+  1485→
+  1486→// ═══════════════════════════════════════════════════════════════════════════
+  1487→//  HANDLERS — Threat Scores
+  1488→// ═══════════════════════════════════════════════════════════════════════════
+  1489→async function handleGetThreatScores(req: Request) {
+  1490→  requireAuth(req);
+  1491→  try {
+  1492→    const scores: { ip: string; score: number }[] = [];
+  1493→    for (const [ip, score] of threatScores) {
+  1494→      scores.push({ ip, score });
+  1495→    }
+  1496→    scores.sort((a, b) => b.score - a.score);
+  1497→    return json({ success: true, data: scores, total: scores.length });
+  1498→  } catch (err: any) {
+  1499→    return jsonErr(err.message || "Failed to fetch threat scores", 500);
+  1500→  }
+  1501→}
+  1502→
+  1503→async function handleResetThreatScores(req: Request) {
+  1504→  const auth = requireAuth(req);
+  1505→  try {
+  1506→    const count = threatScores.size;
+  1507→    threatScores.clear();
+  1508→    log.info("Threat scores reset", { by: auth.userId, previousCount: count });
+  1509→    return json({ success: true, resetCount: count });
+  1510→  } catch (err: any) {
+  1511→    return jsonErr(err.message || "Reset failed", 500);
+  1512→  }
+  1513→}
+  1514→
+  1515→// ═══════════════════════════════════════════════════════════════════════════
+  1516→//  HANDLERS — Top Offenders
+  1517→// ═══════════════════════════════════════════════════════════════════════════
+  1518→async function handleGetTopOffenders(req: Request) {
+  1519→  requireAuth(req);
+  1520→  try {
+  1521→    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  1522→
+  1523→    // Get top 20 IPs by alert count in last 24h
+  1524→    const alertCounts = await prisma.ipsAlert.groupBy({
+  1525→      by: ["sourceIp"],
+  1526→      where: { createdAt: { gte: since } },
+  1527→      _count: { id: true },
+  1528→      _max: { threatScore: true },
+  1529→      orderBy: { _count: { id: "desc" } },
+  1530→      take: 20,
+  1531→    });
+  1532→
+  1533→    const offenders = alertCounts.map((g) => ({
+  1534→      ip: g.sourceIp,
+  1535→      alertCount: g._count.id,
+  1536→      maxThreatScore: g._max.threatScore || 0,
+  1537→      currentThreatScore: getThreatScore(g.sourceIp),
+  1538→    }));
+  1539→
+  1540→    return json({ success: true, data: offenders });
+  1541→  } catch (err: any) {
+  1542→    return jsonErr(err.message || "Failed to fetch top offenders", 500);
+  1543→  }
+  1544→}
+  1545→
+  1546→// ═══════════════════════════════════════════════════════════════════════════
+  1547→//  HANDLERS — nftables Init
+  1548→// ═══════════════════════════════════════════════════════════════════════════
+  1549→async function handleNftablesInit(req: Request) {
+  1550→  const auth = requireAuth(req);
+  1551→  try {
+  1552→    const result = await nftInitTable();
+  1553→    return json({ success: result.success, output: result.output });
+  1554→  } catch (err: any) {
+  1555→    return jsonErr(err.message || "nftables init failed", 500);
+  1556→  }
+  1557→}
+  1558→
+  1559→// ═══════════════════════════════════════════════════════════════════════════
+  1560→//  Server Startup
+  1561→// ═══════════════════════════════════════════════════════════════════════════
+  1562→// ─── Global Error Handlers ──────────────────────────────────────────────
+  1563→process.on('uncaughtException', (err) => {
+  1564→  log.fatal('Uncaught exception', { error: err.message, stack: err.stack });
+  1565→  process.exit(1);
+  1566→});
+  1567→
+  1568→process.on('unhandledRejection', (reason) => {
+  1569→  log.fatal('Unhandled rejection', { reason: String(reason) });
+  1570→});
+  1571→
+  1572→async function main() {
+  1573→  log.info("IPS Detection Daemon starting...", { port: SERVICE_PORT });
+  1574→
+  1575→  // Load rules from DB (fallback to defaults)
+  1576→  const rules = await getDetectionRules();
+  1577→  log.info(`Loaded ${rules.length} detection rules`);
+  1578→
+  1579→  // Start detection engine (every 5 seconds)
+  1580→  detectionInterval = setInterval(runDetectionCycle, 5000);
+  1581→
+  1582→  // Start server
+  1583→  const server = Bun.serve({
+  1584→    port: SERVICE_PORT,
+  1585→    fetch: async (req: Request) => {
+  1586→      const url = new URL(req.url);
+  1587→
+  1588→      // CORS preflight
+  1589→      if (req.method === "OPTIONS") {
+  1590→        return new Response(null, { status: 204, headers: corsHeaders });
+  1591→      }
+  1592→
+  1593→      // WebSocket upgrade
+  1594→      if (url.pathname === "/ws") {
+  1595→        if (server.upgrade(req)) return;
+  1596→        return jsonErr("WebSocket upgrade failed", 500);
+  1597→      }
+  1598→
+  1599→      // Route matching
+  1600→      const matched = matchRoute(url, req.method);
+  1601→      if (matched) {
+  1602→        try {
+  1603→          return await matched.handler(req, matched.params);
+  1604→        } catch (err: any) {
+  1605→          if (err.message?.includes("Unauthorized")) {
+  1606→            return json({ success: false, error: "Unauthorized" }, 401);
+  1607→          }
+  1608→          log.error("Handler error", { path: url.pathname, error: String(err) });
+  1609→          return jsonErr(err.message || "Internal server error", 500);
+  1610→        }
+  1611→      }
+  1612→
+  1613→      return jsonErr("Not found", 404);
+  1614→    },
+  1615→    websocket: {
+  1616→      open(ws) {
+  1617→        wsClients.add(ws);
+  1618→        log.info("WebSocket client connected", { totalClients: wsClients.size });
+  1619→      },
+  1620→      close(ws) {
+  1621→        wsClients.delete(ws);
+  1622→        log.info("WebSocket client disconnected", { totalClients: wsClients.size });
+  1623→      },
+  1624→      message(ws, message) {
+  1625→        // Echo back for keepalive
+  1626→        if (message === "ping") {
+  1627→          ws.send("pong");
+  1628→        }
+  1629→      },
+  1630→    },
+  1631→  });
+  1632→
+  1633→  log.info(`IPS Daemon listening on port ${SERVICE_PORT}`, {
+  1634→    detectionInterval: "5s",
+  1635→    nftablesTable: NFT_TABLE,
+  1636→    simulatedData: true,
+  1637→  });
+  1638→
+  1639→  // Keep process alive
+  1640→  process.stdin.resume();
+  1641→
+  1642→  // Graceful shutdown
+  1643→  const shutdown = async (signal: string) => {
+  1644→    if (isShuttingDown) return;
+  1645→    isShuttingDown = true;
+  1646→    log.info(`Received ${signal}, shutting down...`);
+  1647→
+  1648→    if (detectionInterval) {
+  1649→      clearInterval(detectionInterval);
+  1650→      detectionInterval = null;
+  1651→    }
+  1652→
+  1653→    // Close all WebSocket clients
+  1654→    for (const client of wsClients) {
+  1655→      try { client.close(); } catch {}
+  1656→    }
+  1657→    wsClients.clear();
+  1658→
+  1659→    await prisma.$disconnect();
+  1660→    log.info("IPS Daemon stopped");
+  1661→    process.exit(0);
+  1662→  };
+  1663→
+  1664→  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  1665→  process.on("SIGINT", () => shutdown("SIGINT"));
+  1666→}
+  1667→
+  1668→main().catch((err) => {
+  1669→  log.fatal("Fatal error during startup", { error: String(err) });
+  1670→  process.exit(1);
+  1671→});
+  1672→

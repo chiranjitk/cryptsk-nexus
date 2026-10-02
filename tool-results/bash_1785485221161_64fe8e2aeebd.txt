@@ -1,0 +1,929 @@
+Files with issues: 146
+
+src/app/api/action-history/route.ts: 3 change(s)
+  L66: 'subscriber: {' -> 'Subscriber: {'
+  L222: 'subscriber: {' -> 'Subscriber: {'
+  L274: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/agents/[id]/route.ts: 2 change(s)
+  L64: 'subscriber: {' -> 'Subscriber: {'
+  L65: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/agents/followups/route.ts: 6 change(s)
+  L20: 'subscriber: {' -> 'Subscriber: {'
+  L22: 'subscriber: {' -> 'Subscriber: {'
+  L62: 'subscriber: {' -> 'Subscriber: {'
+  L64: 'subscriber: {' -> 'Subscriber: {'
+  L100: 'subscriber: {' -> 'Subscriber: {'
+  L102: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/ai/advisor/route.ts: 4 change(s)
+  L61: 'area: {' -> 'Area: {'
+  L68: 'area: {' -> 'Area: {'
+  L61: 'subscriber: {' -> 'Subscriber: {'
+  L68: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/ai/churn/route.ts: 3 change(s)
+  L19: 'area: {' -> 'Area: {'
+  L18: 'plan: {' -> 'Plan: {'
+  L20: 'payments: {' -> 'Payment: {'
+
+src/app/api/ai/diagnose/route.ts: 2 change(s)
+  L64: 'area: {' -> 'Area: {'
+  L71: 'sessions: {' -> 'RadiusSession: {'
+
+src/app/api/ai/whatsapp-bot/route.ts: 1 change(s)
+  L63: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/area-budgets/route.ts: 5 change(s)
+  L36: 'area: {' -> 'Area: {'
+  L104: 'area: {' -> 'Area: {'
+  L227: 'area: {' -> 'Area: {'
+  L260: 'area: {' -> 'Area: {'
+  L311: 'area: {' -> 'Area: {'
+
+src/app/api/areas/[id]/route.ts: 1 change(s)
+  L33: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/backup/route.ts: 5 change(s)
+  L1178: 'area: {' -> 'Area: {'
+  L1178: 'plan: {' -> 'Plan: {'
+  L1188: 'plan: {' -> 'Plan: {'
+  L1188: 'subscriber: {' -> 'Subscriber: {'
+  L1208: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/bandwidth/consumers/route.ts: 1 change(s)
+  L32: 'plan: {' -> 'Plan: {'
+
+src/app/api/bandwidth/route.ts: 1 change(s)
+  L96: 'plan: {' -> 'Plan: {'
+
+src/app/api/batch-provisioning/jobs/route.ts: 1 change(s)
+  L62: 'plan: {' -> 'Plan: {'
+
+src/app/api/batch-provisioning/templates/route.ts: 1 change(s)
+  L14: 'plan: {' -> 'Plan: {'
+
+src/app/api/billing/[id]/route.ts: 5 change(s)
+  L21: 'plan: {' -> 'Plan: {'
+  L89: 'plan: {' -> 'Plan: {'
+  L20: 'subscriber: {' -> 'Subscriber: {'
+  L88: 'subscriber: {' -> 'Subscriber: {'
+  L22: 'payments: {' -> 'Payment: {'
+
+src/app/api/billing/export/route.ts: 4 change(s)
+  L43: 'plan: {' -> 'Plan: {'
+  L28: 'subscriber: {' -> 'Subscriber: {'
+  L29: 'subscriber: {' -> 'Subscriber: {'
+  L42: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/billing/route.ts: 8 change(s)
+  L42: 'plan: {' -> 'Plan: {'
+  L129: 'plan: {' -> 'Plan: {'
+  L184: 'plan: {' -> 'Plan: {'
+  L26: 'subscriber: {' -> 'Subscriber: {'
+  L27: 'subscriber: {' -> 'Subscriber: {'
+  L41: 'subscriber: {' -> 'Subscriber: {'
+  L128: 'subscriber: {' -> 'Subscriber: {'
+  L183: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/bw-reports/route.ts: 2 change(s)
+  L140: 'plan: {' -> 'Plan: {'
+  L139: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/captive-portal/[id]/route.ts: 1 change(s)
+  L41: 'area: {' -> 'Area: {'
+
+src/app/api/captive-portal/sessions/[id]/route.ts: 1 change(s)
+  L18: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/captive-portal/sessions/route.ts: 1 change(s)
+  L38: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/captive-portal/subnet-mapping/route.ts: 1 change(s)
+  L32: 'area: {' -> 'Area: {'
+
+src/app/api/charge-override/route.ts: 5 change(s)
+  L63: 'subscriber: {' -> 'Subscriber: {'
+  L138: 'subscriber: {' -> 'Subscriber: {'
+  L216: 'subscriber: {' -> 'Subscriber: {'
+  L290: 'subscriber: {' -> 'Subscriber: {'
+  L324: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/charge-overrides/[id]/route.ts: 2 change(s)
+  L68: 'plan: {' -> 'Plan: {'
+  L67: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/charge-overrides/route.ts: 5 change(s)
+  L53: 'plan: {' -> 'Plan: {'
+  L126: 'plan: {' -> 'Plan: {'
+  L166: 'plan: {' -> 'Plan: {'
+  L48: 'subscriber: {' -> 'Subscriber: {'
+  L165: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/churn-alerts/route.ts: 2 change(s)
+  L25: 'area: {' -> 'Area: {'
+  L24: 'plan: {' -> 'Plan: {'
+
+src/app/api/churn/predict/route.ts: 2 change(s)
+  L47: 'area: {' -> 'Area: {'
+  L46: 'plan: {' -> 'Plan: {'
+
+src/app/api/coa-events/route.ts: 4 change(s)
+  L67: 'subscriber: {' -> 'Subscriber: {'
+  L98: 'subscriber: {' -> 'Subscriber: {'
+  L230: 'subscriber: {' -> 'Subscriber: {'
+  L278: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/collection/disputes/route.ts: 1 change(s)
+  L17: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/collection/receipt/route.ts: 5 change(s)
+  L22: 'area: {' -> 'Area: {'
+  L22: 'subscriber: {' -> 'Subscriber: {'
+  L23: 'invoice: {' -> 'Invoice: {'
+  L24: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L25: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+
+src/app/api/collection/reconcile/route.ts: 1 change(s)
+  L15: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+
+src/app/api/collection/route.ts: 11 change(s)
+  L57: 'area: {' -> 'Area: {'
+  L46: 'subscriber: {' -> 'Subscriber: {'
+  L47: 'subscriber: {' -> 'Subscriber: {'
+  L48: 'subscriber: {' -> 'Subscriber: {'
+  L56: 'subscriber: {' -> 'Subscriber: {'
+  L120: 'subscriber: {' -> 'Subscriber: {'
+  L59: 'invoice: {' -> 'Invoice: {'
+  L121: 'invoice: {' -> 'Invoice: {'
+  L60: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L122: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L61: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+
+src/app/api/collection/summary/route.ts: 2 change(s)
+  L60: 'area: {' -> 'Area: {'
+  L59: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/collections/analytics/route.ts: 5 change(s)
+  L104: 'area: {' -> 'Area: {'
+  L190: 'area: {' -> 'Area: {'
+  L103: 'plan: {' -> 'Plan: {'
+  L98: 'subscriber: {' -> 'Subscriber: {'
+  L188: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/collections/smart/route.ts: 4 change(s)
+  L149: 'plan: {' -> 'Plan: {'
+  L143: 'subscriber: {' -> 'Subscriber: {'
+  L203: 'invoice: {' -> 'Invoice: {'
+  L94: 'payments: {' -> 'Payment: {'
+
+src/app/api/complaints/[id]/auto-assign/route.ts: 3 change(s)
+  L18: 'area: {' -> 'Area: {'
+  L93: 'area: {' -> 'Area: {'
+  L92: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/complaints/[id]/route.ts: 5 change(s)
+  L16: 'area: {' -> 'Area: {'
+  L17: 'area: {' -> 'Area: {'
+  L173: 'area: {' -> 'Area: {'
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L172: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/complaints/export/route.ts: 2 change(s)
+  L65: 'area: {' -> 'Area: {'
+  L64: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/complaints/route.ts: 7 change(s)
+  L65: 'area: {' -> 'Area: {'
+  L245: 'area: {' -> 'Area: {'
+  L48: 'subscriber: {' -> 'Subscriber: {'
+  L49: 'subscriber: {' -> 'Subscriber: {'
+  L50: 'subscriber: {' -> 'Subscriber: {'
+  L64: 'subscriber: {' -> 'Subscriber: {'
+  L244: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/compliance/audit-report/route.ts: 4 change(s)
+  L219: 'subscriber: {' -> 'Subscriber: {'
+  L233: 'subscriber: {' -> 'Subscriber: {'
+  L247: 'subscriber: {' -> 'Subscriber: {'
+  L233: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/compliance/sla/route.ts: 2 change(s)
+  L57: 'area: {' -> 'Area: {'
+  L40: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/dashboard/invoice-aging/route.ts: 1 change(s)
+  L29: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/dashboard/retention/route.ts: 1 change(s)
+  L116: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/dashboard/route.ts: 16 change(s)
+  L309: 'area: {' -> 'Area: {'
+  L338: 'area: {' -> 'Area: {'
+  L412: 'area: {' -> 'Area: {'
+  L284: 'plan: {' -> 'Plan: {'
+  L459: 'plan: {' -> 'Plan: {'
+  L687: 'plan: {' -> 'Plan: {'
+  L705: 'plan: {' -> 'Plan: {'
+  L752: 'plan: {' -> 'Plan: {'
+  L307: 'subscriber: {' -> 'Subscriber: {'
+  L357: 'subscriber: {' -> 'Subscriber: {'
+  L364: 'subscriber: {' -> 'Subscriber: {'
+  L379: 'subscriber: {' -> 'Subscriber: {'
+  L411: 'subscriber: {' -> 'Subscriber: {'
+  L615: 'subscriber: {' -> 'Subscriber: {'
+  L684: 'subscriber: {' -> 'Subscriber: {'
+  L702: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/dashboard/top-subscribers/route.ts: 1 change(s)
+  L43: 'plan: {' -> 'Plan: {'
+
+src/app/api/devices/[id]/route.ts: 1 change(s)
+  L17: 'area: {' -> 'Area: {'
+
+src/app/api/devices/export/route.ts: 1 change(s)
+  L35: 'area: {' -> 'Area: {'
+
+src/app/api/devices/route.ts: 1 change(s)
+  L56: 'area: {' -> 'Area: {'
+
+src/app/api/devices/tree/route.ts: 1 change(s)
+  L25: 'area: {' -> 'Area: {'
+
+src/app/api/disputes/route.ts: 2 change(s)
+  L24: 'subscriber: {' -> 'Subscriber: {'
+  L61: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/due-recovery/payment-plan/route.ts: 2 change(s)
+  L34: 'subscriber: {' -> 'Subscriber: {'
+  L34: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/due-recovery/route.ts: 22 change(s)
+  L87: 'area: {' -> 'Area: {'
+  L200: 'area: {' -> 'Area: {'
+  L208: 'area: {' -> 'Area: {'
+  L238: 'area: {' -> 'Area: {'
+  L210: 'plan: {' -> 'Plan: {'
+  L21: 'subscriber: {' -> 'Subscriber: {'
+  L73: 'subscriber: {' -> 'Subscriber: {'
+  L87: 'subscriber: {' -> 'Subscriber: {'
+  L108: 'subscriber: {' -> 'Subscriber: {'
+  L122: 'subscriber: {' -> 'Subscriber: {'
+  L142: 'subscriber: {' -> 'Subscriber: {'
+  L147: 'subscriber: {' -> 'Subscriber: {'
+  L207: 'subscriber: {' -> 'Subscriber: {'
+  L343: 'subscriber: {' -> 'Subscriber: {'
+  L451: 'subscriber: {' -> 'Subscriber: {'
+  L22: 'invoice: {' -> 'Invoice: {'
+  L72: 'invoice: {' -> 'Invoice: {'
+  L86: 'invoice: {' -> 'Invoice: {'
+  L121: 'invoice: {' -> 'Invoice: {'
+  L148: 'payments: {' -> 'Payment: {'
+  L211: 'payments: {' -> 'Payment: {'
+  L215: 'paymentPlans: {' -> 'PaymentPlan: {'
+
+src/app/api/due-recovery/sla-dashboard/route.ts: 6 change(s)
+  L47: 'area: {' -> 'Area: {'
+  L52: 'area: {' -> 'Area: {'
+  L46: 'subscriber: {' -> 'Subscriber: {'
+  L51: 'subscriber: {' -> 'Subscriber: {'
+  L148: 'subscriber: {' -> 'Subscriber: {'
+  L38: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/due-recovery/sla-export/route.ts: 3 change(s)
+  L30: 'area: {' -> 'Area: {'
+  L29: 'subscriber: {' -> 'Subscriber: {'
+  L19: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/enterprise-auth/[id]/route.ts: 2 change(s)
+  L15: 'plan: {' -> 'Plan: {'
+  L20: 'sessions: {' -> 'RadiusSession: {'
+
+src/app/api/enterprise-auth/route.ts: 1 change(s)
+  L11: 'plan: {' -> 'Plan: {'
+
+src/app/api/export/complaints/route.ts: 2 change(s)
+  L73: 'area: {' -> 'Area: {'
+  L72: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/export/invoices/route.ts: 5 change(s)
+  L56: 'area: {' -> 'Area: {'
+  L58: 'plan: {' -> 'Plan: {'
+  L47: 'subscriber: {' -> 'Subscriber: {'
+  L48: 'subscriber: {' -> 'Subscriber: {'
+  L55: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/export/payments/route.ts: 4 change(s)
+  L41: 'subscriber: {' -> 'Subscriber: {'
+  L42: 'subscriber: {' -> 'Subscriber: {'
+  L49: 'subscriber: {' -> 'Subscriber: {'
+  L50: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/export/subscribers/route.ts: 2 change(s)
+  L44: 'area: {' -> 'Area: {'
+  L43: 'plan: {' -> 'Plan: {'
+
+src/app/api/ftth/olts/[id]/route.ts: 2 change(s)
+  L16: 'area: {' -> 'Area: {'
+  L31: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/ftth/olts/export/route.ts: 1 change(s)
+  L17: 'area: {' -> 'Area: {'
+
+src/app/api/ftth/olts/route.ts: 1 change(s)
+  L13: 'area: {' -> 'Area: {'
+
+src/app/api/ftth/ports/route.ts: 1 change(s)
+  L94: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/grace-periods/route.ts: 1 change(s)
+  L33: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/gst/audit/route.ts: 2 change(s)
+  L26: 'plan: {' -> 'Plan: {'
+  L25: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/gst/gstr9/route.ts: 2 change(s)
+  L23: 'plan: {' -> 'Plan: {'
+  L22: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/gst/reverse-charge/route.ts: 2 change(s)
+  L22: 'plan: {' -> 'Plan: {'
+  L21: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/gst/route.ts: 2 change(s)
+  L96: 'plan: {' -> 'Plan: {'
+  L93: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/gst/tds-tcs/route.ts: 2 change(s)
+  L19: 'subscriber: {' -> 'Subscriber: {'
+  L18: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/incidents/route.ts: 1 change(s)
+  L75: 'plan: {' -> 'Plan: {'
+
+src/app/api/installations/[id]/route.ts: 5 change(s)
+  L18: 'area: {' -> 'Area: {'
+  L79: 'area: {' -> 'Area: {'
+  L16: 'plan: {' -> 'Plan: {'
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L77: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/installations/auto-assign/route.ts: 1 change(s)
+  L21: 'area: {' -> 'Area: {'
+
+src/app/api/installations/route.ts: 11 change(s)
+  L51: 'area: {' -> 'Area: {'
+  L76: 'area: {' -> 'Area: {'
+  L86: 'area: {' -> 'Area: {'
+  L209: 'area: {' -> 'Area: {'
+  L264: 'area: {' -> 'Area: {'
+  L49: 'subscriber: {' -> 'Subscriber: {'
+  L73: 'subscriber: {' -> 'Subscriber: {'
+  L74: 'subscriber: {' -> 'Subscriber: {'
+  L84: 'subscriber: {' -> 'Subscriber: {'
+  L208: 'subscriber: {' -> 'Subscriber: {'
+  L262: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/installations/timeline/route.ts: 5 change(s)
+  L35: 'area: {' -> 'Area: {'
+  L46: 'area: {' -> 'Area: {'
+  L32: 'subscriber: {' -> 'Subscriber: {'
+  L33: 'subscriber: {' -> 'Subscriber: {'
+  L44: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/invoices/[id]/credit-note/route.ts: 1 change(s)
+  L33: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/invoices/[id]/credit-notes/route.ts: 1 change(s)
+  L27: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/invoices/[id]/route.ts: 10 change(s)
+  L19: 'area: {' -> 'Area: {'
+  L164: 'area: {' -> 'Area: {'
+  L23: 'plan: {' -> 'Plan: {'
+  L165: 'plan: {' -> 'Plan: {'
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L164: 'subscriber: {' -> 'Subscriber: {'
+  L33: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L34: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+  L30: 'payments: {' -> 'Payment: {'
+  L167: 'payments: {' -> 'Payment: {'
+
+src/app/api/invoices/export-all/route.ts: 3 change(s)
+  L32: 'plan: {' -> 'Plan: {'
+  L31: 'subscriber: {' -> 'Subscriber: {'
+  L33: 'payments: {' -> 'Payment: {'
+
+src/app/api/invoices/export/route.ts: 5 change(s)
+  L48: 'area: {' -> 'Area: {'
+  L49: 'plan: {' -> 'Plan: {'
+  L40: 'subscriber: {' -> 'Subscriber: {'
+  L41: 'subscriber: {' -> 'Subscriber: {'
+  L48: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/invoices/recurring-templates/route.ts: 9 change(s)
+  L11: 'area: {' -> 'Area: {'
+  L45: 'area: {' -> 'Area: {'
+  L85: 'area: {' -> 'Area: {'
+  L10: 'plan: {' -> 'Plan: {'
+  L44: 'plan: {' -> 'Plan: {'
+  L84: 'plan: {' -> 'Plan: {'
+  L9: 'subscriber: {' -> 'Subscriber: {'
+  L43: 'subscriber: {' -> 'Subscriber: {'
+  L83: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/invoices/route.ts: 10 change(s)
+  L103: 'area: {' -> 'Area: {'
+  L105: 'plan: {' -> 'Plan: {'
+  L245: 'plan: {' -> 'Plan: {'
+  L49: 'subscriber: {' -> 'Subscriber: {'
+  L50: 'subscriber: {' -> 'Subscriber: {'
+  L51: 'subscriber: {' -> 'Subscriber: {'
+  L102: 'subscriber: {' -> 'Subscriber: {'
+  L244: 'subscriber: {' -> 'Subscriber: {'
+  L261: 'subscriber: {' -> 'Subscriber: {'
+  L106: 'payments: {' -> 'Payment: {'
+
+src/app/api/ip-mac-history/route.ts: 3 change(s)
+  L69: 'subscriber: {' -> 'Subscriber: {'
+  L113: 'subscriber: {' -> 'Subscriber: {'
+  L154: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/ipam/export/route.ts: 1 change(s)
+  L60: 'area: {' -> 'Area: {'
+
+src/app/api/ipam/route.ts: 1 change(s)
+  L45: 'area: {' -> 'Area: {'
+
+src/app/api/loyalty/badges/route.ts: 3 change(s)
+  L45: 'plan: {' -> 'Plan: {'
+  L47: 'invoice: {' -> 'Invoice: {'
+  L46: 'payments: {' -> 'Payment: {'
+
+src/app/api/loyalty/enhanced/route.ts: 2 change(s)
+  L31: 'subscriber: {' -> 'Subscriber: {'
+  L169: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/loyalty/tiers/route.ts: 1 change(s)
+  L25: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/notifications/[id]/retry/route.ts: 1 change(s)
+  L19: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/notifications/[id]/route.ts: 2 change(s)
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L72: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/notifications/retry-failed/route.ts: 2 change(s)
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L19: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/notifications/route.ts: 2 change(s)
+  L27: 'subscriber: {' -> 'Subscriber: {'
+  L38: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/payments/[id]/refund/route.ts: 2 change(s)
+  L33: 'subscriber: {' -> 'Subscriber: {'
+  L34: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/payments/[id]/route.ts: 12 change(s)
+  L16: 'subscriber: {' -> 'Subscriber: {'
+  L56: 'subscriber: {' -> 'Subscriber: {'
+  L79: 'subscriber: {' -> 'Subscriber: {'
+  L137: 'subscriber: {' -> 'Subscriber: {'
+  L166: 'subscriber: {' -> 'Subscriber: {'
+  L17: 'invoice: {' -> 'Invoice: {'
+  L57: 'invoice: {' -> 'Invoice: {'
+  L80: 'invoice: {' -> 'Invoice: {'
+  L138: 'invoice: {' -> 'Invoice: {'
+  L167: 'invoice: {' -> 'Invoice: {'
+  L18: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L19: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+
+src/app/api/payments/create-order/route.ts: 2 change(s)
+  L80: 'subscriber: {' -> 'Subscriber: {'
+  L117: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/payments/export/route.ts: 4 change(s)
+  L29: 'subscriber: {' -> 'Subscriber: {'
+  L30: 'subscriber: {' -> 'Subscriber: {'
+  L43: 'subscriber: {' -> 'Subscriber: {'
+  L44: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/payments/recent/route.ts: 1 change(s)
+  L45: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/payments/route.ts: 6 change(s)
+  L35: 'subscriber: {' -> 'Subscriber: {'
+  L36: 'subscriber: {' -> 'Subscriber: {'
+  L50: 'subscriber: {' -> 'Subscriber: {'
+  L191: 'subscriber: {' -> 'Subscriber: {'
+  L51: 'invoice: {' -> 'Invoice: {'
+  L192: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/plans/[id]/route.ts: 2 change(s)
+  L96: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L149: 'group: { select: {' -> 'RadiusGroup: { select: {'
+
+src/app/api/plans/migrate/route.ts: 1 change(s)
+  L70: 'group: { select: {' -> 'RadiusGroup: { select: {'
+
+src/app/api/plans/optimization/route.ts: 1 change(s)
+  L18: 'area: {' -> 'Area: {'
+
+src/app/api/plans/recommend/route.ts: 3 change(s)
+  L24: 'area: {' -> 'Area: {'
+  L279: 'area: {' -> 'Area: {'
+  L202: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius-attributes/route.ts: 1 change(s)
+  L210: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius-attributes/user-attributes/route.ts: 1 change(s)
+  L59: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius-sessions/route.ts: 3 change(s)
+  L27: 'plan: {' -> 'Plan: {'
+  L17: 'radiusUser: {' -> 'RadiusUser: {'
+  L20: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius-users/[id]/route.ts: 6 change(s)
+  L36: 'plan: {' -> 'Plan: {'
+  L42: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L194: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L39: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L21: 'subscriber: {' -> 'Subscriber: {'
+  L45: 'sessions: {' -> 'RadiusSession: {'
+
+src/app/api/radius-users/export/route.ts: 1 change(s)
+  L16: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius-users/route.ts: 7 change(s)
+  L115: 'plan: {' -> 'Plan: {'
+  L197: 'plan: {' -> 'Plan: {'
+  L133: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L196: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L195: 'radiusUser: {' -> 'RadiusUser: {'
+  L122: 'group: {\n                  select: {' -> 'RadiusGroup: { select: {'
+  L100: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius/sessions/route.ts: 3 change(s)
+  L88: 'radiusUser: {' -> 'RadiusUser: {'
+  L89: 'radiusUser: {' -> 'RadiusUser: {'
+  L89: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/radius/users/[id]/route.ts: 1 change(s)
+  L16: 'sessions: {' -> 'RadiusSession: {'
+
+src/app/api/radius/users/route.ts: 3 change(s)
+  L17: 'subscriber: {' -> 'Subscriber: {'
+  L18: 'subscriber: {' -> 'Subscriber: {'
+  L19: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/referral/route.ts: 5 change(s)
+  L24: 'subscriber: {' -> 'Subscriber: {'
+  L90: 'subscriber: {' -> 'Subscriber: {'
+  L117: 'subscriber: {' -> 'Subscriber: {'
+  L160: 'subscriber: {' -> 'Subscriber: {'
+  L205: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/reports/revenue/route.ts: 2 change(s)
+  L195: 'plan: {' -> 'Plan: {'
+  L172: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/reports/route.ts: 13 change(s)
+  L82: 'area: {' -> 'Area: {'
+  L794: 'area: {' -> 'Area: {'
+  L81: 'plan: {' -> 'Plan: {'
+  L296: 'plan: {' -> 'Plan: {'
+  L479: 'plan: {' -> 'Plan: {'
+  L793: 'plan: {' -> 'Plan: {'
+  L923: 'plan: {' -> 'Plan: {'
+  L1156: 'plan: {' -> 'Plan: {'
+  L1155: 'radiusUser: {' -> 'RadiusUser: {'
+  L82: 'subscriber: {' -> 'Subscriber: {'
+  L790: 'subscriber: {' -> 'Subscriber: {'
+  L963: 'subscriber: {' -> 'Subscriber: {'
+  L1156: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/reports/tds-tcs/route.ts: 1 change(s)
+  L23: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/reseller/route.ts: 4 change(s)
+  L67: 'area: {' -> 'Area: {'
+  L55: 'plan: {' -> 'Plan: {'
+  L56: 'plan: {' -> 'Plan: {'
+  L67: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/resellers/analytics/route.ts: 3 change(s)
+  L39: 'area: {' -> 'Area: {'
+  L38: 'plan: {' -> 'Plan: {'
+  L40: 'payments: {' -> 'Payment: {'
+
+src/app/api/resellers/commission-engine/route.ts: 2 change(s)
+  L82: 'plan: {' -> 'Plan: {'
+  L275: 'plan: {' -> 'Plan: {'
+
+src/app/api/revenue/aging-enhanced/route.ts: 2 change(s)
+  L103: 'area: {' -> 'Area: {'
+  L98: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/revenue/audit/route.ts: 5 change(s)
+  L90: 'subscriber: {' -> 'Subscriber: {'
+  L125: 'subscriber: {' -> 'Subscriber: {'
+  L161: 'subscriber: {' -> 'Subscriber: {'
+  L87: 'invoice: {' -> 'Invoice: {'
+  L126: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/revenue/leakage/route.ts: 10 change(s)
+  L327: 'plan: {' -> 'Plan: {'
+  L105: 'subscriber: {' -> 'Subscriber: {'
+  L147: 'subscriber: {' -> 'Subscriber: {'
+  L150: 'subscriber: {' -> 'Subscriber: {'
+  L192: 'subscriber: {' -> 'Subscriber: {'
+  L230: 'subscriber: {' -> 'Subscriber: {'
+  L294: 'subscriber: {' -> 'Subscriber: {'
+  L384: 'subscriber: {' -> 'Subscriber: {'
+  L101: 'invoice: {' -> 'Invoice: {'
+  L143: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/selfcare/usage-meter/route.ts: 1 change(s)
+  L12: 'plan: {' -> 'Plan: {'
+
+src/app/api/subscriber-auth/login/route.ts: 3 change(s)
+  L39: 'area: {' -> 'Area: {'
+  L38: 'plan: {' -> 'Plan: {'
+  L102: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/subscriber-auth/me/route.ts: 3 change(s)
+  L21: 'area: {' -> 'Area: {'
+  L20: 'plan: {' -> 'Plan: {'
+  L39: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/subscriber-auth/service-status/route.ts: 2 change(s)
+  L42: 'area: {' -> 'Area: {'
+  L41: 'plan: {' -> 'Plan: {'
+
+src/app/api/subscriber-auth/usage/route.ts: 1 change(s)
+  L12: 'plan: {' -> 'Plan: {'
+
+src/app/api/subscribers/[id]/360/route.ts: 8 change(s)
+  L18: 'area: {' -> 'Area: {'
+  L19: 'plan: {' -> 'Plan: {'
+  L26: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L27: 'radiusUser: {' -> 'RadiusUser: {'
+  L23: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L231: 'subscriber: {' -> 'Subscriber: {'
+  L82: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+  L83: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+
+src/app/api/subscribers/[id]/balance/route.ts: 1 change(s)
+  L48: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/subscribers/[id]/route.ts: 13 change(s)
+  L18: 'area: {' -> 'Area: {'
+  L143: 'area: {' -> 'Area: {'
+  L19: 'plan: {' -> 'Plan: {'
+  L144: 'plan: {' -> 'Plan: {'
+  L25: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L150: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L26: 'radiusUser: {' -> 'RadiusUser: {'
+  L56: 'radiusUser: {' -> 'RadiusUser: {'
+  L151: 'radiusUser: {' -> 'RadiusUser: {'
+  L266: 'radiusUser: {' -> 'RadiusUser: {'
+  L22: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L147: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L28: 'payments: {' -> 'Payment: {'
+
+src/app/api/subscribers/bulk/route.ts: 3 change(s)
+  L91: 'area: {' -> 'Area: {'
+  L92: 'plan: {' -> 'Plan: {'
+  L93: 'radiusGroup: {' -> 'RadiusGroup: {'
+
+src/app/api/subscribers/expiring/route.ts: 2 change(s)
+  L35: 'area: {' -> 'Area: {'
+  L27: 'plan: {' -> 'Plan: {'
+
+src/app/api/subscribers/export/route.ts: 2 change(s)
+  L24: 'area: {' -> 'Area: {'
+  L23: 'plan: {' -> 'Plan: {'
+
+src/app/api/subscribers/route.ts: 10 change(s)
+  L64: 'area: {' -> 'Area: {'
+  L284: 'area: {' -> 'Area: {'
+  L65: 'plan: {' -> 'Plan: {'
+  L285: 'plan: {' -> 'Plan: {'
+  L71: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L291: 'radiusGroup: {' -> 'RadiusGroup: {'
+  L72: 'radiusUser: {' -> 'RadiusUser: {'
+  L68: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L288: 'group: { select: {' -> 'RadiusGroup: { select: {'
+  L72: 'sessions: {' -> 'RadiusSession: {'
+
+src/app/api/technicians/[id]/route.ts: 4 change(s)
+  L30: 'area: {' -> 'Area: {'
+  L38: 'area: {' -> 'Area: {'
+  L29: 'subscriber: {' -> 'Subscriber: {'
+  L37: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/technicians/calendar/route.ts: 2 change(s)
+  L31: 'subscriber: {' -> 'Subscriber: {'
+  L44: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/technicians/dispatch/route.ts: 2 change(s)
+  L46: 'area: {' -> 'Area: {'
+  L47: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/time-access-policies/route.ts: 2 change(s)
+  L18: 'subscriber: {' -> 'Subscriber: {'
+  L64: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/top-ups/route.ts: 1 change(s)
+  L322: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/traffic-analytics/route.ts: 2 change(s)
+  L183: 'area: {' -> 'Area: {'
+  L218: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/usage/route.ts: 1 change(s)
+  L60: 'plan: {' -> 'Plan: {'
+
+src/app/api/vouchers/[id]/route.ts: 3 change(s)
+  L17: 'plan: {' -> 'Plan: {'
+  L91: 'plan: {' -> 'Plan: {'
+  L37: 'invoice: {' -> 'Invoice: {'
+
+src/app/api/vouchers/bulk/route.ts: 1 change(s)
+  L46: 'plan: {' -> 'Plan: {'
+
+src/app/api/vouchers/route.ts: 6 change(s)
+  L41: 'area: {' -> 'Area: {'
+  L89: 'plan: {' -> 'Plan: {'
+  L117: 'plan: {' -> 'Plan: {'
+  L144: 'plan: {' -> 'Plan: {'
+  L171: 'plan: {' -> 'Plan: {'
+  L215: 'plan: {' -> 'Plan: {'
+
+src/app/api/vouchers/usage-history/route.ts: 1 change(s)
+  L45: 'plan: {' -> 'Plan: {'
+
+src/app/api/whatsapp/conversations/route.ts: 2 change(s)
+  L21: 'subscriber: {' -> 'Subscriber: {'
+  L26: 'subscriber: {' -> 'Subscriber: {'
+
+src/app/api/whatsapp/logs/route.ts: 3 change(s)
+  L26: 'subscriber: {' -> 'Subscriber: {'
+  L27: 'subscriber: {' -> 'Subscriber: {'
+  L36: 'subscriber: {' -> 'Subscriber: {'
+
+
+=== UNIQUE FILES (146) ===
+src/app/api/action-history/route.ts
+src/app/api/agents/[id]/route.ts
+src/app/api/agents/followups/route.ts
+src/app/api/ai/advisor/route.ts
+src/app/api/ai/churn/route.ts
+src/app/api/ai/diagnose/route.ts
+src/app/api/ai/whatsapp-bot/route.ts
+src/app/api/area-budgets/route.ts
+src/app/api/areas/[id]/route.ts
+src/app/api/backup/route.ts
+src/app/api/bandwidth/consumers/route.ts
+src/app/api/bandwidth/route.ts
+src/app/api/batch-provisioning/jobs/route.ts
+src/app/api/batch-provisioning/templates/route.ts
+src/app/api/billing/[id]/route.ts
+src/app/api/billing/export/route.ts
+src/app/api/billing/route.ts
+src/app/api/bw-reports/route.ts
+src/app/api/captive-portal/[id]/route.ts
+src/app/api/captive-portal/sessions/[id]/route.ts
+src/app/api/captive-portal/sessions/route.ts
+src/app/api/captive-portal/subnet-mapping/route.ts
+src/app/api/charge-override/route.ts
+src/app/api/charge-overrides/[id]/route.ts
+src/app/api/charge-overrides/route.ts
+src/app/api/churn-alerts/route.ts
+src/app/api/churn/predict/route.ts
+src/app/api/coa-events/route.ts
+src/app/api/collection/disputes/route.ts
+src/app/api/collection/receipt/route.ts
+src/app/api/collection/reconcile/route.ts
+src/app/api/collection/route.ts
+src/app/api/collection/summary/route.ts
+src/app/api/collections/analytics/route.ts
+src/app/api/collections/smart/route.ts
+src/app/api/complaints/[id]/auto-assign/route.ts
+src/app/api/complaints/[id]/route.ts
+src/app/api/complaints/export/route.ts
+src/app/api/complaints/route.ts
+src/app/api/compliance/audit-report/route.ts
+src/app/api/compliance/sla/route.ts
+src/app/api/dashboard/invoice-aging/route.ts
+src/app/api/dashboard/retention/route.ts
+src/app/api/dashboard/route.ts
+src/app/api/dashboard/top-subscribers/route.ts
+src/app/api/devices/[id]/route.ts
+src/app/api/devices/export/route.ts
+src/app/api/devices/route.ts
+src/app/api/devices/tree/route.ts
+src/app/api/disputes/route.ts
+src/app/api/due-recovery/payment-plan/route.ts
+src/app/api/due-recovery/route.ts
+src/app/api/due-recovery/sla-dashboard/route.ts
+src/app/api/due-recovery/sla-export/route.ts
+src/app/api/enterprise-auth/[id]/route.ts
+src/app/api/enterprise-auth/route.ts
+src/app/api/export/complaints/route.ts
+src/app/api/export/invoices/route.ts
+src/app/api/export/payments/route.ts
+src/app/api/export/subscribers/route.ts
+src/app/api/ftth/olts/[id]/route.ts
+src/app/api/ftth/olts/export/route.ts
+src/app/api/ftth/olts/route.ts
+src/app/api/ftth/ports/route.ts
+src/app/api/grace-periods/route.ts
+src/app/api/gst/audit/route.ts
+src/app/api/gst/gstr9/route.ts
+src/app/api/gst/reverse-charge/route.ts
+src/app/api/gst/route.ts
+src/app/api/gst/tds-tcs/route.ts
+src/app/api/incidents/route.ts
+src/app/api/installations/[id]/route.ts
+src/app/api/installations/auto-assign/route.ts
+src/app/api/installations/route.ts
+src/app/api/installations/timeline/route.ts
+src/app/api/invoices/[id]/credit-note/route.ts
+src/app/api/invoices/[id]/credit-notes/route.ts
+src/app/api/invoices/[id]/route.ts
+src/app/api/invoices/export-all/route.ts
+src/app/api/invoices/export/route.ts
+src/app/api/invoices/recurring-templates/route.ts
+src/app/api/invoices/route.ts
+src/app/api/ip-mac-history/route.ts
+src/app/api/ipam/export/route.ts
+src/app/api/ipam/route.ts
+src/app/api/loyalty/badges/route.ts
+src/app/api/loyalty/enhanced/route.ts
+src/app/api/loyalty/tiers/route.ts
+src/app/api/notifications/[id]/retry/route.ts
+src/app/api/notifications/[id]/route.ts
+src/app/api/notifications/retry-failed/route.ts
+src/app/api/notifications/route.ts
+src/app/api/payments/[id]/refund/route.ts
+src/app/api/payments/[id]/route.ts
+src/app/api/payments/create-order/route.ts
+src/app/api/payments/export/route.ts
+src/app/api/payments/recent/route.ts
+src/app/api/payments/route.ts
+src/app/api/plans/[id]/route.ts
+src/app/api/plans/migrate/route.ts
+src/app/api/plans/optimization/route.ts
+src/app/api/plans/recommend/route.ts
+src/app/api/radius-attributes/route.ts
+src/app/api/radius-attributes/user-attributes/route.ts
+src/app/api/radius-sessions/route.ts
+src/app/api/radius-users/[id]/route.ts
+src/app/api/radius-users/export/route.ts
+src/app/api/radius-users/route.ts
+src/app/api/radius/sessions/route.ts
+src/app/api/radius/users/[id]/route.ts
+src/app/api/radius/users/route.ts
+src/app/api/referral/route.ts
+src/app/api/reports/revenue/route.ts
+src/app/api/reports/route.ts
+src/app/api/reports/tds-tcs/route.ts
+src/app/api/reseller/route.ts
+src/app/api/resellers/analytics/route.ts
+src/app/api/resellers/commission-engine/route.ts
+src/app/api/revenue/aging-enhanced/route.ts
+src/app/api/revenue/audit/route.ts
+src/app/api/revenue/leakage/route.ts
+src/app/api/selfcare/usage-meter/route.ts
+src/app/api/subscriber-auth/login/route.ts
+src/app/api/subscriber-auth/me/route.ts
+src/app/api/subscriber-auth/service-status/route.ts
+src/app/api/subscriber-auth/usage/route.ts
+src/app/api/subscribers/[id]/360/route.ts
+src/app/api/subscribers/[id]/balance/route.ts
+src/app/api/subscribers/[id]/route.ts
+src/app/api/subscribers/bulk/route.ts
+src/app/api/subscribers/expiring/route.ts
+src/app/api/subscribers/export/route.ts
+src/app/api/subscribers/route.ts
+src/app/api/technicians/[id]/route.ts
+src/app/api/technicians/calendar/route.ts
+src/app/api/technicians/dispatch/route.ts
+src/app/api/time-access-policies/route.ts
+src/app/api/top-ups/route.ts
+src/app/api/traffic-analytics/route.ts
+src/app/api/usage/route.ts
+src/app/api/vouchers/[id]/route.ts
+src/app/api/vouchers/bulk/route.ts
+src/app/api/vouchers/route.ts
+src/app/api/vouchers/usage-history/route.ts
+src/app/api/whatsapp/conversations/route.ts
+src/app/api/whatsapp/logs/route.ts

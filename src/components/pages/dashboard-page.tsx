@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, formatINR, cn } from "@/lib/utils";
-import { format } from "date-fns";
 import { useAppStore } from "@/store/app-store";
 import { useModuleStore } from "@/store/module-store";
 import { toast } from "sonner";
@@ -350,7 +349,7 @@ function StatCard({ title, value, subtitle, icon: Icon, gradient, trend, trendVa
           <div className="flex-1 min-w-0">
             <p className={`text-[10px] sm:text-xs font-medium uppercase tracking-wider ${isWhite ? "text-muted-foreground" : "opacity-80"}`}>{title}</p>
             <p className={`text-xl sm:text-2xl lg:text-3xl font-bold mt-1.5 sm:mt-2 tabular-nums animate-count-up ${isWhite ? "text-foreground" : ""} ${pulse ? "animate-cryptsk-pulse" : ""}`}>{value}</p>
-            <p className={`text-[10px] sm:text-xs mt-1.5 sm:mt-2 truncate ${isWhite ? "text-muted-foreground" : "opacity-75"}`}>{subtitle}</p>
+            <p className={`text-[10px] sm:text-xs mt-1.5 sm:mt-2 truncate ${isWhite ? "text-muted-foreground" : "opacity-75"}`} title={subtitle}>{subtitle}</p>
           </div>
           <div className="flex-shrink-0 ml-2 sm:ml-3 flex flex-col items-end gap-1.5 sm:gap-2">
             <div className={`p-2 sm:p-2.5 rounded-xl transition-all duration-200 group-hover:scale-110 ${isWhite ? "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400" : "bg-white/20 backdrop-blur-sm text-white"}`}><Icon className="h-4 w-4 sm:h-5 sm:w-5" /></div>
@@ -397,6 +396,28 @@ function istHour(date: Date): number {
   ) % 24;
 }
 
+// Day-of-week (0 = Sunday) on the same pinned IST clock. The browser's local
+// getDay() lags an IST day behind whenever IST has rolled past midnight but the
+// host timezone has not (e.g. 01:28 IST is still "yesterday" in UTC), which
+// desynced the banner's tip-of-the-day index from its date line.
+const IST_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function istDayOfWeek(date: Date): number {
+  return IST_WEEKDAYS.indexOf(
+    new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "short" }).format(date)
+  );
+}
+
+// Honest day-part buckets on the IST clock: 5-11 morning, 12-16 afternoon,
+// 17-20 evening, 21-04 night. Shared by the header h1 and the welcome banner
+// so both greet identically at the same moment (previously 21:00-04:59 fell
+// through to "Good evening"/"Good morning" depending on the call site).
+function greetingForHour(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good Morning";
+  if (hour >= 12 && hour < 17) return "Good Afternoon";
+  if (hour >= 17 && hour < 21) return "Good Evening";
+  return "Good Night";
+}
+
 export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -406,7 +427,7 @@ export default function DashboardPage() {
   }, []);
 
   const hour = istHour(currentTime);
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const greeting = greetingForHour(hour);
 
   const formattedDate = currentTime.toLocaleDateString("en-IN", {
     weekday: "long",
@@ -686,12 +707,13 @@ export default function DashboardPage() {
             variant="outline" size="sm" className="h-9 w-9 p-0 btn-shine"
             onClick={handleRefresh}
             disabled={isRefetching}
+            aria-label="Refresh dashboard data"
           >
             <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
           </Button>
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 w-9 p-0 relative">
+              <Button variant="outline" size="sm" className="h-9 w-9 p-0 relative" aria-label="Urgent items notifications">
                 <Bell className="h-4 w-4" />
                 {data.urgentItems.total > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">{data.urgentItems.total}</span>
@@ -773,16 +795,16 @@ export default function DashboardPage() {
 
       {/* ── Welcome Banner ── */}
       {showWelcomeBanner && (() => {
-        const bannerHour = istHour(new Date());
-        const bannerGreeting = bannerHour >= 5 && bannerHour < 12
-          ? "Good Morning"
-          : bannerHour >= 12 && bannerHour < 17
-            ? "Good Afternoon"
-            : bannerHour >= 17 && bannerHour < 21
-              ? "Good Evening"
-              : "Good Night";
-        const bannerDate = format(new Date(), "EEEE, d MMMM yyyy");
-        const dayOfWeek = new Date().getDay();
+        // Banner clock = the same live IST state (currentTime / hour /
+        // formattedDate) as the header, so greeting, date line and
+        // tip-of-the-day can never disagree with the topbar date. The old
+        // banner used a browser-local new Date() (date-fns format + getDay()),
+        // which rendered "yesterday" whenever IST had rolled past midnight but
+        // the host timezone had not (QA: banner "1 October" vs topbar "2
+        // October" at 01:28 IST).
+        const bannerGreeting = greetingForHour(hour);
+        const bannerDate = formattedDate;
+        const dayOfWeek = istDayOfWeek(currentTime);
         const dailyTips = [
           `You have ${data.totalActive.toLocaleString("en-IN")} subscribers — consider running a satisfaction survey.`,
           "Tip: Use the AI Advisor for personalized network optimization insights.",
@@ -845,6 +867,7 @@ export default function DashboardPage() {
                               variant="outline"
                               size="sm"
                               className="h-8 w-8 p-0 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
+                              aria-label="New Subscriber"
                               onClick={() => handleQuickAction("Subscribers", "MAIN")}
                             >
                               <UserPlus className="h-4 w-4" />
@@ -858,6 +881,7 @@ export default function DashboardPage() {
                               variant="outline"
                               size="sm"
                               className="h-8 w-8 p-0 border-teal-200 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:border-teal-800 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                              aria-label="Collect Payment"
                               onClick={() => handleQuickAction("Payments", "MAIN")}
                             >
                               <Wallet className="h-4 w-4" />
@@ -871,6 +895,7 @@ export default function DashboardPage() {
                               variant="outline"
                               size="sm"
                               className="h-8 w-8 p-0 border-amber-200 text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                              aria-label="Raise Complaint"
                               onClick={() => handleQuickAction("Complaints", "OPERATIONS")}
                             >
                               <AlertTriangle className="h-4 w-4" />
@@ -900,7 +925,7 @@ export default function DashboardPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total Subscribers</p>
-            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5">{data.totalSubscribers.toLocaleString("en-IN")}</p>
+            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5 truncate">{data.totalSubscribers.toLocaleString("en-IN")}</p>
           </div>
         </div>
 
@@ -914,7 +939,7 @@ export default function DashboardPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Active Connections</p>
-            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5">{data.activeConnections.toLocaleString("en-IN")}</p>
+            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5 truncate">{data.activeConnections.toLocaleString("en-IN")}</p>
           </div>
         </div>
 
@@ -928,7 +953,7 @@ export default function DashboardPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Monthly Revenue (MRR)</p>
-            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5">{formatINR(data.mrr)}</p>
+            <p className="text-xl font-bold tabular-nums text-foreground mt-0.5 truncate" title={formatINR(data.mrr)}>{formatINR(data.mrr)}</p>
           </div>
         </div>
 
@@ -942,7 +967,7 @@ export default function DashboardPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Collection Today %</p>
-            <p className={`text-xl font-bold tabular-nums mt-0.5 ${collectionPercent >= 80 ? "text-emerald-600 dark:text-emerald-400" : collectionPercent >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+            <p className={`text-xl font-bold tabular-nums mt-0.5 truncate ${collectionPercent >= 80 ? "text-emerald-600 dark:text-emerald-400" : collectionPercent >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
               {collectionPercent}%
             </p>
           </div>
@@ -1447,7 +1472,7 @@ export default function DashboardPage() {
       <RecentPaymentsTimelineWidget />
 
       {/* ── Expiring Subscriptions & Overdue Payments Row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ExpiringSubscriptionsWidget />
         <OverduePaymentsWidget />
       </div>

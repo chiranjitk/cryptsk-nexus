@@ -49,8 +49,9 @@ local-*
 *.log
 dev.log
 dev.out.log
-test
-prompt
+# root-level scratch files only (anchored — do not match src/**/test)
+/test
+/prompt
 
 server.log
 # Skills directory
@@ -97,6 +98,19 @@ data/
 download/
 pgsql-production/runtime/
 
+<<<<<<< HEAD
+# ============== Internal ops scripts (contain hardcoded credentials) ==============
+# These are internal helper scripts with prod SSH/DB passwords — NEVER commit
+scripts/_*.mjs
+scripts/apply-ssh2-fix-and-build.mjs
+scripts/push-enhanced-page-and-rebuild.mjs
+scripts/push-radius-fix-and-rebuild.mjs
+scripts/migrate-radius-attrs.mjs
+scripts/check-prod-build.mjs
+scripts/restart-prod-pm2.mjs
+scripts/start-prod-nextjs.mjs
+scripts/quick-prod-check.mjs
+=======
 # ============== agent runtime artifacts (never commit) ==============
 tool-results/
 .zscripts/
@@ -109,10 +123,7 @@ ecosystem.config.production.cjs
 *.env.*
 !.env.example
 
-# ============== next.js config (local-only, per user order) ==============
-# Sandbox-specific tuning lives here (turbopackMemoryLimit etc.); keeping it
-# untracked avoids parallel-agent merge conflicts. fresh-setup.sh recreates
-# a working default if missing after a fresh clone.
-next.config.js
-next.config.ts
-next.config.mjs
+# ============== next.js config ==============
+# TRACKED as of user order 2026-10-02 (survives sandbox resets via git).
+# No production domains in allowedDevOrigins — sandbox-local origins only.
+>>>>>>> origin/main

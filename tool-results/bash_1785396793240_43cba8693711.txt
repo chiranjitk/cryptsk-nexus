@@ -1,0 +1,1740 @@
+
+========== /home/z/my-project/src/app/api/aaa/groups/[groupname]/route.ts ==========
+/**
+ * CRYPTSKINTELLIGENT ISP Platform — FreeRADIUS Single Group Operations
+ *
+ * Provides detailed view and management for a single RADIUS group by name.
+ *
+ * GET    /api/aaa/groups/[groupname]  — Full group detail with attrs, users, enrichment
+ * DELETE /api/aaa/groups/[groupname]  — Delete a specific group by name (path param)
+ */
+
+import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+
+// ─── Serialization helper ────────────────────────────────────────────────────
+
+function serializeRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((row) => {
+    const serialized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      serialized[key] = typeof value === "bigint" ? Number(value) : value;
+    }
+    return serialized;
+  });
+}
+
+// ─── GET /api/aaa/groups/[groupname] ─────────────────────────────────────────
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ groupname: string }> }
+) {
+  try {
+    await requireAuth(req);
+    const { groupname } = await params;
+    const groupName = decodeURIComponent(groupname);
+
+    // ── Fetch group check attributes ──
+    const checks = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+      `SELECT id, groupname, attribute, op, value
+       FROM radgroupcheck
+       WHERE groupname = $1
+       ORDER BY attribute`,
+      groupName
+    );
+
+    // ── Fetch group reply attributes ──
+    const replies = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+      `SELECT id, groupname, attribute, op, value
+       FROM radgroupreply
+       WHERE groupname = $1
+       ORDER BY attribute`,
+      groupName
+    );
+
+    // If neither exists, group not found
+    if (checks.length === 0 && replies.length === 0) {
+      return NextResponse.json({ success: false, error: `Group '${groupName}' not found` }, { status: 404 });
+    }
+
+    // ── Fetch users assigned to this group via radusergroup ──
+    const assignedUsers = await db.$queryRawUnsafe<Record<string, unknown>[]>(
+      `SELECT
+         ug.username,
+         ug.priority AS group_priority,
+         ug."groupName" AS user_group,
+         s.id AS "subscriberId",
+         s.name AS "subscriberName",
+         s.code AS "subscriberCode",
+         s.status AS "subscriberStatus",
+         s."planId",
+         p.name AS "planName"
+       FROM radusergroup ug
+       LEFT JOIN "Subscriber" s ON s."serviceUsername" = ug.username
+       LEFT JOIN "Plan" p ON p.id = s."planId"
+       WHERE ug.groupname = $1
+       ORDER BY ug.username`,
+      groupName
+    );
+
+    // ── Count active sessions for users in this group ──
+    const activeSessions = await db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM radacct a
+       INNER JOIN radusergroup ug ON ug.username = a.username
+       WHERE ug.groupname = $1 AND a.acctstoptime IS NULL`,
+      groupName
+    );
+
+    // ── RadiusGroup Prisma enrichment ──
+    const enrichment = await db.radiusGroup.findUnique({
+      where: { name: groupName },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        priority: true,
+        speedLimitDown: true,
+        speedLimitUp: true,
+        dataLimit: true,
+        sessionTimeout: true,
+        framedIpv6Pool: true,
+        delegatedIpv6PrefixPool: true,
+        plans: {
+          select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, priceMonthly: true, status: true },
+        },
+        subscribers: {
+          select: { id: true, name: true, code: true, status: true },
+          take: 100,
+          orderBy: { name: "asc" },
+        },
+      },
+    });
+
+    // ── Build structured check attributes map ──
+    const checkAttrsMap: Record<string, { id: number; attribute: string; op: string; value: string }> = {};
+    for (const row of checks) {
+      checkAttrsMap[row.attribute as string] = {
+        id: Number(row.id),
+        attribute: row.attribute as string,
+        op: row.op as string,
+        value: row.value as string,
+      };
+    }
+
+    // ── Build structured reply attributes map ──
+    const replyAttrsMap: Record<string, { id: number; attribute: string; op: string; value: string }> = {};
+    for (const row of replies) {
+      replyAttrsMap[row.attribute as string] = {
+        id: Number(row.id),
+        attribute: row.attribute as string,
+        op: row.op as string,
+        value: row.value as string,
+      };
+    }
+
+    // ── Session/accounting stats for this group ──
+    const sessionStats = await db.$queryRawUnsafe<Record<string, unknown>[]>(`
+      SELECT
+        COUNT(*)::int AS total_sessions,
+        COUNT(CASE WHEN acctstoptime IS NULL THEN 1 END)::int AS active_sessions,
+        COALESCE(SUM(acctinputoctets), 0)::bigint AS total_download_bytes,
+        COALESCE(SUM(acctoutputoctets), 0)::bigint AS total_upload_bytes,
+        COALESCE(SUM(acctsessiontime), 0)::bigint AS total_session_seconds
+      FROM radacct a
+      INNER JOIN radusergroup ug ON ug.username = a.username
+      WHERE ug.groupname = $1
+    `, groupName);
+
+    const stats = sessionStats[0] || {};
+    const totalDownloadBytes = Number(stats.total_download_bytes || 0);
+    const totalUploadBytes = Number(stats.total_upload_bytes || 0);
+
+    return NextResponse.json({
+      success: true,
+      group: {
+        groupname: groupName,
+        checkAttrs: serializeRows(checks),
+        replyAttrs: serializeRows(replies),
+        checkAttrsMap,
+        replyAttrsMap,
+        checkCount: checks.length,
+        replyCount: replies.length,
+        userCount: assignedUsers.length,
+        assignedUsers: serializeRows(assignedUsers),
+        enrichment,
+        // Session stats
+        sessionStats: {
+          totalSessions: Number(stats.total_sessions || 0),
+          activeSessions: Number(stats.active_sessions || 0),
+          totalDownloadGB: Number((totalDownloadBytes / 1073741824).toFixed(2)),
+          totalUploadGB: Number((totalUploadBytes / 1073741824).toFixed(2)),
+          totalDataGB: Number(((totalDownloadBytes + totalUploadBytes) / 1073741824).toFixed(2)),
+          totalSessionSeconds: Number(stats.total_session_seconds || 0),
+          totalSessionHours: Number(((Number(stats.total_session_seconds || 0)) / 3600).toFixed(1)),
+        },
+      },
+    });
+  } catch (error: unknown) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
+    console.error("[aaa/groups/[groupname]] GET error:", error);
+    const msg = error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+// ─── DELETE /api/aaa/groups/[groupname] ──────────────────────────────────────
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ groupname: string }> }
+) {
+  try {
+    await requireAuth(req);
+    const { groupname } = await params;
+    const groupName = decodeURIComponent(groupname);
+
+    // Verify group exists
+    const exists = await db.$queryRawUnsafe<{ exists: boolean }[]>(
+      `SELECT EXISTS(
+        SELECT 1 FROM radgroupcheck WHERE groupname = $1
+        UNION
+        SELECT 1 FROM radgroupreply WHERE groupname = $1
+      )::text::boolean AS exists`,
+      groupName
+    );
+
+    if (!exists[0]?.exists) {
+      return NextResponse.json({ success: false, error: `Group '${groupName}' not found` }, { status: 404 });
+    }
+
+    // Pre-delete counts
+    const [checkCountResult, replyCountResult, userCountResult] = await Promise.all([
+      db.$queryRawUnsafe<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count FROM radgroupcheck WHERE groupname = $1`,
+        groupName
+      ),
+      db.$queryRawUnsafe<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count FROM radgroupreply WHERE groupname = $1`,
+        groupName
+      ),
+      db.$queryRawUnsafe<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count FROM radusergroup WHERE groupname = $1`,
+        groupName
+      ),
+    ]);
+
+    const deletedChecks = Number(checkCountResult[0]?.count || 0);
+    const deletedReplies = Number(replyCountResult[0]?.count || 0);
+    const unassignedUsers = Number(userCountResult[0]?.count || 0);
+
+    // Execute deletions
+    await db.$queryRawUnsafe(`DELETE FROM radgroupcheck WHERE groupname = $1`, groupName);
+    await db.$queryRawUnsafe(`DELETE FROM radgroupreply WHERE groupname = $1`, groupName);
+    await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE groupname = $1`, groupName);
+
+    // Remove RadiusGroup Prisma model if exists
+    try {
+      await db.radiusGroup.deleteMany({ where: { name: groupName } });
+    } catch {
+      // RadiusGroup might not exist — that's fine
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted: {
+        groupname: groupName,
+        deletedChecks,
+        deletedReplies,
+        unassignedUsers,
+      },
+    });
+  } catch (error: unknown) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
+    console.error("[aaa/groups/[groupname]] DELETE error:", error);
+    const msg = error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+========== /home/z/my-project/src/app/api/radius-sessions/route.ts ==========
+import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+
+// GET /api/radius-sessions - Active RADIUS sessions
+export async function GET(request: Request) {
+  try {
+    try {
+      await requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const sessions = await db.radiusSession.findMany({
+      where: { stopTime: null },
+      orderBy: { startTime: "desc" },
+      include: {
+        radiusUser: {
+          select: {
+            id: true,
+            subscriber: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                phone: true,
+                serviceUsername: true,
+                plan: {
+                  select: { name: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Map sessions to include serviceUsername from subscriber
+    // Convert BigInt fields to Number for JSON serialization
+    const mappedSessions = sessions.map((s: any) => ({
+      ...s,
+      inputOctets: Number(s.inputOctets || 0),
+      outputOctets: Number(s.outputOctets || 0),
+      ipv6InputOctets: Number(s.ipv6InputOctets || 0),
+      ipv6OutputOctets: Number(s.ipv6OutputOctets || 0),
+      sessionTimeout: Number(s.sessionTimeout || 0),
+      idleTimeout: Number(s.idleTimeout || 0),
+      username: s.radiusUser.subscriber.serviceUsername,
+      subscriberName: s.radiusUser.subscriber.name,
+      subscriberCode: s.radiusUser.subscriber.code,
+      subscriberPhone: s.radiusUser.subscriber.phone,
+      planName: s.radiusUser.subscriber.plan?.name || "",
+    }));
+
+    const totalActive = mappedSessions.length;
+    const totalInputBytes = mappedSessions.reduce(
+      (sum, s) => sum + Number(s.inputOctets),
+      0
+    );
+    const totalOutputBytes = mappedSessions.reduce(
+      (sum, s) => sum + Number(s.outputOctets),
+      0
+    );
+
+    return NextResponse.json(
+      JSON.parse(
+        JSON.stringify({
+          sessions: mappedSessions,
+          stats: {
+            totalActive,
+            totalInputBytes,
+            totalOutputBytes,
+            totalBytes: totalInputBytes + totalOutputBytes,
+          },
+        })
+      )
+    );
+  } catch (error) {
+    console.error("RADIUS sessions error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch RADIUS sessions" },
+      { status: 500 }
+    );
+  }
+}
+
+// POST /api/radius-sessions - Disconnect a RADIUS session (CoA/Disconnect-Message)
+export async function POST(request: NextRequest) {
+  try {
+    try {
+      await requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const body = await request.json();
+    const { action, sessionId } = body;
+
+    if (action !== "disconnect" || !sessionId) {
+      return NextResponse.json({ error: "Invalid action. Use { action: 'disconnect', sessionId: '...' }" }, { status: 400 });
+    }
+
+    // Find the active session
+    const session = await db.radiusSession.findFirst({
+      where: { sessionId, stopTime: null },
+    });
+
+    if (!session) {
+      return NextResponse.json({ error: "Session not found or already terminated" }, { status: 404 });
+    }
+
+    // Terminate the session by setting stopTime and terminateCause
+    await db.radiusSession.update({
+      where: { id: session.id },
+      data: {
+        stopTime: new Date(),
+        terminateCause: "Admin-Reset",
+        lastUpdate: new Date(),
+      },
+    });
+
+    return NextResponse.json({ success: true, message: "Session disconnected" });
+  } catch (error) {
+    console.error("RADIUS session disconnect error:", error);
+    return NextResponse.json(
+      { error: "Failed to disconnect session" },
+      { status: 500 }
+    );
+  }
+}
+
+========== /home/z/my-project/src/app/api/radius-groups/route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
+import { db } from "@/lib/db";
+import { isValidIPv6CIDR } from "@/lib/validators/ipv6";
+
+// GET /api/radius-groups — list all groups with plan count, subscriber count, and linked plans
+export async function GET(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    // Use raw query for counts (Turbopack compatibility — _count with include is broken)
+    const countRows: any[] = await db.$queryRawUnsafe(`
+      SELECT (SELECT COUNT(*) FROM "Plan" WHERE "groupId" = g."id") as "planCount",
+             (SELECT COUNT(*) FROM "Subscriber" WHERE "radiusGroupId" = g."id") as "subscriberCount",
+             g."id"
+      FROM "RadiusGroup" g
+      ORDER BY g."priority" ASC
+    `);
+    const countMap = new Map(countRows.map((r: any) => [r.id, { planCount: Number(r.planCount), subscriberCount: Number(r.subscriberCount) }]));
+
+    const groups = await db.radiusGroup.findMany({
+      orderBy: { priority: "asc" },
+      include: {
+        plans: {
+          select: {
+            id: true,
+            name: true,
+            downloadSpeed: true,
+            uploadSpeed: true,
+          },
+        },
+      },
+    });
+    const enriched = groups.map((g: any) => {
+      const counts = countMap.get(g.id) || { planCount: 0, subscriberCount: 0 };
+      return { ...g, _count: counts };
+    });
+    return NextResponse.json({ groups: enriched });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    const status = (error as any)?.statusCode || 500;
+    return NextResponse.json({ error: msg }, { status });
+  }
+}
+
+// POST /api/radius-groups — create group
+export async function POST(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const body = await req.json();
+    const { name, description, speedLimitDown, speedLimitUp, dataLimit, sessionTimeout, priority, framedIpv6Pool, delegatedIpv6PrefixPool } = body;
+
+    if (!name?.trim()) {
+      return NextResponse.json({ error: "Group name is required" }, { status: 400 });
+    }
+
+    // IPv6 validation
+    if (framedIpv6Pool && framedIpv6Pool.trim() !== "" && !isValidIPv6CIDR(framedIpv6Pool)) {
+      return NextResponse.json({ success: false, error: "Invalid framed IPv6 pool. Must be a valid IPv6 CIDR (e.g. 2001:db8::/64)" }, { status: 400 });
+    }
+    if (delegatedIpv6PrefixPool && delegatedIpv6PrefixPool.trim() !== "" && !isValidIPv6CIDR(delegatedIpv6PrefixPool)) {
+      return NextResponse.json({ success: false, error: "Invalid delegated IPv6 prefix pool. Must be a valid IPv6 CIDR (e.g. 2001:db8::/48)" }, { status: 400 });
+    }
+
+    const existing = await db.radiusGroup.findUnique({ where: { name: name.trim() } });
+    if (existing) {
+      return NextResponse.json({ error: "Group with this name already exists" }, { status: 409 });
+    }
+
+    const group = await db.radiusGroup.create({
+      data: {
+        name: name.trim(),
+        description: description || "",
+        speedLimitDown: parseInt(speedLimitDown) || 0,
+        speedLimitUp: parseInt(speedLimitUp) || 0,
+        dataLimit: dataLimit ? parseInt(dataLimit) || null : null,
+        sessionTimeout: sessionTimeout ? parseInt(sessionTimeout) || null : null,
+        priority: parseInt(priority) || 0,
+        framedIpv6Pool: framedIpv6Pool || "",
+        delegatedIpv6PrefixPool: delegatedIpv6PrefixPool || "",
+      },
+      include: {
+        plans: {
+          select: {
+            id: true,
+            name: true,
+            downloadSpeed: true,
+            uploadSpeed: true,
+          },
+        },
+      },
+    });
+
+    // Fetch counts via raw query (Turbopack compatibility)
+    const countRows: any[] = await db.$queryRawUnsafe(`
+      SELECT (SELECT COUNT(*) FROM "Plan" WHERE "groupId" = $1) as "planCount",
+             (SELECT COUNT(*) FROM "Subscriber" WHERE "radiusGroupId" = $1) as "subscriberCount"
+    `, group.id);
+    const counts = { planCount: Number(countRows[0]?.planCount || 0), subscriberCount: Number(countRows[0]?.subscriberCount || 0) };
+    return NextResponse.json({ group: { ...group, _count: counts } });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    const status = (error as any)?.statusCode || 500;
+    return NextResponse.json({ error: msg }, { status });
+  }
+}
+
+// PUT /api/radius-groups — update group
+export async function PUT(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const body = await req.json();
+    const { id, name, description, speedLimitDown, speedLimitUp, dataLimit, sessionTimeout, priority, framedIpv6Pool, delegatedIpv6PrefixPool } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: "Group ID is required" }, { status: 400 });
+    }
+
+    // IPv6 validation
+    if (framedIpv6Pool && framedIpv6Pool.trim() !== "" && !isValidIPv6CIDR(framedIpv6Pool)) {
+      return NextResponse.json({ success: false, error: "Invalid framed IPv6 pool. Must be a valid IPv6 CIDR (e.g. 2001:db8::/64)" }, { status: 400 });
+    }
+    if (delegatedIpv6PrefixPool && delegatedIpv6PrefixPool.trim() !== "" && !isValidIPv6CIDR(delegatedIpv6PrefixPool)) {
+      return NextResponse.json({ success: false, error: "Invalid delegated IPv6 prefix pool. Must be a valid IPv6 CIDR (e.g. 2001:db8::/48)" }, { status: 400 });
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (name !== undefined) updateData.name = name.trim();
+    if (description !== undefined) updateData.description = description;
+    if (speedLimitDown !== undefined) updateData.speedLimitDown = parseInt(speedLimitDown) || 0;
+    if (speedLimitUp !== undefined) updateData.speedLimitUp = parseInt(speedLimitUp) || 0;
+    if (dataLimit !== undefined) updateData.dataLimit = dataLimit ? parseInt(dataLimit) || null : null;
+    if (sessionTimeout !== undefined) updateData.sessionTimeout = sessionTimeout ? parseInt(sessionTimeout) || null : null;
+    if (priority !== undefined) updateData.priority = parseInt(priority) || 0;
+    if (framedIpv6Pool !== undefined) updateData.framedIpv6Pool = framedIpv6Pool;
+    if (delegatedIpv6PrefixPool !== undefined) updateData.delegatedIpv6PrefixPool = delegatedIpv6PrefixPool;
+
+    // Check name uniqueness if changing name
+    if (updateData.name) {
+      const existing = await db.radiusGroup.findFirst({
+        where: { name: updateData.name as string, NOT: { id } },
+      });
+      if (existing) {
+        return NextResponse.json({ error: "Group with this name already exists" }, { status: 409 });
+      }
+    }
+
+    const group = await db.radiusGroup.update({
+      where: { id },
+      data: updateData,
+      include: {
+        plans: {
+          select: {
+            id: true,
+            name: true,
+            downloadSpeed: true,
+            uploadSpeed: true,
+          },
+        },
+      },
+    });
+
+    // Fetch counts via raw query (Turbopack compatibility)
+    const countRows: any[] = await db.$queryRawUnsafe(`
+      SELECT (SELECT COUNT(*) FROM "Plan" WHERE "groupId" = $1) as "planCount",
+             (SELECT COUNT(*) FROM "Subscriber" WHERE "radiusGroupId" = $1) as "subscriberCount"
+    `, id);
+    const counts = { planCount: Number(countRows[0]?.planCount || 0), subscriberCount: Number(countRows[0]?.subscriberCount || 0) };
+    return NextResponse.json({ group: { ...group, _count: counts } });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    const status = (error as any)?.statusCode || 500;
+    return NextResponse.json({ error: msg }, { status });
+  }
+}
+
+// DELETE /api/radius-groups?id=xxx — delete group
+export async function DELETE(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "Group ID is required" }, { status: 400 });
+    }
+
+    // Unassign subscribers from this group first
+    await db.subscriber.updateMany({
+      where: { radiusGroupId: id },
+      data: { radiusGroupId: null },
+    });
+
+    // Unassign plans from this group first
+    await db.plan.updateMany({
+      where: { groupId: id },
+      data: { groupId: null },
+    });
+
+    await db.radiusGroup.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    const status = (error as any)?.statusCode || 500;
+    return NextResponse.json({ error: msg }, { status });
+  }
+}
+
+========== /home/z/my-project/src/app/api/radius-users/route.ts ==========
+import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { auditCreate } from "@/lib/services/audit-service";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+
+// Helper: Sync user to FreeRADIUS tables (radcheck, radreply, radusergroup)
+async function syncToFreeRADIUS(
+  username: string,
+  password: string,
+  groupName: string | null,
+  maxSessions: number = 1
+) {
+  const uname = username.replace(/'/g, "''");
+  const pwd = password.replace(/'/g, "''");
+  const grp = groupName ? groupName.replace(/'/g, "''") : null;
+  const rateLimit = grp
+    ? (await db.$queryRawUnsafe<{ value: string }[]>(
+        `SELECT value FROM radgroupreply WHERE groupname = '${grp}' AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`
+      ))[0]?.value || null
+    : null;
+
+  // Upsert radcheck: Cleartext-Password
+  await db.$queryRawUnsafe(`
+    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Cleartext-Password', ':=', '${pwd}')
+    ON CONFLICT DO NOTHING
+  `);
+
+  // Upsert radcheck: Simultaneous-Use
+  await db.$queryRawUnsafe(`
+    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Simultaneous-Use', ':=', '${maxSessions}')
+    ON CONFLICT DO NOTHING
+  `);
+
+  // Upsert radreply: Mikrotik-Rate-Limit from group if not exists
+  if (rateLimit) {
+    await db.$queryRawUnsafe(`
+      INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${rateLimit.replace(/'/g, "''")}')
+      ON CONFLICT DO NOTHING
+    `);
+  }
+
+  // Upsert radusergroup
+  if (grp) {
+    await db.$queryRawUnsafe(`
+      INSERT INTO radusergroup (username, groupname, priority) VALUES ('${uname}', '${grp}', 1)
+      ON CONFLICT DO NOTHING
+    `);
+  }
+}
+
+// Helper: Remove user from FreeRADIUS tables
+async function removeFromFreeRADIUS(username: string) {
+  const uname = username.replace(/'/g, "''");
+  await db.$queryRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}'`);
+  await db.$queryRawUnsafe(`DELETE FROM radreply WHERE username = '${uname}'`);
+  await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}'`);
+}
+
+// Helper: Update user's group in FreeRADIUS
+async function updateFreeRADIUSGroup(
+  username: string,
+  oldGroup: string | null,
+  newGroup: string | null
+) {
+  const uname = username.replace(/'/g, "''");
+
+  if (oldGroup && oldGroup !== newGroup) {
+    await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}' AND groupname = '${oldGroup.replace(/'/g, "''")}'`);
+  }
+
+  if (newGroup) {
+    const grp = newGroup.replace(/'/g, "''");
+    await db.$queryRawUnsafe(`
+      INSERT INTO radusergroup (username, groupname, priority) VALUES ('${uname}', '${grp}', 1)
+      ON CONFLICT (username, groupname) DO NOTHING
+    `);
+
+    // Update rate limit reply from group
+    const rateLimit = (await db.$queryRawUnsafe<{ value: string }[]>(
+      `SELECT value FROM radgroupreply WHERE groupname = '${grp}' AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`
+    ))[0]?.value;
+
+    if (rateLimit) {
+      await db.$queryRawUnsafe(`
+        INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${rateLimit.replace(/'/g, "''")}')
+        ON CONFLICT (username, attribute) DO UPDATE SET value = '${rateLimit.replace(/'/g, "''")}'
+      `);
+    }
+  }
+}
+
+// GET /api/radius-users - List all RADIUS users (nested structure matching frontend RadiusUser interface)
+export async function GET(request: NextRequest) {
+  try {
+    await requireAuth(request);
+
+    const users = await db.radiusUser.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        subscriber: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            phone: true,
+            serviceUsername: true,
+            servicePassword: true,
+            radiusEnabled: true,
+            radiusGroupId: true,
+            sessionTimeout: true,
+            idleTimeout: true,
+            lastAuthAt: true,
+            lastAuthResult: true,
+            status: true,
+            plan: {
+              select: {
+                id: true,
+                name: true,
+                downloadSpeed: true,
+                uploadSpeed: true,
+                dataLimitGb: true,
+                group: {
+                  select: {
+                    id: true,
+                    name: true,
+                    speedLimitDown: true,
+                    speedLimitUp: true,
+                    dataLimit: true,
+                  },
+                },
+              },
+            },
+            radiusGroup: {
+              select: {
+                id: true,
+                name: true,
+                speedLimitDown: true,
+                speedLimitUp: true,
+                dataLimit: true,
+              },
+            },
+          },
+        },
+        _count: { select: { sessions: true } },
+      },
+    });
+
+    // Return in the nested structure the frontend expects (RadiusUser interface)
+    const mapped = users.map((u) => ({
+      id: u.id,
+      subscriberId: u.subscriberId,
+      createdAt: u.createdAt.toISOString(),
+      updatedAt: u.updatedAt.toISOString(),
+      subscriber: u.subscriber,
+      _count: u._count,
+    }));
+
+    return NextResponse.json({ users: mapped });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("RADIUS users list error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch RADIUS users" },
+      { status: 500 }
+    );
+  }
+}
+
+// POST /api/radius-users - Create a new RADIUS user (thin record + enable RADIUS on subscriber + sync to FreeRADIUS)
+export async function POST(request: NextRequest) {
+  try {
+    await requireAuth(request);
+    const body = await request.json();
+    const {
+      subscriberId,
+      radiusGroupId,
+      sessionTimeout,
+      idleTimeout,
+    } = body;
+
+    // Validation
+    const errors: string[] = [];
+    if (!subscriberId?.trim()) errors.push("Subscriber ID is required");
+
+    if (errors.length > 0) {
+      return NextResponse.json({ error: errors.join("; ") }, { status: 400 });
+    }
+
+    // Check subscriber exists
+    const subscriber = await db.subscriber.findUnique({
+      where: { id: subscriberId },
+      include: {
+        radiusUser: { select: { id: true } },
+        radiusGroup: { select: { name: true } },
+        plan: { select: { maxConcurrentSessions: true } },
+      },
+    });
+    if (!subscriber) {
+      return NextResponse.json(
+        { error: "Subscriber not found" },
+        { status: 404 }
+      );
+    }
+
+    // Check if already has a RadiusUser record
+    if (subscriber.radiusUser) {
+      return NextResponse.json(
+        { error: "RADIUS user already exists for this subscriber" },
+        { status: 409 }
+      );
+    }
+
+    // Validate radiusGroupId if provided
+    let groupName: string | null = null;
+    if (radiusGroupId) {
+      const group = await db.radiusGroup.findUnique({ where: { id: radiusGroupId } });
+      if (!group) {
+        return NextResponse.json({ error: "RADIUS group not found" }, { status: 404 });
+      }
+      groupName = group.name;
+    } else if (subscriber.radiusGroupId) {
+      // Use subscriber's existing group if not explicitly provided
+      groupName = subscriber.radiusGroup?.name || null;
+    }
+
+    // Create thin RadiusUser record
+    const user = await db.radiusUser.create({
+      data: {
+        subscriberId,
+      },
+    });
+
+    // Update subscriber: set radiusEnabled = true and optional RADIUS fields
+    const updatedSubscriber = await db.subscriber.update({
+      where: { id: subscriberId },
+      data: {
+        radiusEnabled: true,
+        ...(radiusGroupId !== undefined && { radiusGroupId: radiusGroupId || null }),
+        ...(sessionTimeout !== undefined && { sessionTimeout: sessionTimeout || null }),
+        ...(idleTimeout !== undefined && { idleTimeout: idleTimeout || null }),
+      },
+    });
+
+    // Sync to FreeRADIUS tables
+    await syncToFreeRADIUS(
+      subscriber.serviceUsername,
+      subscriber.servicePassword,
+      groupName,
+      subscriber.plan?.maxConcurrentSessions || 1
+    );
+
+    await auditCreate(request, "RadiusUser", user.id, {
+      subscriberId,
+      serviceUsername: subscriber.serviceUsername,
+      radiusGroupId,
+    });
+    return NextResponse.json({
+      user: {
+        id: user.id,
+        subscriberId: user.subscriberId,
+        username: subscriber.serviceUsername,
+        password: subscriber.servicePassword,
+        radiusEnabled: updatedSubscriber.radiusEnabled,
+        radiusGroupId: updatedSubscriber.radiusGroupId,
+        sessionTimeout: updatedSubscriber.sessionTimeout,
+        idleTimeout: updatedSubscriber.idleTimeout,
+        createdAt: user.createdAt,
+      },
+    }, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("RADIUS user create error:", error);
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: string }).code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "RADIUS user already exists for this subscriber" },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json(
+      { error: "Failed to create RADIUS user" },
+      { status: 500 }
+    );
+  }
+}
+
+========== /home/z/my-project/src/app/api/radius-users/[id]/route.ts ==========
+import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { auditUpdate, auditDelete } from "@/lib/services/audit-service";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+
+// GET /api/radius-users/[id] - Get single RADIUS user
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    try {
+      await requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const { id } = await params;
+    const user = await db.radiusUser.findUnique({
+      where: { id },
+      include: {
+        subscriber: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            phone: true,
+            serviceUsername: true,
+            servicePassword: true,
+            radiusEnabled: true,
+            radiusGroupId: true,
+            sessionTimeout: true,
+            idleTimeout: true,
+            lastAuthAt: true,
+            lastAuthResult: true,
+            status: true,
+            plan: {
+              select: {
+                name: true,
+                group: { select: { id: true, name: true } },
+              },
+            },
+            radiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
+          },
+        },
+        sessions: {
+          orderBy: { startTime: "desc" },
+          take: 10,
+        },
+      },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: "RADIUS user not found" },
+        { status: 404 }
+      );
+    }
+
+    // Map to a flat shape: username/password come from subscriber
+    const mapped = {
+      id: user.id,
+      subscriberId: user.subscriberId,
+      username: user.subscriber.serviceUsername,
+      password: user.subscriber.servicePassword,
+      subscriberName: user.subscriber.name,
+      subscriberCode: user.subscriber.code,
+      subscriberPhone: user.subscriber.phone,
+      subscriberStatus: user.subscriber.status,
+      radiusEnabled: user.subscriber.radiusEnabled,
+      radiusGroupId: user.subscriber.radiusGroupId,
+      radiusGroupName: user.subscriber.radiusGroup?.name || "",
+      sessionTimeout: user.subscriber.sessionTimeout,
+      idleTimeout: user.subscriber.idleTimeout,
+      lastAuthAt: user.subscriber.lastAuthAt,
+      lastAuthResult: user.subscriber.lastAuthResult,
+      planName: user.subscriber.plan?.name || "",
+      planGroup: user.subscriber.plan?.group?.name || "",
+      sessions: user.sessions,
+      createdAt: user.createdAt,
+    };
+
+    return NextResponse.json({ user: mapped });
+  } catch (error) {
+    console.error("RADIUS user get error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch RADIUS user" },
+      { status: 500 }
+    );
+  }
+}
+
+// Helper: Update user's group in FreeRADIUS tables
+async function syncGroupToFreeRADIUS(
+  username: string,
+  oldGroup: string | null,
+  newGroup: string | null
+) {
+  const uname = username.replace(/'/g, "''");
+  if (oldGroup && oldGroup !== newGroup) {
+    await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}' AND groupname = '${oldGroup.replace(/'/g, "''")}'`);
+  }
+  if (newGroup) {
+    const grp = newGroup.replace(/'/g, "''");
+    await db.$queryRawUnsafe(`INSERT INTO radusergroup (username, groupname, priority) VALUES ('${uname}', '${grp}', 1) ON CONFLICT (username, groupname) DO NOTHING`);
+    const rateLimit = (await db.$queryRawUnsafe<{ value: string }[]>(`SELECT value FROM radgroupreply WHERE groupname = '${grp}' AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`))[0]?.value;
+    if (rateLimit) {
+      const rl = rateLimit.replace(/'/g, "''");
+      await db.$queryRawUnsafe(`INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${rl}') ON CONFLICT (username, attribute) DO UPDATE SET value = '${rl}'`);
+    }
+  }
+}
+
+// Helper: Remove user from FreeRADIUS tables
+async function removeFromFreeRADIUS(username: string) {
+  const uname = username.replace(/'/g, "''");
+  await db.$queryRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}'`);
+  await db.$queryRawUnsafe(`DELETE FROM radreply WHERE username = '${uname}'`);
+  await db.$queryRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}'`);
+}
+
+// PUT /api/radius-users/[id] - Update RADIUS user (updates subscriber's RADIUS fields + syncs to FreeRADIUS)
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    try {
+      await requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const { id } = await params;
+    const body = await request.json();
+    const {
+      serviceUsername,
+      servicePassword,
+      radiusGroupId,
+      sessionTimeout,
+      idleTimeout,
+    } = body;
+
+    const existing = await db.radiusUser.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json(
+        { error: "RADIUS user not found" },
+        { status: 404 }
+      );
+    }
+
+    // Build update data for subscriber
+    const subscriberUpdate: Record<string, unknown> = {};
+
+    if (serviceUsername !== undefined) {
+      if (!serviceUsername?.trim()) {
+        return NextResponse.json({ error: "Service username is required" }, { status: 400 });
+      }
+      // Check uniqueness
+      const dup = await db.subscriber.findFirst({
+        where: { serviceUsername: serviceUsername.trim(), NOT: { id: existing.subscriberId } },
+      });
+      if (dup) {
+        return NextResponse.json({ error: "Service username already exists" }, { status: 409 });
+      }
+      subscriberUpdate.serviceUsername = serviceUsername.trim();
+    }
+
+    if (servicePassword !== undefined && servicePassword !== "") {
+      subscriberUpdate.servicePassword = servicePassword.trim();
+    }
+
+    if (radiusGroupId !== undefined) {
+      if (radiusGroupId) {
+        const group = await db.radiusGroup.findUnique({ where: { id: radiusGroupId } });
+        if (!group) {
+          return NextResponse.json({ error: "RADIUS group not found" }, { status: 404 });
+        }
+      }
+      subscriberUpdate.radiusGroupId = radiusGroupId || null;
+    }
+
+    if (sessionTimeout !== undefined) {
+      subscriberUpdate.sessionTimeout = sessionTimeout || null;
+    }
+
+    if (idleTimeout !== undefined) {
+      subscriberUpdate.idleTimeout = idleTimeout || null;
+    }
+
+    // Update subscriber's RADIUS fields
+    const updatedSubscriber = await db.subscriber.update({
+      where: { id: existing.subscriberId },
+      data: subscriberUpdate,
+      include: {
+        radiusGroup: { select: { id: true, name: true } },
+      },
+    });
+
+    // Refresh the RadiusUser record (touch updatedAt)
+    await db.radiusUser.update({
+      where: { id },
+      data: {},
+    });
+
+    // Sync changes to FreeRADIUS tables
+    if (servicePassword !== undefined) {
+      const pwd = servicePassword.trim().replace(/'/g, "''");
+      await db.$queryRawUnsafe(`UPDATE radcheck SET value = '${pwd}' WHERE username = '${updatedSubscriber.serviceUsername.replace(/'/g, "''")}' AND attribute = 'Cleartext-Password'`);
+    }
+    if (radiusGroupId !== undefined) {
+      const oldGroupName = (existing as any)._oldGroupName || null;
+      await syncGroupToFreeRADIUS(updatedSubscriber.serviceUsername, oldGroupName, updatedSubscriber.radiusGroup?.name || null);
+    }
+
+    await auditUpdate(request, "RadiusUser", id, body, existing);
+
+    return NextResponse.json({
+      user: {
+        id: existing.id,
+        subscriberId: existing.subscriberId,
+        username: updatedSubscriber.serviceUsername,
+        password: updatedSubscriber.servicePassword,
+        radiusGroupId: updatedSubscriber.radiusGroupId,
+        radiusGroupName: updatedSubscriber.radiusGroup?.name || null,
+        sessionTimeout: updatedSubscriber.sessionTimeout,
+        idleTimeout: updatedSubscriber.idleTimeout,
+        radiusEnabled: updatedSubscriber.radiusEnabled,
+        updatedAt: new Date(),
+      },
+    });
+  } catch (error: unknown) {
+    console.error("RADIUS user update error:", error);
+    return NextResponse.json(
+      { error: "Failed to update RADIUS user" },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/radius-users/[id] - Delete RADIUS user and disable RADIUS on subscriber
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    try {
+      await requireAuth(request as unknown as import("next/server").NextRequest);
+    } catch (error) {
+      if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    const { id } = await params;
+    const existing = await db.radiusUser.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json(
+        { error: "RADIUS user not found" },
+        { status: 404 }
+      );
+    }
+
+    const deletedRecord = { ...existing };
+
+    // Get subscriber info for FreeRADIUS cleanup
+    const sub = await db.subscriber.findUnique({ where: { id: existing.subscriberId }, select: { serviceUsername: true } });
+
+    // Delete RadiusUser record
+    await db.radiusUser.delete({ where: { id } });
+
+    // Disable RADIUS on subscriber
+    await db.subscriber.update({
+      where: { id: existing.subscriberId },
+      data: { radiusEnabled: false },
+    });
+
+    // Remove from FreeRADIUS tables
+    if (sub?.serviceUsername) {
+      await removeFromFreeRADIUS(sub.serviceUsername);
+    }
+
+    await auditDelete(request, "RadiusUser", id, deletedRecord);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("RADIUS user delete error:", error);
+    return NextResponse.json(
+      { error: "Failed to delete RADIUS user" },
+      { status: 500 }
+    );
+  }
+}
+
+========== /home/z/my-project/src/app/api/radius-attributes/user-attributes/route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+import { db } from "@/lib/db";
+
+// GET /api/radius-attributes/user-attributes?subscriberId=xxx — List user attributes
+export async function GET(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const { searchParams } = new URL(req.url);
+    const subscriberId = searchParams.get("subscriberId");
+
+    if (!subscriberId) {
+      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    }
+
+    // Verify subscriber exists
+    const subscriber = await db.subscriber.findUnique({
+      where: { id: subscriberId },
+      select: { id: true, name: true, code: true, serviceUsername: true },
+    });
+    if (!subscriber) {
+      return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+    }
+
+    const attrs = await db.userRadiusAttribute.findMany({
+      where: { subscriberId },
+      include: {
+        attributeDef: {
+          select: {
+            id: true,
+            name: true,
+            attributeName: true,
+            vendorName: true,
+            attrType: true,
+            dataType: true,
+            description: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Map to the format the page component expects
+    const mapped = attrs.map((a) => ({
+      id: a.id,
+      subscriberId: a.subscriberId,
+      attributeDefId: a.attributeDefId,
+      value: a.value,
+      createdAt: a.createdAt.toISOString(),
+      attributeDef: {
+        id: a.attributeDef.id,
+        name: a.attributeDef.name,
+        attributeName: a.attributeDef.attributeName,
+        vendor: a.attributeDef.vendorName,
+        type: mapAttrType(a.attributeDef.attrType),
+        dataType: mapDataType(a.attributeDef.dataType),
+        description: a.attributeDef.description,
+      },
+      subscriber: {
+        id: subscriber.id,
+        name: subscriber.name,
+        code: subscriber.code,
+        serviceUsername: subscriber.serviceUsername,
+      },
+    }));
+
+    return NextResponse.json({ userAttributes: mapped });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("User attributes GET error:", error);
+    return NextResponse.json({ error: "Failed to fetch user attributes" }, { status: 500 });
+  }
+}
+
+// POST /api/radius-attributes/user-attributes — Set a user attribute
+export async function POST(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const body = await req.json();
+    const { subscriberId, attributeDefId, value } = body;
+
+    if (!subscriberId) {
+      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    }
+    if (!attributeDefId) {
+      return NextResponse.json({ error: "attributeDefId is required" }, { status: 400 });
+    }
+    if (!value && value !== "0") {
+      return NextResponse.json({ error: "value is required" }, { status: 400 });
+    }
+
+    // Verify subscriber exists
+    const subscriber = await db.subscriber.findUnique({ where: { id: subscriberId } });
+    if (!subscriber) {
+      return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+    }
+
+    // Verify attribute definition exists
+    const attrDef = await db.radiusAttributeDef.findUnique({ where: { id: attributeDefId } });
+    if (!attrDef) {
+      return NextResponse.json({ error: "Attribute definition not found" }, { status: 404 });
+    }
+
+    // Upsert using unique constraint [subscriberId, attributeDefId]
+    const attr = await db.userRadiusAttribute.upsert({
+      where: {
+        subscriberId_attributeDefId: { subscriberId, attributeDefId },
+      },
+      update: { value: String(value) },
+      create: {
+        subscriberId,
+        attributeDefId,
+        value: String(value),
+      },
+      include: {
+        attributeDef: {
+          select: {
+            id: true, name: true, attributeName: true,
+            vendorName: true, attrType: true, dataType: true,
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ attribute: attr }, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("User attributes POST error:", error);
+    return NextResponse.json({ error: "Failed to set user attribute" }, { status: 500 });
+  }
+}
+
+function mapAttrType(type: string): string {
+  switch (type) {
+    case "CHECK": return "check";
+    case "REPLY": return "reply";
+    case "BOTH": return "vendor-specific";
+    default: return "vendor-specific";
+  }
+}
+
+function mapDataType(dt: string): string {
+  switch (dt) {
+    case "INTEGER": return "integer";
+    case "IP_ADDRESS": return "ipaddr";
+    case "OCTETS": return "octets";
+    default: return "string";
+  }
+}
+
+========== /home/z/my-project/src/app/api/charge-overrides/route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+import { db } from "@/lib/db";
+
+// GET /api/charge-overrides — List charge overrides with filters
+export async function GET(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const { searchParams } = new URL(req.url);
+
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "15");
+    const status = searchParams.get("status") || "";
+    const search = searchParams.get("search") || "";
+    const activeOnly = searchParams.get("active") === "true";
+
+    // Build where clause
+    const where: Record<string, unknown> = {};
+
+    if (status && status !== "all") {
+      where.status = status;
+    }
+
+    if (activeOnly) {
+      const now = new Date();
+      where.status = "ACTIVE";
+      where.validFrom = { lte: now };
+      where.OR = [
+        { validUntil: { gte: now } },
+        { validUntil: null },
+      ];
+    }
+
+    // Search by subscriber name or code
+    if (search) {
+      where.subscriber = {
+        OR: [
+          { name: { contains: search } },
+          { code: { contains: search } },
+        ],
+      };
+    }
+
+    const [overrides, total] = await Promise.all([
+      db.subscriberChargeOverride.findMany({
+        where,
+        include: {
+          subscriber: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              plan: {
+                select: { id: true, name: true, priceMonthly: true },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      db.subscriberChargeOverride.count({ where }),
+    ]);
+
+    // Map to the format the page component expects
+    const mapped = overrides.map((o) => {
+      const now = new Date();
+      const from = new Date(o.validFrom);
+      const until = o.validUntil ? new Date(o.validUntil) : null;
+      let effectiveStatus = o.status as string;
+      if (o.status === "ACTIVE") {
+        if (from > now) effectiveStatus = "SCHEDULED";
+        else if (until && until < now) effectiveStatus = "EXPIRED";
+      }
+
+      return {
+        id: o.id,
+        subscriberId: o.subscriberId,
+        subscriberName: o.subscriber.name,
+        subscriberCode: o.subscriber.code,
+        planName: o.subscriber.plan?.name || "No Plan",
+        originalPrice: o.subscriber.plan?.priceMonthly || o.oldPrice,
+        overridePrice: o.newPrice,
+        validFrom: o.validFrom.toISOString(),
+        validUntil: o.validUntil ? o.validUntil.toISOString() : null,
+        status: effectiveStatus,
+        reason: o.reason,
+        createdAt: o.createdAt.toISOString(),
+      };
+    });
+
+    return NextResponse.json({
+      overrides: mapped,
+      totalPages: Math.ceil(total / limit) || 1,
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Charge overrides GET error:", error);
+    return NextResponse.json({ error: "Failed to fetch charge overrides" }, { status: 500 });
+  }
+}
+
+// POST /api/charge-overrides — Create a new charge override
+export async function POST(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const body = await req.json();
+    const { subscriberId, overridePrice, validFrom, validUntil, reason } = body;
+
+    if (!subscriberId) {
+      return NextResponse.json({ error: "subscriberId is required" }, { status: 400 });
+    }
+    if (!overridePrice || overridePrice <= 0) {
+      return NextResponse.json({ error: "overridePrice must be greater than 0" }, { status: 400 });
+    }
+    if (!validFrom) {
+      return NextResponse.json({ error: "validFrom is required" }, { status: 400 });
+    }
+
+    // Verify subscriber exists and get plan info
+    const subscriber = await db.subscriber.findUnique({
+      where: { id: subscriberId },
+      select: { id: true, name: true, code: true, planId: true, plan: { select: { id: true, name: true, priceMonthly: true } } },
+    });
+    if (!subscriber) {
+      return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+    }
+
+    const parsedValidFrom = new Date(validFrom);
+    if (isNaN(parsedValidFrom.getTime())) {
+      return NextResponse.json({ error: "validFrom must be a valid date" }, { status: 400 });
+    }
+
+    let parsedValidUntil: Date | null = null;
+    if (validUntil) {
+      parsedValidUntil = new Date(validUntil);
+      if (isNaN(parsedValidUntil.getTime())) {
+        return NextResponse.json({ error: "validUntil must be a valid date" }, { status: 400 });
+      }
+      if (parsedValidUntil <= parsedValidFrom) {
+        return NextResponse.json({ error: "validUntil must be after validFrom" }, { status: 400 });
+      }
+    }
+
+    // Determine effective status
+    const now = new Date();
+    let status: "ACTIVE" | "SCHEDULED" = "ACTIVE";
+    if (parsedValidFrom > now) status = "SCHEDULED";
+
+    const override = await db.subscriberChargeOverride.create({
+      data: {
+        subscriberId,
+        planId: subscriber.planId,
+        oldPrice: subscriber.plan?.priceMonthly || 0,
+        newPrice: parseFloat(String(overridePrice)),
+        reason: reason || "",
+        validFrom: parsedValidFrom,
+        validUntil: parsedValidUntil,
+        status,
+      },
+      include: {
+        subscriber: {
+          select: { id: true, name: true, code: true, plan: { select: { id: true, name: true, priceMonthly: true } } },
+        },
+      },
+    });
+
+    return NextResponse.json({ override }, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Charge overrides POST error:", error);
+    return NextResponse.json({ error: "Failed to create charge override" }, { status: 500 });
+  }
+}
+
+========== /home/z/my-project/src/app/api/grace-periods/route.ts ==========
+import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth, AuthError } from "@/lib/api-auth";
+
+// ─────────────────────────────────────────────────────────────
+// GET — List all grace periods, or get periods for a subscriber
+// ─────────────────────────────────────────────────────────────
+export async function GET(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const { searchParams } = req.nextUrl;
+    const action = searchParams.get("action");
+
+    // ── List all grace periods (with pagination, status filter) ──
+    if (action === "list") {
+      const page = parseInt(searchParams.get("page") || "1");
+      const limit = parseInt(searchParams.get("limit") || "25");
+      const status = searchParams.get("status");
+      const graceType = searchParams.get("graceType");
+
+      const where: Record<string, unknown> = {};
+      if (status) {
+        where.status = status;
+      }
+      if (graceType) {
+        where.graceType = graceType;
+      }
+
+      const [gracePeriods, total] = await Promise.all([
+        db.subscriberGracePeriod.findMany({
+          where,
+          include: {
+            subscriber: {
+              select: { id: true, name: true, code: true, phone: true },
+            },
+          },
+          orderBy: { appliedAt: "desc" },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        db.subscriberGracePeriod.count({ where }),
+      ]);
+
+      return NextResponse.json({ gracePeriods, total, page, limit });
+    }
+
+    // ── Get grace periods for a specific subscriber ──
+    if (action === "subscriber") {
+      const subscriberId = searchParams.get("subscriberId");
+      if (!subscriberId) {
+        return NextResponse.json(
+          { error: "Missing required query param: subscriberId" },
+          { status: 400 }
+        );
+      }
+
+      const gracePeriods = await db.subscriberGracePeriod.findMany({
+        where: { subscriberId },
+        orderBy: { appliedAt: "desc" },
+      });
+
+      return NextResponse.json({ gracePeriods });
+    }
+
+    return NextResponse.json(
+      { error: "Unknown action. Valid GET actions: list, subscriber" },
+      { status: 400 }
+    );
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Grace periods GET error:", error);
+    return NextResponse.json({ error: "Failed to fetch grace periods" }, { status: 500 });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// POST — Apply, update status, or cancel a grace period
+// ─────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest) {
+  try {
+    await requireAuth(req);
+    const { searchParams } = req.nextUrl;
+    const action = searchParams.get("action");
+    const body = await req.json();
+
+    // ── Apply grace period ──
+    if (action === "apply") {
+      const { subscriberId, graceDays, graceType, reason, appliedBy } = body;
+
+      if (!subscriberId || graceDays === undefined || !graceDays) {
+        return NextResponse.json(
+          { error: "Missing required fields: subscriberId, graceDays" },
+          { status: 400 }
+        );
+      }
+
+      // Verify subscriber exists
+      const subscriber = await db.subscriber.findUnique({
+        where: { id: subscriberId },
+      });
+      if (!subscriber) {
+        return NextResponse.json({ error: "Subscriber not found" }, { status: 404 });
+      }
+
+      // Validate graceDays is positive
+      if (graceDays <= 0) {
+        return NextResponse.json(
+          { error: "graceDays must be a positive integer" },
+          { status: 400 }
+        );
+      }
+
+      const gracePeriod = await db.subscriberGracePeriod.create({
+        data: {
+          subscriberId,
+          graceDays,
+          graceType: graceType ?? "POST_BILLING",
+          reason: reason ?? "",
+          appliedBy: appliedBy ?? null,
+        },
+      });
+
+      return NextResponse.json({ gracePeriod }, { status: 201 });
+    }
+
+    // ── Update grace period status ──
+    if (action === "update-status") {
+      const { id, status, suspensionDate } = body;
+
+      if (!id || !status) {
+        return NextResponse.json(
+          { error: "Missing required fields: id, status" },
+          { status: 400 }
+        );
+      }
+
+      // Validate status value
+      const validStatuses = ["ACTIVE", "SUSPENDED", "CANCELLED", "EXPIRED"];
+      if (!validStatuses.includes(status)) {
+        return NextResponse.json(
+          { error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` },
+          { status: 400 }
+        );
+      }
+
+      const existing = await db.subscriberGracePeriod.findUnique({ where: { id } });
+      if (!existing) {
+        return NextResponse.json({ error: "Grace period not found" }, { status: 404 });
+      }
+
+      // Cannot update if already CANCELLED or EXPIRED
+      if (existing.status === "CANCELLED" || existing.status === "EXPIRED") {
+        return NextResponse.json(
+          { error: `Cannot update grace period with status: ${existing.status}` },
+          { status: 400 }
+        );
+      }
+
+      const updateData: Record<string, unknown> = { status };
+      if (suspensionDate !== undefined) {
+        updateData.suspensionDate = suspensionDate ? new Date(suspensionDate) : null;
+      }
+
+      const gracePeriod = await db.subscriberGracePeriod.update({
+        where: { id },
+        data: updateData,
+      });
+
+      return NextResponse.json({ gracePeriod });
+    }
+
+    // ── Cancel grace period ──
+    if (action === "cancel") {
+      const { id } = body;
+
+      if (!id) {
+        return NextResponse.json(
+          { error: "Missing required field: id" },
+          { status: 400 }
+        );
+      }
+
+      const existing = await db.subscriberGracePeriod.findUnique({ where: { id } });
+      if (!existing) {
+        return NextResponse.json({ error: "Grace period not found" }, { status: 404 });
+      }
+
+      if (existing.status === "CANCELLED" || existing.status === "EXPIRED") {
+        return NextResponse.json(
+          { error: `Cannot cancel grace period with status: ${existing.status}` },
+          { status: 400 }
+        );
+      }
+
+      const gracePeriod = await db.subscriberGracePeriod.update({
+        where: { id },
+        data: { status: "CANCELLED" },
+      });
+
+      return NextResponse.json({ gracePeriod });
+    }
+
+    return NextResponse.json(
+      { error: "Unknown action. Valid POST actions: apply, update-status, cancel" },
+      { status: 400 }
+    );
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("Grace periods POST error:", error);
+    return NextResponse.json({ error: "Failed to perform grace period operation" }, { status: 500 });
+  }
+}

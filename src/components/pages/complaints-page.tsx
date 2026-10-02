@@ -1095,9 +1095,9 @@ export default function ComplaintsPage() {
               </Button>
             </div>
           )}
-          <ScrollArea className="max-h-[500px]">
+          <div className="max-h-[500px] overflow-y-auto overflow-x-auto nice-scroll">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                 <TableRow className="bg-muted/50">
                   <TableHead className="text-xs font-semibold uppercase tracking-wider w-10">
                     <Checkbox
@@ -1239,7 +1239,7 @@ export default function ComplaintsPage() {
                 )}
               </TableBody>
             </Table>
-          </ScrollArea>
+          </div>
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t gap-2">

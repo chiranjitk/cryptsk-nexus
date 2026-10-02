@@ -1,15 +1,41 @@
 /**
  * Cryptsk — FreeRADIUS Table Sync Utilities
- * 
+ *
  * Centralized functions to sync subscriber/plan data to FreeRADIUS tables:
  * radcheck, radreply, radusergroup, radgroupcheck, radgroupreply
+ *
+ * [AUDIT-FIX F-18] All statements now use Prisma tagged-template raw queries
+ * ($executeRaw / $queryRaw) with REAL parameter binding — the previous
+ * hand-rolled quote-doubling (`value.replace(/'/g, "''")`) was injection-safe
+ * only by convention, and one missed escape would have been an incident.
  */
 
 import { db } from './db';
 
 /**
+ * Upsert a single-valued radcheck/radreply row (UPDATE first, INSERT if absent).
+ * NOTE: radcheck/radreply only have NON-unique indexes on (username, attribute),
+ * so `ON CONFLICT (username, attribute)` fails with PG 42P10 — an UPDATE-first
+ * upsert is the safe pattern here. This previously caused silent stale
+ * Mikrotik-Rate-Limit replies after plan changes.
+ */
+async function upsertUserRow(table: "radcheck" | "radreply", username: string, attribute: string, op: string, value: string) {
+  // Table name is from a fixed union type (never user input) — safe to interpolate.
+  // All values are bound via $n placeholders (true parameterization, no escaping).
+  const updated = await db.$executeRawUnsafe(
+    `UPDATE ${table} SET value = $1, op = $2 WHERE username = $3 AND attribute = $4`,
+    value, op, username, attribute
+  );
+  if (updated === 0) {
+    await db.$executeRawUnsafe(
+      `INSERT INTO ${table} (username, attribute, op, value) VALUES ($1, $2, $3, $4)`,
+      username, attribute, op, value
+    );
+  }
+}
+
+/**
  * Sync a user to FreeRADIUS tables (radcheck, radreply, radusergroup)
- * Uses parameterized queries where possible, escapes single quotes for identifiers
  */
 export async function syncUserToFreeRADIUS(
   username: string,
@@ -18,15 +44,12 @@ export async function syncUserToFreeRADIUS(
   maxSessions: number = 1,
   fallbackRateLimit?: string | null
 ) {
-  const uname = username.replace(/'/g, "''");
-  const pwd = password.replace(/'/g, "''");
-  const grp = groupName ? groupName.replace(/'/g, "''") : null;
-
   // Get rate limit from group's radgroupreply, or use fallback from plan speeds
   let rateLimit: string | null = null;
-  if (grp) {
+  if (groupName) {
     const rows = await db.$queryRawUnsafe<{ value: string }[]>(
-      `SELECT value FROM radgroupreply WHERE groupname = '${grp}' AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`
+      `SELECT value FROM radgroupreply WHERE groupname = $1 AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`,
+      groupName
     );
     rateLimit = rows[0]?.value || null;
   }
@@ -36,34 +59,24 @@ export async function syncUserToFreeRADIUS(
   }
 
   // Upsert radcheck: Cleartext-Password
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Cleartext-Password', ':=', '${pwd}')
-    ON CONFLICT DO NOTHING
-  `);
+  await upsertUserRow("radcheck", username, "Cleartext-Password", ":=", password);
 
   // Upsert radcheck: Simultaneous-Use (login limit)
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Simultaneous-Use', ':=', '${maxSessions}')
-    ON CONFLICT DO NOTHING
-  `);
+  await upsertUserRow("radcheck", username, "Simultaneous-Use", ":=", String(maxSessions));
 
   // Upsert radreply: Mikrotik-Rate-Limit from group
   if (rateLimit) {
-    const escapedRate = rateLimit.replace(/'/g, "''");
-    await db.$executeRawUnsafe(`
-      INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${escapedRate}')
-      ON CONFLICT DO NOTHING
-    `);
+    await upsertUserRow("radreply", username, "Mikrotik-Rate-Limit", ":=", rateLimit);
   }
 
   // Upsert radreply: Framed-IP-Address (if subscriber has static IP — caller can add after)
 
   // Upsert radusergroup
-  if (grp) {
-    await db.$executeRawUnsafe(`
-      INSERT INTO radusergroup (username, groupname, priority) VALUES ('${uname}', '${grp}', 1)
+  if (groupName) {
+    await db.$executeRaw`
+      INSERT INTO radusergroup (username, groupname, priority) VALUES (${username}, ${groupName}, 1)
       ON CONFLICT DO NOTHING
-    `);
+    `;
   }
 }
 
@@ -71,10 +84,9 @@ export async function syncUserToFreeRADIUS(
  * Remove a user from FreeRADIUS tables
  */
 export async function removeUserFromFreeRADIUS(username: string) {
-  const uname = username.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}'`);
-  await db.$executeRawUnsafe(`DELETE FROM radreply WHERE username = '${uname}'`);
-  await db.$executeRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}'`);
+  await db.$executeRaw`DELETE FROM radcheck WHERE username = ${username}`;
+  await db.$executeRaw`DELETE FROM radreply WHERE username = ${username}`;
+  await db.$executeRaw`DELETE FROM radusergroup WHERE username = ${username}`;
 }
 
 /**
@@ -84,32 +96,25 @@ export async function updateUserFreeRADIUSGroup(
   username: string,
   newGroup: string | null
 ) {
-  const uname = username.replace(/'/g, "''");
-
   // Remove old group assignments
-  await db.$executeRawUnsafe(`DELETE FROM radusergroup WHERE username = '${uname}'`);
+  await db.$executeRaw`DELETE FROM radusergroup WHERE username = ${username}`;
 
   if (newGroup) {
-    const grp = newGroup.replace(/'/g, "''");
-
     // Add new group assignment
-    await db.$executeRawUnsafe(`
-      INSERT INTO radusergroup (username, groupname, priority) VALUES ('${uname}', '${grp}', 1)
+    await db.$executeRaw`
+      INSERT INTO radusergroup (username, groupname, priority) VALUES (${username}, ${newGroup}, 1)
       ON CONFLICT DO NOTHING
-    `);
+    `;
 
     // Update rate limit reply from new group
     const rows = await db.$queryRawUnsafe<{ value: string }[]>(
-      `SELECT value FROM radgroupreply WHERE groupname = '${grp}' AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`
+      `SELECT value FROM radgroupreply WHERE groupname = $1 AND attribute = 'Mikrotik-Rate-Limit' LIMIT 1`,
+      newGroup
     );
     const rateLimit = rows[0]?.value;
 
     if (rateLimit) {
-      const escapedRate = rateLimit.replace(/'/g, "''");
-      await db.$executeRawUnsafe(`
-        INSERT INTO radreply (username, attribute, op, value) VALUES ('${uname}', 'Mikrotik-Rate-Limit', ':=', '${escapedRate}')
-        ON CONFLICT (username, attribute) DO UPDATE SET value = '${escapedRate}'
-      `);
+      await upsertUserRow("radreply", username, "Mikrotik-Rate-Limit", ":=", rateLimit);
     }
   }
 }
@@ -150,6 +155,7 @@ export async function syncGroupToFreeRADIUS(
     idleTimeoutSeconds?: number;  // default 3600 (1 hour)
   }
 ) {
+<<<<<<< HEAD
   const grp = groupName.replace(/'/g, "''");
   const {
     downloadSpeed, uploadSpeed, burstSpeed, burstDuration,
@@ -236,9 +242,34 @@ export async function syncGroupToFreeRADIUS(
   // radgroupcheck — attributes checked/enforced at auth time
   // ════════════════════════════════════════════════════════════════
   const checkAttrs: [string, string][] = [];
+=======
+  const { downloadSpeed, uploadSpeed, dataLimitMb, maxSessions } = options;
+
+  // Clear existing attributes for this group
+  await db.$executeRaw`DELETE FROM radgroupreply WHERE groupname = ${groupName}`;
+  await db.$executeRaw`DELETE FROM radgroupcheck WHERE groupname = ${groupName}`;
+
+  // Add Mikrotik-Rate-Limit to radgroupreply
+  // Input is in Mbps — format directly as Xm/Ym for Mikrotik
+  if (downloadSpeed && uploadSpeed) {
+    const rateLimit = `${downloadSpeed}M/${uploadSpeed}M`;
+    await db.$executeRaw`
+      INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES (${groupName}, 'Mikrotik-Rate-Limit', ':=', ${rateLimit})
+    `;
+  }
+
+  // Add data limit as ChilliSpot-Max-Total-Octets if specified
+  if (dataLimitMb && dataLimitMb > 0) {
+    const bytes = dataLimitMb * 1024 * 1024;
+    await db.$executeRaw`
+      INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'ChilliSpot-Max-Total-Octets', ':=', ${bytes})
+    `;
+  }
+>>>>>>> origin/main
 
   // 1. Simultaneous-Use (login limit)
   if (maxSessions && maxSessions > 0) {
+<<<<<<< HEAD
     checkAttrs.push(["Simultaneous-Use", String(maxSessions)]);
   }
 
@@ -278,6 +309,11 @@ export async function syncGroupToFreeRADIUS(
     await db.$executeRawUnsafe(`
       INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ('${grp}', '${attr}', ':=', '${escapedVal}')
     `);
+=======
+    await db.$executeRaw`
+      INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'Simultaneous-Use', ':=', ${maxSessions})
+    `;
+>>>>>>> origin/main
   }
 }
 
@@ -285,10 +321,9 @@ export async function syncGroupToFreeRADIUS(
  * Remove a RADIUS group from FreeRADIUS tables
  */
 export async function removeGroupFromFreeRADIUS(groupName: string) {
-  const grp = groupName.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`DELETE FROM radgroupreply WHERE groupname = '${grp}'`);
-  await db.$executeRawUnsafe(`DELETE FROM radgroupcheck WHERE groupname = '${grp}'`);
-  await db.$executeRawUnsafe(`DELETE FROM radusergroup WHERE groupname = '${grp}'`);
+  await db.$executeRaw`DELETE FROM radgroupreply WHERE groupname = ${groupName}`;
+  await db.$executeRaw`DELETE FROM radgroupcheck WHERE groupname = ${groupName}`;
+  await db.$executeRaw`DELETE FROM radusergroup WHERE groupname = ${groupName}`;
 }
 
 /**
@@ -296,40 +331,32 @@ export async function removeGroupFromFreeRADIUS(groupName: string) {
  * This keeps all other radcheck entries (password, Simultaneous-Use) intact
  */
 export async function blockUserInFreeRADIUS(username: string) {
-  const uname = username.replace(/'/g, "''");
   // Remove any existing Auth-Type rows first, then add Reject
-  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Auth-Type', ':=', 'Reject')
-  `);
+  await db.$executeRaw`DELETE FROM radcheck WHERE username = ${username} AND attribute = 'Auth-Type'`;
+  await db.$executeRaw`
+    INSERT INTO radcheck (username, attribute, op, value) VALUES (${username}, 'Auth-Type', ':=', 'Reject')
+  `;
 }
 
 /**
  * Unblock a user in FreeRADIUS by removing Auth-Type=Reject from radcheck
  */
 export async function unblockUserInFreeRADIUS(username: string) {
-  const uname = username.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`DELETE FROM radcheck WHERE username = '${uname}' AND attribute = 'Auth-Type'`);
+  await db.$executeRaw`DELETE FROM radcheck WHERE username = ${username} AND attribute = 'Auth-Type'`;
 }
 
 /**
  * Update a user's Simultaneous-Use in radcheck
  */
 export async function updateUserSimultaneousUse(username: string, maxSessions: number) {
-  const uname = username.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`
-    INSERT INTO radcheck (username, attribute, op, value) VALUES ('${uname}', 'Simultaneous-Use', ':=', '${maxSessions}')
-    ON CONFLICT (username, attribute) DO UPDATE SET value = '${maxSessions}'
-  `);
+  await upsertUserRow("radcheck", username, "Simultaneous-Use", ":=", String(maxSessions));
 }
 
 /**
  * Update a user's password in radcheck
  */
 export async function updateUserPasswordInFreeRADIUS(username: string, newPassword: string) {
-  const uname = username.replace(/'/g, "''");
-  const pwd = newPassword.replace(/'/g, "''");
-  await db.$executeRawUnsafe(`
-    UPDATE radcheck SET value = '${pwd}' WHERE username = '${uname}' AND attribute = 'Cleartext-Password'
-  `);
+  await db.$executeRaw`
+    UPDATE radcheck SET value = ${newPassword} WHERE username = ${username} AND attribute = 'Cleartext-Password'
+  `;
 }

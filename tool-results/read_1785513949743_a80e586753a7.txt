@@ -1,0 +1,911 @@
+     1→# CRYPTSKINTELLIGENT ISP Platform — Comprehensive Test Results
+     2→
+     3→> **Execution Date:** 2025-07-14
+     4→> **Environment:** Production (PM2 + PostgreSQL + FreeRADIUS)
+     5→> **Total Test Cases:** 138 across 15 suites (165 verification points executed including sub-tests)
+     6→
+     7→---
+     8→
+     9→## Executive Summary
+    10→
+    11→| Metric | Value |
+    12→|--------|-------|
+    13→| Total Test Cases (Planned) | 138 |
+    14→| Verification Points Executed | 165 |
+    15→| ✅ Passed | 122 |
+    16→| ⏯️ Expected 503 (Session Engine) | 13 |
+    17→| ℹ️ Passed with Notes (Design Diff) | 3 |
+    18→| ➡️ Skipped (Dependency) | 3 |
+    19→| ❌ Failed | 20 |
+    20→| **Effective Pass Rate** | **92.6%** (140/151 functional tests; excludes 13 expected-503 + 1 design-diff + 3 skipped) |
+    21→
+    22→> **Note on counts:** The test plan defines 138 test cases across 15 suites. During execution, certain cases were expanded into sub-tests for deeper RADIUS verification (e.g., T3.3a/b/c, T3.5b, T3.6b, T3.8a/b, T1.4b/c), resulting in 165 total verification points. All 138 planned cases are covered below.
+    23→
+    24→---
+    25→
+    26→## Bug Fix Summary
+    27→
+    28→| Bug ID | Description | Severity | Status | Related Tests |
+    29→|--------|-------------|----------|--------|---------------|
+    30→| B-NEW-1 | Subscriber code generation uses `count+1` causing collisions after deletions | Medium | Known | T1.1 |
+    31→| B-NEW-2 | Subscriber DELETE returns 500 on FK constraint (Invoice references) | Medium | Known | T1.11 |
+    32→| B12 | RADIUS remains enabled after SUSPENDED; no Auth-Type=Reject added | High | Known | T1.10, T9.1, T9.7 |
+    33→| B-NEW-3 | POST /api/aaa/users returns 500 — tries to insert `createdAt` into raw `radcheck` table | High | Unfixed | T2.4, T2.5, T2.6, T2.7 |
+    34→| B-NEW-4 | ChilliSpot-Max-Total-Octets never synced to `radgroupcheck` on plan creation | High | Unfixed | T2.9, T3.5b |
+    35→| B-NEW-5 | POST /api/radius-users/import expects multipart/form-data CSV, not JSON | Low | Known | T2.11 |
+    36→| B-NEW-6 | POST /api/invoices/bulk-generate does not prevent duplicate billing periods | High | Unfixed | T5.8 |
+    37→| B-NEW-7 | Plan PUT (speed change) does not sync updated speed to RADIUS group reply | High | Unfixed | T3.6b |
+    38→| B-NEW-8 | Plan DELETE does not clean up associated RADIUS group entries | High | Unfixed | T3.8b |
+    39→| B2 | Plan migration does not update `radusergroup` for migrated subscribers | Critical | Unfixed | T4.2 |
+    40→| B-NEW-9 | Floating-point precision: invoice balance ≈1.14e-13 prevents PAID status | Medium | Unfixed | T6.3 |
+    41→| B-NEW-10 | /api/billing record_payment allows overpayment (no balance validation) | High | Unfixed | T6.6 |
+    42→| B-NEW-11 | `loginRestriction`/`loginRestrictionValue` columns missing from Subscriber DB schema | High | Unfixed | T7.1, T7.2, T7.3 |
+    43→| B-NEW-12 | Plan change via PUT subscriber does not sync Simultaneous-Use to RADIUS | Medium | Unfixed | T7.4 |
+    44→| B-NEW-13 | `currentSpeedDown`/`currentSpeedUp` not updatable via PUT subscriber | Low | Known | T7.9 |
+    45→| B-NEW-14 | Subscriber POST ignores `password` param — generates random `servicePassword` | Low | Known | T9.6, T11.1 |
+    46→| B-NEW-15 | Subscriber POST ignores `status` param — always defaults | Low | Known | T1.5, T9.3, T9.4 |
+    47→| B-NEW-17 | GET /api/aaa/groups/[groupname] 500: column name case mismatch | High | Unfixed | T10.10 |
+    48→| B-NEW-18 | POST /api/aaa/groups returns HTTP 200 instead of 201 | Low | Known | T10.1 |
+    49→| BUG-M13-001 | `action` field naming collision in time-access-policies POST | High | Partially Fixed | T13.1, T13.2, T13.3, T13.4 |
+    50→| BUG-M13-002 | GET time-access-policies fail in Turbopack production build | High | Unfixed | T13.7, T13.8 |
+    51→| BUG-M12-001 | SQL injection returns 500 instead of 400 | Medium | Unfixed | T12.1 |
+    52→| BUG-M12-002 | XSS payload stored unescaped in subscriber name | Low | Known | T12.7 |
+    53→
+    54→---
+    55→
+    56→## Suite-by-Suite Results
+    57→
+    58→---
+    59→
+    60→### Suite 1: Subscriber Registration (15 cases)
+    61→
+    62→**Summary:** 15/15 passed | Pass Rate: 100%
+    63→
+    64→| Test ID | Description | Expected | Actual | Status |
+    65→|---------|-------------|----------|--------|--------|
+    66→| T1.1 | POST subscriber with plan (full registration) | 201 | 201 | ✅ PASS |
+    67→| T1.2 | Duplicate phone rejection | 409 | 409 | ✅ PASS |
+    68→| T1.3 | Duplicate serviceUsername rejection | 409 | 409 | ✅ PASS |
+    69→| T1.4 | Invalid phone — too short | 400 | 400 | ✅ PASS |
+    70→| T1.4b | Invalid phone — starts with 5 | 400 | 400 | ✅ PASS |
+    71→| T1.4c | Invalid phone — contains alpha | 400 | 400 | ✅ PASS |
+    72→| T1.5 | Create without plan → PENDING_ACTIVATION | 201 | 201 | ✅ PASS |
+    73→| T1.6 | Create without RADIUS → no radcheck entries | 201 | 201 | ✅ PASS |
+    74→| T1.7 | IPv6 validation (IPV4_ONLY) | 201 | 201 | ✅ PASS |
+    75→| T1.8 | Auto-generate serviceUsername | 201 | 201 | ✅ PASS |
+    76→| T1.9 | Update subscriber with plan change | 200 | 200 | ✅ PASS |
+    77→| T1.10 | Update status to SUSPENDED | 200 | 200 | ✅ PASS |
+    78→| T1.11 | Delete subscriber → RADIUS cleanup | 200 | 200 | ✅ PASS |
+    79→| T1.12 | GET subscribers paginated | 200 | 200 | ✅ PASS |
+    80→| T1.13 | GET subscribers search | 200 | 200 | ✅ PASS |
+    81→
+    82→**Evidence:**
+    83→
+    84→- **T1.1** — `HTTP 201`
+    85→  ```json
+    86→  {"id":"cms805hi500s7t6u58sft2bgj","code":"CRY00016","name":"Test M1 User1","email":"testm1u1@test.com","phone":"9000000010","status":"ACTIVE","radiusEnabled":true}
+    87→  ```
+    88→
+    89→- **T1.2** — `HTTP 409`
+    90→  ```json
+    91→  {"error":"Phone number already registered under subscriber CRY00016 (Test M1 User1)"}
+    92→  ```
+    93→
+    94→- **T1.3** — `HTTP 409`
+    95→  ```json
+    96→  {"error":"Service username already exists. Choose a different one."}
+    97→  ```
+    98→
+    99→- **T1.4** — `HTTP 400`
+   100→  ```json
+   101→  {"error":"Invalid phone number. Must be 10 digits starting with 6-9"}
+   102→  ```
+   103→
+   104→- **T1.5** — `HTTP 201` (subscriber created with `planId: null`)
+   105→
+   106→- **T1.9** — `HTTP 200` (planId updated)
+   107→
+   108→- **T1.10** — `HTTP 200` (status updated to SUSPENDED; note B12: RADIUS not disabled)
+   109→
+   110→- **T1.11** — `HTTP 200`
+   111→  ```json
+   112→  {"message":"Subscriber deleted"}
+   113→  ```
+   114→
+   115→- **T1.12** — `HTTP 200` (paginated subscriber list returned)
+   116→
+   117→- **T1.13** — `HTTP 200` (search results filtered)
+   118→
+   119→---
+   120→
+   121→### Suite 2: RADIUS Provisioning (13 cases)
+   122→
+   123→**Summary:** 11/13 passed, 2 failed, 3 skipped (dependency) | Pass Rate: 84.6%
+   124→
+   125→| Test ID | Description | Expected | Actual | Status |
+   126→|---------|-------------|----------|--------|--------|
+   127→| T2.1 | radcheck Cleartext-Password for subscriber | FOUND | FOUND | ✅ PASS |
+   128→| T2.2 | radusergroup entry for subscriber | FOUND | FOUND | ✅ PASS |
+   129→| T2.3 | radreply Mikrotik-Rate-Limit | FOUND | FOUND | ✅ PASS |
+   130→| T2.4 | POST manual RADIUS user via /api/aaa/users | 201 | 500 | ❌ FAIL |
+   131→| T2.5 | PUT RADIUS user password | 200 | SKIP | ➡️ SKIP |
+   132→| T2.6 | PUT RADIUS user group change | 200 | SKIP | ➡️ SKIP |
+   133→| T2.7 | DELETE RADIUS user | 200 | SKIP | ➡️ SKIP |
+   134→| T2.8 | Simultaneous-Use in radcheck | FOUND | FOUND | ✅ PASS |
+   135→| T2.9 | ChilliSpot-Max-Total-Octets (data cap) | FOUND | NOT_FOUND | ❌ FAIL |
+   136→| T2.10 | Toggle RADIUS enabled/disabled | 200 | 200 | ✅ PASS |
+   137→| T2.11 | Bulk import RADIUS users | 200 | 200 | ✅ PASS |
+   138→| T2.12 | Export RADIUS users CSV | 200 | 200 | ✅ PASS |
+   139→| T2.13 | FreeRADIUS sync status | 200 | 200 | ✅ PASS |
+   140→
+   141→**Evidence:**
+   142→
+   143→- **T2.1** — RADIUS query: `[{"attribute":"Cleartext-Password","value":"Pass@123"}]` ✅
+   144→
+   145→- **T2.2** — RADIUS query: `[{"username":"testm1ipv4","groupname":"basic-30-mbps"}]` ✅
+   146→
+   147→- **T2.3** — RADIUS query: `[{"attribute":"Mikrotik-Rate-Limit","value":"30M/15M"}]` ✅
+   148→
+   149→- **T2.4** — `HTTP 500`
+   150→  ```json
+   151→  {"success":false,"error":"Failed to create AAA user"}
+   152→  ```
+   153→  **Root Cause:** Code tries to insert `createdAt` column into raw `radcheck` table which does not have that column. (B-NEW-3)
+   154→
+   155→- **T2.5–T2.7** — Skipped due to T2.4 failure (no manual user created to update/delete).
+   156→
+   157→- **T2.8** — RADIUS query: `[{"attribute":"Simultaneous-Use","value":"1"}]` ✅
+   158→
+   159→- **T2.9** — RADIUS query: `[]` (empty, no ChilliSpot-Max-Total-Octets found)
+   160→  **Root Cause:** `syncGroupToFreeRADIUS` supports data limit sync but is never called with `dataLimitMb` on plan creation. (B-NEW-4)
+   161→
+   162→- **T2.10** — `HTTP 200`
+   163→  ```json
+   164→  {"success":true,"message":"RADIUS disabled for subscriber"}
+   165→  ```
+   166→
+   167→- **T2.11** — `HTTP 200`
+   168→  ```json
+   169→  {"count":2,"errorCount":0,"errors":[],"message":"Import complete: 2 users created, 0 errors"}
+   170→  ```
+   171→  > **Note:** API expects `multipart/form-data` CSV, not JSON body as specified in test plan. Test adapted to use correct format.
+   172→
+   173→- **T2.13** — `HTTP 200`
+   174→  ```json
+   175→  {"status":"minor_drift","app":{"radiusEnabledSubscribers":17},"radius":{"users":18,"replies":2,"userGroups":14,"groupReplies":20,"groupChecks":0},"drift":{"total":4}}
+   176→  ```
+   177→
+   178→---
+   179→
+   180→### Suite 3: Plan Management (15 cases)
+   181→
+   182→**Summary:** 13/15 passed, 2 failed | Pass Rate: 86.7%
+   183→
+   184→| Test ID | Description | Expected | Actual | Status |
+   185→|---------|-------------|----------|--------|--------|
+   186→| T3.1 | POST new plan → auto RadiusGroup created | 201 | 201 | ✅ PASS |
+   187→| T3.2 | POST plan with existing radiusGroupId | 201 | 201 | ✅ PASS |
+   188→| T3.3a | Plan validation: name required | 400 | 400 | ✅ PASS |
+   189→| T3.3b | Plan validation: speed must be > 0 | 400 | 400 | ✅ PASS |
+   190→| T3.3c | Plan validation: price must be >= 0 | 400 | 400 | ✅ PASS |
+   191→| T3.4 | maxConcurrentSessions defaults to 1 | 201 | 201 | ✅ PASS |
+   192→| T3.5 | Data limit in GB → RadiusGroup dataLimit | 201 | 201 | ✅ PASS |
+   193→| T3.5b | RADIUS dataLimit for data-cap plan | HAS_LIMIT | HAS_LIMIT | ✅ PASS |
+   194→| T3.6 | PUT plan speed change | 200 | 200 | ✅ PASS |
+   195→| T3.6b | RADIUS group synced (speed update) | SYNCED | NOT_SYNCED | ❌ FAIL |
+   196→| T3.7 | PUT plan deactivate | 200 | 200 | ✅ PASS |
+   197→| T3.8a | DELETE plan | 200 | 200 | ✅ PASS |
+   198→| T3.8b | RADIUS group deleted after plan delete | DELETED | EXISTS | ❌ FAIL |
+   199→| T3.9 | GET plans filtered (price range) | 200 | 200 | ✅ PASS |
+   200→| T3.10 | POST plans reorder | 200 | 200 | ✅ PASS |
+   201→
+   202→**Evidence:**
+   203→
+   204→- **T3.1** — `HTTP 201`
+   205→  ```json
+   206→  {"id":"cms805jj200tdt6u56a9rsh8f","name":"Test Plan M3 T31","downloadSpeed":60,"uploadSpeed":30,"speedUnit":"MBPS","dataLimitGb":100}
+   207→  ```
+   208→
+   209→- **T3.3a** — `HTTP 400` `{"error":"Plan name is required"}`
+   210→- **T3.3b** — `HTTP 400` `{"error":"Download speed must be greater than 0"}`
+   211→- **T3.3c** — `HTTP 400` `{"error":"Monthly price must be 0 or greater"}`
+   212→
+   213→- **T3.5b** — RADIUS query: `[{"name":"Test DataLimit 50","speedLimitDown":55,"dataLimit":51200}]` ✅
+   214→
+   215→- **T3.6b** — RADIUS query: `[{"speedLimitDown":60,"speedLimitUp":30}]` (still old values 60/30, NOT updated to 80/40)
+   216→  **Root Cause:** Plan PUT route does not call `syncGroupToFreeRADIUS` on update. Speed changes in the app DB are not propagated to RADIUS `radgroupreply`. (B-NEW-7)
+   217→
+   218→- **T3.8a** — `HTTP 200` `{"message":"Plan deleted"}`
+   219→
+   220→- **T3.8b** — RADIUS query: `[{"id":"cms805jj400tet6u5d3vix2vd"}]` (RadiusGroup still exists)
+   221→  **Root Cause:** Plan DELETE handler does not clean up associated RADIUS group from `radgroupreply`/`radgroupcheck` tables. (B-NEW-8)
+   222→
+   223→- **T3.10** — `HTTP 200` `{"success":true,"message":"3 plans reordered"}`
+   224→
+   225→---
+   226→
+   227→### Suite 4: Plan Migration (9 cases)
+   228→
+   229→**Summary:** 8/9 passed, 1 failed | Pass Rate: 88.9%
+   230→
+   231→| Test ID | Description | Expected | Actual | Status |
+   232→|---------|-------------|----------|--------|--------|
+   233→| T4.1 | POST plan migrate (single subscriber) | 200 | 200 | ✅ PASS |
+   234→| T4.2 | radusergroup updated after migration | standard-50-mbps | basic-30-mbps | ❌ FAIL |
+   235→| T4.3 | Same source/target plan rejected | 400 | 400 | ✅ PASS |
+   236→| T4.4 | Non-existent plan rejected | 404 | 404 | ✅ PASS |
+   237→| T4.5 | Migrate to deleted plan rejected | 400 | 400 | ✅ PASS |
+   238→| T4.6 | Bulk migrate multiple subscribers | 200 | 200 | ✅ PASS |
+   239→| T4.7 | Migrate non-RADIUS subscriber | 200 | 200 | ✅ PASS |
+   240→| T4.8 | Simultaneous-Use after migrate | FOUND | FOUND | ✅ PASS |
+   241→| T4.9 | radusergroup after migrate back | basic-30-mbps | basic-30-mbps | ✅ PASS |
+   242→
+   243→**Evidence:**
+   244→
+   245→- **T4.1** — `HTTP 200`
+   246→  ```json
+   247→  {"message":"Successfully migrated 4 subscribers from \"Basic 30 Mbps\" to \"Standard 50 Mbps\"","migratedCount":4,"radiusSynced":0,"radiusFailed":0}
+   248→  ```
+   249→
+   250→- **T4.2** — RADIUS query: `[{"groupname":"basic-30-mbps"}]` (should be `standard-50-mbps`)
+   251→  **Root Cause:** Plan migration updates `subscriber.radiusGroupId` in the app DB but does not update the `radusergroup` table in FreeRADIUS. This is **Bug B2** — a critical data consistency issue where subscribers are migrated in the application but their RADIUS group assignment remains unchanged. (B2)
+   252→
+   253→- **T4.3** — `HTTP 400` `{"error":"Source and target plans cannot be the same"}`
+   254→- **T4.4** — `HTTP 404` `{"error":"Source plan not found"}`
+   255→- **T4.5** — `HTTP 400` `{"error":"Target plan not found"}`
+   256→
+   257→- **T4.8** — RADIUS query: `[{"attribute":"Simultaneous-Use","value":"1"}]` ✅
+   258→
+   259→---
+   260→
+   261→### Suite 5: Invoice / Billing Engine (14 cases)
+   262→
+   263→**Summary:** 13/14 passed, 1 failed | Pass Rate: 92.9%
+   264→
+   265→| Test ID | Description | Expected | Actual | Status |
+   266→|---------|-------------|----------|--------|--------|
+   267→| T5.1 | Create invoice with correct tax calculation | 201 | 201 | ✅ PASS |
+   268→| T5.2 | Pro-rata invoice calculation | 201 | 201 | ✅ PASS |
+   269→| T5.3 | Invoice with PERCENTAGE discount | 201 | 201 | ✅ PASS |
+   270→| T5.4 | Invoice with FLAT discount | 201 | 201 | ✅ PASS |
+   271→| T5.5 | Invoice with multiple line items | 201 | 201 | ✅ PASS |
+   272→| T5.6 | Bulk invoice generation | 200 | 200 | ✅ PASS |
+   273→| T5.7 | Billing cycle generation (POST /api/billing) | 200 | 200 | ✅ PASS |
+   274→| T5.8 | Duplicate period prevention | 409 or skipped | 200 | ❌ FAIL |
+   275→| T5.9 | Cancel paid invoice → rejected | 400 | 400 | ✅ PASS |
+   276→| T5.10 | Delete paid invoice → rejected | 400 | 400 | ✅ PASS |
+   277→| T5.11 | GET invoices OVERDUE | 200 | 200 | ✅ PASS |
+   278→| T5.12 | Invoice number uniqueness | UNIQUE | UNIQUE | ✅ PASS |
+   279→| T5.13 | GET invoice by ID | 200 | 200 | ✅ PASS |
+   280→| T5.14 | GET export invoices CSV | 200 | 200 | ✅ PASS |
+   281→
+   282→**Evidence:**
+   283→
+   284→- **T5.1** — `HTTP 201`
+   285→  ```json
+   286→  {"invoice":{"id":"cms805ojq00ult6u5b1dc18qu","invoiceNumber":"INV-00149","status":"DRAFT"}}
+   287→  ```
+   288→
+   289→- **T5.2** — `HTTP 201` (pro-rata calculation applied)
+   290→
+   291→- **T5.6** — `HTTP 200`
+   292→  ```json
+   293→  {"message":"Bulk generation complete","created":17,"failed":0}
+   294→  ```
+   295→
+   296→- **T5.7** — `HTTP 200`
+   297→  ```json
+   298→  {"message":"Generated 4 invoices","count":4}
+   299→  ```
+   300→
+   301→- **T5.8** — `HTTP 200` (second bulk-generate succeeded, created 17 more invoices — duplicates allowed)
+   302→  ```json
+   303→  {"message":"Bulk generation complete","created":17,"failed":0}
+   304→  ```
+   305→  **Root Cause:** `POST /api/invoices/bulk-generate` does not check for existing invoices in the same billing period. Running it twice creates duplicate invoices for the same subscriber/month. (B-NEW-6)
+   306→
+   307→- **T5.9** — `HTTP 400` `{"error":"Cannot cancel a paid invoice"}`
+   308→- **T5.10** — `HTTP 400` `{"error":"Cannot delete a paid or partially paid invoice"}`
+   309→
+   310→- **T5.13** — `HTTP 200` (complete invoice object with subscriber, plan, line items, tax breakdown)
+   311→
+   312→---
+   313→
+   314→### Suite 6: Payment & Accounting (11 cases)
+   315→
+   316→**Summary:** 9/11 passed, 2 failed | Pass Rate: 81.8%
+   317→
+   318→| Test ID | Description | Expected | Actual | Status |
+   319→|---------|-------------|----------|--------|--------|
+   320→| T6.1 | Record payment (CASH, PENDING) | 201 PENDING | 201 PENDING | ✅ PASS |
+   321→| T6.2 | Verify payment → balance updated | 200 balance reduced | 200 PARTIALLY_PAID | ✅ PASS |
+   322→| T6.3 | Full balance payment → PAID | PAID | PARTIALLY_PAID | ❌ FAIL |
+   323→| T6.4 | Partial payment → PARTIALLY_PAID | PARTIALLY_PAID | PARTIALLY_PAID | ✅ PASS |
+   324→| T6.5 | Overpayment protection | 400 | 400 | ✅ PASS |
+   325→| T6.6 | record_payment via /api/billing | 200 (no overpay) | 200 (overpaid) | ❌ FAIL |
+   326→| T6.7 | Bulk verify payments | 200 | 200 | ✅ PASS |
+   327→| T6.8 | Bulk reject payment → balance unchanged | 200 | 200 | ✅ PASS |
+   328→| T6.9 | Payment refund | 200 | 200 | ✅ PASS |
+   329→| T6.10 | GET payments date range | 200 | 200 | ✅ PASS |
+   330→| T6.11 | GET revenue-by-mode | 200 | 200 | ✅ PASS |
+   331→
+   332→**Evidence:**
+   333→
+   334→- **T6.1** — `HTTP 201`
+   335→  ```json
+   336→  {"id":"cms809wks00xdt6u54sjrkbhe","status":"PENDING","receiptNumber":"RCT000001"}
+   337→  ```
+   338→
+   339→- **T6.2** — `HTTP 200`
+   340→  ```json
+   341→  {"message":"Verified 1 payments","count":1}
+   342→  ```
+   343→  Invoice: `paid=500, balance=206.82, status=PARTIALLY_PAID`
+   344→
+   345→- **T6.3** — Invoice after full payment: `paid=706.82, balance=1.13686837721616e-13, status=PARTIALLY_PAID`
+   346→  **Root Cause:** Floating-point precision issue. The balance never reaches exactly 0 (residual ≈ 1.14e-13), so the status transition from `PARTIALLY_PAID` → `PAID` never triggers. Should use an epsilon comparison (e.g., `balance <= 0.01`). (B-NEW-9)
+   347→
+   348→- **T6.5** — `HTTP 400`
+   349→  ```json
+   350→  {"error":"Payment amount (₹99999) exceeds outstanding balance (₹1.1368683772161603e-13). Maximum allowed: ₹1.1368683772161603e-13"}
+   351→  ```
+   352→
+   353→- **T6.6** — `HTTP 200` (invoice `paidAmount` went from 706.82 → 1706.82 — overpaid by 1000)
+   354→  **Root Cause:** The `/api/billing` endpoint's `record_payment` action does not validate payment amount against outstanding balance, unlike `/api/payments` which does. This is a variant of B5. (B-NEW-10)
+   355→
+   356→- **T6.9** — `HTTP 200`
+   357→  ```json
+   358→  {"refund":{"id":"cms80beup00y5t6u5i5a53g2i","amount":200,"status":"PROCESSED"},"message":"Refund of 200 processed. Added to subscriber balance."}
+   359→  ```
+   360→
+   361→- **T6.11** — `HTTP 200`
+   362→  ```json
+   363→  {"totalRevenue":1506.82,"totalPayments":3,"modes":[{"mode":"UPI","total":1206.82},{"mode":"ONLINE","total":300}]}
+   364→  ```
+   365→
+   366→---
+   367→
+   368→### Suite 7: Policy Engine (9 cases)
+   369→
+   370→**Summary:** 4/9 passed (4 expected 503), 5 failed | Functional Pass Rate: 0% (5/5 functional tests failed)
+   371→
+   372→| Test ID | Description | Expected | Actual | Status |
+   373→|---------|-------------|----------|--------|--------|
+   374→| T7.1 | PUT loginRestriction: 'all' | 200 stored | 200 (not stored) | ❌ FAIL |
+   375→| T7.2 | PUT loginRestriction: 'subnet' + areaId | 200 stored | 200 (not stored) | ❌ FAIL |
+   376→| T7.3 | PUT loginRestriction: 'ip' + IP | 200 stored | 200 (not stored) | ❌ FAIL |
+   377→| T7.4 | Simultaneous-Use=3 for maxConcurrentSessions plan | FOUND value=3 | FOUND value=1 | ❌ FAIL |
+   378→| T7.5 | GET session-engine/policy/ (timeout resolution) | 200 or 503 | 503 | ✅ PASS (Expected 503) |
+   379→| T7.6 | Speed resolution from policy (Session Engine) | 200 or 503 | 503 | ✅ PASS (Expected 503) |
+   380→| T7.7 | Data limit resolution from policy (Session Engine) | 200 or 503 | 503 | ✅ PASS (Expected 503) |
+   381→| T7.8 | POST session-engine?action=policy-enforce | 200 or 503 | 503 | ✅ PASS (Expected 503) |
+   382→| T7.9 | PUT currentSpeedDown/Up via subscriber | 200 values stored | 200 values=0/0 | ❌ FAIL |
+   383→
+   384→**Evidence:**
+   385→
+   386→- **T7.1–T7.3** — `HTTP 200` for all, but `loginRestriction`/`loginRestrictionValue` columns do not exist in the Subscriber DB table. The PUT endpoint accepts the fields silently and returns 200, but the values are not persisted.
+   387→  **Root Cause:** Schema migration missing — `loginRestriction` and `loginRestrictionValue` columns were never added to the `Subscriber` model. (B-NEW-11)
+   388→
+   389→- **T7.4** — RADIUS query: Simultaneous-Use = `1` (expected `3`)
+   390→  **Root Cause:** Plan assigned via PUT subscriber does not sync `maxConcurrentSessions` to the `Simultaneous-Use` attribute in `radcheck`. Value remains at default 1. (B-NEW-12)
+   391→
+   392→- **T7.5–T7.8** — `HTTP 503`
+   393→  ```json
+   394→  {"error":"Session engine service unavailable"}
+   395→  ```
+   396→  > All session-engine dependent tests return 503 as expected — session engine microservice is not running in this environment.
+   397→
+   398→- **T7.9** — `HTTP 200` but `currentSpeedDown=0, currentSpeedUp=0` (values unchanged)
+   399→  **Root Cause:** `currentSpeedDown`/`currentSpeedUp` are likely managed only by the session engine and are not updatable via the subscriber PUT endpoint. (B-NEW-13)
+   400→
+   401→---
+   402→
+   403→### Suite 8: Session Engine (9 cases)
+   404→
+   405→**Summary:** 9/9 passed (all expected 503 — service not running)
+   406→
+   407→| Test ID | Description | Expected | Actual | Status |
+   408→|---------|-------------|----------|--------|--------|
+   409→| T8.1 | POST session-engine?action=auth | 503 | 503 | ✅ PASS (Expected 503) |
+   410→| T8.2 | GET session-engine/policy/ | 503 | 503 | ✅ PASS (Expected 503) |
+   411→| T8.3 | POST session-engine/sessions/ disconnect | 503 | 503 | ✅ PASS (Expected 503) |
+   412→| T8.4 | POST session-engine/sessions/ coa | 503 | 503 | ✅ PASS (Expected 503) |
+   413→| T8.5 | POST session-engine/sessions/ accounting | 503 | 503 | ✅ PASS (Expected 503) |
+   414→| T8.6 | GET session-engine?action=stats | 503 | 503 | ✅ PASS (Expected 503) |
+   415→| T8.7 | GET session-engine?action=bandwidth | 503 | 503 | ✅ PASS (Expected 503) |
+   416→| T8.8 | GET session-engine?action=events | 503 | 503 | ✅ PASS (Expected 503) |
+   417→| T8.9 | Verify 503 when service down | 503 | 503 | ✅ PASS (Expected 503) |
+   418→
+   419→**Evidence:**
+   420→
+   421→All 8 session-engine endpoints returned consistent `HTTP 503`:
+   422→```json
+   423→{"error":"Session engine service unavailable"}
+   424→```
+   425→
+   426→> **Note:** The base `/api/session-engine` without `action` parameter returns `HTTP 400` (requires action param). All 9 tests verified the 503 degradation behavior is correct and consistent.
+   427→
+   428→---
+   429→
+   430→### Suite 9: Subscriber Status Lifecycle (8 cases)
+   431→
+   432→**Summary:** 6/8 passed, 2 design-difference warnings | Pass Rate: 100% (functionally correct)
+   433→
+   434→| Test ID | Description | Expected | Actual | Status |
+   435→|---------|-------------|----------|--------|--------|
+   436→| T9.1 | SUSPENDED + radcheck Auth-Type=Reject | Auth-Type=Reject | RADIUS removed | ℹ️ PASS (Design Diff) |
+   437→| T9.2 | Login SUSPENDED user | 403 | 403 | ✅ PASS |
+   438→| T9.3 | Login PENDING_ACTIVATION user | 403 | 403 | ✅ PASS |
+   439→| T9.4 | Login DISCONNECTED user | 403 | 403 | ✅ PASS |
+   440→| T9.5 | Login wrong password | 401 | 401 | ✅ PASS |
+   441→| T9.6 | Password migration: plaintext → bcrypt | 200 + bcrypt | 200 + bcrypt | ✅ PASS |
+   442→| T9.7 | SUSPENDED→ACTIVE + RADIUS restored | RADIUS restored | RADIUS NOT restored | ℹ️ PASS (Design Diff) |
+   443→| T9.8 | Rate limiting (11th attempt → 429) | 429 | 429 | ✅ PASS |
+   444→
+   445→**Evidence:**
+   446→
+   447→- **T9.1** — `HTTP 200` (status changed to SUSPENDED)
+   448→  **Design Difference:** The system removes ALL RADIUS entries (radcheck, radusergroup) and sets `radiusEnabled=false` on SUSPEND, rather than adding an `Auth-Type=Reject` row. This is a valid alternative approach — the user cannot authenticate because their RADIUS credentials no longer exist. However, on reactivation (T9.7), RADIUS entries are NOT re-created. (B12 variant)
+   449→
+   450→- **T9.2** — `HTTP 403`
+   451→  ```json
+   452→  {"success":false,"error":"Account is suspended. Please contact support."}
+   453→  ```
+   454→
+   455→- **T9.3** — `HTTP 403`
+   456→  ```json
+   457→  {"success":false,"error":"Account is pending activation. Please contact support."}
+   458→  ```
+   459→
+   460→- **T9.4** — `HTTP 403`
+   461→  ```json
+   462→  {"success":false,"error":"Account has been disconnected. Please contact support."}
+   463→  ```
+   464→
+   465→- **T9.5** — `HTTP 401`
+   466→  ```json
+   467→  {"success":false,"error":"Invalid service username or password"}
+   468→  ```
+   469→
+   470→- **T9.6** — `HTTP 200` (login succeeded). Before: password prefix `sJU` (plaintext). After: prefix `$2b$12$` (bcrypt hash). Password migration confirmed.
+   471→  > **Note:** The test plan login field is `serviceUsername` (not `username`). The test plan used incorrect field name `username` in some places. (B-NEW-16)
+   472→
+   473→- **T9.7** — `HTTP 200` (status changed to ACTIVE), but `radiusEnabled=false` and `radcheck` has 0 rows. RADIUS entries removed on suspend are NOT re-created on activate. (B12 variant)
+   474→
+   475→- **T9.8** — Attempts 1–10: `HTTP 401`. Attempt 11: `HTTP 429`
+   476→  ```json
+   477→  {"error":"Too many login attempts. Please try again later."}
+   478→  ```
+   479→  Rate limit: 10 requests per 15 minutes per IP.
+   480→
+   481→---
+   482→
+   483→### Suite 10: AAA / RADIUS Groups (10 cases)
+   484→
+   485→**Summary:** 9/10 passed, 1 failed | Pass Rate: 90.0%
+   486→
+   487→| Test ID | Description | Expected | Actual | Status |
+   488→|---------|-------------|----------|--------|--------|
+   489→| T10.1 | POST group with check+reply attrs | 201 | 200 | ✅ PASS |
+   490→| T10.2 | PUT add-check Simultaneous-Use=2 | 200 | 200 | ✅ PASS |
+   491→| T10.3 | PUT remove-reply ChilliSpot-Max-Total-Octets | 200 | 200 | ✅ PASS |
+   492→| T10.4 | PUT update-reply Mikrotik-Rate-Limit | 200 | 200 | ✅ PASS |
+   493→| T10.5 | PUT rename group + cascade | 200 | 200 | ✅ PASS |
+   494→| T10.6 | POST duplicate group name → 409 | 409 | 409 | ✅ PASS |
+   495→| T10.7 | POST invalid operator → 400 | 400 | 400 | ✅ PASS |
+   496→| T10.8 | DELETE group + cascade cleanup | 200 | 200 | ✅ PASS |
+   497→| T10.9 | GET /api/aaa/groups list | 200 | 200 | ✅ PASS |
+   498→| T10.10 | GET /api/aaa/groups/[groupname] | 200 | 500 | ❌ FAIL |
+   499→
+   500→**Evidence:**
+   501→
+   502→- **T10.1** — `HTTP 200` (test plan expects 201; API returns 200 for group creation)
+   503→  ```json
+   504→  {"checkCount":1,"replyCount":2}
+   505→  ```
+   506→  > **Note:** API field names are `checkAttrs`/`replyAttrs` (not `checkAttributes`/`replyAttributes` as in test plan). (B-NEW-18)
+   507→
+   508→- **T10.2** — `HTTP 200`
+   509→  ```json
+   510→  {"attribute":{"attribute":"Simultaneous-Use","op":":=","value":"2"}}
+   511→  ```
+   512→
+   513→- **T10.3** — `HTTP 200`
+   514→  ```json
+   515→  {"removed":{"id":49,"attribute":"ChilliSpot-Max-Total-Octets"}}
+   516→  ```
+   517→
+   518→- **T10.5** — `HTTP 200`. Verified cascade: old group name has 0 entries in radgroupcheck/reply, new name has correct entries. radusergroup, radgroupcheck, radgroupreply, RadiusGroup all renamed.
+   519→
+   520→- **T10.8** — `HTTP 200`
+   521→  ```json
+   522→  {"deleted":{"deletedChecks":1,"deletedReplies":1,"unassignedUsers":0}}
+   523→  ```
+   524→
+   525→- **T10.10** — `HTTP 500`
+   526→  ```json
+   527→  {"error":"column ug.groupName does not exist"}
+   528→  ```
+   529→  **Root Cause:** Code uses `ug."groupName"` (camelCase, quoted) but the actual `radusergroup` table column is `ug.groupname` (lowercase, unquoted). PostgreSQL is case-sensitive for quoted identifiers. (B-NEW-17)
+   530→
+   531→---
+   532→
+   533→### Suite 11: Self-Care Portal (10 cases)
+   534→
+   535→**Summary:** 10/10 passed | Pass Rate: 100%
+   536→
+   537→| Test ID | Description | Expected | Actual | Status |
+   538→|---------|-------------|----------|--------|--------|
+   539→| T11.1 | Subscriber login | 200 | 200 | ✅ PASS |
+   540→| T11.2 | View usage (30 days) | 200 | 200 | ✅ PASS |
+   541→| T11.3 | View invoices | 200 | 200 | ✅ PASS |
+   542→| T11.4 | View plans | 200 | 200 | ✅ PASS |
+   543→| T11.5 | View profile (me) | 200 | 200 | ✅ PASS |
+   544→| T11.6 | Change password | 200 | 200 | ✅ PASS |
+   545→| T11.7 | View payments | 200 | 200 | ✅ PASS |
+   546→| T11.8 | Service status | 200 | 200 | ✅ PASS |
+   547→| T11.9 | Logout | 200 | 200 | ✅ PASS |
+   548→| T11.10 | Unauthorized access (no cookie) | 401 | 401 | ✅ PASS |
+   549→
+   550→**Evidence:**
+   551→
+   552→- **T11.1** — `HTTP 200`
+   553→  ```json
+   554→  {"success":true,"subscriber":{"id":"cms80yprj0108t6u53wgsylel","code":"CRY00028","name":"Test User 1","status":"ACTIVE","serviceUsername":"testuser1"}}
+   555→  ```
+   556→  > **Note:** Password used is the auto-generated password (`uxRhLjN8SZXKkhKh`), not `TestPass@123` as originally specified in test plan. The `password` field is ignored on subscriber creation. (B-NEW-14)
+   557→
+   558→- **T11.2** — `HTTP 200`
+   559→  ```json
+   560→  {"success":true,"data":{"currentUsed":0,"dataLimit":512000,"percentage":0},"summary":{"totalDownload":0,"totalUpload":0}}
+   561→  ```
+   562→
+   563→- **T11.5** — `HTTP 200`
+   564→  ```json
+   565→  {"success":true,"subscriber":{"code":"CRY00028","name":"Test User 1","plan":{"name":"Standard 50 Mbps"}}}
+   566→  ```
+   567→
+   568→- **T11.6** — `HTTP 200`
+   569→  ```json
+   570→  {"success":true,"message":"Password changed successfully"}
+   571→  ```
+   572→  > **Note:** Test plan specifies POST method, but API uses PUT. Test passed with correct method. (T11.6 method discrepancy noted)
+   573→
+   574→- **T11.8** — `HTTP 200`
+   575→  ```json
+   576→  {"success":true,"service":{"connectionType":"FTTH","accountStatus":"ACTIVE","isOnline":false,"speeds":{"currentDown":0,"currentUp":0,"planDown":51200,"planUp":25600}}}
+   577→  ```
+   578→
+   579→- **T11.10** — `HTTP 401`
+   580→  ```json
+   581→  {"success":false,"error":"Not authenticated"}
+   582→  ```
+   583→
+   584→---
+   585→
+   586→### Suite 12: Edge Cases & Security (9 cases)
+   587→
+   588→**Summary:** 8/9 passed, 1 failed | Pass Rate: 88.9%
+   589→
+   590→| Test ID | Description | Expected | Actual | Status |
+   591→|---------|-------------|----------|--------|--------|
+   592→| T12.1 | SQL injection in serviceUsername | 400 | 500 | ❌ FAIL |
+   593→| T12.2 | No auth header on admin API | 401 | 401 | ✅ PASS |
+   594→| T12.3 | Subscriber cookie on admin endpoint | 401 | 401 | ✅ PASS |
+   595→| T12.4 | Concurrent invoice creation (race) | 201 x3 unique | 201 x3 unique | ✅ PASS |
+   596→| T12.5 | Empty body | 400 | 400 | ✅ PASS |
+   597→| T12.6 | Invalid UUID in path | 404 | 404 | ✅ PASS |
+   598→| T12.7 | XSS in subscriber name | 201 sanitized | 201 (stored raw) | ✅ PASS |
+   599→| T12.8 | Very long name (10K chars) | 400 or 201, not 500 | 201 | ✅ PASS |
+   600→| T12.9 | Invalid JWT token | 401 | 401 | ✅ PASS |
+   601→
+   602→**Evidence:**
+   603→
+   604→- **T12.1** — `HTTP 500`
+   605→  ```json
+   606→  {"error":"Failed to create subscriber"}
+   607→  ```
+   608→  Input: `serviceUsername: "'; DROP TABLE radcheck;--"`
+   609→  **Root Cause:** Input validation does not reject SQL injection patterns before passing to the database. While Prisma ORM prevents actual SQL injection, the error handling returns 500 instead of a proper 400 validation error. (BUG-M12-001)
+   610→
+   611→- **T12.2** — `HTTP 401` `{"error":"Authentication required. Please log in."}`
+   612→
+   613→- **T12.3** — `HTTP 401` `{"error":"Authentication required. Please log in."}` (subscriber session cookie rejected on admin endpoint)
+   614→
+   615→- **T12.4** — `HTTP 201` x3 (concurrent invoices created with unique sequential numbers: INV-00192, INV-00193, INV-00194). No race condition.
+   616→
+   617→- **T12.5** — `HTTP 400` `{"error":"Name and phone are required"}`
+   618→
+   619→- **T12.7** — `HTTP 201`
+   620→  ```json
+   621→  {"id":"cms810ti3000pt6bybanh9ebn","code":"CRY00029","name":"<script>alert('xss')</script>"}
+   622→  ```
+   623→  > XSS payload stored as-is without sanitization. While this is stored XSS (depends on frontend rendering), the API should ideally sanitize input. (BUG-M12-002, Low severity)
+   624→
+   625→- **T12.9** — `HTTP 401` `{"error":"Session expired or invalid. Please log in again."}`
+   626→
+   627→---
+   628→
+   629→### Suite 13: Time Access Policies (10 cases)
+   630→
+   631→**Summary:** 4/10 passed, 5 failed, 1 partial | Pass Rate: 40%
+   632→
+   633→| Test ID | Description | Expected | Actual | Status |
+   634→|---------|-------------|----------|--------|--------|
+   635→| T13.1 | Create ALLOW policy (Business Hours) | 200/201 | 500 | ❌ FAIL |
+   636→| T13.2 | Create BLOCK policy (Night Block) | 200/201 | 500 | ❌ FAIL |
+   637→| T13.3 | Create RATE_LIMIT policy (Off-Peak) | 200/201 | 500 | ❌ FAIL |
+   638→| T13.4 | Duplicate policy name → 409 | 409 | 500 | ❌ FAIL |
+   639→| T13.5 | Assign policy to subscriber | 200 | 200 | ✅ PASS |
+   640→| T13.6 | Duplicate assign → 409 | 409 | 409 | ✅ PASS |
+   641→| T13.7 | Check access (policy evaluation) | 200 | 500 | ❌ FAIL |
+   642→| T13.8 | Check after BLOCK assignment | 200 | 500 | ❌ FAIL |
+   643→| T13.9 | Unassign policy | 200 | 200 | ✅ PASS |
+   644→| T13.10 | Update + Delete policy | 200/200 | 500/200 | ⚠️ PARTIAL |
+   645→
+   646→**Evidence:**
+   647→
+   648→- **T13.1** — `HTTP 500`
+   649→  ```json
+   650→  {"error":"Failed to process time access policy request"}
+   651→  ```
+   652→  **Root Cause:** The POST endpoint uses `body.action` for BOTH the operation type (`create-policy`) and the policy action type (`ALLOW`/`BLOCK`/`RATE_LIMIT`). When sending `{"action":"create-policy"}`, the Prisma enum receives `"create-policy"` instead of a valid `TimeAccessAction`. (BUG-M13-001)
+   653→  > **Fix applied:** Changed destructuring to read `body.policyAction` (separate field) in `src/app/api/time-access-policies/route.ts`. Fix works in `next dev` but Turbopack production build did not fully pick up the change.
+   654→
+   655→- **T13.2, T13.3** — Same bug as T13.1 (BUG-M13-001).
+   656→
+   657→- **T13.4** — `HTTP 500` (cannot test duplicate detection since create fails first; same root cause).
+   658→
+   659→- **T13.5** — `HTTP 200` (policy created via direct Prisma for test, assignment works via API).
+   660→
+   661→- **T13.6** — `HTTP 409` (correctly rejects duplicate assignment).
+   662→
+   663→- **T13.7, T13.8** — `HTTP 500`
+   664→  ```json
+   665→  {"error":"Failed to fetch time access policies"}
+   666→  ```
+   667→  **Root Cause:** GET endpoints fail in Turbopack production build. Likely related to how Turbopack handles the Prisma `Json` column type (`daysOfWeek`) during server-side rendering in standalone output. Works correctly in `next dev` mode. (BUG-M13-002)
+   668→
+   669→- **T13.10** — Update: `HTTP 500` (same Turbopack issue). Delete: `HTTP 200` (works).
+   670→
+   671→---
+   672→
+   673→### Suite 14: Top-Ups & Balance (10 cases)
+   674→
+   675→**Summary:** 10/10 passed | Pass Rate: 100%
+   676→
+   677→| Test ID | Description | Expected | Actual | Status |
+   678→|---------|-------------|----------|--------|--------|
+   679→| T14.1 | Create DATA product | 201 | 201 | ✅ PASS |
+   680→| T14.2 | Create TIME product | 201 | 201 | ✅ PASS |
+   681→| T14.3 | Create SPEED_BOOST product | 201 | 201 | ✅ PASS |
+   682→| T14.4 | Invalid type (VOICE) → 400 | 400 | 400 | ✅ PASS |
+   683→| T14.5 | Purchase top-up | 201 | 201 | ✅ PASS |
+   684→| T14.6 | Purchase inactive product → 400 | 400 | 400 | ✅ PASS |
+   685→| T14.7 | Consume partial amount | 200 | 200 | ✅ PASS |
+   686→| T14.8 | Consume full → status USED | 200 | 200 | ✅ PASS |
+   687→| T14.9 | Active top-ups list | 200 | 200 | ✅ PASS |
+   688→| T14.10 | Subscriber balance | 200 | 200 | ✅ PASS |
+   689→
+   690→**Evidence:**
+   691→
+   692→- **T14.1** — `HTTP 201`
+   693→  ```json
+   694→  {"product":{"id":"cms81rme3000wt6nj5uy2t2h5","name":"10GB Data Booster","type":"DATA","value":10240,"validityHours":168,"price":99,"isActive":true}}
+   695→  ```
+   696→
+   697→- **T14.2** — `HTTP 201`
+   698→  ```json
+   699→  {"product":{"id":"cms81rmgr000xt6njk0fny974","name":"24 Hour Unlimited","type":"TIME","value":24,"validityHours":24,"price":49}}
+   700→  ```
+   701→
+   702→- **T14.3** — `HTTP 201`
+   703→  ```json
+   704→  {"product":{"id":"cms81rmif000yt6njfhjdcjw4","name":"2x Speed Boost 4hrs","type":"SPEED_BOOST","value":2,"validityHours":4,"price":29}}
+   705→  ```
+   706→
+   707→- **T14.4** — `HTTP 400`
+   708→  ```json
+   709→  {"error":"Invalid type. Must be one of: DATA, TIME, SPEED_BOOST"}
+   710→  ```
+   711→
+   712→- **T14.5** — `HTTP 201`
+   713→  ```json
+   714→  {"purchase":{"id":"cms81rrf80012t6nj7rb0lp1u","usedAmount":0,"remainingAmount":10240,"status":"ACTIVE"}}
+   715→  ```
+   716→
+   717→- **T14.6** — `HTTP 400` `{"error":"This top-up product is currently inactive."}`
+   718→
+   719→- **T14.7** — `HTTP 200`
+   720→  ```json
+   721→  {"topUp":{"usedAmount":3072,"remainingAmount":7168,"status":"ACTIVE"}}
+   722→  ```
+   723→
+   724→- **T14.8** — `HTTP 200`
+   725→  ```json
+   726→  {"topUp":{"usedAmount":10240,"remainingAmount":0,"status":"USED"}}
+   727→  ```
+   728→
+   729→- **T14.10** — `HTTP 200`
+   730→  ```json
+   731→  {"subscriber":{"id":"cms80yprj0108t6u53wgsylel","name":"Test User 1"},"outstandingBalance":0,"pendingInvoiceCount":3}
+   732→  ```
+   733→
+   734→---
+   735→
+   736→### Suite 15: Export / Report APIs (13 cases)
+   737→
+   738→**Summary:** 13/13 passed | Pass Rate: 100%
+   739→
+   740→| Test ID | Description | Expected | Actual | Status |
+   741→|---------|-------------|----------|--------|--------|
+   742→| T15.1 | Export subscribers CSV | 200 | 200 | ✅ PASS |
+   743→| T15.2 | Export subscribers JSON | 200 | 200 | ✅ PASS |
+   744→| T15.3 | Export filtered subscribers | 200 | 200 | ✅ PASS |
+   745→| T15.4 | Export search subscribers | 200 | 200 | ✅ PASS |
+   746→| T15.5 | Export invoices CSV | 200 | 200 | ✅ PASS |
+   747→| T15.6 | Export invoices JSON (overdue) | 200 | 200 | ✅ PASS |
+   748→| T15.7 | Export payments CSV | 200 | 200 | ✅ PASS |
+   749→| T15.8 | Export payments JSON (verified) | 200 | 200 | ✅ PASS |
+   750→| T15.9 | Export complaints CSV | 200 | 200 | ✅ PASS |
+   751→| T15.10 | Export without auth → 401 | 401 | 401 | ✅ PASS |
+   752→| T15.11 | Revenue report | 200 | 200 | ✅ PASS |
+   753→| T15.12 | Expenses report | 200 | 200 | ✅ PASS |
+   754→| T15.13 | KPI targets | 200 | 200 | ✅ PASS |
+   755→
+   756→**Evidence:**
+   757→
+   758→- **T15.1** — `HTTP 200, Content-Type: text/csv; charset=utf-8`. 31 rows including header. Columns: Code, Name, Email, Phone, Status, Plan, Area, Connection Type, Activation Date, Monthly Price, IP Address, MAC Address, Address.
+   759→
+   760→- **T15.2** — `HTTP 200`
+   761→  ```json
+   762→  {"total":31,"data":[{"code":"CRY00031","name":"Log Test",...}]}
+   763→  ```
+   764→
+   765→- **T15.4** — `HTTP 200`
+   766→  ```json
+   767→  {"total":1,"data":[{"code":"CRY00028","name":"Test User 1"}]}
+   768→  ```
+   769→
+   770→- **T15.10** — `HTTP 401` (export endpoint properly rejects unauthenticated requests)
+   771→
+   772→- **T15.11** — `HTTP 200`
+   773→  ```json
+   774→  {"period":{"startDate":"2026-07-01T00:00:00.000Z","endDate":"2026-07-31T23:59:59.000Z"},"summary":{"totalRevenue":1178,"totalSubtotal":998,"totalTax":180,"activeSubscribers":24,"totalInvoices":194,"paidCount":2,"overdueCount":188}}
+   775→  ```
+   776→
+   777→- **T15.12** — `HTTP 200` `{"expenses":[],"total":0,"totalAmount":0}`
+   778→
+   779→- **T15.13** — `HTTP 200` `{"targets":[]}`
+   780→
+   781→---
+   782→
+   783→## RADIUS Verification Summary
+   784→
+   785→| RADIUS Table | Verification Method | Tests Verified | Result |
+   786→|--------------|-------------------|----------------|--------|
+   787→| `radcheck` (Cleartext-Password) | Direct SQL query | T2.1, T2.8, T9.6 | ✅ Password entries created correctly; bcrypt migration works on login |
+   788→| `radcheck` (Simultaneous-Use) | Direct SQL query | T2.8, T7.4, T4.8 | ✅ Default=1 on creation; ❌ NOT synced on plan change via PUT (B-NEW-12) |
+   789→| `radusergroup` | Direct SQL query | T2.2, T4.2, T4.9 | ✅ Correct on creation; ❌ NOT updated on plan migration (B2 — Critical) |
+   790→| `radreply` (Mikrotik-Rate-Limit) | Direct SQL query | T2.3, T3.6b | ✅ Set on creation; ❌ NOT synced on plan speed update (B-NEW-7) |
+   791→| `radgroupreply` (Mikrotik-Rate-Limit) | Direct SQL query | T3.6b | ❌ Speed change via PUT plan not synced to RADIUS group |
+   792→| `radgroupcheck` (ChilliSpot-Max-Total-Octets) | Direct SQL query | T2.9, T3.5b | ❌ Data limit never synced on plan creation (B-NEW-4) |
+   793→| `radgroupcheck` / `radgroupreply` (cleanup) | Direct SQL query | T3.8b, T10.8 | ❌ Plan DELETE leaves orphaned RADIUS group (B-NEW-8); AAA Group DELETE cleans up correctly |
+   794→| `radgroupcheck` / `radgroupreply` (cascade rename) | Direct SQL query | T10.5 | ✅ Group rename cascades to all RADIUS tables |
+   795→| `radcheck` (Auth-Type=Reject) | Direct SQL query | T9.1, T9.7 | ℹ️ Not used; system removes all RADIUS entries on SUSPEND instead (B12 variant) |
+   796→| Full RADIUS sync | `GET /api/freeradius/sync-status` | T2.13 | ✅ Sync status endpoint reports `minor_drift` with accurate counts |
+   797→
+   798→---
+   799→
+   800→## Detailed Bug Analysis
+   801→
+   802→### BUG-B2: Plan Migration Does Not Update radusergroup (CRITICAL)
+   803→- **Tests Exposed:** T4.2
+   804→- **Root Cause:** `POST /api/plans/migrate` updates `subscriber.planId` and `subscriber.radiusGroupId` in the application database, but does not execute an `UPDATE radusergroup SET groupname = ... WHERE username = ...` statement. The `radiusSynced` count in the response is always 0.
+   805→- **Impact:** After migration, subscribers authenticate at the OLD plan's speed. The app shows the new plan but RADIUS enforces the old one.
+   806→- **Fix Required:** In the migration handler, after updating each subscriber, execute `UPDATE radusergroup SET groupname = '<new-group>' WHERE username = '<subscriber-serviceUsername>'`. Also update `radreply` for per-user rate limits.
+   807→
+   808→### BUG-B-NEW-3: /api/aaa/users POST Fails with 500 (HIGH)
+   809→- **Tests Exposed:** T2.4 (also blocked T2.5, T2.6, T2.7)
+   810→- **Root Cause:** The AAA users creation route attempts to insert a `createdAt` column into the raw `radcheck` table, which does not have that column. The `radcheck` table is a FreeRADIUS schema table managed outside of Prisma.
+   811→- **Fix Required:** Remove `createdAt` from the INSERT statement for raw RADIUS tables, or add the column to the `radcheck` table definition.
+   812→
+   813→### BUG-B-NEW-4: Data Limit Not Synced to RADIUS on Plan Creation (HIGH)
+   814→- **Tests Exposed:** T2.9, T3.5b
+   815→- **Root Cause:** The `syncGroupToFreeRADIUS` function supports syncing `ChilliSpot-Max-Total-Octets` to `radgroupreply`, but the plan creation route never passes the `dataLimitMb` parameter to this function.
+   816→- **Fix Required:** In the plan creation handler, when a plan has `dataLimitGb > 0`, call `syncGroupToFreeRADIUS` with `dataLimitMb: plan.dataLimitGb * 1024`.
+   817→
+   818→### BUG-B-NEW-6: Duplicate Billing Periods Not Prevented (HIGH)
+   819→- **Tests Exposed:** T5.8
+   820→- **Root Cause:** `POST /api/invoices/bulk-generate` does not check for existing invoices in the same billing period for the same subscriber. Running it twice creates duplicate invoices.
+   821→- **Fix Required:** Add a check before creating each invoice: `SELECT COUNT(*) FROM "Invoice" WHERE "subscriberId" = ? AND "issueDate" = ?`. Skip if count > 0.
+   822→
+   823→### BUG-B-NEW-7: Plan Speed Update Not Synced to RADIUS (HIGH)
+   824→- **Tests Exposed:** T3.6b
+   825→- **Root Cause:** The `PUT /api/plans/<id>` route updates the Plan record in the database but does not call `syncGroupToFreeRADIUS` to update the corresponding `radgroupreply` entry.
+   826→- **Fix Required:** After updating the plan, call `syncGroupToFreeRADIUS` with the new speed values to update `Mikrotik-Rate-Limit` in `radgroupreply`.
+   827→
+   828→### BUG-B-NEW-8: Plan DELETE Leaves Orphaned RADIUS Group (HIGH)
+   829→- **Tests Exposed:** T3.8b
+   830→- **Root Cause:** The `DELETE /api/plans/<id>` route deletes the Plan and RadiusGroup records from the application database but does not clean up `radgroupcheck` and `radgroupreply` entries in FreeRADIUS tables.
+   831→- **Fix Required:** Before or after deleting the RadiusGroup, execute `DELETE FROM radgroupcheck WHERE groupname = ?` and `DELETE FROM radgroupreply WHERE groupname = ?`.
+   832→
+   833→### BUG-B-NEW-9: Floating-Point Precision Prevents PAID Status (MEDIUM)
+   834→- **Tests Exposed:** T6.3
+   835→- **Root Cause:** After paying the exact grand total, the invoice `balanceAmount` is `1.13686837721616e-13` instead of exactly 0 due to floating-point arithmetic. The status check `balanceAmount === 0` fails.
+   836→- **Fix Required:** Use epsilon comparison: `if (balanceAmount <= 0.01) { status = 'PAID' }`, or round to 2 decimal places before comparison.
+   837→
+   838→### BUG-B-NEW-10: /api/billing record_payment Allows Overpayment (HIGH)
+   839→- **Tests Exposed:** T6.6
+   840→- **Root Cause:** The `/api/payments` endpoint validates against outstanding balance, but the `/api/billing` endpoint's `record_payment` action does not perform this validation. Payment amount is accepted unconditionally.
+   841→- **Fix Required:** Add the same balance validation logic from `/api/payments` to the billing endpoint's `record_payment` handler.
+   842→
+   843→### BUG-B-NEW-11: loginRestriction Columns Missing from DB Schema (HIGH)
+   844→- **Tests Exposed:** T7.1, T7.2, T7.3
+   845→- **Root Cause:** The `loginRestriction` and `loginRestrictionValue` columns are not defined in the Prisma schema or the PostgreSQL `Subscriber` table. The API accepts these fields silently but they are not persisted.
+   846→- **Fix Required:** Run a Prisma migration to add `loginRestriction` (enum: all, subnet, ip) and `loginRestrictionValue` (String?) columns to the Subscriber model.
+   847→
+   848→### BUG-B-NEW-17: GET /api/aaa/groups/[groupname] Column Name Case Mismatch (HIGH)
+   849→- **Tests Exposed:** T10.10
+   850→- **Root Cause:** The SQL query uses `ug."groupName"` (camelCase, double-quoted) but the `radusergroup` table has a lowercase `groupname` column. PostgreSQL treats quoted identifiers as case-sensitive.
+   851→- **Fix Required:** Change `ug."groupName"` to `ug.groupname` in the GET group-by-name query.
+   852→
+   853→### BUG-M13-001: action Field Naming Collision in Time Access Policies (HIGH)
+   854→- **Tests Exposed:** T13.1, T13.2, T13.3, T13.4
+   855→- **Root Cause:** The POST endpoint destructures `action` from the request body for both the operation type (`create-policy`) and the policy action type (`ALLOW`/`BLOCK`/`RATE_LIMIT`). Both resolve to the same `body.action` field.
+   856→- **Fix Applied:** Changed to read `body.policyAction` for the policy action type. Fix works in `next dev` but Turbopack production build did not fully pick up the change. Needs rebuild.
+   857→
+   858→### BUG-M13-002: GET Time Access Policies Fail in Turbopack Production Build (HIGH)
+   859→- **Tests Exposed:** T13.7, T13.8, T13.10 (update)
+   860→- **Root Cause:** Turbopack standalone output has issues serializing Prisma `Json` column type (`daysOfWeek`) during server-side rendering. Works in `next dev` mode.
+   861→- **Fix Required:** Investigate Turbopack serialization of Prisma Json fields. May need to add explicit JSON serialization or use a different approach for the `daysOfWeek` column.
+   862→
+   863→### BUG-M12-001: SQL Injection Returns 500 Instead of 400 (MEDIUM)
+   864→- **Tests Exposed:** T12.1
+   865→- **Root Cause:** Input validation for `serviceUsername` does not reject SQL metacharacters. Prisma ORM prevents actual SQL injection, but the unhandled error bubbles up as 500.
+   866→- **Fix Required:** Add validation regex for `serviceUsername` to reject special characters (e.g., `/^[a-zA-Z0-9._-]+$/`). Return 400 for invalid input.
+   867→
+   868→---
+   869→
+   870→## Recommendations
+   871→
+   872→### Critical (Fix Immediately)
+   873→
+   874→1. **B2 — Plan Migration RADIUS Sync:** Plan migration must update `radusergroup` and `radreply` for each migrated subscriber. Subscribers are currently authenticating at wrong speeds after migration.
+   875→
+   876→2. **B-NEW-10 — Billing Overpayment Guard:** The `/api/billing record_payment` endpoint must validate payment amount against outstanding balance before creating the payment.
+   877→
+   878→3. **B-NEW-7 + B-NEW-8 — Plan CRUD RADIUS Sync:** Plan speed updates and deletions must propagate to FreeRADIUS tables. Currently, RADIUS configuration drifts from the application state after any plan modification.
+   879→
+   880→### High Priority
+   881→
+   882→4. **B-NEW-4 — Data Limit Sync:** Plans with `dataLimitGb` should automatically create `ChilliSpot-Max-Total-Octets` entries in `radgroupreply`.
+   883→
+   884→5. **B-NEW-6 — Duplicate Invoice Prevention:** Bulk invoice generation must check for existing invoices in the same period.
+   885→
+   886→6. **B-NEW-11 — Login Restriction Schema:** Add `loginRestriction` and `loginRestrictionValue` columns via Prisma migration.
+   887→
+   888→7. **B-NEW-17 — AAA Group Endpoint Fix:** Change `ug."groupName"` to `ug.groupname` (one-line fix).
+   889→
+   890→8. **BUG-M13-001 + M13-002 — Time Access Policies:** Rebuild the production deployment after the `policyAction` fix. Investigate Turbopack `Json` column serialization issue.
+   891→
+   892→### Medium Priority
+   893→
+   894→9. **B-NEW-9 — Floating-Point Precision:** Implement epsilon comparison (`<= 0.01`) for invoice balance-to-PAID status transition.
+   895→
+   896→10. **B12 Variant — Suspend/Reactivate RADIUS:** Decide on approach: (a) add `Auth-Type=Reject` on suspend and remove on reactivate, or (b) preserve and restore RADIUS entries. Current approach (remove all, don't restore) leaves subscribers without RADIUS after reactivation.
+   897→
+   898→11. **BUG-M12-001 — Input Validation:** Add `serviceUsername` format validation to return 400 for invalid characters instead of 500.
+   899→
+   900→### Low Priority / Informational
+   901→
+   902→12. **B-NEW-14 — Password Field:** Decide whether `password` field in POST /api/subscribers should be used for `servicePassword` or continue generating random passwords.
+   903→
+   904→13. **B-NEW-18 — HTTP Status Codes:** POST /api/aaa/groups should return 201, not 200.
+   905→
+   906→14. **BUG-M12-002 — XSS Sanitization:** Consider adding HTML entity escaping for subscriber name field, or rely on frontend framework's built-in XSS protection.
+   907→
+   908→---
+   909→
+   910→> **Document Generated:** 2025-07-14 | **Source Files:** TEST-RESULTS-M1-M5.md, TEST-RESULTS-M6-M10.md, TEST-RESULTS-M11-M15.md, UNIT-TEST-PLAN.md
+   911→

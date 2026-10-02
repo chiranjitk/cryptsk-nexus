@@ -1,0 +1,118 @@
+# =============================================================================
+# CRYPTSK PRIVATE LIMITED  —  Vendor-Specific Attributes (VSA)
+# =============================================================================
+#
+# IANA Private Enterprise Code: 64179
+# Company: Cryptsk Private Limited
+#
+# These VSA attributes are used when Cryptsk operates in MULTIMODE
+# (acting as both the captive-portal gateway AND the RADIUS server).
+#
+# In external-gateway mode, the product generates vendor-specific attrs
+# for the connected NAS (MikroTik, Cisco, Aruba, etc.) instead.
+#
+# Attribute numbering convention:
+#   1-10   : Core traffic shaping (bandwidth, data limits)
+#   11-20  : Session & access control
+#   21-30  : Network assignment (VLAN, IP pool)
+#   31-40  : Portal & filtering
+#   41-50  : FUP & policy
+#
+# DEPLOYMENT: Copy this file to /etc/raddb/dictionary.cryptsk on the
+# production server, then add '$INCLUDE dictionary.cryptsk' to the
+# main /etc/raddb/dictionary file.
+#
+# =============================================================================
+
+VENDOR    Cryptsk          64179
+
+BEGIN-VENDOR Cryptsk
+
+# -- Core Traffic Shaping (1-10) -------------------------------------------
+
+# Bandwidth rate limit in MikroTik-compatible "D/U" format: "50M/25M"
+# Example value: "50M/25M" means 50 Mbps down / 25 Mbps up
+ATTRIBUTE       Cryptsk-Rate-Limit              1       string
+
+# Maximum download bandwidth in bits per second (bps)
+ATTRIBUTE       Cryptsk-Bandwidth-Max-Down      2       integer
+
+# Maximum upload bandwidth in bits per second (bps)
+ATTRIBUTE       Cryptsk-Bandwidth-Max-Up        3       integer
+
+# Burst/ceiling download bandwidth in bits per second (bps)
+ATTRIBUTE       Cryptsk-Bandwidth-Ceil-Down     4       integer
+
+# Burst/ceiling upload bandwidth in bits per second (bps)
+ATTRIBUTE       Cryptsk-Bandwidth-Ceil-Up       5       integer
+
+# Total data limit (combined input + output) in bytes
+ATTRIBUTE       Cryptsk-Total-Limit             6       integer
+
+# Maximum input (download) data in bytes
+ATTRIBUTE       Cryptsk-Max-Input-Octets        7       integer
+
+# Maximum output (upload) data in bytes
+ATTRIBUTE       Cryptsk-Max-Output-Octets       8       integer
+
+# -- Session & Access Control (11-20) --------------------------------------
+
+# Session timeout in seconds (overrides RFC Session-Timeout when set)
+ATTRIBUTE       Cryptsk-Session-Timeout         11      integer
+
+# Idle timeout in seconds -- disconnect after idle period
+ATTRIBUTE       Cryptsk-Idle-Timeout            12      integer
+
+# Maximum concurrent sessions allowed per user
+ATTRIBUTE       Cryptsk-Max-Sessions            13      integer
+
+# -- Network Assignment (21-30) --------------------------------------------
+
+# IP pool name for address assignment
+ATTRIBUTE       Cryptsk-Pool-Name               21      string
+
+# VLAN ID to assign to the user session
+ATTRIBUTE       Cryptsk-VLAN-ID                 22      integer
+
+# Static IP address to assign (format: "10.0.0.100")
+ATTRIBUTE       Cryptsk-Static-IP               23      ipaddr
+
+# -- Portal & Filtering (31-40) --------------------------------------------
+
+# Captive portal redirect URL after authentication
+ATTRIBUTE       Cryptsk-Redirect-URL            31      string
+
+# Content filter profile name
+ATTRIBUTE       Cryptsk-Filter-Id               32      string
+
+# User profile / group name for policy matching
+ATTRIBUTE       Cryptsk-User-Profile            33      string
+
+# WiFi plan display name (for logging / portal UI)
+ATTRIBUTE       Cryptsk-Plan-Name               34      string
+
+# -- FUP & Policy (41-50) -------------------------------------------------
+
+# Fair Usage Policy -- rate limit AFTER data threshold is reached
+# Format: "5M/2M" (post-FUP: 5 Mbps down / 2 Mbps up)
+ATTRIBUTE       Cryptsk-FUP-Rate-Limit          41      string
+
+# FUP data threshold in bytes -- triggers FUP rate limit when exceeded
+ATTRIBUTE       Cryptsk-FUP-Threshold-Bytes     42      integer
+
+# Data quota reset interval in seconds (e.g., 86400 = daily reset)
+ATTRIBUTE       Cryptsk-Data-Reset-Interval     43      integer
+
+# Priority level for QoS (higher = better, range 1-10)
+ATTRIBUTE       Cryptsk-QoS-Priority            44      integer
+
+# Billing class / tariff identifier
+ATTRIBUTE       Cryptsk-Billing-Class           45      string
+
+# -- Internal Tracking (46-50) ----------------------------------------------
+
+# Auth method used for this request (eap-ttls, eap-peap, eap-tls, eap-md5,
+# mac-auth, chap, mschapv2, pap) — set in authorize phase for UI display
+ATTRIBUTE       Cryptsk-Auth-Method              46      string
+
+END-VENDOR Cryptsk

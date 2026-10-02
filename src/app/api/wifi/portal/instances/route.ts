@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (partnerId) {
       where.partnerId = partnerId;
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       partnerId,
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
       ssidList,
     } = body;
 
-    console.log(`[PortalInstances POST] body:`, { partnerId: partnerId || 'MISSING', name: name || 'MISSING', slug: slug || 'none', tenantId });
+    console.log(`[PortalInstances POST] body:`, { partnerId: partnerId || 'MISSING', name: name || 'MISSING', slug: slug || 'none'});
 
     if (!partnerId || !name) {
       console.warn('[PortalInstances POST] 400: Missing partnerId or name');
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     if (partnerId === 'default' || partnerId.length !== 36) {
       console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" for tenant ${tenantId}`);
       const firstPartner = await db.partner.findFirst({
-        where: { tenantId },
+        where: {},
         select: { id: true },
       });
       if (!firstPartner) {
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-      where: { id: resolvedPropertyId, tenantId },
+      where: { id: resolvedPropertyId},
     });
 
     if (!property) {
@@ -248,7 +248,7 @@ export async function POST(request: NextRequest) {
 
     const instance = await db.captivePortal.create({
       data: {
-        tenantId,
+
         partnerId: resolvedPropertyId,
         name,
         description,
@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
 
       await db.portalPage.create({
         data: {
-          tenantId,
+
           portalId: instance.id,
           language: 'en',
           title: 'Welcome',

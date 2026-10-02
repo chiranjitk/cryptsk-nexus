@@ -38,16 +38,16 @@ export async function POST(request: NextRequest) {
         ruleId: { in: ruleIds },
         status: { in: ["ACTIVE", "ACKNOWLEDGED"] },
       },
-      include: { rule: true },
+      include: { AlertRule: true },
     });
 
     let escalatedCount = 0;
 
     for (const alert of pendingAlerts) {
-      if (!alert.rule) continue;
+      if (!alert.AlertRule) continue;
 
-      const intervalMinutes = alert.rule.escalationIntervalMinutes || 30;
-      const maxSeverity = (alert.rule.maxSeverity || "CRITICAL").toUpperCase();
+      const intervalMinutes = alert.AlertRule.escalationIntervalMinutes || 30;
+      const maxSeverity = (alert.AlertRule.maxSeverity || "CRITICAL").toUpperCase();
 
       // Calculate time since alert was created
       const minutesSinceCreation = (now.getTime() - alert.createdAt.getTime()) / 60000;
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       const targetMaxIdx = SEVERITY_ORDER.indexOf(maxSeverity);
 
       // Calculate target severity based on steps
-      const baseIdx = SEVERITY_ORDER.indexOf(alert.rule.severity.toUpperCase());
+      const baseIdx = SEVERITY_ORDER.indexOf(alert.AlertRule.severity.toUpperCase());
       const targetIdx = Math.min(baseIdx + expectedSteps, targetMaxIdx, SEVERITY_ORDER.length - 1);
 
       if (targetIdx <= currentMaxIdx) continue;
@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
             previousSeverity: alert.severity,
             newSeverity,
             escalationLevel: newLevel,
-            ruleName: alert.rule.name,
+            ruleName: alert.AlertRule.name,
             minutesSinceCreation: Math.round(minutesSinceCreation),
             intervalMinutes,
           }),

@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (partnerId) where.partnerId = partnerId;
     if (portalId) where.portalId = portalId;
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       partnerId,
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant
     const property = await db.partner.findFirst({
-      where: { id: partnerId, tenantId },
+      where: { id: partnerId},
     });
     if (!property) {
       return NextResponse.json(
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     // Verify portal belongs to same tenant
     const portal = await db.captivePortal.findFirst({
-      where: { id: portalId, tenantId },
+      where: { id: portalId},
     });
     if (!portal) {
       return NextResponse.json(
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     // Verify IpPool belongs to same tenant (if provided)
     if (ipPoolId) {
       const pool = await db.ipPool.findFirst({
-        where: { id: ipPoolId, tenantId },
+        where: { id: ipPoolId},
       });
       if (!pool) {
         return NextResponse.json(
@@ -147,7 +147,6 @@ export async function POST(request: NextRequest) {
       const existingMappings = await db.portalMapping.findMany({
         where: {
           ipPoolId,
-          tenantId,
         },
       });
       if (existingMappings.length > 0) {
@@ -162,7 +161,7 @@ export async function POST(request: NextRequest) {
 
     const mapping = await db.portalMapping.create({
       data: {
-        tenantId,
+
         partnerId,
         portalId,
         ipPoolId: ipPoolId || null,

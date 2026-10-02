@@ -109,11 +109,11 @@ const EXPORT_CATEGORIES: ExportCategory[] = [
   {
     id: "plans",
     title: "Plans",
-    description: "Plan catalog with pricing and features",
+    description: "Plan MIS — pricing, subs, revenue, ARPU",
     icon: Globe,
     format: "CSV",
     estimatedSize: "~15 KB",
-    url: "/api/plans",
+    url: "/api/reports/plan-area-mis?format=csv&dimension=plan",
     iconBg: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
   },
   {
@@ -128,12 +128,12 @@ const EXPORT_CATEGORIES: ExportCategory[] = [
   },
   {
     id: "revenue",
-    title: "Revenue Reports",
-    description: "Financial summary data",
+    title: "Side Revenue",
+    description: "Top-ups, vouchers & add-on income",
     icon: BarChart3,
     format: "CSV",
     estimatedSize: "~60 KB",
-    url: "/api/reports?tab=financial&export=csv",
+    url: "/api/reports/side-revenue?format=csv",
     iconBg: "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400",
   },
   {
@@ -143,7 +143,7 @@ const EXPORT_CATEGORIES: ExportCategory[] = [
     icon: ClipboardList,
     format: "CSV",
     estimatedSize: "~100 KB",
-    url: "/api/audit-log?export=csv",
+    url: "/api/audit-log?type=export-all&format=csv",
     iconBg: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
   },
   {
@@ -179,11 +179,11 @@ const EXPORT_CATEGORIES: ExportCategory[] = [
   {
     id: "collection",
     title: "Collection",
-    description: "Collection agent performance",
+    description: "Collection register — verified receipts",
     icon: HandCoins,
     format: "CSV",
     estimatedSize: "~45 KB",
-    url: "/api/collection/export",
+    url: "/api/reports/collection-register?format=csv",
     iconBg: "bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400",
   },
 ];

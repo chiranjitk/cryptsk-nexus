@@ -3,6 +3,7 @@ import { createPaymentOrder, verifyPayment } from "@/lib/services/payment-servic
 import { db } from "@/lib/db";
 import { fireEventAsync } from "@/lib/services/webhook-service";
 import { requireAuth, AuthError } from "@/lib/api-auth";
+import { newReceiptNumber } from "@/lib/services/receipt";
 
 // POST /api/payments/create-order — create a payment order via configured gateway
 export async function POST(req: NextRequest) {
@@ -11,6 +12,7 @@ export async function POST(req: NextRequest) {
       await requireAuth(req as unknown as import("next/server").NextRequest);
     } catch (error) {
       if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.statusCode });
+      throw error; // [SECURITY-FIX] non-auth errors must not bypass authentication
     }
     const body = await req.json();
     const { subscriberId, amount, currency, invoiceId } = body;
@@ -29,8 +31,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Create payment record
-    const payCount = await db.payment.count();
-    const receiptNumber = `RCT${String(payCount + 1).padStart(6, "0")}`;
+    // [PAYMENTS-NOLEAK] Receipt was `RCT<count+1>` (collision-prone) — unified allocator.
+    const receiptNumber = newReceiptNumber();
 
     const payment = await db.payment.create({
       data: {
@@ -68,6 +70,20 @@ export async function POST(req: NextRequest) {
       where: { id: payment.id },
       data: { transactionRef: result.orderId },
     });
+
+    // [PAYMENTS-NOLEAK] Order creation is now the FIRST ingest point — the
+    // IntegrationTransaction ledger is written in real time (was never written
+    // anywhere, making reconciliation impossible).
+    await db.integrationTransaction.create({
+      data: {
+        gatewayType: result.provider,
+        transactionType: "order",
+        amount,
+        status: "created",
+        externalRef: result.orderId,
+        paymentId: payment.id,
+      },
+    }).catch(() => { /* ledger write must not block checkout */ });
 
     // Fire webhook event
     fireEventAsync("payment.initiated", {
@@ -147,6 +163,29 @@ export async function PUT(req: NextRequest) {
         transactionRef: `${orderId}|${paymentId}`,
       },
     });
+
+    // [PAYMENTS-NOLEAK] Real-time capture ingest: upsert the gateway payment
+    // transaction and link it to the local payment (reconciliation ledger).
+    const capturedTxn = await db.integrationTransaction.findFirst({
+      where: { OR: [{ externalRef: paymentId }, { externalRef: orderId }] },
+    });
+    if (capturedTxn) {
+      await db.integrationTransaction.update({
+        where: { id: capturedTxn.id },
+        data: { status: "captured", externalRef: paymentId, paymentId: payment.id, transactionType: "payment" },
+      });
+    } else {
+      await db.integrationTransaction.create({
+        data: {
+          gatewayType: provider,
+          transactionType: "payment",
+          amount: payment.amount,
+          status: "captured",
+          externalRef: paymentId,
+          paymentId: payment.id,
+        },
+      }).catch(() => { /* ledger write must not block verification */ });
+    }
 
     // Update linked invoice balance
     if (payment.invoiceId && payment.Invoice) {

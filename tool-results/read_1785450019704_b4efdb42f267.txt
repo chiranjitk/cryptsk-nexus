@@ -1,0 +1,583 @@
+    60→    99→  1737→  "daysOfWeek": [0, 6],
+    61→   100→  1738→  "startTime": "00:00",
+    62→   101→  1739→  "endTime": "08:00",
+    63→   102→  1740→  "action": "RATE_LIMIT",
+    64→   103→  1741→  "speedDownKbps": 10240,
+    65→   104→  1742→  "speedUpKbps": 5120,
+    66→   105→  1743→  "enabled": true
+    67→   106→  1744→}
+    68→   107→  1745→```
+    69→   108→  1746→**Expected HTTP Status:** 200 or 201
+    70→   109→  1747→**Expected Response Validation:** Policy with `action: "RATE_LIMIT"`, `speedDownKbps: 10240`, `speedUpKbps: 5120`
+    71→   110→  1748→**RADIUS Table Verification SQL:** None
+    72→   111→  1749→
+    73→   112→  1750→### T13.4 — Duplicate policy name rejected
+    74→   113→  1751→**Endpoint:** `POST /api/time-access-policies`
+    75→   114→  1752→**Method:** POST
+    76→   115→  1753→**Request Body:** `{ "action": "create-policy", "name": "Business Hours Only" }` (duplicate name)
+    77→   116→  1754→**Expected HTTP Status:** 409
+    78→   117→  1755→**Expected Response Validation:** Error message about policy name already exists
+    79→   118→  1756→**RADIUS Table Verification SQL:** None
+    80→   119→  1757→
+    81→   120→  1758→### T13.5 — Assign policy to subscriber
+    82→   121→  1759→**Endpoint:** `POST /api/time-access-policies`
+    83→   122→  1760→**Method:** POST
+    84→   123→  1761→**Request Body:**
+    85→   124→  1762→```json
+    86→   125→  1763→{
+    87→   126→  1764→  "action": "assign",
+    88→   127→  1765→  "subscriberId": "<SUBSCRIBER_ID>",
+    89→   128→  1766→  "timeAccessPolicyId": "<POLICY_ID>",
+    90→   129→  1767→  "priority": 10,
+    91→   130→  1768→  "enabled": true
+    92→   131→  1769→}
+    93→   132→  1770→```
+    94→   133→  1771→**Expected HTTP Status:** 200
+    95→   134→  1772→**Expected Response Validation:** Assignment created with `subscriberId`, `timeAccessPolicyId`, `priority: 10`
+    96→   135→  1773→**RADIUS Table Verification SQL:** None
+    97→   136→  1774→
+    98→   137→  1775→### T13.6 — Duplicate assignment rejected
+    99→   138→  1776→**Endpoint:** `POST /api/time-access-policies`
+   100→   139→  1777→**Method:** POST
+   101→   140→  1778→**Request Body:** Same as T13.5 (same subscriber + policy combination)
+   102→   141→  1779→**Expected HTTP Status:** 409
+   103→   142→  1780→**Expected Response Validation:** Error message about policy already assigned
+   104→   143→  1781→**RADIUS Table Verification SQL:** None
+   105→   144→  1782→
+   106→   145→  1783→### T13.7 — Check subscriber access (current time matches ALLOW policy)
+   107→   146→  1784→**Endpoint:** `GET /api/time-access-policies?action=check&subscriberId=<SUBSCRIBER_ID>`
+   108→   147→  1785→**Method:** GET
+   109→   148→  1786→**Request Body:** None
+   110→   149→  1787→**Expected HTTP Status:** 200
+   111→   150→  1788→**Expected Response Validation:**
+   112→   151→  1789→- `allowed: true` (if current time/day matches an ALLOW policy)
+   113→   152→  1790→- `matchedPolicy: "Business Hours Only"` (or null if no match)
+   114→   153→  1791→- `totalPolicies: 1` (number of active assigned policies)
+   115→   154→  1792→**RADIUS Table Verification SQL:** None
+   116→   155→  1793→
+   117→   156→  1794→### T13.8 — Check subscriber access (current time matches BLOCK policy)
+   118→   157→  1795→**Endpoint:** `GET /api/time-access-policies?action=check&subscriberId=<SUBSCRIBER_ID>`
+   119→   158→  1796→**Method:** GET
+   120→   159→  1797→**Request Body:** None
+   121→   160→  1798→**Expected HTTP Status:** 200
+   122→   161→  1799→**Expected Response Validation:**
+   123→   162→  1800→- `allowed: false` (if current time matches a BLOCK policy)
+   124→   163→  1801→- `action: "BLOCK"`
+   125→   164→  1802→- `matchedPolicy: "Night Block"`
+   126→   165→  1803→**RADIUS Table Verification SQL:** None
+   127→   166→  1804→
+   128→   167→  1805→### T13.9 — Unassign policy from subscriber
+   129→   168→  1806→**Endpoint:** `POST /api/time-access-policies`
+   130→   169→  1807→**Method:** POST
+   131→   170→  1808→**Request Body:**
+   132→   171→  1809→```json
+   133→   172→  1810→{
+   134→   173→  1811→  "action": "unassign",
+   135→   174→  1812→  "subscriberId": "<SUBSCRIBER_ID>",
+   136→   175→  1813→  "timeAccessPolicyId": "<POLICY_ID>"
+   137→   176→  1814→}
+   138→   177→  1815→```
+   139→   178→  1816→**Expected HTTP Status:** 200
+   140→   179→  1817→**Expected Response Validation:** `success: true`, `message: "Policy unassigned from subscriber"`
+   141→   180→  1818→**RADIUS Table Verification SQL:** None
+   142→   181→  1819→
+   143→   182→  1820→### T13.10 — Update and delete policy
+   144→   183→  1821→**Endpoint:** `POST /api/time-access-policies`
+   145→   184→  1822→**Method:** POST
+   146→   185→  1823→**Request Body (update):**
+   147→   186→  1824→```json
+   148→   187→  1825→{
+   149→   188→  1826→  "action": "update-policy",
+   150→   189→  1827→  "id": "<POLICY_ID>",
+   151→   190→  1828→  "startTime": "10:00",
+   152→   191→  1829→  "endTime": "19:00"
+   153→   192→  1830→}
+   154→   193→  1831→```
+   155→   194→  1832→**Expected HTTP Status:** 200
+   156→   195→  1833→**Expected Response Validation:** Updated policy with new time range
+   157→   196→  1834→
+   158→   197→  1835→**Request Body (delete):** `{ "action": "delete-policy", "id": "<POLICY_ID>" }`
+   159→   198→  1836→**Expected HTTP Status:** 200
+   160→   199→  1837→**Expected Response Validation:** `success: true`
+   161→   200→  1838→**RADIUS Table Verification SQL:**
+   162→   201→  1839→```sql
+   163→   202→  1840→SELECT COUNT(*) FROM "TimeAccessPolicy" WHERE id = '<POLICY_ID>';
+   164→   203→  1841→-- Expected: 0 (deleted)
+   165→   204→  1842→
+   166→   205→  1843→SELECT COUNT(*) FROM "SubscriberTimeAccess" WHERE "timeAccessPolicyId" = '<POLICY_ID>';
+   167→   206→  1844→-- Expected: 0 (cascade deleted)
+   168→   207→  1845→```
+   169→   208→  1846→
+   170→   209→  1847→---
+   171→   210→  1848→
+   172→   211→  1849→## Test Suite 14: Top-Ups & Balance (NEW — 10 cases)
+   173→   212→  1850→
+   174→   213→  1851→### T14.1 — Create top-up product (DATA type)
+   175→   214→  1852→**Endpoint:** `POST /api/top-ups?action=create-product`
+   176→   215→  1853→**Method:** POST
+   177→   216→  1854→**Request Body:**
+   178→   217→  1855→```json
+   179→   218→  1856→{
+   180→   219→  1857→  "name": "10GB Data Booster",
+   181→   220→  1858→  "description": "Add 10GB to current cycle",
+   182→   221→  1859→  "type": "DATA",
+   183→   222→  1860→  "value": 10240,
+   184→   223→  1861→  "validityHours": 168,
+   185→   224→  1862→  "price": 99,
+   186→   225→  1863→  "isActive": true,
+   187→   226→  1864→  "sortOrder": 1
+   188→   227→  1865→}
+   189→   228→  1866→```
+   190→   229→  1867→**Expected HTTP Status:** 201
+   191→   230→  1868→**Expected Response Validation:** Product with `id`, `name: "10GB Data Booster"`, `type: "DATA"`, `value: 10240`, `price: 99`
+   192→   231→  1869→**RADIUS Table Verification SQL:** None (top-up is application-level, not RADIUS)
+   193→   232→  1870→
+   194→   233→  1871→### T14.2 — Create top-up product (TIME type)
+   195→   234→  1872→**Endpoint:** `POST /api/top-ups?action=create-product`
+   196→   235→  1873→**Method:** POST
+   197→   236→  1874→**Request Body:**
+   198→   237→  1875→```json
+   199→   238→  1876→{
+   200→   239→  1877→  "name": "24 Hour Unlimited",
+   201→   240→  1878→  "type": "TIME",
+   202→   241→  1879→  "value": 24,
+   203→   242→  1880→  "validityHours": 24,
+   204→   243→  1881→  "price": 49,
+   205→   244→  1882→  "isActive": true
+   206→   245→  1883→}
+   207→   246→  1884→```
+   208→   247→  1885→**Expected HTTP Status:** 201
+   209→   248→  1886→**Expected Response Validation:** Product with `type: "TIME"`, `value: 24`, `validityHours: 24`
+   210→   249→  1887→**RADIUS Table Verification SQL:** None
+   211→   250→  1888→
+   212→   251→  1889→### T14.3 — Create top-up product (SPEED_BOOST type)
+   213→   252→  1890→**Endpoint:** `POST /api/top-ups?action=create-product`
+   214→   253→  1891→**Method:** POST
+   215→   254→  1892→**Request Body:**
+   216→   255→  1893→```json
+   217→   256→  1894→{
+   218→   257→  1895→  "name": "2x Speed Boost 4hrs",
+   219→   258→  1896→  "type": "SPEED_BOOST",
+   220→   259→  1897→  "value": 2,
+   221→   260→  1898→  "validityHours": 4,
+   222→   261→  1899→  "price": 29,
+   223→   262→  1900→  "isActive": true
+   224→   263→  1901→}
+   225→   264→  1902→```
+   226→   265→  1903→**Expected HTTP Status:** 201
+   227→   266→  1904→**Expected Response Validation:** Product with `type: "SPEED_BOOST"`
+   228→   267→  1905→**RADIUS Table Verification SQL:** None
+   229→   268→  1906→
+   230→   269→  1907→### T14.4 — Invalid top-up type rejected
+   231→   270→  1908→**Endpoint:** `POST /api/top-ups?action=create-product`
+   232→   271→  1909→**Method:** POST
+   233→   272→  1910→**Request Body:** `{ "name": "Bad Type", "type": "VOICE", "price": 10 }`
+   234→   273→  1911→**Expected HTTP Status:** 400
+   235→   274→  1912→**Expected Response Validation:** Error message: `"Invalid type. Must be one of: DATA, TIME, SPEED_BOOST"`
+   236→   275→  1913→**RADIUS Table Verification SQL:** None
+   237→   276→  1914→
+   238→   277→  1915→### T14.5 — Purchase top-up for subscriber
+   239→   278→  1916→**Endpoint:** `POST /api/top-ups?action=purchase`
+   240→   279→  1917→**Method:** POST
+   241→   280→  1918→**Request Body:**
+   242→   281→  1919→```json
+   243→   282→  1920→{
+   244→   283→  1921→  "subscriberId": "<SUBSCRIBER_ID>",
+   245→   284→  1922→  "topUpProductId": "<PRODUCT_ID>",
+   246→   285→  1923→  "transactionId": "TXN-TEST-001"
+   247→   286→  1924→}
+   248→   287→  1925→```
+   249→   288→  1926→**Expected HTTP Status:** 201
+   250→   289→  1927→**Expected Response Validation:** Purchase with `status: "ACTIVE"`, `remainingAmount: 10240`, `expiresAt` set to now + validityHours, `topUpProduct` included
+   251→   290→  1928→**RADIUS Table Verification SQL:** None
+   252→   291→  1929→
+   253→   292→  1930→### T14.6 — Purchase inactive top-up product → rejected
+   254→   293→  1931→**Endpoint:** `POST /api/top-ups?action=purchase`
+   255→   294→  1932→**Method:** POST
+   256→   295→  1933→**Request Body:** Same as T14.5 but with `topUpProductId` of an inactive product
+   257→   296→  1934→**Expected HTTP Status:** 400
+   258→   297→  1935→**Expected Response Validation:** Error: `"This top-up product is currently inactive."`
+   259→   298→  1936→**RADIUS Table Verification SQL:** None
+   260→   299→  1937→
+   261→   300→  1938→### T14.7 — Consume from top-up (partial)
+   262→   301→  1939→**Endpoint:** `POST /api/top-ups?action=consume`
+   263→   302→  1940→**Method:** POST
+   264→   303→  1941→**Request Body:**
+   265→   304→  1942→```json
+   266→   305→  1943→{
+   267→   306→  1944→  "id": "<PURCHASE_ID>",
+   268→   307→  1945→  "usedAmount": 3072
+   269→   308→  1946→}
+   270→   309→  1947→```
+   271→   310→  1948→**Expected HTTP Status:** 200
+   272→   311→  1949→**Expected Response Validation:**
+   273→   312→  1950→- `topUp.usedAmount: 3072`
+   274→   313→  1951→- `topUp.remainingAmount: 7168` (10240 - 3072)
+   275→   314→  1952→- `topUp.status: "ACTIVE"`
+   276→   315→  1953→- `fullyConsumed: false`
+   277→   316→  1954→**RADIUS Table Verification SQL:** None
+   278→   317→  1955→
+   279→   318→  1956→### T14.8 — Consume from top-up (full → USED)
+   280→   319→  1957→**Endpoint:** `POST /api/top-ups?action=consume`
+   281→   320→  1958→**Method:** POST
+   282→   321→  1959→**Request Body:** `{ "id": "<PURCHASE_ID>", "usedAmount": 10240 }` (consume remaining)
+   283→   322→  1960→**Expected HTTP Status:** 200
+   284→   323→  1961→**Expected Response Validation:**
+   285→   324→  1962→- `topUp.remainingAmount: 0`
+   286→   325→  1963→- `topUp.status: "USED"`
+   287→   326→  1964→- `fullyConsumed: true`
+   288→   327→  1965→**RADIUS Table Verification SQL:** None
+   289→   328→  1966→
+   290→   329→  1967→### T14.9 — List subscriber's active top-ups (with auto-expiry)
+   291→   330→  1968→**Endpoint:** `GET /api/top-ups?action=active&subscriberId=<SUBSCRIBER_ID>`
+   292→   331→  1969→**Method:** GET
+   293→   332→  1970→**Request Body:** None
+   294→   333→  1971→**Expected HTTP Status:** 200
+   295→   334→  1972→**Expected Response Validation:** Array of `activeTopUps` (status=ACTIVE, not expired), `expiredCount` indicating how many were just marked EXPIRED
+   296→   335→  1973→**RADIUS Table Verification SQL:**
+   297→   336→  1974→```sql
+   298→   337→  1975→SELECT * FROM "SubscriberTopUp" WHERE "subscriberId" = '<SUBSCRIBER_ID>' AND "expiresAt" < NOW() AND "status" = 'ACTIVE';
+   299→   338→  1976→-- Expected: 0 (auto-expired during the API call)
+   300→   339→  1977→```
+   301→   340→  1978→
+   302→   341→  1979→### T14.10 — Get subscriber balance (outstanding invoices)
+   303→   342→  1980→**Endpoint:** `GET /api/subscribers/<id>/balance`
+   304→   343→  1981→**Method:** GET
+   305→   344→  1982→**Request Body:** None
+   306→   345→  1983→**Expected HTTP Status:** 200
+   307→   346→  1984→**Expected Response Validation:**
+   308→   347→  1985→- `outstandingBalance: <sum of all unpaid invoice balances>`
+   309→   348→  1986→- `pendingInvoiceCount: <count>`
+   310→   349→  1987→- `pendingInvoices` array with `invoiceNumber`, `grandTotal`, `paidAmount`, `balanceAmount`, `status`
+   311→   350→  1988→**RADIUS Table Verification SQL:**
+   312→   351→  1989→```sql
+   313→   352→  1990→SELECT SUM("balanceAmount") FROM "Invoice" WHERE "subscriberId" = '<SUBSCRIBER_ID>' AND "status" IN ('DRAFT', 'SENT', 'PARTIALLY_PAID', 'OVERDUE');
+   314→   353→  1991→-- Cross-check with response's outstandingBalance
+   315→   354→  1992→```
+   316→   355→  1993→
+   317→   356→  1994→---
+   318→   357→  1995→
+   319→   358→  1996→## Test Suite 15: Export/Report APIs (NEW — 13 cases)
+   320→   359→  1997→
+   321→   360→  1998→### T15.1 — Export subscribers (CSV format)
+   322→   361→  1999→**Endpoint:** `GET /api/export/subscribers?format=csv`
+   323→   362→  2000→**Method:** GET
+   324→   363→  2001→**Request Body:** None
+   325→   364→  2002→**Expected HTTP Status:** 200
+   326→   365→  2003→**Expected Response Validation:**
+   327→   366→  2004→- Content-Type contains `text/csv`
+   328→   367→  2005→- Content-Disposition header with filename containing `subscribers` and `.csv`
+   329→   368→  2006→- CSV has headers: Code, Name, Email, Phone, Status, Plan, Area, Connection Type, Activation Date, Monthly Price, IP Address, MAC Address, Address
+   330→   369→  2007→- At least 1 data row
+   331→   370→  2008→**RADIUS Table Verification SQL:** None
+   332→   371→  2009→
+   333→   372→  2010→### T15.2 — Export subscribers (JSON format)
+   334→   373→  2011→**Endpoint:** `GET /api/export/subscribers?format=json`
+   335→   374→  2012→**Method:** GET
+   336→   375→  2013→**Request Body:** None
+   337→   376→  2014→**Expected HTTP Status:** 200
+   338→   377→  2015→**Expected Response Validation:** `{ "total": <n>, "data": [...] }` where each object has `code`, `name`, `status`, `plan`, `area`
+   339→   378→  2016→**RADIUS Table Verification SQL:** None
+   340→   379→  2017→
+   341→   380→  2018→### T15.3 — Export subscribers with status filter
+   342→   381→  2019→**Endpoint:** `GET /api/export/subscribers?status=ACTIVE&connectionType=FTTH`
+   343→   382→  2020→**Method:** GET
+   344→   383→  2021→**Request Body:** None
+   345→   384→  2022→**Expected HTTP Status:** 200
+   346→   385→  2023→**Expected Response Validation:** All returned subscribers have `status: "ACTIVE"` and `connectionType: "FTTH"`
+   347→   386→  2024→**RADIUS Table Verification SQL:** None
+   348→   387→  2025→
+   349→   388→  2026→### T15.4 — Export subscribers with search filter
+   350→   389→  2027→**Endpoint:** `GET /api/export/subscribers?search=testuser&format=json`
+   351→   390→  2028→**Method:** GET
+   352→   391→  2029→**Request Body:** None
+   353→   392→  2030→**Expected HTTP Status:** 200
+   354→   393→  2031→**Expected Response Validation:** All returned subscribers contain "testuser" in name, code, email, or phone
+   355→   394→  2032→**RADIUS Table Verification SQL:** None
+   356→   395→  2033→
+   357→   396→  2034→### T15.5 — Export invoices (CSV with date range)
+   358→   397→  2035→**Endpoint:** `GET /api/export/invoices?format=csv&dateFrom=2025-07-01&dateTo=2025-07-31`
+   359→   398→  2036→**Method:** GET
+   360→   399→  2037→**Request Body:** None
+   361→   400→  2038→**Expected HTTP Status:** 200
+   362→   401→  2039→**Expected Response Validation:**
+   363→   402→  2040→- CSV with headers: Invoice#, Subscriber Name, Plan, Issue Date, Due Date, Subtotal, Tax, Total, Status, Paid Amount, Balance
+   364→   403→  2041→- All invoices have `issueDate` within July 2025
+   365→   404→  2042→**RADIUS Table Verification SQL:** None
+   366→   405→  2043→
+   367→   406→  2044→### T15.6 — Export invoices (JSON with status + search filter)
+   368→   407→  2045→**Endpoint:** `GET /api/export/invoices?format=json&status=OVERDUE&search=testuser1`
+   369→   408→  2046→**Method:** GET
+   370→   409→  2047→**Request Body:** None
+   371→   410→  2048→**Expected HTTP Status:** 200
+   372→   411→  2049→**Expected Response Validation:** All invoices have `status: "OVERDUE"`, subscriber name/code contains "testuser1"
+   373→   412→  2050→**RADIUS Table Verification SQL:** None
+   374→   413→  2051→
+   375→   414→  2052→### T15.7 — Export payments (CSV with mode + date filter)
+   376→   415→  2053→**Endpoint:** `GET /api/export/payments?format=csv&mode=CASH&dateFrom=2025-07-01`
+   377→   416→  2054→**Method:** GET
+   378→   417→  2055→**Request Body:** None
+   379→   418→  2056→**Expected HTTP Status:** 200
+   380→   419→  2057→**Expected Response Validation:**
+   381→   420→  2058→- CSV with headers: Receipt#, Subscriber Name, Amount, Mode, Transaction Ref, Status, Date, Invoice#, Notes
+   382→   421→  2059→- All payments have `paymentMode: "CASH"` and date >= 2025-07-01
+   383→   422→  2060→**RADIUS Table Verification SQL:** None
+   384→   423→  2061→
+   385→   424→  2062→### T15.8 — Export payments (JSON format)
+   386→   425→  2063→**Endpoint:** `GET /api/export/payments?format=json&status=VERIFIED`
+   387→   426→  2064→**Method:** GET
+   388→   427→  2065→**Request Body:** None
+   389→   428→  2066→**Expected HTTP Status:** 200
+   390→   429→  2067→**Expected Response Validation:** `{ "total": <n>, "data": [...] }`, all payments have `status: "VERIFIED"`
+   391→   430→  2068→**RADIUS Table Verification SQL:** None
+   392→   431→  2069→
+   393→   432→  2070→### T15.9 — Export complaints (CSV)
+   394→   433→  2071→**Endpoint:** `GET /api/complaints/export?format=csv`
+   395→   434→  2072→**Method:** GET
+   396→   435→  2073→**Request Body:** None
+   397→   436→  2074→**Expected HTTP Status:** 200
+   398→   437→  2075→**Expected Response Validation:** CSV content with complaint data, Content-Type contains `text/csv`
+   399→   438→  2076→**RADIUS Table Verification SQL:** None
+   400→   439→  2077→
+   401→   440→  2078→### T15.10 — Export without auth → rejected
+   402→   441→  2079→**Endpoint:** `GET /api/export/subscribers?format=csv` (no Authorization header)
+   403→   442→  2080→**Method:** GET
+   404→   443→  2081→**Request Body:** None
+   405→   444→  2082→**Expected HTTP Status:** 401
+   406→   445→  2083→**Expected Response Validation:** Authentication error
+   407→   446→  2084→**RADIUS Table Verification SQL:** None
+   408→   447→  2085→
+   409→   448→  2086→### T15.11 — Revenue report
+   410→   449→  2087→**Endpoint:** `GET /api/reports/revenue?period=monthly&year=2025`
+   411→   450→  2088→**Method:** GET
+   412→   451→  2089→**Request Body:** None
+   413→   452→  2090→**Expected HTTP Status:** 200
+   414→   453→  2091→**Expected Response Validation:** Revenue data with monthly breakdown, totals, MRR, collection percentage
+   415→   454→  2092→**RADIUS Table Verification SQL:** None
+   416→   455→  2093→
+   417→   456→  2094→### T15.12 — Expenses report
+   418→   457→  2095→**Endpoint:** `GET /api/reports/expenses?period=monthly&year=2025`
+   419→   458→  2096→**Method:** GET
+   420→   459→  2097→**Request Body:** None
+   421→   460→  2098→**Expected HTTP Status:** 200
+   422→   461→  2099→**Expected Response Validation:** Expense data with category breakdown and totals
+   423→   462→  2100→**RADIUS Table Verification SQL:** None
+   424→   463→  2101→
+   425→   464→  2102→### T15.13 — Custom report with KPI targets
+   426→   465→  2103→**Endpoint:** `GET /api/reports/kpi-targets`
+   427→   466→  2104→**Method:** GET
+   428→   467→  2105→**Request Body:** None
+   429→   468→  2106→**Expected HTTP Status:** 200
+   430→   469→  2107→**Expected Response Validation:** KPI targets for subscriber growth, revenue, collection efficiency, churn rate
+   431→   470→  2108→**RADIUS Table Verification SQL:** None
+   432→   471→  2109→
+   433→   472→  2110→---
+   434→   473→  2111→
+   435→   474→  2112→## Known Bugs / Gaps (Identified During Code Review)
+   436→   475→  2113→
+   437→   476→  2114→| # | Area | Issue | Severity | Status | Related Tests |
+   438→   477→  2115→|---|------|-------|----------|--------|---------------|
+   439→   478→  2116→| B1 | Subscriber POST | IPv6 validation runs even when ipStackType=IPV4_ONLY, blocking creation | CRITICAL | TODO | T1.7 |
+   440→   479→  2117→| B2 | Plan Migration | Does NOT update radusergroup entries for migrated subscribers | CRITICAL | TODO | T4.2, T4.6 |
+   441→   480→  2118→| B3 | Subscriber DELETE | Does NOT cleanup radcheck/radreply/radusergroup | HIGH | TODO | T1.11, T2.8 |
+   442→   481→  2119→| B4 | Invoice GET | Auto-overdue runs on every GET request (performance + race) | MEDIUM | TODO | T5.11 |
+   443→   482→  2120→| B5 | Payment POST | No validation that payment doesn't exceed invoice balance | HIGH | TODO | T6.5 |
+   444→   483→  2121→| B6 | Subscriber Password | Stored in plain text, only hashed on self-care login | MEDIUM | TODO | T9.6 |
+   445→   484→  2122→| B7 | Billing | No automatic billing cycle / renewal logic | MEDIUM | TODO | T5.7 |
+   446→   485→  2123→| B8 | Prepaid | No balance-based billing / deduction system | MEDIUM | TODO | T14.7, T14.8 |
+   447→   486→  2124→| B9 | RADIUS sync | Plan migration doesn't update Mikrotik-Rate-Limit in radreply | HIGH | TODO | T4.2, T4.9 |
+   448→   487→  2125→| B10 | Login Restriction | Stored in internalNotes as string, not enforced in RADIUS/auth | MEDIUM | TODO | T7.2, T7.3 |
+   449→   488→  2126→| B11 | Concurrent Sessions | Simultaneous-Use set in radcheck but not enforced when plan changes | HIGH | TODO | T4.8 |
+   450→   489→  2127→| B12 | Subscriber Status | Changing status to SUSPENDED doesn't disable RADIUS auth | CRITICAL | TODO | T9.1, T9.7 |
+   451→   490→  2128→
+   452→   491→  2129→---
+   453→   492→  2130→
+   454→   493→  2131→## Test Execution Log
+   455→   494→  2132→
+   456→   495→  2133→| # | Suite | Test ID | Test Description | Executed | HTTP Status | Pass/Fail | Notes | RADIUS Verified | Date |
+   457→   496→  2134→|---|-------|---------|-----------------|----------|-------------|-----------|-------|-----------------|------|
+   458→   497→  2135→| 1 | M1 | T1.1 | Create subscriber with plan (full registration) | | | | | | |
+   459→   498→  2136→| 2 | M1 | T1.2 | Duplicate phone rejection | | | | | | |
+   460→   499→  2137→| 3 | M1 | T1.3 | Duplicate serviceUsername rejection | | | | | | |
+   461→   500→  2138→| 4 | M1 | T1.4 | Invalid phone format (too short) | | | | | | |
+   462→   501→  2139→| 5 | M1 | T1.4b | Invalid phone format (starts with 5) | | | | | | |
+   463→   502→  2140→| 6 | M1 | T1.4c | Invalid phone format (contains alpha) | | | | | | |
+   464→   503→  2141→| 7 | M1 | T1.5 | Create without plan → PENDING_ACTIVATION | | | | | | |
+   465→   504→  2142→| 8 | M1 | T1.6 | Create without RADIUS → no radcheck entries | | | | | | |
+   466→   505→  2143→| 9 | M1 | T1.7 | IPv6 validation bug check (IPV4_ONLY) | | | | | | |
+   467→   506→  2144→| 10 | M1 | T1.8 | Auto-generate serviceUsername | | | | | | |
+   468→   507→  2145→| 11 | M1 | T1.9 | Update subscriber with plan change | | | | | | |
+   469→   508→  2146→| 12 | M1 | T1.10 | Update subscriber status to SUSPENDED | | | | | | |
+   470→   509→  2147→| 13 | M1 | T1.11 | Delete subscriber → RADIUS cleanup | | | | | | |
+   471→   510→  2148→| 14 | M1 | T1.12 | Get subscriber list with pagination | | | | | | |
+   472→   511→  2149→| 15 | M1 | T1.13 | Search subscriber by name or code | | | | | | |
+   473→   512→  2150→| 16 | M2 | T2.1 | radcheck entry on creation | | | | | | |
+   474→   513→  2151→| 17 | M2 | T2.2 | radusergroup assignment | | | | | | |
+   475→   514→  2152→| 18 | M2 | T2.3 | Mikrotik-Rate-Limit in radreply | | | | | | |
+   476→   515→  2153→| 19 | M2 | T2.4 | Create RADIUS user manually | | | | | | |
+   477→   516→  2154→| 20 | M2 | T2.5 | Update RADIUS password | | | | | | |
+   478→   517→  2155→| 21 | M2 | T2.6 | Change RADIUS group | | | | | | |
+   479→   518→  2156→| 22 | M2 | T2.7 | Delete RADIUS user → cleanup | | | | | | |
+   480→   519→  2157→| 23 | M2 | T2.8 | Simultaneous-Use in radcheck | | | | | | |
+   481→   520→  2158→| 24 | M2 | T2.9 | ChilliSpot-Max-Total-Octets in group reply | | | | | | |
+   482→   521→  2159→| 25 | M2 | T2.10 | Toggle RADIUS enabled/disabled | | | | | | |
+   483→   522→  2160→| 26 | M2 | T2.11 | Bulk import RADIUS users | | | | | | |
+   484→   523→  2161→| 27 | M2 | T2.12 | Export RADIUS users list | | | | | | |
+   485→   524→  2162→| 28 | M2 | T2.13 | RADIUS sync status check | | | | | | |
+   486→   525→  2163→| 29 | M3 | T3.1 | Create plan → auto RadiusGroup | | | | | | |
+   487→   526→  2164→| 30 | M3 | T3.2 | Create plan with existing groupId | | | | | | |
+   488→   527→  2165→| 31 | M3 | T3.3a | Validation: name required | | | | | | |
+   489→   528→  2166→| 32 | M3 | T3.3b | Validation: speed > 0 | | | | | | |
+   490→   529→  2167→| 33 | M3 | T3.3c | Validation: price >= 0 | | | | | | |
+   491→   530→  2168→| 34 | M3 | T3.4 | maxConcurrentSessions defaults to 1 | | | | | | |
+   492→   531→  2169→| 35 | M3 | T3.5 | Data limit GB → MB conversion | | | | | | |
+   493→   532→  2170→| 36 | M3 | T3.6 | Update plan speed → RADIUS sync | | | | | | |
+   494→   533→  2171→| 37 | M3 | T3.7 | Deactivate plan | | | | | | |
+   495→   534→  2172→| 38 | M3 | T3.8 | Delete plan → RADIUS group cleanup | | | | | | |
+   496→   535→  2173→| 39 | M3 | T3.9 | Plan list with filtering | | | | | | |
+   497→   536→  2174→| 40 | M3 | T3.10 | Plan reorder | | | | | | |
+   498→   537→  2175→| 41 | M4 | T4.1 | Migrate subscriber between plans | | | | | | |
+   499→   538→  2176→| 42 | M4 | T4.2 | Migration updates RADIUS group (BUG) | | | | | | |
+   500→   539→  2177→| 43 | M4 | T4.3 | Same source/target plan rejected | | | | | | |
+   501→   540→  2178→| 44 | M4 | T4.4 | Non-existent plan rejected | | | | | | |
+   502→   541→  2179→| 45 | M4 | T4.5 | Inactive target plan rejected | | | | | | |
+   503→   542→  2180→| 46 | M4 | T4.6 | Bulk migrate multiple subscribers | | | | | | |
+   504→   543→  2181→| 47 | M4 | T4.7 | Migrate non-RADIUS subscriber | | | | | | |
+   505→   544→  2182→| 48 | M4 | T4.8 | Migrate with session limit change (BUG) | | | | | | |
+   506→   545→  2183→| 49 | M4 | T4.9 | Migrate with data limit change | | | | | | |
+   507→   546→  2184→| 50 | M5 | T5.1 | Invoice with correct tax (CGST 9% + SGST 9%) | | | | | | |
+   508→   547→  2185→| 51 | M5 | T5.2 | Pro-rata invoice calculation | | | | | | |
+   509→   548→  2186→| 52 | M5 | T5.3 | Invoice with PERCENTAGE discount | | | | | | |
+   510→   549→  2187→| 53 | M5 | T5.4 | Invoice with FLAT discount | | | | | | |
+   511→   550→  2188→| 54 | M5 | T5.5 | Invoice with multiple line items | | | | | | |
+   512→   551→  2189→| 55 | M5 | T5.6 | Bulk invoice generation | | | | | | |
+   513→   552→  2190→| 56 | M5 | T5.7 | Billing cycle generation | | | | | | |
+   514→   553→  2191→| 57 | M5 | T5.8 | Duplicate period prevention | | | | | | |
+   515→   554→  2192→| 58 | M5 | T5.9 | Cancel paid invoice → rejected | | | | | | |
+   516→   555→  2193→| 59 | M5 | T5.10 | Delete paid invoice → rejected | | | | | | |
+   517→   556→  2194→| 60 | M5 | T5.11 | Auto-overdue marking | | | | | | |
+   518→   557→  2195→| 61 | M5 | T5.12 | Invoice number uniqueness | | | | | | |
+   519→   558→  2196→| 62 | M5 | T5.13 | Get invoice by ID | | | | | | |
+   520→   559→  2197→| 63 | M5 | T5.14 | Invoice export (CSV) | | | | | | |
+   521→   560→  2198→| 64 | M6 | T6.1 | Record payment against invoice | | | | | | |
+   522→   561→  2199→| 65 | M6 | T6.2 | Verify payment → balance update | | | | | | |
+   523→   562→  2200→| 66 | M6 | T6.3 | Full payment → PAID status | | | | | | |
+   524→   563→  2201→| 67 | M6 | T6.4 | Partial payment → PARTIALLY_PAID | | | | | | |
+   525→   564→  2202→| 68 | M6 | T6.5 | Overpayment protection (BUG CHECK) | | | | | | |
+   526→   565→  2203→| 69 | M6 | T6.6 | Payment via billing endpoint | | | | | | |
+   527→   566→  2204→| 70 | M6 | T6.7 | Bulk verify payments | | | | | | |
+   528→   567→  2205→| 71 | M6 | T6.8 | Bulk reject payments | | | | | | |
+   529→   568→  2206→| 72 | M6 | T6.9 | Payment refund | | | | | | |
+   530→   569→  2207→| 73 | M6 | T6.10 | Payment list with date range | | | | | | |
+   531→   570→  2208→| 74 | M6 | T6.11 | Revenue by payment mode | | | | | | |
+   532→   571→  2209→| 75 | M7 | T7.1 | Login restriction: all (default) | | | | | | |
+   533→   572→  2210→| 76 | M7 | T7.2 | Login restriction: subnet | | | | | | |
+   534→   573→  2211→| 77 | M7 | T7.3 | Login restriction: specific IP | | | | | | |
+   535→   574→  2212→| 78 | M7 | T7.4 | Concurrent session limit (Simultaneous-Use) | | | | | | |
+   536→   575→  2213→| 79 | M7 | T7.5 | Session timeout resolution chain | | | | | | |
+   537→   576→  2214→| 80 | M7 | T7.6 | Speed limit resolution chain | | | | | | |
+   538→   577→  2215→| 81 | M7 | T7.7 | Data limit resolution chain | | | | | | |
+   539→   578→  2216→| 82 | M7 | T7.8 | Policy enforcement (session engine) | | | | | | |
+   540→   579→  2217→| 83 | M7 | T7.9 | Speed limit change via subscriber update | | | | | | |
+   541→   580→  2218→| 84 | M8 | T8.1 | Session auth via session engine | | | | | | |
+   542→   581→  2219→| 85 | M8 | T8.2 | Session policy evaluation | | | | | | |
+   543→   582→  2220→| 86 | M8 | T8.3 | Session disconnect | | | | | | |
+   544→   583→  2221→| 87 | M8 | T8.4 | CoA (Change of Authorization) | | | | | | |
+   545→   584→  2222→| 88 | M8 | T8.5 | Session accounting update | | | | | | |
+   546→   585→  2223→| 89 | M8 | T8.6 | Session engine stats overview | | | | | | |
+   547→   586→  2224→| 90 | M8 | T8.7 | Session engine bandwidth stats | | | | | | |
+   548→   587→  2225→| 91 | M8 | T8.8 | Session engine events log | | | | | | |
+   549→   588→  2226→| 92 | M8 | T8.9 | Session engine unavailable (503) | | | | | | |
+   550→   589→  2227→| 93 | M9 | T9.1 | ACTIVE → SUSPENDED + RADIUS check | | | | | | |
+   551→   590→  2228→| 94 | M9 | T9.2 | SUSPENDED → self-care login blocked | | | | | | |
+   552→   591→  2229→| 95 | M9 | T9.3 | PENDING_ACTIVATION → self-care blocked | | | | | | |
+   553→   592→  2230→| 96 | M9 | T9.4 | DISCONNECTED → self-care blocked | | | | | | |
+   554→   593→  2231→| 97 | M9 | T9.5 | Wrong password → 401 | | | | | | |
+   555→   594→  2232→| 98 | M9 | T9.6 | Password migration (plain → bcrypt) | | | | | | |
+   556→   595→  2233→| 99 | M9 | T9.7 | SUSPENDED → ACTIVE reactivation | | | | | | |
+   557→   596→  2234→| 100 | M9 | T9.8 | Rate limiting on self-care login | | | | | | |
+   558→   597→  2235→| 101 | M10 | T10.1 | Create group with check+reply attributes | | | | | | |
+   559→   598→  2236→| 102 | M10 | T10.2 | Add check attribute to group | | | | | | |
+   560→   599→  2237→| 103 | M10 | T10.3 | Remove reply attribute | | | | | | |
+   561→   600→  2238→| 104 | M10 | T10.4 | Update attribute value | | | | | | |
+   562→   601→  2239→| 105 | M10 | T10.5 | Rename group (cascades) | | | | | | |
+   563→   602→  2240→| 106 | M10 | T10.6 | Duplicate groupname rejected | | | | | | |
+   564→   603→  2241→| 107 | M10 | T10.7 | Invalid operator rejected | | | | | | |
+   565→   604→  2242→| 108 | M10 | T10.8 | Delete group (cascade cleanup) | | | | | | |
+   566→   605→  2243→| 109 | M10 | T10.9 | List all AAA groups | | | | | | |
+   567→   606→  2244→| 110 | M10 | T10.10 | Get group by name with users | | | | | | |
+   568→   607→  2245→| 111 | M11 | T11.1 | Subscriber login (correct creds) | | | | | | |
+   569→   608→  2246→| 112 | M11 | T11.2 | View own usage | | | | | | |
+   570→   609→  2247→| 113 | M11 | T11.3 | View own invoices | | | | | | |
+   571→   610→  2248→| 114 | M11 | T11.4 | View plan comparison | | | | | | |
+   572→   611→  2249→| 115 | M11 | T11.5 | View own profile | | | | | | |
+   573→   612→  2250→| 116 | M11 | T11.6 | Change own password | | | | | | |
+   574→   613→  2251→| 117 | M11 | T11.7 | View own payments | | | | | | |
+   575→   614→  2252→| 118 | M11 | T11.8 | View service status | | | | | | |
+   576→   615→  2253→| 119 | M11 | T11.9 | Self-care logout | | | | | | |
+   577→   616→  2254→| 120 | M11 | T11.10 | Unauthorized self-care access | | | | | | |
+   578→   617→  2255→| 121 | M12 | T12.1 | SQL injection in serviceUsername | | | | | | |
+   579→   618→  2256→| 122 | M12 | T12.2 | No-auth access rejected | | | | | | |
+   580→   619→  2257→| 123 | M12 | T12.3 | Subscriber can't access admin APIs | | | | | | |
+   581→   620→  2258→| 124 | M12 | T12.4 | Invoice number uniqueness (concurrent) | | | | | | |
+   582→   621→  2259→| 125 | M12 | T12.5 | Empty body / missing fields | | | | | | |
+   583→   622→  2260→| 126 | M12 | T12.6 | Invalid UUID in path param | | | | | | |
+   584→   623→  2261→| 127 | M12 | T12.7 | XSS in subscriber name | | | | | | |
+   585→   624→  2262→| 128 | M12 | T12.8 | Very long input strings | | | | | | |
+   586→   625→  2263→| 129 | M12 | T12.9 | Expired/invalid JWT token | | | | | | |
+   587→   626→  2264→| 130 | M13 | T13.1 | Create time policy (ALLOW) | | | | | | |
+   588→   627→  2265→| 131 | M13 | T13.2 | Create time policy (BLOCK) | | | | | | |
+   589→   628→  2266→| 132 | M13 | T13.3 | Create time policy (RATE_LIMIT) | | | | | | |
+   590→   629→  2267→| 133 | M13 | T13.4 | Duplicate policy name rejected | | | | | | |
+   591→   630→  2268→| 134 | M13 | T13.5 | Assign policy to subscriber | | | | | | |
+   592→   631→  2269→| 135 | M13 | T13.6 | Duplicate assignment rejected | | | | | | |
+   593→   632→  2270→| 136 | M13 | T13.7 | Check access (ALLOW match) | | | | | | |
+   594→   633→  2271→| 137 | M13 | T13.8 | Check access (BLOCK match) | | | | | | |
+   595→   634→  2272→| 138 | M13 | T13.9 | Unassign policy from subscriber | | | | | | |
+   596→   635→  2273→| 139 | M13 | T13.10 | Update and delete policy | | | | | | |
+   597→   636→  2274→| 140 | M14 | T14.1 | Create top-up product (DATA) | | | | | | |
+   598→   637→  2275→| 141 | M14 | T14.2 | Create top-up product (TIME) | | | | | | |
+   599→   638→  2276→| 142 | M14 | T14.3 | Create top-up product (SPEED_BOOST) | | | | | | |
+   600→   639→  2277→| 143 | M14 | T14.4 | Invalid top-up type rejected | | | | | | |
+   601→   640→  2278→| 144 | M14 | T14.5 | Purchase top-up for subscriber | | | | | | |
+   602→   641→  2279→| 145 | M14 | T14.6 | Purchase inactive product → rejected | | | | | | |
+   603→   642→  2280→| 146 | M14 | T14.7 | Consume top-up (partial) | | | | | | |
+   604→   643→  2281→| 147 | M14 | T14.8 | Consume top-up (full → USED) | | | | | | |
+   605→   644→  2282→| 148 | M14 | T14.9 | List active top-ups (auto-expiry) | | | | | | |
+   606→   645→  2283→| 149 | M14 | T14.10 | Get subscriber balance | | | | | | |
+   607→   646→  2284→| 150 | M15 | T15.1 | Export subscribers CSV | | | | | | |
+   608→   647→  2285→| 151 | M15 | T15.2 | Export subscribers JSON | | | | | | |
+   609→   648→  2286→| 152 | M15 | T15.3 | Export subscribers with filters | | | | | | |
+   610→   649→  2287→| 153 | M15 | T15.4 | Export subscribers with search | | | | | | |
+   611→   650→  2288→| 154 | M15 | T15.5 | Export invoices CSV + date range | | | | | | |
+   612→   651→  2289→| 155 | M15 | T15.6 | Export invoices JSON + filters | | | | | | |
+   613→   652→  2290→| 156 | M15 | T15.7 | Export payments CSV + filters | | | | | | |
+   614→   653→  2291→| 157 | M15 | T15.8 | Export payments JSON | | | | | | |
+   615→   654→  2292→| 158 | M15 | T15.9 | Export complaints CSV | | | | | | |
+   616→   655→  2293→| 159 | M15 | T15.10 | Export without auth → rejected | | | | | | |
+   617→   656→  2294→| 160 | M15 | T15.11 | Revenue report | | | | | | |
+   618→   657→  2295→| 161 | M15 | T15.12 | Expenses report | | | | | | |
+   619→   658→  2296→| 162 | M15 | T15.13 | KPI targets report | | | | | | |
+   620→   659→  2297→
+   621→   660→  2298→---
+   622→   661→  2299→
+   623→   662→  2300→## Test Case Summary
+   624→   663→  2301→
+   625→   664→  2302→| Suite | Name | Test Count |
+   626→   665→  2303→|-------|------|------------|
+   627→   666→  2304→| M1 | Subscriber Registration | 13 |
+   628→   667→  2305→| M2 | RADIUS Provisioning | 13 |
+   629→   668→  2306→| M3 | Plan Management | 10 |
+   630→   669→  2307→| M4 | Plan Migration | 9 |
+   631→   670→  2308→| M5 | Invoice / Billing Engine | 14 |
+   632→   671→  2309→| M6 | Payment & Accounting | 11 |
+   633→   672→  2310→| M7 | Policy Engine | 9 |
+   634→   673→  2311→| M8 | Session Engine | 9 |
+   635→   674→  2312→| M9 | Subscriber Status Lifecycle | 8 |
+   636→   675→  2313→| M10 | AAA / RADIUS Groups | 10 |
+   637→   676→  2314→| M11 | Self-Care Portal | 10 |
+   638→   677→  2315→| M12 | Edge Cases & Security | 9 |
+   639→   678→  2316→| M13 | Time Access Policies (NEW) | 10 |
+   640→   679→  2317→| M14 | Top-Ups & Balance (NEW) | 10 |
+   641→   680→  2318→| M15 | Export/Report APIs (NEW) | 13 |
+   642→   681→  2319→| **Total** | | **138** |

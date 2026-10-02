@@ -1,0 +1,929 @@
+     1→Files with issues: 146
+     2→
+     3→src/app/api/action-history/route.ts: 3 change(s)
+     4→  L66: 'subscriber: {' -> 'Subscriber: {'
+     5→  L222: 'subscriber: {' -> 'Subscriber: {'
+     6→  L274: 'subscriber: {' -> 'Subscriber: {'
+     7→
+     8→src/app/api/agents/[id]/route.ts: 2 change(s)
+     9→  L64: 'subscriber: {' -> 'Subscriber: {'
+    10→  L65: 'invoice: {' -> 'Invoice: {'
+    11→
+    12→src/app/api/agents/followups/route.ts: 6 change(s)
+    13→  L20: 'subscriber: {' -> 'Subscriber: {'
+    14→  L22: 'subscriber: {' -> 'Subscriber: {'
+    15→  L62: 'subscriber: {' -> 'Subscriber: {'
+    16→  L64: 'subscriber: {' -> 'Subscriber: {'
+    17→  L100: 'subscriber: {' -> 'Subscriber: {'
+    18→  L102: 'subscriber: {' -> 'Subscriber: {'
+    19→
+    20→src/app/api/ai/advisor/route.ts: 4 change(s)
+    21→  L61: 'area: {' -> 'Area: {'
+    22→  L68: 'area: {' -> 'Area: {'
+    23→  L61: 'subscriber: {' -> 'Subscriber: {'
+    24→  L68: 'subscriber: {' -> 'Subscriber: {'
+    25→
+    26→src/app/api/ai/churn/route.ts: 3 change(s)
+    27→  L19: 'area: {' -> 'Area: {'
+    28→  L18: 'plan: {' -> 'Plan: {'
+    29→  L20: 'payments: {' -> 'Payment: {'
+    30→
+    31→src/app/api/ai/diagnose/route.ts: 2 change(s)
+    32→  L64: 'area: {' -> 'Area: {'
+    33→  L71: 'sessions: {' -> 'RadiusSession: {'
+    34→
+    35→src/app/api/ai/whatsapp-bot/route.ts: 1 change(s)
+    36→  L63: 'subscriber: {' -> 'Subscriber: {'
+    37→
+    38→src/app/api/area-budgets/route.ts: 5 change(s)
+    39→  L36: 'area: {' -> 'Area: {'
+    40→  L104: 'area: {' -> 'Area: {'
+    41→  L227: 'area: {' -> 'Area: {'
+    42→  L260: 'area: {' -> 'Area: {'
+    43→  L311: 'area: {' -> 'Area: {'
+    44→
+    45→src/app/api/areas/[id]/route.ts: 1 change(s)
+    46→  L33: 'subscriber: {' -> 'Subscriber: {'
+    47→
+    48→src/app/api/backup/route.ts: 5 change(s)
+    49→  L1178: 'area: {' -> 'Area: {'
+    50→  L1178: 'plan: {' -> 'Plan: {'
+    51→  L1188: 'plan: {' -> 'Plan: {'
+    52→  L1188: 'subscriber: {' -> 'Subscriber: {'
+    53→  L1208: 'subscriber: {' -> 'Subscriber: {'
+    54→
+    55→src/app/api/bandwidth/consumers/route.ts: 1 change(s)
+    56→  L32: 'plan: {' -> 'Plan: {'
+    57→
+    58→src/app/api/bandwidth/route.ts: 1 change(s)
+    59→  L96: 'plan: {' -> 'Plan: {'
+    60→
+    61→src/app/api/batch-provisioning/jobs/route.ts: 1 change(s)
+    62→  L62: 'plan: {' -> 'Plan: {'
+    63→
+    64→src/app/api/batch-provisioning/templates/route.ts: 1 change(s)
+    65→  L14: 'plan: {' -> 'Plan: {'
+    66→
+    67→src/app/api/billing/[id]/route.ts: 5 change(s)
+    68→  L21: 'plan: {' -> 'Plan: {'
+    69→  L89: 'plan: {' -> 'Plan: {'
+    70→  L20: 'subscriber: {' -> 'Subscriber: {'
+    71→  L88: 'subscriber: {' -> 'Subscriber: {'
+    72→  L22: 'payments: {' -> 'Payment: {'
+    73→
+    74→src/app/api/billing/export/route.ts: 4 change(s)
+    75→  L43: 'plan: {' -> 'Plan: {'
+    76→  L28: 'subscriber: {' -> 'Subscriber: {'
+    77→  L29: 'subscriber: {' -> 'Subscriber: {'
+    78→  L42: 'subscriber: {' -> 'Subscriber: {'
+    79→
+    80→src/app/api/billing/route.ts: 8 change(s)
+    81→  L42: 'plan: {' -> 'Plan: {'
+    82→  L129: 'plan: {' -> 'Plan: {'
+    83→  L184: 'plan: {' -> 'Plan: {'
+    84→  L26: 'subscriber: {' -> 'Subscriber: {'
+    85→  L27: 'subscriber: {' -> 'Subscriber: {'
+    86→  L41: 'subscriber: {' -> 'Subscriber: {'
+    87→  L128: 'subscriber: {' -> 'Subscriber: {'
+    88→  L183: 'subscriber: {' -> 'Subscriber: {'
+    89→
+    90→src/app/api/bw-reports/route.ts: 2 change(s)
+    91→  L140: 'plan: {' -> 'Plan: {'
+    92→  L139: 'subscriber: {' -> 'Subscriber: {'
+    93→
+    94→src/app/api/captive-portal/[id]/route.ts: 1 change(s)
+    95→  L41: 'area: {' -> 'Area: {'
+    96→
+    97→src/app/api/captive-portal/sessions/[id]/route.ts: 1 change(s)
+    98→  L18: 'subscriber: {' -> 'Subscriber: {'
+    99→
+   100→src/app/api/captive-portal/sessions/route.ts: 1 change(s)
+   101→  L38: 'subscriber: {' -> 'Subscriber: {'
+   102→
+   103→src/app/api/captive-portal/subnet-mapping/route.ts: 1 change(s)
+   104→  L32: 'area: {' -> 'Area: {'
+   105→
+   106→src/app/api/charge-override/route.ts: 5 change(s)
+   107→  L63: 'subscriber: {' -> 'Subscriber: {'
+   108→  L138: 'subscriber: {' -> 'Subscriber: {'
+   109→  L216: 'subscriber: {' -> 'Subscriber: {'
+   110→  L290: 'subscriber: {' -> 'Subscriber: {'
+   111→  L324: 'subscriber: {' -> 'Subscriber: {'
+   112→
+   113→src/app/api/charge-overrides/[id]/route.ts: 2 change(s)
+   114→  L68: 'plan: {' -> 'Plan: {'
+   115→  L67: 'subscriber: {' -> 'Subscriber: {'
+   116→
+   117→src/app/api/charge-overrides/route.ts: 5 change(s)
+   118→  L53: 'plan: {' -> 'Plan: {'
+   119→  L126: 'plan: {' -> 'Plan: {'
+   120→  L166: 'plan: {' -> 'Plan: {'
+   121→  L48: 'subscriber: {' -> 'Subscriber: {'
+   122→  L165: 'subscriber: {' -> 'Subscriber: {'
+   123→
+   124→src/app/api/churn-alerts/route.ts: 2 change(s)
+   125→  L25: 'area: {' -> 'Area: {'
+   126→  L24: 'plan: {' -> 'Plan: {'
+   127→
+   128→src/app/api/churn/predict/route.ts: 2 change(s)
+   129→  L47: 'area: {' -> 'Area: {'
+   130→  L46: 'plan: {' -> 'Plan: {'
+   131→
+   132→src/app/api/coa-events/route.ts: 4 change(s)
+   133→  L67: 'subscriber: {' -> 'Subscriber: {'
+   134→  L98: 'subscriber: {' -> 'Subscriber: {'
+   135→  L230: 'subscriber: {' -> 'Subscriber: {'
+   136→  L278: 'subscriber: {' -> 'Subscriber: {'
+   137→
+   138→src/app/api/collection/disputes/route.ts: 1 change(s)
+   139→  L17: 'subscriber: {' -> 'Subscriber: {'
+   140→
+   141→src/app/api/collection/receipt/route.ts: 5 change(s)
+   142→  L22: 'area: {' -> 'Area: {'
+   143→  L22: 'subscriber: {' -> 'Subscriber: {'
+   144→  L23: 'invoice: {' -> 'Invoice: {'
+   145→  L24: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   146→  L25: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+   147→
+   148→src/app/api/collection/reconcile/route.ts: 1 change(s)
+   149→  L15: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   150→
+   151→src/app/api/collection/route.ts: 11 change(s)
+   152→  L57: 'area: {' -> 'Area: {'
+   153→  L46: 'subscriber: {' -> 'Subscriber: {'
+   154→  L47: 'subscriber: {' -> 'Subscriber: {'
+   155→  L48: 'subscriber: {' -> 'Subscriber: {'
+   156→  L56: 'subscriber: {' -> 'Subscriber: {'
+   157→  L120: 'subscriber: {' -> 'Subscriber: {'
+   158→  L59: 'invoice: {' -> 'Invoice: {'
+   159→  L121: 'invoice: {' -> 'Invoice: {'
+   160→  L60: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   161→  L122: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   162→  L61: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+   163→
+   164→src/app/api/collection/summary/route.ts: 2 change(s)
+   165→  L60: 'area: {' -> 'Area: {'
+   166→  L59: 'subscriber: {' -> 'Subscriber: {'
+   167→
+   168→src/app/api/collections/analytics/route.ts: 5 change(s)
+   169→  L104: 'area: {' -> 'Area: {'
+   170→  L190: 'area: {' -> 'Area: {'
+   171→  L103: 'plan: {' -> 'Plan: {'
+   172→  L98: 'subscriber: {' -> 'Subscriber: {'
+   173→  L188: 'subscriber: {' -> 'Subscriber: {'
+   174→
+   175→src/app/api/collections/smart/route.ts: 4 change(s)
+   176→  L149: 'plan: {' -> 'Plan: {'
+   177→  L143: 'subscriber: {' -> 'Subscriber: {'
+   178→  L203: 'invoice: {' -> 'Invoice: {'
+   179→  L94: 'payments: {' -> 'Payment: {'
+   180→
+   181→src/app/api/complaints/[id]/auto-assign/route.ts: 3 change(s)
+   182→  L18: 'area: {' -> 'Area: {'
+   183→  L93: 'area: {' -> 'Area: {'
+   184→  L92: 'subscriber: {' -> 'Subscriber: {'
+   185→
+   186→src/app/api/complaints/[id]/route.ts: 5 change(s)
+   187→  L16: 'area: {' -> 'Area: {'
+   188→  L17: 'area: {' -> 'Area: {'
+   189→  L173: 'area: {' -> 'Area: {'
+   190→  L16: 'subscriber: {' -> 'Subscriber: {'
+   191→  L172: 'subscriber: {' -> 'Subscriber: {'
+   192→
+   193→src/app/api/complaints/export/route.ts: 2 change(s)
+   194→  L65: 'area: {' -> 'Area: {'
+   195→  L64: 'subscriber: {' -> 'Subscriber: {'
+   196→
+   197→src/app/api/complaints/route.ts: 7 change(s)
+   198→  L65: 'area: {' -> 'Area: {'
+   199→  L245: 'area: {' -> 'Area: {'
+   200→  L48: 'subscriber: {' -> 'Subscriber: {'
+   201→  L49: 'subscriber: {' -> 'Subscriber: {'
+   202→  L50: 'subscriber: {' -> 'Subscriber: {'
+   203→  L64: 'subscriber: {' -> 'Subscriber: {'
+   204→  L244: 'subscriber: {' -> 'Subscriber: {'
+   205→
+   206→src/app/api/compliance/audit-report/route.ts: 4 change(s)
+   207→  L219: 'subscriber: {' -> 'Subscriber: {'
+   208→  L233: 'subscriber: {' -> 'Subscriber: {'
+   209→  L247: 'subscriber: {' -> 'Subscriber: {'
+   210→  L233: 'invoice: {' -> 'Invoice: {'
+   211→
+   212→src/app/api/compliance/sla/route.ts: 2 change(s)
+   213→  L57: 'area: {' -> 'Area: {'
+   214→  L40: 'subscriber: {' -> 'Subscriber: {'
+   215→
+   216→src/app/api/dashboard/invoice-aging/route.ts: 1 change(s)
+   217→  L29: 'subscriber: {' -> 'Subscriber: {'
+   218→
+   219→src/app/api/dashboard/retention/route.ts: 1 change(s)
+   220→  L116: 'subscriber: {' -> 'Subscriber: {'
+   221→
+   222→src/app/api/dashboard/route.ts: 16 change(s)
+   223→  L309: 'area: {' -> 'Area: {'
+   224→  L338: 'area: {' -> 'Area: {'
+   225→  L412: 'area: {' -> 'Area: {'
+   226→  L284: 'plan: {' -> 'Plan: {'
+   227→  L459: 'plan: {' -> 'Plan: {'
+   228→  L687: 'plan: {' -> 'Plan: {'
+   229→  L705: 'plan: {' -> 'Plan: {'
+   230→  L752: 'plan: {' -> 'Plan: {'
+   231→  L307: 'subscriber: {' -> 'Subscriber: {'
+   232→  L357: 'subscriber: {' -> 'Subscriber: {'
+   233→  L364: 'subscriber: {' -> 'Subscriber: {'
+   234→  L379: 'subscriber: {' -> 'Subscriber: {'
+   235→  L411: 'subscriber: {' -> 'Subscriber: {'
+   236→  L615: 'subscriber: {' -> 'Subscriber: {'
+   237→  L684: 'subscriber: {' -> 'Subscriber: {'
+   238→  L702: 'subscriber: {' -> 'Subscriber: {'
+   239→
+   240→src/app/api/dashboard/top-subscribers/route.ts: 1 change(s)
+   241→  L43: 'plan: {' -> 'Plan: {'
+   242→
+   243→src/app/api/devices/[id]/route.ts: 1 change(s)
+   244→  L17: 'area: {' -> 'Area: {'
+   245→
+   246→src/app/api/devices/export/route.ts: 1 change(s)
+   247→  L35: 'area: {' -> 'Area: {'
+   248→
+   249→src/app/api/devices/route.ts: 1 change(s)
+   250→  L56: 'area: {' -> 'Area: {'
+   251→
+   252→src/app/api/devices/tree/route.ts: 1 change(s)
+   253→  L25: 'area: {' -> 'Area: {'
+   254→
+   255→src/app/api/disputes/route.ts: 2 change(s)
+   256→  L24: 'subscriber: {' -> 'Subscriber: {'
+   257→  L61: 'subscriber: {' -> 'Subscriber: {'
+   258→
+   259→src/app/api/due-recovery/payment-plan/route.ts: 2 change(s)
+   260→  L34: 'subscriber: {' -> 'Subscriber: {'
+   261→  L34: 'invoice: {' -> 'Invoice: {'
+   262→
+   263→src/app/api/due-recovery/route.ts: 22 change(s)
+   264→  L87: 'area: {' -> 'Area: {'
+   265→  L200: 'area: {' -> 'Area: {'
+   266→  L208: 'area: {' -> 'Area: {'
+   267→  L238: 'area: {' -> 'Area: {'
+   268→  L210: 'plan: {' -> 'Plan: {'
+   269→  L21: 'subscriber: {' -> 'Subscriber: {'
+   270→  L73: 'subscriber: {' -> 'Subscriber: {'
+   271→  L87: 'subscriber: {' -> 'Subscriber: {'
+   272→  L108: 'subscriber: {' -> 'Subscriber: {'
+   273→  L122: 'subscriber: {' -> 'Subscriber: {'
+   274→  L142: 'subscriber: {' -> 'Subscriber: {'
+   275→  L147: 'subscriber: {' -> 'Subscriber: {'
+   276→  L207: 'subscriber: {' -> 'Subscriber: {'
+   277→  L343: 'subscriber: {' -> 'Subscriber: {'
+   278→  L451: 'subscriber: {' -> 'Subscriber: {'
+   279→  L22: 'invoice: {' -> 'Invoice: {'
+   280→  L72: 'invoice: {' -> 'Invoice: {'
+   281→  L86: 'invoice: {' -> 'Invoice: {'
+   282→  L121: 'invoice: {' -> 'Invoice: {'
+   283→  L148: 'payments: {' -> 'Payment: {'
+   284→  L211: 'payments: {' -> 'Payment: {'
+   285→  L215: 'paymentPlans: {' -> 'PaymentPlan: {'
+   286→
+   287→src/app/api/due-recovery/sla-dashboard/route.ts: 6 change(s)
+   288→  L47: 'area: {' -> 'Area: {'
+   289→  L52: 'area: {' -> 'Area: {'
+   290→  L46: 'subscriber: {' -> 'Subscriber: {'
+   291→  L51: 'subscriber: {' -> 'Subscriber: {'
+   292→  L148: 'subscriber: {' -> 'Subscriber: {'
+   293→  L38: 'invoice: {' -> 'Invoice: {'
+   294→
+   295→src/app/api/due-recovery/sla-export/route.ts: 3 change(s)
+   296→  L30: 'area: {' -> 'Area: {'
+   297→  L29: 'subscriber: {' -> 'Subscriber: {'
+   298→  L19: 'invoice: {' -> 'Invoice: {'
+   299→
+   300→src/app/api/enterprise-auth/[id]/route.ts: 2 change(s)
+   301→  L15: 'plan: {' -> 'Plan: {'
+   302→  L20: 'sessions: {' -> 'RadiusSession: {'
+   303→
+   304→src/app/api/enterprise-auth/route.ts: 1 change(s)
+   305→  L11: 'plan: {' -> 'Plan: {'
+   306→
+   307→src/app/api/export/complaints/route.ts: 2 change(s)
+   308→  L73: 'area: {' -> 'Area: {'
+   309→  L72: 'subscriber: {' -> 'Subscriber: {'
+   310→
+   311→src/app/api/export/invoices/route.ts: 5 change(s)
+   312→  L56: 'area: {' -> 'Area: {'
+   313→  L58: 'plan: {' -> 'Plan: {'
+   314→  L47: 'subscriber: {' -> 'Subscriber: {'
+   315→  L48: 'subscriber: {' -> 'Subscriber: {'
+   316→  L55: 'subscriber: {' -> 'Subscriber: {'
+   317→
+   318→src/app/api/export/payments/route.ts: 4 change(s)
+   319→  L41: 'subscriber: {' -> 'Subscriber: {'
+   320→  L42: 'subscriber: {' -> 'Subscriber: {'
+   321→  L49: 'subscriber: {' -> 'Subscriber: {'
+   322→  L50: 'invoice: {' -> 'Invoice: {'
+   323→
+   324→src/app/api/export/subscribers/route.ts: 2 change(s)
+   325→  L44: 'area: {' -> 'Area: {'
+   326→  L43: 'plan: {' -> 'Plan: {'
+   327→
+   328→src/app/api/ftth/olts/[id]/route.ts: 2 change(s)
+   329→  L16: 'area: {' -> 'Area: {'
+   330→  L31: 'subscriber: {' -> 'Subscriber: {'
+   331→
+   332→src/app/api/ftth/olts/export/route.ts: 1 change(s)
+   333→  L17: 'area: {' -> 'Area: {'
+   334→
+   335→src/app/api/ftth/olts/route.ts: 1 change(s)
+   336→  L13: 'area: {' -> 'Area: {'
+   337→
+   338→src/app/api/ftth/ports/route.ts: 1 change(s)
+   339→  L94: 'subscriber: {' -> 'Subscriber: {'
+   340→
+   341→src/app/api/grace-periods/route.ts: 1 change(s)
+   342→  L33: 'subscriber: {' -> 'Subscriber: {'
+   343→
+   344→src/app/api/gst/audit/route.ts: 2 change(s)
+   345→  L26: 'plan: {' -> 'Plan: {'
+   346→  L25: 'subscriber: {' -> 'Subscriber: {'
+   347→
+   348→src/app/api/gst/gstr9/route.ts: 2 change(s)
+   349→  L23: 'plan: {' -> 'Plan: {'
+   350→  L22: 'subscriber: {' -> 'Subscriber: {'
+   351→
+   352→src/app/api/gst/reverse-charge/route.ts: 2 change(s)
+   353→  L22: 'plan: {' -> 'Plan: {'
+   354→  L21: 'subscriber: {' -> 'Subscriber: {'
+   355→
+   356→src/app/api/gst/route.ts: 2 change(s)
+   357→  L96: 'plan: {' -> 'Plan: {'
+   358→  L93: 'subscriber: {' -> 'Subscriber: {'
+   359→
+   360→src/app/api/gst/tds-tcs/route.ts: 2 change(s)
+   361→  L19: 'subscriber: {' -> 'Subscriber: {'
+   362→  L18: 'invoice: {' -> 'Invoice: {'
+   363→
+   364→src/app/api/incidents/route.ts: 1 change(s)
+   365→  L75: 'plan: {' -> 'Plan: {'
+   366→
+   367→src/app/api/installations/[id]/route.ts: 5 change(s)
+   368→  L18: 'area: {' -> 'Area: {'
+   369→  L79: 'area: {' -> 'Area: {'
+   370→  L16: 'plan: {' -> 'Plan: {'
+   371→  L16: 'subscriber: {' -> 'Subscriber: {'
+   372→  L77: 'subscriber: {' -> 'Subscriber: {'
+   373→
+   374→src/app/api/installations/auto-assign/route.ts: 1 change(s)
+   375→  L21: 'area: {' -> 'Area: {'
+   376→
+   377→src/app/api/installations/route.ts: 11 change(s)
+   378→  L51: 'area: {' -> 'Area: {'
+   379→  L76: 'area: {' -> 'Area: {'
+   380→  L86: 'area: {' -> 'Area: {'
+   381→  L209: 'area: {' -> 'Area: {'
+   382→  L264: 'area: {' -> 'Area: {'
+   383→  L49: 'subscriber: {' -> 'Subscriber: {'
+   384→  L73: 'subscriber: {' -> 'Subscriber: {'
+   385→  L74: 'subscriber: {' -> 'Subscriber: {'
+   386→  L84: 'subscriber: {' -> 'Subscriber: {'
+   387→  L208: 'subscriber: {' -> 'Subscriber: {'
+   388→  L262: 'subscriber: {' -> 'Subscriber: {'
+   389→
+   390→src/app/api/installations/timeline/route.ts: 5 change(s)
+   391→  L35: 'area: {' -> 'Area: {'
+   392→  L46: 'area: {' -> 'Area: {'
+   393→  L32: 'subscriber: {' -> 'Subscriber: {'
+   394→  L33: 'subscriber: {' -> 'Subscriber: {'
+   395→  L44: 'subscriber: {' -> 'Subscriber: {'
+   396→
+   397→src/app/api/invoices/[id]/credit-note/route.ts: 1 change(s)
+   398→  L33: 'subscriber: {' -> 'Subscriber: {'
+   399→
+   400→src/app/api/invoices/[id]/credit-notes/route.ts: 1 change(s)
+   401→  L27: 'subscriber: {' -> 'Subscriber: {'
+   402→
+   403→src/app/api/invoices/[id]/route.ts: 10 change(s)
+   404→  L19: 'area: {' -> 'Area: {'
+   405→  L164: 'area: {' -> 'Area: {'
+   406→  L23: 'plan: {' -> 'Plan: {'
+   407→  L165: 'plan: {' -> 'Plan: {'
+   408→  L16: 'subscriber: {' -> 'Subscriber: {'
+   409→  L164: 'subscriber: {' -> 'Subscriber: {'
+   410→  L33: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   411→  L34: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+   412→  L30: 'payments: {' -> 'Payment: {'
+   413→  L167: 'payments: {' -> 'Payment: {'
+   414→
+   415→src/app/api/invoices/export-all/route.ts: 3 change(s)
+   416→  L32: 'plan: {' -> 'Plan: {'
+   417→  L31: 'subscriber: {' -> 'Subscriber: {'
+   418→  L33: 'payments: {' -> 'Payment: {'
+   419→
+   420→src/app/api/invoices/export/route.ts: 5 change(s)
+   421→  L48: 'area: {' -> 'Area: {'
+   422→  L49: 'plan: {' -> 'Plan: {'
+   423→  L40: 'subscriber: {' -> 'Subscriber: {'
+   424→  L41: 'subscriber: {' -> 'Subscriber: {'
+   425→  L48: 'subscriber: {' -> 'Subscriber: {'
+   426→
+   427→src/app/api/invoices/recurring-templates/route.ts: 9 change(s)
+   428→  L11: 'area: {' -> 'Area: {'
+   429→  L45: 'area: {' -> 'Area: {'
+   430→  L85: 'area: {' -> 'Area: {'
+   431→  L10: 'plan: {' -> 'Plan: {'
+   432→  L44: 'plan: {' -> 'Plan: {'
+   433→  L84: 'plan: {' -> 'Plan: {'
+   434→  L9: 'subscriber: {' -> 'Subscriber: {'
+   435→  L43: 'subscriber: {' -> 'Subscriber: {'
+   436→  L83: 'subscriber: {' -> 'Subscriber: {'
+   437→
+   438→src/app/api/invoices/route.ts: 10 change(s)
+   439→  L103: 'area: {' -> 'Area: {'
+   440→  L105: 'plan: {' -> 'Plan: {'
+   441→  L245: 'plan: {' -> 'Plan: {'
+   442→  L49: 'subscriber: {' -> 'Subscriber: {'
+   443→  L50: 'subscriber: {' -> 'Subscriber: {'
+   444→  L51: 'subscriber: {' -> 'Subscriber: {'
+   445→  L102: 'subscriber: {' -> 'Subscriber: {'
+   446→  L244: 'subscriber: {' -> 'Subscriber: {'
+   447→  L261: 'subscriber: {' -> 'Subscriber: {'
+   448→  L106: 'payments: {' -> 'Payment: {'
+   449→
+   450→src/app/api/ip-mac-history/route.ts: 3 change(s)
+   451→  L69: 'subscriber: {' -> 'Subscriber: {'
+   452→  L113: 'subscriber: {' -> 'Subscriber: {'
+   453→  L154: 'subscriber: {' -> 'Subscriber: {'
+   454→
+   455→src/app/api/ipam/export/route.ts: 1 change(s)
+   456→  L60: 'area: {' -> 'Area: {'
+   457→
+   458→src/app/api/ipam/route.ts: 1 change(s)
+   459→  L45: 'area: {' -> 'Area: {'
+   460→
+   461→src/app/api/loyalty/badges/route.ts: 3 change(s)
+   462→  L45: 'plan: {' -> 'Plan: {'
+   463→  L47: 'invoice: {' -> 'Invoice: {'
+   464→  L46: 'payments: {' -> 'Payment: {'
+   465→
+   466→src/app/api/loyalty/enhanced/route.ts: 2 change(s)
+   467→  L31: 'subscriber: {' -> 'Subscriber: {'
+   468→  L169: 'subscriber: {' -> 'Subscriber: {'
+   469→
+   470→src/app/api/loyalty/tiers/route.ts: 1 change(s)
+   471→  L25: 'subscriber: {' -> 'Subscriber: {'
+   472→
+   473→src/app/api/notifications/[id]/retry/route.ts: 1 change(s)
+   474→  L19: 'subscriber: {' -> 'Subscriber: {'
+   475→
+   476→src/app/api/notifications/[id]/route.ts: 2 change(s)
+   477→  L16: 'subscriber: {' -> 'Subscriber: {'
+   478→  L72: 'subscriber: {' -> 'Subscriber: {'
+   479→
+   480→src/app/api/notifications/retry-failed/route.ts: 2 change(s)
+   481→  L16: 'subscriber: {' -> 'Subscriber: {'
+   482→  L19: 'subscriber: {' -> 'Subscriber: {'
+   483→
+   484→src/app/api/notifications/route.ts: 2 change(s)
+   485→  L27: 'subscriber: {' -> 'Subscriber: {'
+   486→  L38: 'subscriber: {' -> 'Subscriber: {'
+   487→
+   488→src/app/api/payments/[id]/refund/route.ts: 2 change(s)
+   489→  L33: 'subscriber: {' -> 'Subscriber: {'
+   490→  L34: 'invoice: {' -> 'Invoice: {'
+   491→
+   492→src/app/api/payments/[id]/route.ts: 12 change(s)
+   493→  L16: 'subscriber: {' -> 'Subscriber: {'
+   494→  L56: 'subscriber: {' -> 'Subscriber: {'
+   495→  L79: 'subscriber: {' -> 'Subscriber: {'
+   496→  L137: 'subscriber: {' -> 'Subscriber: {'
+   497→  L166: 'subscriber: {' -> 'Subscriber: {'
+   498→  L17: 'invoice: {' -> 'Invoice: {'
+   499→  L57: 'invoice: {' -> 'Invoice: {'
+   500→  L80: 'invoice: {' -> 'Invoice: {'
+   501→  L138: 'invoice: {' -> 'Invoice: {'
+   502→  L167: 'invoice: {' -> 'Invoice: {'
+   503→  L18: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   504→  L19: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+   505→
+   506→src/app/api/payments/create-order/route.ts: 2 change(s)
+   507→  L80: 'subscriber: {' -> 'Subscriber: {'
+   508→  L117: 'subscriber: {' -> 'Subscriber: {'
+   509→
+   510→src/app/api/payments/export/route.ts: 4 change(s)
+   511→  L29: 'subscriber: {' -> 'Subscriber: {'
+   512→  L30: 'subscriber: {' -> 'Subscriber: {'
+   513→  L43: 'subscriber: {' -> 'Subscriber: {'
+   514→  L44: 'invoice: {' -> 'Invoice: {'
+   515→
+   516→src/app/api/payments/recent/route.ts: 1 change(s)
+   517→  L45: 'subscriber: {' -> 'Subscriber: {'
+   518→
+   519→src/app/api/payments/route.ts: 6 change(s)
+   520→  L35: 'subscriber: {' -> 'Subscriber: {'
+   521→  L36: 'subscriber: {' -> 'Subscriber: {'
+   522→  L50: 'subscriber: {' -> 'Subscriber: {'
+   523→  L191: 'subscriber: {' -> 'Subscriber: {'
+   524→  L51: 'invoice: {' -> 'Invoice: {'
+   525→  L192: 'invoice: {' -> 'Invoice: {'
+   526→
+   527→src/app/api/plans/[id]/route.ts: 2 change(s)
+   528→  L96: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   529→  L149: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   530→
+   531→src/app/api/plans/migrate/route.ts: 1 change(s)
+   532→  L70: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   533→
+   534→src/app/api/plans/optimization/route.ts: 1 change(s)
+   535→  L18: 'area: {' -> 'Area: {'
+   536→
+   537→src/app/api/plans/recommend/route.ts: 3 change(s)
+   538→  L24: 'area: {' -> 'Area: {'
+   539→  L279: 'area: {' -> 'Area: {'
+   540→  L202: 'subscriber: {' -> 'Subscriber: {'
+   541→
+   542→src/app/api/radius-attributes/route.ts: 1 change(s)
+   543→  L210: 'subscriber: {' -> 'Subscriber: {'
+   544→
+   545→src/app/api/radius-attributes/user-attributes/route.ts: 1 change(s)
+   546→  L59: 'subscriber: {' -> 'Subscriber: {'
+   547→
+   548→src/app/api/radius-sessions/route.ts: 3 change(s)
+   549→  L27: 'plan: {' -> 'Plan: {'
+   550→  L17: 'radiusUser: {' -> 'RadiusUser: {'
+   551→  L20: 'subscriber: {' -> 'Subscriber: {'
+   552→
+   553→src/app/api/radius-users/[id]/route.ts: 6 change(s)
+   554→  L36: 'plan: {' -> 'Plan: {'
+   555→  L42: 'radiusGroup: {' -> 'RadiusGroup: {'
+   556→  L194: 'radiusGroup: {' -> 'RadiusGroup: {'
+   557→  L39: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   558→  L21: 'subscriber: {' -> 'Subscriber: {'
+   559→  L45: 'sessions: {' -> 'RadiusSession: {'
+   560→
+   561→src/app/api/radius-users/export/route.ts: 1 change(s)
+   562→  L16: 'subscriber: {' -> 'Subscriber: {'
+   563→
+   564→src/app/api/radius-users/route.ts: 7 change(s)
+   565→  L115: 'plan: {' -> 'Plan: {'
+   566→  L197: 'plan: {' -> 'Plan: {'
+   567→  L133: 'radiusGroup: {' -> 'RadiusGroup: {'
+   568→  L196: 'radiusGroup: {' -> 'RadiusGroup: {'
+   569→  L195: 'radiusUser: {' -> 'RadiusUser: {'
+   570→  L122: 'group: {\n                  select: {' -> 'RadiusGroup: { select: {'
+   571→  L100: 'subscriber: {' -> 'Subscriber: {'
+   572→
+   573→src/app/api/radius/sessions/route.ts: 3 change(s)
+   574→  L88: 'radiusUser: {' -> 'RadiusUser: {'
+   575→  L89: 'radiusUser: {' -> 'RadiusUser: {'
+   576→  L89: 'subscriber: {' -> 'Subscriber: {'
+   577→
+   578→src/app/api/radius/users/[id]/route.ts: 1 change(s)
+   579→  L16: 'sessions: {' -> 'RadiusSession: {'
+   580→
+   581→src/app/api/radius/users/route.ts: 3 change(s)
+   582→  L17: 'subscriber: {' -> 'Subscriber: {'
+   583→  L18: 'subscriber: {' -> 'Subscriber: {'
+   584→  L19: 'subscriber: {' -> 'Subscriber: {'
+   585→
+   586→src/app/api/referral/route.ts: 5 change(s)
+   587→  L24: 'subscriber: {' -> 'Subscriber: {'
+   588→  L90: 'subscriber: {' -> 'Subscriber: {'
+   589→  L117: 'subscriber: {' -> 'Subscriber: {'
+   590→  L160: 'subscriber: {' -> 'Subscriber: {'
+   591→  L205: 'subscriber: {' -> 'Subscriber: {'
+   592→
+   593→src/app/api/reports/revenue/route.ts: 2 change(s)
+   594→  L195: 'plan: {' -> 'Plan: {'
+   595→  L172: 'subscriber: {' -> 'Subscriber: {'
+   596→
+   597→src/app/api/reports/route.ts: 13 change(s)
+   598→  L82: 'area: {' -> 'Area: {'
+   599→  L794: 'area: {' -> 'Area: {'
+   600→  L81: 'plan: {' -> 'Plan: {'
+   601→  L296: 'plan: {' -> 'Plan: {'
+   602→  L479: 'plan: {' -> 'Plan: {'
+   603→  L793: 'plan: {' -> 'Plan: {'
+   604→  L923: 'plan: {' -> 'Plan: {'
+   605→  L1156: 'plan: {' -> 'Plan: {'
+   606→  L1155: 'radiusUser: {' -> 'RadiusUser: {'
+   607→  L82: 'subscriber: {' -> 'Subscriber: {'
+   608→  L790: 'subscriber: {' -> 'Subscriber: {'
+   609→  L963: 'subscriber: {' -> 'Subscriber: {'
+   610→  L1156: 'subscriber: {' -> 'Subscriber: {'
+   611→
+   612→src/app/api/reports/tds-tcs/route.ts: 1 change(s)
+   613→  L23: 'subscriber: {' -> 'Subscriber: {'
+   614→
+   615→src/app/api/reseller/route.ts: 4 change(s)
+   616→  L67: 'area: {' -> 'Area: {'
+   617→  L55: 'plan: {' -> 'Plan: {'
+   618→  L56: 'plan: {' -> 'Plan: {'
+   619→  L67: 'subscriber: {' -> 'Subscriber: {'
+   620→
+   621→src/app/api/resellers/analytics/route.ts: 3 change(s)
+   622→  L39: 'area: {' -> 'Area: {'
+   623→  L38: 'plan: {' -> 'Plan: {'
+   624→  L40: 'payments: {' -> 'Payment: {'
+   625→
+   626→src/app/api/resellers/commission-engine/route.ts: 2 change(s)
+   627→  L82: 'plan: {' -> 'Plan: {'
+   628→  L275: 'plan: {' -> 'Plan: {'
+   629→
+   630→src/app/api/revenue/aging-enhanced/route.ts: 2 change(s)
+   631→  L103: 'area: {' -> 'Area: {'
+   632→  L98: 'subscriber: {' -> 'Subscriber: {'
+   633→
+   634→src/app/api/revenue/audit/route.ts: 5 change(s)
+   635→  L90: 'subscriber: {' -> 'Subscriber: {'
+   636→  L125: 'subscriber: {' -> 'Subscriber: {'
+   637→  L161: 'subscriber: {' -> 'Subscriber: {'
+   638→  L87: 'invoice: {' -> 'Invoice: {'
+   639→  L126: 'invoice: {' -> 'Invoice: {'
+   640→
+   641→src/app/api/revenue/leakage/route.ts: 10 change(s)
+   642→  L327: 'plan: {' -> 'Plan: {'
+   643→  L105: 'subscriber: {' -> 'Subscriber: {'
+   644→  L147: 'subscriber: {' -> 'Subscriber: {'
+   645→  L150: 'subscriber: {' -> 'Subscriber: {'
+   646→  L192: 'subscriber: {' -> 'Subscriber: {'
+   647→  L230: 'subscriber: {' -> 'Subscriber: {'
+   648→  L294: 'subscriber: {' -> 'Subscriber: {'
+   649→  L384: 'subscriber: {' -> 'Subscriber: {'
+   650→  L101: 'invoice: {' -> 'Invoice: {'
+   651→  L143: 'invoice: {' -> 'Invoice: {'
+   652→
+   653→src/app/api/selfcare/usage-meter/route.ts: 1 change(s)
+   654→  L12: 'plan: {' -> 'Plan: {'
+   655→
+   656→src/app/api/subscriber-auth/login/route.ts: 3 change(s)
+   657→  L39: 'area: {' -> 'Area: {'
+   658→  L38: 'plan: {' -> 'Plan: {'
+   659→  L102: 'subscriber: {' -> 'Subscriber: {'
+   660→
+   661→src/app/api/subscriber-auth/me/route.ts: 3 change(s)
+   662→  L21: 'area: {' -> 'Area: {'
+   663→  L20: 'plan: {' -> 'Plan: {'
+   664→  L39: 'subscriber: {' -> 'Subscriber: {'
+   665→
+   666→src/app/api/subscriber-auth/service-status/route.ts: 2 change(s)
+   667→  L42: 'area: {' -> 'Area: {'
+   668→  L41: 'plan: {' -> 'Plan: {'
+   669→
+   670→src/app/api/subscriber-auth/usage/route.ts: 1 change(s)
+   671→  L12: 'plan: {' -> 'Plan: {'
+   672→
+   673→src/app/api/subscribers/[id]/360/route.ts: 8 change(s)
+   674→  L18: 'area: {' -> 'Area: {'
+   675→  L19: 'plan: {' -> 'Plan: {'
+   676→  L26: 'radiusGroup: {' -> 'RadiusGroup: {'
+   677→  L27: 'radiusUser: {' -> 'RadiusUser: {'
+   678→  L23: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   679→  L231: 'subscriber: {' -> 'Subscriber: {'
+   680→  L82: 'collectedBy: {' -> 'User_Payment_collectedByIdToUser: {'
+   681→  L83: 'verifiedBy: {' -> 'User_Payment_verifiedByIdToUser: {'
+   682→
+   683→src/app/api/subscribers/[id]/balance/route.ts: 1 change(s)
+   684→  L48: 'subscriber: {' -> 'Subscriber: {'
+   685→
+   686→src/app/api/subscribers/[id]/route.ts: 13 change(s)
+   687→  L18: 'area: {' -> 'Area: {'
+   688→  L143: 'area: {' -> 'Area: {'
+   689→  L19: 'plan: {' -> 'Plan: {'
+   690→  L144: 'plan: {' -> 'Plan: {'
+   691→  L25: 'radiusGroup: {' -> 'RadiusGroup: {'
+   692→  L150: 'radiusGroup: {' -> 'RadiusGroup: {'
+   693→  L26: 'radiusUser: {' -> 'RadiusUser: {'
+   694→  L56: 'radiusUser: {' -> 'RadiusUser: {'
+   695→  L151: 'radiusUser: {' -> 'RadiusUser: {'
+   696→  L266: 'radiusUser: {' -> 'RadiusUser: {'
+   697→  L22: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   698→  L147: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   699→  L28: 'payments: {' -> 'Payment: {'
+   700→
+   701→src/app/api/subscribers/bulk/route.ts: 3 change(s)
+   702→  L91: 'area: {' -> 'Area: {'
+   703→  L92: 'plan: {' -> 'Plan: {'
+   704→  L93: 'radiusGroup: {' -> 'RadiusGroup: {'
+   705→
+   706→src/app/api/subscribers/expiring/route.ts: 2 change(s)
+   707→  L35: 'area: {' -> 'Area: {'
+   708→  L27: 'plan: {' -> 'Plan: {'
+   709→
+   710→src/app/api/subscribers/export/route.ts: 2 change(s)
+   711→  L24: 'area: {' -> 'Area: {'
+   712→  L23: 'plan: {' -> 'Plan: {'
+   713→
+   714→src/app/api/subscribers/route.ts: 10 change(s)
+   715→  L64: 'area: {' -> 'Area: {'
+   716→  L284: 'area: {' -> 'Area: {'
+   717→  L65: 'plan: {' -> 'Plan: {'
+   718→  L285: 'plan: {' -> 'Plan: {'
+   719→  L71: 'radiusGroup: {' -> 'RadiusGroup: {'
+   720→  L291: 'radiusGroup: {' -> 'RadiusGroup: {'
+   721→  L72: 'radiusUser: {' -> 'RadiusUser: {'
+   722→  L68: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   723→  L288: 'group: { select: {' -> 'RadiusGroup: { select: {'
+   724→  L72: 'sessions: {' -> 'RadiusSession: {'
+   725→
+   726→src/app/api/technicians/[id]/route.ts: 4 change(s)
+   727→  L30: 'area: {' -> 'Area: {'
+   728→  L38: 'area: {' -> 'Area: {'
+   729→  L29: 'subscriber: {' -> 'Subscriber: {'
+   730→  L37: 'subscriber: {' -> 'Subscriber: {'
+   731→
+   732→src/app/api/technicians/calendar/route.ts: 2 change(s)
+   733→  L31: 'subscriber: {' -> 'Subscriber: {'
+   734→  L44: 'subscriber: {' -> 'Subscriber: {'
+   735→
+   736→src/app/api/technicians/dispatch/route.ts: 2 change(s)
+   737→  L46: 'area: {' -> 'Area: {'
+   738→  L47: 'subscriber: {' -> 'Subscriber: {'
+   739→
+   740→src/app/api/time-access-policies/route.ts: 2 change(s)
+   741→  L18: 'subscriber: {' -> 'Subscriber: {'
+   742→  L64: 'subscriber: {' -> 'Subscriber: {'
+   743→
+   744→src/app/api/top-ups/route.ts: 1 change(s)
+   745→  L322: 'subscriber: {' -> 'Subscriber: {'
+   746→
+   747→src/app/api/traffic-analytics/route.ts: 2 change(s)
+   748→  L183: 'area: {' -> 'Area: {'
+   749→  L218: 'subscriber: {' -> 'Subscriber: {'
+   750→
+   751→src/app/api/usage/route.ts: 1 change(s)
+   752→  L60: 'plan: {' -> 'Plan: {'
+   753→
+   754→src/app/api/vouchers/[id]/route.ts: 3 change(s)
+   755→  L17: 'plan: {' -> 'Plan: {'
+   756→  L91: 'plan: {' -> 'Plan: {'
+   757→  L37: 'invoice: {' -> 'Invoice: {'
+   758→
+   759→src/app/api/vouchers/bulk/route.ts: 1 change(s)
+   760→  L46: 'plan: {' -> 'Plan: {'
+   761→
+   762→src/app/api/vouchers/route.ts: 6 change(s)
+   763→  L41: 'area: {' -> 'Area: {'
+   764→  L89: 'plan: {' -> 'Plan: {'
+   765→  L117: 'plan: {' -> 'Plan: {'
+   766→  L144: 'plan: {' -> 'Plan: {'
+   767→  L171: 'plan: {' -> 'Plan: {'
+   768→  L215: 'plan: {' -> 'Plan: {'
+   769→
+   770→src/app/api/vouchers/usage-history/route.ts: 1 change(s)
+   771→  L45: 'plan: {' -> 'Plan: {'
+   772→
+   773→src/app/api/whatsapp/conversations/route.ts: 2 change(s)
+   774→  L21: 'subscriber: {' -> 'Subscriber: {'
+   775→  L26: 'subscriber: {' -> 'Subscriber: {'
+   776→
+   777→src/app/api/whatsapp/logs/route.ts: 3 change(s)
+   778→  L26: 'subscriber: {' -> 'Subscriber: {'
+   779→  L27: 'subscriber: {' -> 'Subscriber: {'
+   780→  L36: 'subscriber: {' -> 'Subscriber: {'
+   781→
+   782→
+   783→=== UNIQUE FILES (146) ===
+   784→src/app/api/action-history/route.ts
+   785→src/app/api/agents/[id]/route.ts
+   786→src/app/api/agents/followups/route.ts
+   787→src/app/api/ai/advisor/route.ts
+   788→src/app/api/ai/churn/route.ts
+   789→src/app/api/ai/diagnose/route.ts
+   790→src/app/api/ai/whatsapp-bot/route.ts
+   791→src/app/api/area-budgets/route.ts
+   792→src/app/api/areas/[id]/route.ts
+   793→src/app/api/backup/route.ts
+   794→src/app/api/bandwidth/consumers/route.ts
+   795→src/app/api/bandwidth/route.ts
+   796→src/app/api/batch-provisioning/jobs/route.ts
+   797→src/app/api/batch-provisioning/templates/route.ts
+   798→src/app/api/billing/[id]/route.ts
+   799→src/app/api/billing/export/route.ts
+   800→src/app/api/billing/route.ts
+   801→src/app/api/bw-reports/route.ts
+   802→src/app/api/captive-portal/[id]/route.ts
+   803→src/app/api/captive-portal/sessions/[id]/route.ts
+   804→src/app/api/captive-portal/sessions/route.ts
+   805→src/app/api/captive-portal/subnet-mapping/route.ts
+   806→src/app/api/charge-override/route.ts
+   807→src/app/api/charge-overrides/[id]/route.ts
+   808→src/app/api/charge-overrides/route.ts
+   809→src/app/api/churn-alerts/route.ts
+   810→src/app/api/churn/predict/route.ts
+   811→src/app/api/coa-events/route.ts
+   812→src/app/api/collection/disputes/route.ts
+   813→src/app/api/collection/receipt/route.ts
+   814→src/app/api/collection/reconcile/route.ts
+   815→src/app/api/collection/route.ts
+   816→src/app/api/collection/summary/route.ts
+   817→src/app/api/collections/analytics/route.ts
+   818→src/app/api/collections/smart/route.ts
+   819→src/app/api/complaints/[id]/auto-assign/route.ts
+   820→src/app/api/complaints/[id]/route.ts
+   821→src/app/api/complaints/export/route.ts
+   822→src/app/api/complaints/route.ts
+   823→src/app/api/compliance/audit-report/route.ts
+   824→src/app/api/compliance/sla/route.ts
+   825→src/app/api/dashboard/invoice-aging/route.ts
+   826→src/app/api/dashboard/retention/route.ts
+   827→src/app/api/dashboard/route.ts
+   828→src/app/api/dashboard/top-subscribers/route.ts
+   829→src/app/api/devices/[id]/route.ts
+   830→src/app/api/devices/export/route.ts
+   831→src/app/api/devices/route.ts
+   832→src/app/api/devices/tree/route.ts
+   833→src/app/api/disputes/route.ts
+   834→src/app/api/due-recovery/payment-plan/route.ts
+   835→src/app/api/due-recovery/route.ts
+   836→src/app/api/due-recovery/sla-dashboard/route.ts
+   837→src/app/api/due-recovery/sla-export/route.ts
+   838→src/app/api/enterprise-auth/[id]/route.ts
+   839→src/app/api/enterprise-auth/route.ts
+   840→src/app/api/export/complaints/route.ts
+   841→src/app/api/export/invoices/route.ts
+   842→src/app/api/export/payments/route.ts
+   843→src/app/api/export/subscribers/route.ts
+   844→src/app/api/ftth/olts/[id]/route.ts
+   845→src/app/api/ftth/olts/export/route.ts
+   846→src/app/api/ftth/olts/route.ts
+   847→src/app/api/ftth/ports/route.ts
+   848→src/app/api/grace-periods/route.ts
+   849→src/app/api/gst/audit/route.ts
+   850→src/app/api/gst/gstr9/route.ts
+   851→src/app/api/gst/reverse-charge/route.ts
+   852→src/app/api/gst/route.ts
+   853→src/app/api/gst/tds-tcs/route.ts
+   854→src/app/api/incidents/route.ts
+   855→src/app/api/installations/[id]/route.ts
+   856→src/app/api/installations/auto-assign/route.ts
+   857→src/app/api/installations/route.ts
+   858→src/app/api/installations/timeline/route.ts
+   859→src/app/api/invoices/[id]/credit-note/route.ts
+   860→src/app/api/invoices/[id]/credit-notes/route.ts
+   861→src/app/api/invoices/[id]/route.ts
+   862→src/app/api/invoices/export-all/route.ts
+   863→src/app/api/invoices/export/route.ts
+   864→src/app/api/invoices/recurring-templates/route.ts
+   865→src/app/api/invoices/route.ts
+   866→src/app/api/ip-mac-history/route.ts
+   867→src/app/api/ipam/export/route.ts
+   868→src/app/api/ipam/route.ts
+   869→src/app/api/loyalty/badges/route.ts
+   870→src/app/api/loyalty/enhanced/route.ts
+   871→src/app/api/loyalty/tiers/route.ts
+   872→src/app/api/notifications/[id]/retry/route.ts
+   873→src/app/api/notifications/[id]/route.ts
+   874→src/app/api/notifications/retry-failed/route.ts
+   875→src/app/api/notifications/route.ts
+   876→src/app/api/payments/[id]/refund/route.ts
+   877→src/app/api/payments/[id]/route.ts
+   878→src/app/api/payments/create-order/route.ts
+   879→src/app/api/payments/export/route.ts
+   880→src/app/api/payments/recent/route.ts
+   881→src/app/api/payments/route.ts
+   882→src/app/api/plans/[id]/route.ts
+   883→src/app/api/plans/migrate/route.ts
+   884→src/app/api/plans/optimization/route.ts
+   885→src/app/api/plans/recommend/route.ts
+   886→src/app/api/radius-attributes/route.ts
+   887→src/app/api/radius-attributes/user-attributes/route.ts
+   888→src/app/api/radius-sessions/route.ts
+   889→src/app/api/radius-users/[id]/route.ts
+   890→src/app/api/radius-users/export/route.ts
+   891→src/app/api/radius-users/route.ts
+   892→src/app/api/radius/sessions/route.ts
+   893→src/app/api/radius/users/[id]/route.ts
+   894→src/app/api/radius/users/route.ts
+   895→src/app/api/referral/route.ts
+   896→src/app/api/reports/revenue/route.ts
+   897→src/app/api/reports/route.ts
+   898→src/app/api/reports/tds-tcs/route.ts
+   899→src/app/api/reseller/route.ts
+   900→src/app/api/resellers/analytics/route.ts
+   901→src/app/api/resellers/commission-engine/route.ts
+   902→src/app/api/revenue/aging-enhanced/route.ts
+   903→src/app/api/revenue/audit/route.ts
+   904→src/app/api/revenue/leakage/route.ts
+   905→src/app/api/selfcare/usage-meter/route.ts
+   906→src/app/api/subscriber-auth/login/route.ts
+   907→src/app/api/subscriber-auth/me/route.ts
+   908→src/app/api/subscriber-auth/service-status/route.ts
+   909→src/app/api/subscriber-auth/usage/route.ts
+   910→src/app/api/subscribers/[id]/360/route.ts
+   911→src/app/api/subscribers/[id]/balance/route.ts
+   912→src/app/api/subscribers/[id]/route.ts
+   913→src/app/api/subscribers/bulk/route.ts
+   914→src/app/api/subscribers/expiring/route.ts
+   915→src/app/api/subscribers/export/route.ts
+   916→src/app/api/subscribers/route.ts
+   917→src/app/api/technicians/[id]/route.ts
+   918→src/app/api/technicians/calendar/route.ts
+   919→src/app/api/technicians/dispatch/route.ts
+   920→src/app/api/time-access-policies/route.ts
+   921→src/app/api/top-ups/route.ts
+   922→src/app/api/traffic-analytics/route.ts
+   923→src/app/api/usage/route.ts
+   924→src/app/api/vouchers/[id]/route.ts
+   925→src/app/api/vouchers/bulk/route.ts
+   926→src/app/api/vouchers/route.ts
+   927→src/app/api/vouchers/usage-history/route.ts
+   928→src/app/api/whatsapp/conversations/route.ts
+   929→src/app/api/whatsapp/logs/route.ts

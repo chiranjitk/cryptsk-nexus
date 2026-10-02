@@ -1,0 +1,1907 @@
+  1188→                        />
+  1189→                      </TableCell>
+  1190→                      <TableCell className="font-mono text-xs font-medium">{sub.code}</TableCell>
+  1191→                      <TableCell>
+  1192→                        <div className="flex items-center gap-2">
+  1193→                          <div className="h-8 w-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-xs font-bold shrink-0">
+  1194→                            {sub.name.charAt(0).toUpperCase()}
+  1195→                          </div>
+  1196→                          <div className="min-w-0">
+  1197→                            <p className="text-sm font-medium truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.name}</p>
+  1198→                            {sub.email && <p className="text-xs text-muted-foreground hidden md:block truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.email}</p>}
+  1199→                          </div>
+  1200→                        </div>
+  1201→                      </TableCell>
+  1202→                      <TableCell className="text-xs hidden md:table-cell">{sub.phone}</TableCell>
+  1203→                      <TableCell className="text-xs hidden lg:table-cell">
+  1204→                        {sub.plan ? (
+  1205→                          <Badge variant="outline" className={`text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ${getPlanSpeedTier(sub.plan.name).class}`}>
+  1206→                            {sub.plan.name}
+  1207→                            {extractPlanSpeed(sub.plan.name) && (
+  1208→                              <span className="opacity-60">↓{extractPlanSpeed(sub.plan.name)}</span>
+  1209→                            )}
+  1210→                          </Badge>
+  1211→                        ) : "—"}
+  1212→                      </TableCell>
+  1213→                      <TableCell className="text-xs hidden lg:table-cell">{sub.area?.name || "—"}</TableCell>
+  1214→                      <TableCell className="text-xs hidden md:table-cell">
+  1215→                        <span className={sub.balance < 0 ? "text-red-600 font-semibold" : sub.balance > 0 ? "text-green-600 font-semibold" : ""}>
+  1216→                          {formatINR(sub.balance ?? 0)}
+  1217→                        </span>
+  1218→                      </TableCell>
+  1219→                      <TableCell>
+  1220→                        <div className="flex items-center gap-1.5 flex-wrap">
+  1221→                          {sub.activeSessions !== undefined && sub.activeSessions > 0 && (
+  1222→                            <span className="relative flex h-2.5 w-2.5 shrink-0" title="Online — active session">
+  1223→                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
+  1224→                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-1 ring-emerald-500/30" />
+  1225→                            </span>
+  1226→                          )}
+  1227→                          <Badge variant="outline" className={`text-[10px] px-2 py-0.5 rounded-full gap-1 inline-flex items-center ${STATUS_MAP[sub.status]?.class || ""}`}>
+  1228→                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_MAP[sub.status]?.dot || "bg-gray-400"}`} />
+  1229→                            {STATUS_MAP[sub.status]?.label || sub.status}
+  1230→                          </Badge>
+  1231→                        </div>
+  1232→                      </TableCell>
+  1233→                      <TableCell className="text-xs">
+  1234→                        <span className="font-mono text-[11px] text-muted-foreground truncate block max-w-[120px]">
+  1235→                          {sub.serviceUsername || "—"}
+  1236→                        </span>
+  1237→                      </TableCell>
+  1238→                      <TableCell className="text-xs hidden md:table-cell">
+  1239→                        {sub.lastAuthTimestamp ? (
+  1240→                          <div className="flex items-center gap-1.5">
+  1241→                            <span className="text-muted-foreground">{relativeTime(sub.lastAuthTimestamp)}</span>
+  1242→                            <Badge
+  1243→                              variant="outline"
+  1244→                              className={`text-[9px] px-1.5 py-0 rounded-full ${
+  1245→                                sub.lastAuthResult === "Access-Accept"
+  1246→                                  ? "bg-green-50 text-green-700 border-green-200"
+  1247→                                  : sub.lastAuthResult === "Access-Reject"
+  1248→                                  ? "bg-red-50 text-red-700 border-red-200"
+  1249→                                  : "bg-gray-50 text-gray-600 border-gray-200"
+  1250→                              }`}
+  1251→                            >
+  1252→                              {sub.lastAuthResult === "Access-Accept" ? "OK" : sub.lastAuthResult === "Access-Reject" ? "FAIL" : sub.lastAuthResult || "—"}
+  1253→                            </Badge>
+  1254→                          </div>
+  1255→                        ) : (
+  1256→                          <span className="text-muted-foreground">—</span>
+  1257→                        )}
+  1258→                      </TableCell>
+  1259→                      {isModuleEnabled("ipv6") && (
+  1260→                        <TableCell className="text-xs hidden sm:table-cell">
+  1261→                          {sub.ipStackType === "DUAL_STACK" ? (
+  1262→                            <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-green-50 text-green-700 border-green-200">Dual</Badge>
+  1263→                          ) : sub.ipStackType === "IPV6_ONLY" ? (
+  1264→                            <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-sky-50 text-sky-700 border-sky-200">IPv6</Badge>
+  1265→                          ) : (
+  1266→                            <Badge variant="outline" className="text-[10px] px-2 py-0.5">IPv4</Badge>
+  1267→                          )}
+  1268→                        </TableCell>
+  1269→                      )}
+  1270→                      {isModuleEnabled("ipv6") && (
+  1271→                        <TableCell className="text-xs hidden lg:table-cell font-mono">
+  1272→                          {sub.ipv6Address || "—"}
+  1273→                        </TableCell>
+  1274→                      )}
+  1275→                      <TableCell className="text-xs hidden sm:table-cell">
+  1276→                        <span className="inline-flex items-center gap-1.5">
+  1277→                          <ConnectionTypeIcon type={sub.connectionType} />
+  1278→                          {CONNECTION_LABELS[sub.connectionType] || sub.connectionType}
+  1279→                        </span>
+  1280→                      </TableCell>
+  1281→                      <TableCell className="text-xs hidden xl:table-cell text-muted-foreground">
+  1282→                        {sub.createdAt ? new Date(sub.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+  1283→                      </TableCell>
+  1284→                      <TableCell className="text-xs hidden lg:table-cell">
+  1285→                        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+  1286→                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${activityDotColor(sub.updatedAt, sub.status)}`} />
+  1287→                          {sub.updatedAt ? relativeTime(sub.updatedAt) : "—"}
+  1288→                        </span>
+  1289→                      </TableCell>
+  1290→                      <TableCell className="text-right">
+  1291→                        <DropdownMenu>
+  1292→                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity duration-150"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+  1293→                          <DropdownMenuContent align="end" className="w-48">
+  1294→                            <DropdownMenuItem onClick={() => openDetail(sub.id)}><Eye className="h-4 w-4 mr-2" />View Details</DropdownMenuItem>
+  1295→                            <DropdownMenuItem onClick={() => openEdit(sub)}><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
+  1296→                            <DropdownMenuSeparator />
+  1297→                            {sub.status === "ACTIVE" && (
+  1298→                              <DropdownMenuItem onClick={() => statusMutation.mutate({ id: sub.id, status: "SUSPENDED" })}><Ban className="h-4 w-4 mr-2" />Suspend</DropdownMenuItem>
+  1299→                            )}
+  1300→                            {sub.status === "ACTIVE" && sub.radiusEnabled && (
+  1301→                              <DropdownMenuItem onClick={() => handleKickSession(sub)} className="text-red-600"><WifiOff className="h-4 w-4 mr-2" />Kick Session (CoA)</DropdownMenuItem>
+  1302→                            )}
+  1303→                            {sub.status === "ACTIVE" && (
+  1304→                              <DropdownMenuItem onClick={() => statusMutation.mutate({ id: sub.id, status: "DISCONNECTED" })} className="text-orange-600"><Unplug className="h-4 w-4 mr-2" />Disconnect</DropdownMenuItem>
+  1305→                            )}
+  1306→                            {(sub.status === "SUSPENDED" || sub.status === "DISCONNECTED") && (
+  1307→                              <DropdownMenuItem onClick={() => statusMutation.mutate({ id: sub.id, status: "ACTIVE" })}><CheckCircle2 className="h-4 w-4 mr-2" />Activate</DropdownMenuItem>
+  1308→                            )}
+  1309→                            <DropdownMenuSeparator />
+  1310→                            <DropdownMenuItem><MessageSquare className="h-4 w-4 mr-2" />Message</DropdownMenuItem>
+  1311→                            <DropdownMenuSeparator />
+  1312→                            <DropdownMenuItem className="text-red-600" onClick={() => openDelete(sub)}><Trash2 className="h-4 w-4 mr-2" />Delete</DropdownMenuItem>
+  1313→                          </DropdownMenuContent>
+  1314→                        </DropdownMenu>
+  1315→                      </TableCell>
+  1316→                    </TableRow>
+  1317→                    );
+  1318→                  })
+  1319→                )}
+  1320→              </TableBody>
+  1321→            </Table>
+  1322→          </div>
+  1323→        </CardContent>
+  1324→      </Card>
+  1325→
+  1326→      {/* Pagination */}
+  1327→      {total > 0 && (
+  1328→        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-background rounded-lg px-1 animate-slide-up" style={{ animationDelay: "150ms" }}>
+  1329→          <p className="text-sm text-muted-foreground">
+  1330→            Showing <span className="font-medium text-foreground">{((page - 1) * 15) + 1}–{Math.min(page * 15, total)}</span> of <span className="font-medium text-foreground">{total}</span>
+  1331→          </p>
+  1332→          <div className="flex items-center gap-1.5">
+  1333→            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-8 w-8 p-0 rounded-md">
+  1334→              <ChevronLeft className="h-4 w-4" />
+  1335→            </Button>
+  1336→            <div className="flex items-center gap-1">
+  1337→              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+  1338→                let pageNum: number;
+  1339→                if (totalPages <= 5) {
+  1340→                  pageNum = i + 1;
+  1341→                } else if (page <= 3) {
+  1342→                  pageNum = i + 1;
+  1343→                } else if (page >= totalPages - 2) {
+  1344→                  pageNum = totalPages - 4 + i;
+  1345→                } else {
+  1346→                  pageNum = page - 2 + i;
+  1347→                }
+  1348→                return (
+  1349→                  <Button
+  1350→                    key={pageNum}
+  1351→                    variant={page === pageNum ? "default" : "outline"}
+  1352→                    size="sm"
+  1353→                    className={`h-8 w-8 p-0 text-xs rounded-md transition-all ${page === pageNum ? "bg-red-600 hover:bg-red-700 text-white border-red-600" : ""}`}
+  1354→                    onClick={() => setPage(pageNum)}
+  1355→                  >
+  1356→                    {pageNum}
+  1357→                  </Button>
+  1358→                );
+  1359→              })}
+  1360→            </div>
+  1361→            <span className="text-xs text-muted-foreground px-1">of {totalPages}</span>
+  1362→            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="h-8 w-8 p-0 rounded-md">
+  1363→              <ChevronRight className="h-4 w-4" />
+  1364→            </Button>
+  1365→          </div>
+  1366→        </div>
+  1367→      )}
+  1368→      {total === 0 && !hasActiveFilters && (
+  1369→        <p className="text-sm text-muted-foreground text-center py-4 animate-slide-up" style={{ animationDelay: "150ms" }}>0 results</p>
+  1370→      )}
+  1371→
+  1372→      {/* ─── Add Subscriber Dialog ─── */}
+  1373→      <Dialog open={addOpen} onOpenChange={(v) => { if (!v) setAddOpen(v); }}>
+  1374→        <DialogContent className="sm:max-w-[780px] max-h-[94vh] overflow-hidden flex flex-col">
+  1375→          <DialogHeader>
+  1376→            <DialogTitle className="flex items-center gap-2">
+  1377→              <UserPlus className="h-5 w-5 text-primary" />
+  1378→              Add New Subscriber
+  1379→            </DialogTitle>
+  1380→            <DialogDescription>Complete registration form — fill in all relevant details.</DialogDescription>
+  1381→          </DialogHeader>
+  1382→
+  1383→          {/* ── Step Progress Indicator ── */}
+  1384→          <div className="flex items-center gap-1 pt-1 pb-3 border-b">
+  1385→            {[
+  1386→              { num: 1, label: "Personal", icon: <User className="h-3.5 w-3.5" /> },
+  1387→              { num: 2, label: "Plan & Network", icon: <Globe className="h-3.5 w-3.5" /> },
+  1388→              { num: 3, label: "Equipment & Billing", icon: <CreditCard className="h-3.5 w-3.5" /> },
+  1389→              { num: 4, label: "Additional", icon: <MoreVertical className="h-3.5 w-3.5" /> },
+  1390→            ].map((step) => (
+  1391→              <button
+  1392→                key={step.num}
+  1393→                type="button"
+  1394→                onClick={() => setFormStep(step.num)}
+  1395→                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+  1396→                  formStep === step.num
+  1397→                    ? "bg-primary text-primary-foreground shadow-sm"
+  1398→                    : formStep > step.num
+  1399→                    ? "bg-primary/10 text-primary hover:bg-primary/15"
+  1400→                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+  1401→                }`}
+  1402→              >
+  1403→                <span className={`flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-bold shrink-0 ${
+  1404→                  formStep === step.num ? "bg-primary-foreground text-primary" : formStep > step.num ? "bg-primary text-primary-foreground" : "bg-muted-foreground/30 text-muted-foreground"
+  1405→                }`}>
+  1406→                  {formStep > step.num ? "✓" : step.num}
+  1407→                </span>
+  1408→                <span className="hidden sm:inline truncate">{step.label}</span>
+  1409→              </button>
+  1410→            ))}
+  1411→          </div>
+  1412→
+  1413→          {/* ── Form Completion Bar ── */}
+  1414→          <div className="flex items-center gap-2 pt-2">
+  1415→            <Progress value={formCompletion} className="h-1.5 flex-1" />
+  1416→            <span className="text-[10px] text-muted-foreground font-medium tabular-nums">{formCompletion}%</span>
+  1417→          </div>
+  1418→
+  1419→          <div className="flex-1 overflow-y-auto space-y-4 py-3 pr-1">
+  1420→
+  1421→            {/* ══════ STEP 1: Personal & Address ══════ */}
+  1422→            {formStep === 1 && (
+  1423→              <>
+  1424→                <div className="rounded-lg border bg-card">
+  1425→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1426→                    <User className="h-4 w-4 text-primary" />
+  1427→                    <span className="text-sm font-semibold">Personal Information</span>
+  1428→                    <Badge variant="outline" className="ml-auto text-[10px]">Required *</Badge>
+  1429→                  </div>
+  1430→                  <div className="p-4 space-y-3">
+  1431→                    <div className="space-y-1.5">
+  1432→                      <Label className="text-xs">Full Name <span className="text-red-500">*</span></Label>
+  1433→                      <Input placeholder="Enter subscriber's full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-9" />
+  1434→                    </div>
+  1435→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1436→                      <div className="space-y-1.5">
+  1437→                        <Label className="text-xs">Phone <span className="text-red-500">*</span></Label>
+  1438→                        <div className="relative">
+  1439→                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">+91</span>
+  1440→                          <Input placeholder="9876543210" maxLength={10} className="pl-10 h-9 font-mono" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} />
+  1441→                        </div>
+  1442→                      </div>
+  1443→                      <div className="space-y-1.5">
+  1444→                        <Label className="text-xs">Alternate Phone</Label>
+  1445→                        <div className="relative">
+  1446→                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">+91</span>
+  1447→                          <Input placeholder="Optional" maxLength={10} className="pl-10 h-9 font-mono" value={form.altPhone} onChange={(e) => setForm({ ...form, altPhone: e.target.value.replace(/\D/g, "") })} />
+  1448→                        </div>
+  1449→                      </div>
+  1450→                    </div>
+  1451→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1452→                      <div className="space-y-1.5">
+  1453→                        <Label className="text-xs">Email</Label>
+  1454→                        <Input placeholder="email@example.com" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="h-9" />
+  1455→                      </div>
+  1456→                      <div className="space-y-1.5">
+  1457→                        <Label className="text-xs">Aadhaar Number (KYC)</Label>
+  1458→                        <Input placeholder="XXXX XXXX XXXX" maxLength={14} className="h-9 font-mono" value={form.kycAadhaarNumber} onChange={(e) => {
+  1459→                          const v = e.target.value.replace(/\D/g, "").slice(0, 12);
+  1460→                          const formatted = v.replace(/(\d{4})(?=\d)/g, "$1 ");
+  1461→                          setForm({ ...form, kycAadhaarNumber: formatted });
+  1462→                        }} />
+  1463→                      </div>
+  1464→                    </div>
+  1465→                    {/* Profile Photo & KYC Document Upload */}
+  1466→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+  1467→                      <div className="space-y-1.5">
+  1468→                        <Label className="text-xs">Profile Photo</Label>
+  1469→                        <div className="flex items-center gap-2">
+  1470→                          {form.profilePhotoPath ? (
+  1471→                            <div className="relative group">
+  1472→                              <img src={`/api/files?path=${encodeURIComponent(form.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
+  1473→                              <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setForm({ ...form, profilePhotoPath: "" })}>
+  1474→                                <X className="h-2.5 w-2.5" />
+  1475→                              </button>
+  1476→                            </div>
+  1477→                          ) : (
+  1478→                            <div className="h-12 w-12 rounded-full bg-muted border-2 border-dashed flex items-center justify-center">
+  1479→                              <User className="h-5 w-5 text-muted-foreground" />
+  1480→                            </div>
+  1481→                          )}
+  1482→                          <label className="cursor-pointer">
+  1483→                            <span className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border bg-muted hover:bg-muted/80 transition-colors">
+  1484→                              <Upload className="h-3 w-3" />{form.profilePhotoPath ? "Change" : "Upload"}
+  1485→                            </span>
+  1486→                            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploading === "profile"} onChange={async (e) => {
+  1487→                              const f = e.target.files?.[0]; if (!f) return;
+  1488→                              setUploading("profile");
+  1489→                              try { const path = await uploadFile(f, "profile"); setForm({ ...form, profilePhotoPath: path }); toast.success("Profile photo uploaded"); }
+  1490→                              catch (err: any) { toast.error(err.message || "Upload failed"); }
+  1491→                              finally { setUploading(null); e.target.value = ""; }
+  1492→                            }} />
+  1493→                          </label>
+  1494→                          {uploading === "profile" && <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>}
+  1495→                        </div>
+  1496→                      </div>
+  1497→                      <div className="space-y-1.5">
+  1498→                        <Label className="text-xs">KYC Document</Label>
+  1499→                        <div className="flex items-center gap-2">
+  1500→                          {form.kycDocPath ? (
+  1501→                            <div className="relative group flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 border border-green-200">
+  1502→                              <FileText className="h-3.5 w-3.5 text-green-600" />
+  1503→                              <span className="text-xs text-green-700 max-w-[100px] truncate">Uploaded</span>
+  1504→                              <button type="button" className="h-4 w-4 rounded-full bg-green-600 text-white flex items-center justify-center" onClick={() => setForm({ ...form, kycDocPath: "" })}>
+  1505→                                <X className="h-2.5 w-2.5" />
+  1506→                              </button>
+  1507→                            </div>
+  1508→                          ) : (
+  1509→                            <span className="text-xs text-muted-foreground">No document</span>
+  1510→                          )}
+  1511→                          <label className="cursor-pointer">
+  1512→                            <span className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border bg-muted hover:bg-muted/80 transition-colors">
+  1513→                              <Upload className="h-3 w-3" />{form.kycDocPath ? "Change" : "Upload"}
+  1514→                            </span>
+  1515→                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" disabled={uploading === "kyc"} onChange={async (e) => {
+  1516→                              const f = e.target.files?.[0]; if (!f) return;
+  1517→                              setUploading("kyc");
+  1518→                              try { const path = await uploadFile(f, "kyc"); setForm({ ...form, kycDocPath: path }); toast.success("KYC document uploaded"); }
+  1519→                              catch (err: any) { toast.error(err.message || "Upload failed"); }
+  1520→                              finally { setUploading(null); e.target.value = ""; }
+  1521→                            }} />
+  1522→                          </label>
+  1523→                          {uploading === "kyc" && <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>}
+  1524→                        </div>
+  1525→                      </div>
+  1526→                    </div>
+  1527→                  </div>
+  1528→                </div>
+  1529→                <div className="rounded-lg border bg-card">
+  1530→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1531→                    <MapPin className="h-4 w-4 text-primary" />
+  1532→                    <span className="text-sm font-semibold">Address Details</span>
+  1533→                  </div>
+  1534→                  <div className="p-4 space-y-3">
+  1535→                    <div className="space-y-1.5">
+  1536→                      <Label className="text-xs">Full Address</Label>
+  1537→                      <Textarea placeholder="House/flat no, street, locality..." value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} className="text-sm" />
+  1538→                    </div>
+  1539→                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+  1540→                      <div className="space-y-1.5">
+  1541→                        <Label className="text-xs">Area / Zone</Label>
+  1542→                        <Select value={form.areaId || "none"} onValueChange={(v) => setForm({ ...form, areaId: v === "none" ? "" : v })}>
+  1543→                          <SelectTrigger className="h-9"><SelectValue placeholder="Select area" /></SelectTrigger>
+  1544→                          <SelectContent>
+  1545→                            <SelectItem value="none">No Area</SelectItem>
+  1546→                            {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+  1547→                          </SelectContent>
+  1548→                        </Select>
+  1549→                      </div>
+  1550→                      <div className="space-y-1.5">
+  1551→                        <Label className="text-xs">Landmark</Label>
+  1552→                        <Input placeholder="Near..." value={form.landmark} onChange={(e) => setForm({ ...form, landmark: e.target.value })} className="h-9" />
+  1553→                      </div>
+  1554→                      <div className="space-y-1.5">
+  1555→                        <Label className="text-xs">Pincode</Label>
+  1556→                        <Input placeholder="6-digit" maxLength={6} className="h-9 font-mono" value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "") })} />
+  1557→                      </div>
+  1558→                    </div>
+  1559→                  </div>
+  1560→                </div>
+  1561→              </>
+  1562→            )}
+  1563→
+  1564→            {/* ══════ STEP 2: Plan & Network ══════ */}
+  1565→            {formStep === 2 && (
+  1566→              <>
+  1567→                <div className="rounded-lg border bg-card">
+  1568→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1569→                    <Zap className="h-4 w-4 text-primary" />
+  1570→                    <span className="text-sm font-semibold">Plan & Connection</span>
+  1571→                  </div>
+  1572→                  <div className="p-4 space-y-3">
+  1573→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1574→                      <div className="space-y-1.5">
+  1575→                        <Label className="text-xs">Plan</Label>
+  1576→                        <Select value={form.planId || "none"} onValueChange={(v) => {
+  1577→                          const newPlanId = v === "none" ? "" : v;
+  1578→                          const plan = plans?.find((p) => p.id === newPlanId);
+  1579→                          const ipv6AutoFill: Record<string, string> = {};
+  1580→                          if (isModuleEnabled("ipv6") && plan?.ipv6Enabled) {
+  1581→                            ipv6AutoFill.ipStackType = "DUAL_STACK";
+  1582→                            ipv6AutoFill.ipv6AssignmentMode = plan.ipv6AssignmentMode || "SLAAC";
+  1583→                          } else {
+  1584→                            ipv6AutoFill.ipStackType = "IPV4_ONLY";
+  1585→                          }
+  1586→                          setForm({ ...form, planId: newPlanId, ...ipv6AutoFill });
+  1587→                        }}>
+  1588→                          <SelectTrigger className="h-9"><SelectValue placeholder="Select plan" /></SelectTrigger>
+  1589→                          <SelectContent>
+  1590→                            <SelectItem value="none">No Plan</SelectItem>
+  1591→                            {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}/mo</SelectItem>)}
+  1592→                          </SelectContent>
+  1593→                        </Select>
+  1594→                      </div>
+  1595→                      <div className="space-y-1.5">
+  1596→                        <Label className="text-xs">Connection Type</Label>
+  1597→                        <Select value={form.connectionType} onValueChange={(v) => setForm({ ...form, connectionType: v })}>
+  1598→                          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1599→                          <SelectContent>
+  1600→                            <SelectItem value="FTTH">FTTH (Fiber)</SelectItem>
+  1601→                            <SelectItem value="WIRELESS">Wireless</SelectItem>
+  1602→                            <SelectItem value="CABLE">Cable</SelectItem>
+  1603→                            <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
+  1604→                            <SelectItem value="ETHERNET">Ethernet</SelectItem>
+  1605→                          </SelectContent>
+  1606→                        </Select>
+  1607→                      </div>
+  1608→                    </div>
+  1609→                    {selectedPlan && (
+  1610→                      <div className="flex items-center gap-2 p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+  1611→                        <Zap className="h-4 w-4 text-emerald-600 shrink-0" />
+  1612→                        <p className="text-sm text-emerald-800 dark:text-emerald-300">
+  1613→                          <span className="font-medium">Plan Price:</span> {formatINR(selectedPlan.priceMonthly)}<span className="text-muted-foreground">/month</span>
+  1614→                        </p>
+  1615→                      </div>
+  1616→                    )}
+  1617→                    {isModuleEnabled("ipv6") && selectedPlan && form.ipStackType !== "IPV4_ONLY" && !selectedPlan.ipv6Enabled && (
+  1618→                      <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
+  1619→                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+  1620→                        <p>Plan "{selectedPlan.name}" doesn't include IPv6. IPv6 is custom-assigned to this subscriber.</p>
+  1621→                      </div>
+  1622→                    )}
+  1623→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1624→                      <div className="space-y-1.5">
+  1625→                        <Label className="text-xs">Billing Cycle</Label>
+  1626→                        <Select value={form.billingCycle} onValueChange={(v) => setForm({ ...form, billingCycle: v })}>
+  1627→                          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1628→                          <SelectContent>
+  1629→                            <SelectItem value="MONTHLY">Monthly</SelectItem>
+  1630→                            <SelectItem value="QUARTERLY">Quarterly (3 months)</SelectItem>
+  1631→                            <SelectItem value="HALF_YEARLY">Half-Yearly (6 months)</SelectItem>
+  1632→                            <SelectItem value="YEARLY">Yearly (12 months)</SelectItem>
+  1633→                          </SelectContent>
+  1634→                        </Select>
+  1635→                      </div>
+  1636→                      <div className="flex items-center gap-2 pt-5">
+  1637→                        <Checkbox id="generateInvoice" checked={form.generateInvoice} onCheckedChange={(v) => setForm({ ...form, generateInvoice: v === true })} />
+  1638→                        <Label htmlFor="generateInvoice" className="cursor-pointer text-xs">Auto-generate first invoice</Label>
+  1639→                      </div>
+  1640→                    </div>
+  1641→                  </div>
+  1642→                </div>
+  1643→                <div className="rounded-lg border bg-card">
+  1644→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1645→                    <KeyRound className="h-4 w-4 text-primary" />
+  1646→                    <span className="text-sm font-semibold">Service Credentials</span>
+  1647→                  </div>
+  1648→                  <div className="p-4">
+  1649→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1650→                      <div className="space-y-1.5">
+  1651→                        <Label className="text-xs">Service Username</Label>
+  1652→                        <div className="flex gap-1.5">
+  1653→                          <Input placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.serviceUsername} onChange={(e) => setForm({ ...form, serviceUsername: e.target.value })} />
+  1654→                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, serviceUsername: `service_${genId(6)}` })}>
+  1655→                            <RefreshCw className="h-3.5 w-3.5" />
+  1656→                          </Button>
+  1657→                        </div>
+  1658→                      </div>
+  1659→                      <div className="space-y-1.5">
+  1660→                        <Label className="text-xs">Service Password</Label>
+  1661→                        <div className="flex gap-1.5">
+  1662→                          <Input type={showPassword ? "text" : "password"} placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.servicePassword} onChange={(e) => setForm({ ...form, servicePassword: e.target.value })} />
+  1663→                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title={showPassword ? "Hide" : "Show"} onClick={() => setShowPassword(!showPassword)}>
+  1664→                            {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+  1665→                          </Button>
+  1666→                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, servicePassword: genId(10) })}>
+  1667→                            <RefreshCw className="h-3.5 w-3.5" />
+  1668→                          </Button>
+  1669→                        </div>
+  1670→                      </div>
+  1671→                    </div>
+  1672→                  </div>
+  1673→                </div>
+  1674→                <div className="rounded-lg border bg-card">
+  1675→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1676→                    <Network className="h-4 w-4 text-primary" />
+  1677→                    <span className="text-sm font-semibold">IP Configuration</span>
+  1678→                  </div>
+  1679→                  <div className="p-4 space-y-3">
+  1680→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1681→                      <div className="space-y-1.5">
+  1682→                        <Label className="text-xs">IP Type</Label>
+  1683→                        <Select value={form.ipType} onValueChange={(v) => setForm({ ...form, ipType: v as "DYNAMIC" | "STATIC", ipAddress: "", ipSubnetId: "" })}>
+  1684→                          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1685→                          <SelectContent>
+  1686→                            <SelectItem value="DYNAMIC">Dynamic (DHCP Auto)</SelectItem>
+  1687→                            <SelectItem value="STATIC">Static (Select from Pool)</SelectItem>
+  1688→                          </SelectContent>
+  1689→                        </Select>
+  1690→                      </div>
+  1691→                      {form.ipType === "STATIC" && (
+  1692→                        <div className="space-y-1.5">
+  1693→                          <Label className="text-xs">MAC Address</Label>
+  1694→                          <Input placeholder="AA:BB:CC:DD:EE:FF" className="font-mono text-sm h-9" value={form.macAddress} onChange={(e) => setForm({ ...form, macAddress: e.target.value })} />
+  1695→                        </div>
+  1696→                      )}
+  1697→                    </div>
+  1698→                    {form.ipType === "STATIC" && (
+  1699→                      <>
+  1700→                        <div className="space-y-1.5">
+  1701→                          <Label className="text-xs">Select Subnet (IP Pool)</Label>
+  1702→                          <Select value={form.ipSubnetId || "none"} onValueChange={(v) => setForm({ ...form, ipSubnetId: v === "none" ? "" : v, ipAddress: "" })}>
+  1703→                            <SelectTrigger className="h-9"><SelectValue placeholder="Choose a subnet..." /></SelectTrigger>
+  1704→                            <SelectContent>
+  1705→                              <SelectItem value="none">Select Subnet</SelectItem>
+  1706→                              {subnets?.map?.((s) => (
+  1707→                                <SelectItem key={s.id} value={s.id}>
+  1708→                                  <span className="flex items-center gap-2">
+  1709→                                    <span className="font-medium">{s.name}</span>
+  1710→                                    <span className="text-muted-foreground text-xs">({s.cidr})</span>
+  1711→                                    <Badge variant="secondary" className="text-[10px] ml-auto">{s.freeIps} free</Badge>
+  1712→                                  </span>
+  1713→                                </SelectItem>
+  1714→                              ))}
+  1715→                            </SelectContent>
+  1716→                          </Select>
+  1717→                        </div>
+  1718→                        {form.ipSubnetId && (
+  1719→                          <div className="space-y-1.5">
+  1720→                            <Label className="text-xs">Select IP Address from Pool</Label>
+  1721→                            {availableIps && availableIps.length > 0 ? (
+  1722→                              <Select value={form.ipAddress || "none"} onValueChange={(v) => setForm({ ...form, ipAddress: v === "none" ? "" : v })}>
+  1723→                                <SelectTrigger className="h-9"><SelectValue placeholder="Choose an IP..." /></SelectTrigger>
+  1724→                                <SelectContent className="max-h-48">
+  1725→                                  <SelectItem value="none">Select IP</SelectItem>
+  1726→                                  {availableIps.map((ip) => (
+  1727→                                    <SelectItem key={ip.id} value={ip.address}>
+  1728→                                      <span className="font-mono text-xs">{ip.address}</span>
+  1729→                                      {ip.hostname && <span className="text-muted-foreground text-xs ml-2">({ip.hostname})</span>}
+  1730→                                    </SelectItem>
+  1731→                                  ))}
+  1732→                                </SelectContent>
+  1733→                              </Select>
+  1734→                            ) : (
+  1735→                              <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+  1736→                                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+  1737→                                <p className="text-xs text-amber-700 dark:text-amber-300">No available IPs in this subnet. All IPs are assigned.</p>
+  1738→                              </div>
+  1739→                            )}
+  1740→                          </div>
+  1741→                        )}
+  1742→                      </>
+  1743→                    )}
+  1744→                    {form.ipType === "DYNAMIC" && (
+  1745→                      <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50">
+  1746→                        <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+  1747→                        <p className="text-xs text-muted-foreground">IP will be assigned automatically by DHCP server</p>
+  1748→                      </div>
+  1749→                    )}
+  1750→                  </div>
+  1751→                </div>
+  1752→                {isModuleEnabled("ipv6") && (
+  1753→                <div className="rounded-lg border bg-card">
+  1754→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1755→                    <Globe className="h-4 w-4 text-primary" />
+  1756→                    <span className="text-sm font-semibold">IPv6 Configuration</span>
+  1757→                  </div>
+  1758→                  <div className="p-4 space-y-3">
+  1759→                    <div className="space-y-1.5">
+  1760→                      <Label className="text-xs">IP Stack Type</Label>
+  1761→                      <Select value={form.ipStackType} onValueChange={(v) => setForm({ ...form, ipStackType: v, ipv6Address: "", ipv6Prefix: "" })}>
+  1762→                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1763→                        <SelectContent>
+  1764→                          <SelectItem value="IPV4_ONLY">IPv4 Only</SelectItem>
+  1765→                          <SelectItem value="DUAL_STACK">Dual Stack (IPv4 + IPv6)</SelectItem>
+  1766→                          <SelectItem value="IPV6_ONLY">IPv6 Only</SelectItem>
+  1767→                        </SelectContent>
+  1768→                      </Select>
+  1769→                    </div>
+  1770→                    {(form.ipStackType === "DUAL_STACK" || form.ipStackType === "IPV6_ONLY") && (
+  1771→                      <>
+  1772→                        <div className="space-y-1.5">
+  1773→                          <Label className="text-xs">IPv6 Assignment Mode</Label>
+  1774→                          <Select value={form.ipv6AssignmentMode} onValueChange={(v) => setForm({ ...form, ipv6AssignmentMode: v, ipv6Address: "" })}>
+  1775→                            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1776→                            <SelectContent>
+  1777→                              <SelectItem value="SLAAC">SLAAC (Auto-config)</SelectItem>
+  1778→                              <SelectItem value="DHCPV6">DHCPv6 (Server assigned)</SelectItem>
+  1779→                              <SelectItem value="STATIC">Static (Manual)</SelectItem>
+  1780→                              <SelectItem value="PD_ONLY">Prefix Delegation Only</SelectItem>
+  1781→                            </SelectContent>
+  1782→                          </Select>
+  1783→                        </div>
+  1784→                        {form.ipv6AssignmentMode === "STATIC" && (
+  1785→                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1786→                            <div className="space-y-1.5">
+  1787→                              <Label className="text-xs">IPv6 Address</Label>
+  1788→                              <Input placeholder="2001:db8::1" className="font-mono text-sm h-9" value={form.ipv6Address} onChange={(e) => setForm({ ...form, ipv6Address: e.target.value })} />
+  1789→                            </div>
+  1790→                            <div className="space-y-1.5">
+  1791→                              <Label className="text-xs">Prefix Length</Label>
+  1792→                              <Select value={String(form.ipv6PrefixLength)} onValueChange={(v) => setForm({ ...form, ipv6PrefixLength: Number(v) })}>
+  1793→                                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1794→                                <SelectContent>
+  1795→                                  <SelectItem value="60">/60</SelectItem>
+  1796→                                  <SelectItem value="64">/64</SelectItem>
+  1797→                                  <SelectItem value="80">/80</SelectItem>
+  1798→                                  <SelectItem value="96">/96</SelectItem>
+  1799→                                  <SelectItem value="112">/112</SelectItem>
+  1800→                                  <SelectItem value="128">/128</SelectItem>
+  1801→                                </SelectContent>
+  1802→                              </Select>
+  1803→                            </div>
+  1804→                          </div>
+  1805→                        )}
+  1806→                        {(form.ipStackType === "DUAL_STACK" || form.ipv6AssignmentMode === "PD_ONLY") && (
+  1807→                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1808→                            <div className="space-y-1.5">
+  1809→                              <Label className="text-xs">IPv6 Prefix (Delegated)</Label>
+  1810→                              <Input placeholder="2001:db8:42::" className="font-mono text-sm h-9" value={form.ipv6Prefix} onChange={(e) => setForm({ ...form, ipv6Prefix: e.target.value })} />
+  1811→                            </div>
+  1812→                            <div className="space-y-1.5">
+  1813→                              <Label className="text-xs">Prefix Length</Label>
+  1814→                              <Select value={String(form.ipv6PrefixLength)} onValueChange={(v) => setForm({ ...form, ipv6PrefixLength: Number(v) })}>
+  1815→                                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1816→                                <SelectContent>
+  1817→                                  <SelectItem value="48">/48</SelectItem>
+  1818→                                  <SelectItem value="56">/56</SelectItem>
+  1819→                                  <SelectItem value="60">/60</SelectItem>
+  1820→                                  <SelectItem value="64">/64</SelectItem>
+  1821→                                </SelectContent>
+  1822→                              </Select>
+  1823→                            </div>
+  1824→                          </div>
+  1825→                        )}
+  1826→                        <div className="space-y-1.5">
+  1827→                          <Label className="text-xs">DUID <span className="text-[10px] text-muted-foreground font-normal">(auto-detected)</span></Label>
+  1828→                          <Input placeholder="Auto-detected from client" className="font-mono text-sm h-9 bg-muted/50" value={form.ipv6Duid} readOnly />
+  1829→                        </div>
+  1830→                      </>
+  1831→                    )}
+  1832→                  </div>
+  1833→                </div>
+  1834→                )}
+  1835→                <div className="rounded-lg border bg-card">
+  1836→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1837→                    <Shield className="h-4 w-4 text-primary" />
+  1838→                    <span className="text-sm font-semibold">Login Restriction</span>
+  1839→                  </div>
+  1840→                  <div className="p-4 space-y-3">
+  1841→                    <div className="space-y-1.5">
+  1842→                      <Label className="text-xs">Restriction Type</Label>
+  1843→                      <Select value={form.loginRestriction} onValueChange={(v) => setForm({ ...form, loginRestriction: v as "all" | "subnet" | "specific", loginSubnetId: "", loginSpecificIp: "" })}>
+  1844→                        <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  1845→                        <SelectContent>
+  1846→                          <SelectItem value="all">All Nodes (No Restriction)</SelectItem>
+  1847→                          <SelectItem value="subnet">Selected Subnet Only</SelectItem>
+  1848→                          <SelectItem value="specific">Specific IP Address</SelectItem>
+  1849→                        </SelectContent>
+  1850→                      </Select>
+  1851→                    </div>
+  1852→                    {form.loginRestriction === "subnet" && (
+  1853→                      <div className="space-y-1.5">
+  1854→                        <Label className="text-xs">Subnet</Label>
+  1855→                        <Select value={form.loginSubnetId || "none"} onValueChange={(v) => setForm({ ...form, loginSubnetId: v === "none" ? "" : v })}>
+  1856→                          <SelectTrigger className="h-9"><SelectValue placeholder="Select subnet..." /></SelectTrigger>
+  1857→                          <SelectContent>
+  1858→                            <SelectItem value="none">No Restriction</SelectItem>
+  1859→                            {subnets?.map?.((s) => (
+  1860→                              <SelectItem key={s.id} value={s.id}>
+  1861→                                <span className="flex items-center gap-2">
+  1862→                                  <span>{s.name}</span>
+  1863→                                  <span className="text-muted-foreground text-xs">({s.cidr})</span>
+  1864→                                </span>
+  1865→                              </SelectItem>
+  1866→                            ))}
+  1867→                          </SelectContent>
+  1868→                        </Select>
+  1869→                      </div>
+  1870→                    )}
+  1871→                    {form.loginRestriction === "specific" && (
+  1872→                      <div className="space-y-1.5">
+  1873→                        <Label className="text-xs">Allowed IP Address</Label>
+  1874→                        <Input placeholder="Enter specific IP allowed to login" className="font-mono text-sm h-9" value={form.loginSpecificIp} onChange={(e) => setForm({ ...form, loginSpecificIp: e.target.value })} />
+  1875→                        <p className="text-[10px] text-muted-foreground">Subscriber will only be able to login from this specific IP address</p>
+  1876→                      </div>
+  1877→                    )}
+  1878→                  </div>
+  1879→                </div>
+  1880→                <div className="rounded-lg border bg-card">
+  1881→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1882→                    <Server className="h-4 w-4 text-primary" />
+  1883→                    <span className="text-sm font-semibold">Device Assignment</span>
+  1884→                    <Badge variant="outline" className="ml-auto text-[10px]">Optional</Badge>
+  1885→                  </div>
+  1886→                  <div className="p-4">
+  1887→                    <div className="space-y-1.5">
+  1888→                      <Label className="text-xs">Assign Network Device</Label>
+  1889→                      <Select value={form.assignedDeviceId || "none"} onValueChange={(v) => setForm({ ...form, assignedDeviceId: v === "none" ? "" : v })}>
+  1890→                        <SelectTrigger className="h-9"><SelectValue placeholder="Select device..." /></SelectTrigger>
+  1891→                        <SelectContent>
+  1892→                          <SelectItem value="none">No Device</SelectItem>
+  1893→                          {devices?.map?.((d) => (
+  1894→                            <SelectItem key={d.id} value={d.id}>
+  1895→                              <span className="flex items-center gap-2">
+  1896→                                <span>{d.name}</span>
+  1897→                                <span className="text-muted-foreground text-xs font-mono">({d.ipAddress})</span>
+  1898→                                <Badge variant="outline" className="text-[10px]">{d.type}</Badge>
+  1899→                              </span>
+  1900→                            </SelectItem>
+  1901→                          ))}
+  1902→                        </SelectContent>
+  1903→                      </Select>
+  1904→                    </div>
+  1905→                  </div>
+  1906→                </div>
+  1907→              </>
+  1908→            )}
+  1909→
+  1910→            {/* ══════ STEP 3: Equipment & Billing ══════ */}
+  1911→            {formStep === 3 && (
+  1912→              <>
+  1913→                <div className="rounded-lg border bg-card">
+  1914→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1915→                    <Router className="h-4 w-4 text-primary" />
+  1916→                    <span className="text-sm font-semibold">Router & Equipment</span>
+  1917→                  </div>
+  1918→                  <div className="p-4 space-y-3">
+  1919→                    <div className="flex items-center gap-2">
+  1920→                      <Checkbox id="routerRented" checked={form.routerRented} onCheckedChange={(v) => setForm({ ...form, routerRented: v === true, routerSerial: "", routerDeposit: "" })} />
+  1921→                      <Label htmlFor="routerRented" className="cursor-pointer text-xs">Router Provided by ISP (Rented)</Label>
+  1922→                    </div>
+  1923→                    {form.routerRented && (
+  1924→                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 ml-4 pl-4 border-l-2 border-primary/20">
+  1925→                        <div className="space-y-1.5">
+  1926→                          <Label className="text-xs">Serial Number <span className="text-red-500">*</span></Label>
+  1927→                          <Input placeholder="Enter serial number" className="font-mono text-sm h-9" value={form.routerSerial} onChange={(e) => setForm({ ...form, routerSerial: e.target.value })} />
+  1928→                        </div>
+  1929→                        <div className="space-y-1.5">
+  1930→                          <Label className="text-xs">Security Deposit (₹)</Label>
+  1931→                          <Input placeholder="0" type="number" min="0" className="h-9" value={form.routerDeposit} onChange={(e) => setForm({ ...form, routerDeposit: e.target.value })} />
+  1932→                        </div>
+  1933→                      </div>
+  1934→                    )}
+  1935→                  </div>
+  1936→                </div>
+  1937→                <div className="rounded-lg border bg-card">
+  1938→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1939→                    <CreditCard className="h-4 w-4 text-primary" />
+  1940→                    <span className="text-sm font-semibold">Billing & Tax Information</span>
+  1941→                  </div>
+  1942→                  <div className="p-4 space-y-3">
+  1943→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1944→                      <div className="space-y-1.5">
+  1945→                        <Label className="text-xs">GSTIN</Label>
+  1946→                        <Input placeholder="22AAAAA0000A1Z5" className="font-mono text-sm h-9 uppercase" value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value.toUpperCase() })} />
+  1947→                      </div>
+  1948→                      <div className="space-y-1.5">
+  1949→                        <Label className="text-xs">PAN Number</Label>
+  1950→                        <Input placeholder="ABCDE1234F" className="font-mono text-sm h-9 uppercase" maxLength={10} value={form.panNumber} onChange={(e) => setForm({ ...form, panNumber: e.target.value.toUpperCase() })} />
+  1951→                      </div>
+  1952→                    </div>
+  1953→                    <p className="text-[10px] text-muted-foreground">GSTIN and PAN are required for business/GST billing. Leave blank for residential customers.</p>
+  1954→                  </div>
+  1955→                </div>
+  1956→              </>
+  1957→            )}
+  1958→
+  1959→            {/* ══════ STEP 4: Additional ══════ */}
+  1960→            {formStep === 4 && (
+  1961→              <>
+  1962→                <div className="rounded-lg border bg-card">
+  1963→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1964→                    <Clock className="h-4 w-4 text-primary" />
+  1965→                    <span className="text-sm font-semibold">Activation & Billing Dates</span>
+  1966→                  </div>
+  1967→                  <div className="p-4">
+  1968→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1969→                      <div className="space-y-1.5">
+  1970→                        <Label className="text-xs">Activation Date</Label>
+  1971→                        <Input type="date" className="h-9" value={form.activationDate} onChange={(e) => setForm({ ...form, activationDate: e.target.value })} />
+  1972→                        <p className="text-[10px] text-muted-foreground">Leave blank for today</p>
+  1973→                      </div>
+  1974→                      <div className="space-y-1.5">
+  1975→                        <Label className="text-xs">Billing Start Date</Label>
+  1976→                        <Input type="date" className="h-9" value={form.billingStartDate} onChange={(e) => setForm({ ...form, billingStartDate: e.target.value })} />
+  1977→                        <p className="text-[10px] text-muted-foreground">First billing cycle begins</p>
+  1978→                      </div>
+  1979→                    </div>
+  1980→                  </div>
+  1981→                </div>
+  1982→                <div className="rounded-lg border bg-card">
+  1983→                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  1984→                    <MessageSquare className="h-4 w-4 text-primary" />
+  1985→                    <span className="text-sm font-semibold">Notes</span>
+  1986→                  </div>
+  1987→                  <div className="p-4 space-y-3">
+  1988→                    <div className="space-y-1.5">
+  1989→                      <Label className="text-xs">Customer Notes <span className="text-[10px] text-muted-foreground font-normal">(visible to subscriber)</span></Label>
+  1990→                      <Textarea placeholder="Special instructions, welcome note..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} className="text-sm" />
+  1991→                    </div>
+  1992→                    <div className="space-y-1.5">
+  1993→                      <Label className="text-xs">Internal Notes <span className="text-[10px] text-muted-foreground font-normal">(staff only)</span></Label>
+  1994→                      <Textarea placeholder="Internal observations, special handling..." value={form.internalNotes} onChange={(e) => setForm({ ...form, internalNotes: e.target.value })} rows={3} className="text-sm" />
+  1995→                    </div>
+  1996→                  </div>
+  1997→                </div>
+  1998→                <div className="rounded-lg border bg-gradient-to-r from-primary/5 to-primary/10">
+  1999→                  <div className="px-4 py-3 space-y-1.5">
+  2000→                    <p className="text-xs font-semibold text-primary">Registration Summary</p>
+  2001→                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+  2002→                      <span className="text-muted-foreground">Name:</span><span className="font-medium truncate">{form.name || "—"}</span>
+  2003→                      <span className="text-muted-foreground">Phone:</span><span className="font-mono">{form.phone || "—"}</span>
+  2004→                      <span className="text-muted-foreground">Plan:</span><span className="font-medium">{selectedPlan?.name || "No plan"}</span>
+  2005→                      <span className="text-muted-foreground">Connection:</span><span>{form.connectionType}</span>
+  2006→                      <span className="text-muted-foreground">IP:</span><span>{form.ipType === "DYNAMIC" ? "Dynamic" : `Static: ${form.ipAddress || "Not selected"}`}</span>
+  2007→                      <span className="text-muted-foreground">Billing:</span><span>{form.billingCycle.replace("_", " ")}</span>
+  2008→                      <span className="text-muted-foreground">Invoice:</span><span>{form.generateInvoice ? "Auto" : "Manual"}</span>
+  2009→                      <span className="text-muted-foreground">Login:</span><span>{form.loginRestriction === "all" ? "All Nodes" : form.loginRestriction === "subnet" ? "Subnet" : `IP: ${form.loginSpecificIp}`}</span>
+  2010→                    </div>
+  2011→                  </div>
+  2012→                </div>
+  2013→              </>
+  2014→            )}
+  2015→          </div>
+  2016→
+  2017→          <DialogFooter className="border-t pt-3 mt-1 shrink-0">
+  2018→            <div className="flex w-full items-center justify-between">
+  2019→              <Button variant="outline" size="sm" onClick={() => setAddOpen(false)}>Cancel</Button>
+  2020→              <div className="flex gap-2">
+  2021→                {formStep > 1 && (
+  2022→                  <Button variant="outline" size="sm" onClick={() => setFormStep(formStep - 1)}>
+  2023→                    <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Back
+  2024→                  </Button>
+  2025→                )}
+  2026→                {formStep < TOTAL_STEPS ? (
+  2027→                  <Button size="sm" onClick={() => setFormStep(formStep + 1)}>
+  2028→                    Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+  2029→                  </Button>
+  2030→                ) : (
+  2031→                  <Button onClick={handleCreate} disabled={createMutation.isPending || !form.name || !form.phone} className="bg-red-600 hover:bg-red-700 text-white">
+  2032→                    {createMutation.isPending ? (
+  2033→                      <span className="flex items-center gap-1.5"><Timer className="h-3.5 w-3.5 animate-spin" /> Creating...</span>
+  2034→                    ) : (
+  2035→                      <span className="flex items-center gap-1.5"><UserPlus className="h-3.5 w-3.5" /> Create Subscriber</span>
+  2036→                    )}
+  2037→                  </Button>
+  2038→                )}
+  2039→              </div>
+  2040→            </div>
+  2041→          </DialogFooter>
+  2042→        </DialogContent>
+  2043→      </Dialog>
+  2044→
+  2045→      {/* ─── Credentials Dialog ─── */}
+  2046→      <Dialog open={credentialsOpen} onOpenChange={setCredentialsOpen}>
+  2047→        <DialogContent className="sm:max-w-[420px]">
+  2048→          <DialogHeader>
+  2049→            <DialogTitle className="flex items-center gap-2">
+  2050→              <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+  2051→                <CheckCircle2 className="h-4 w-4 text-green-600" />
+  2052→              </div>
+  2053→              Subscriber Created
+  2054→            </DialogTitle>
+  2055→            <DialogDescription>Save these credentials for the subscriber</DialogDescription>
+  2056→          </DialogHeader>
+  2057→          <div className="space-y-3 py-2">
+  2058→            <div className="p-3 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg">
+  2059→              <p className="text-sm font-medium text-green-800 dark:text-green-300">
+  2060→                Subscriber Code: <span className="font-mono font-bold">{createdSub?.code || "—"}</span>
+  2061→              </p>
+  2062→            </div>
+  2063→            <div className="space-y-1.5">
+  2064→              <Label className="text-xs text-muted-foreground">Service Username</Label>
+  2065→              <div className="flex gap-2">
+  2066→                <Input readOnly value={createdSub?.serviceUsername || createdSub?.generatedUsername || ""} className="font-mono text-sm bg-muted" />
+  2067→                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.serviceUsername || createdSub?.generatedUsername || "")}>
+  2068→                  <Copy className="h-3.5 w-3.5" />
+  2069→                </Button>
+  2070→              </div>
+  2071→            </div>
+  2072→            <div className="space-y-1.5">
+  2073→              <Label className="text-xs text-muted-foreground">Service Password</Label>
+  2074→              <div className="flex gap-2">
+  2075→                <Input readOnly value={createdSub?.servicePassword || createdSub?.generatedPassword || ""} className="font-mono text-sm bg-muted" />
+  2076→                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.servicePassword || createdSub?.generatedPassword || "")}>
+  2077→                  <Copy className="h-3.5 w-3.5" />
+  2078→                </Button>
+  2079→              </div>
+  2080→            </div>
+  2081→            <div className="flex items-start gap-2 p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg mt-2">
+  2082→              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+  2083→              <p className="text-xs text-amber-700 dark:text-amber-400">Share these credentials securely with the subscriber via a trusted channel.</p>
+  2084→            </div>
+  2085→          </div>
+  2086→          <DialogFooter>
+  2087→            <Button onClick={() => setCredentialsOpen(false)} className="bg-red-600 hover:bg-red-700 text-white w-full sm:w-auto">
+  2088→              Done
+  2089→            </Button>
+  2090→          </DialogFooter>
+  2091→        </DialogContent>
+  2092→      </Dialog>
+  2093→
+  2094→      {/* ─── Edit Subscriber Dialog ─── */}
+  2095→      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+  2096→        <DialogContent className="sm:max-w-[780px] max-h-[94vh] overflow-hidden flex flex-col">
+  2097→          <DialogHeader>
+  2098→            <DialogTitle className="flex items-center gap-2">
+  2099→              <Pencil className="h-5 w-5 text-primary" />
+  2100→              Edit Subscriber
+  2101→            </DialogTitle>
+  2102→            <DialogDescription>Update subscriber details across all sections.</DialogDescription>
+  2103→          </DialogHeader>
+  2104→
+  2105→          <div className="flex-1 overflow-y-auto space-y-4 py-3 pr-1">
+  2106→
+  2107→            {/* ═══ Personal & Contact ═══ */}
+  2108→            <div className="rounded-lg border bg-card">
+  2109→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2110→                <User className="h-4 w-4 text-primary" />
+  2111→                <span className="text-sm font-semibold">Personal & Contact</span>
+  2112→                <Badge variant="outline" className="ml-auto text-[10px]">Editable</Badge>
+  2113→              </div>
+  2114→              <div className="p-4 space-y-3">
+  2115→                <div className="space-y-1.5">
+  2116→                  <Label className="text-xs">Full Name <span className="text-red-500">*</span></Label>
+  2117→                  <Input placeholder="Enter full name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="h-9" />
+  2118→                </div>
+  2119→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2120→                  <div className="space-y-1.5">
+  2121→                    <Label className="text-xs">Phone <span className="text-red-500">*</span></Label>
+  2122→                    <div className="relative">
+  2123→                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">+91</span>
+  2124→                      <Input placeholder="9876543210" maxLength={10} className="pl-10 h-9 font-mono" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value.replace(/\D/g, "") })} />
+  2125→                    </div>
+  2126→                  </div>
+  2127→                  <div className="space-y-1.5">
+  2128→                    <Label className="text-xs">Alternate Phone</Label>
+  2129→                    <div className="relative">
+  2130→                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">+91</span>
+  2131→                      <Input placeholder="Optional" maxLength={10} className="pl-10 h-9 font-mono" value={editForm.altPhone} onChange={(e) => setEditForm({ ...editForm, altPhone: e.target.value.replace(/\D/g, "") })} />
+  2132→                    </div>
+  2133→                  </div>
+  2134→                </div>
+  2135→                <div className="space-y-1.5">
+  2136→                  <Label className="text-xs">Email</Label>
+  2137→                  <Input placeholder="email@example.com" type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="h-9" />
+  2138→                </div>
+  2139→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2140→                  <div className="space-y-1.5">
+  2141→                    <Label className="text-xs">Aadhaar Number (KYC)</Label>
+  2142→                    <Input placeholder="XXXX XXXX XXXX" maxLength={14} className="h-9 font-mono" value={editForm.kycAadhaarNumber} onChange={(e) => {
+  2143→                      const v = e.target.value.replace(/\D/g, "").slice(0, 12);
+  2144→                      const formatted = v.replace(/(\d{4})(?=\d)/g, "$1 ");
+  2145→                      setEditForm({ ...editForm, kycAadhaarNumber: formatted });
+  2146→                    }} />
+  2147→                  </div>
+  2148→                </div>
+  2149→                {/* Profile Photo & KYC Document Upload */}
+  2150→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+  2151→                  <div className="space-y-1.5">
+  2152→                    <Label className="text-xs">Profile Photo</Label>
+  2153→                    <div className="flex items-center gap-2">
+  2154→                      {editForm.profilePhotoPath ? (
+  2155→                        <div className="relative group">
+  2156→                          <img src={`/api/files?path=${encodeURIComponent(editForm.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
+  2157→                          <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setEditForm({ ...editForm, profilePhotoPath: "" })}>
+  2158→                            <X className="h-2.5 w-2.5" />
+  2159→                          </button>
+  2160→                        </div>
+  2161→                      ) : (
+  2162→                        <div className="h-12 w-12 rounded-full bg-muted border-2 border-dashed flex items-center justify-center">
+  2163→                          <User className="h-5 w-5 text-muted-foreground" />
+  2164→                        </div>
+  2165→                      )}
+  2166→                      <label className="cursor-pointer">
+  2167→                        <span className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border bg-muted hover:bg-muted/80 transition-colors">
+  2168→                          <Upload className="h-3 w-3" />{editForm.profilePhotoPath ? "Change" : "Upload"}
+  2169→                        </span>
+  2170→                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploading === "profile"} onChange={async (e) => {
+  2171→                          const f = e.target.files?.[0]; if (!f) return;
+  2172→                          setUploading("profile");
+  2173→                          try { const path = await uploadFile(f, "profile"); setEditForm({ ...editForm, profilePhotoPath: path }); toast.success("Profile photo uploaded"); }
+  2174→                          catch (err: any) { toast.error(err.message || "Upload failed"); }
+  2175→                          finally { setUploading(null); e.target.value = ""; }
+  2176→                        }} />
+  2177→                      </label>
+  2178→                      {uploading === "profile" && <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>}
+  2179→                    </div>
+  2180→                  </div>
+  2181→                  <div className="space-y-1.5">
+  2182→                    <Label className="text-xs">KYC Document</Label>
+  2183→                    <div className="flex items-center gap-2">
+  2184→                      {editForm.kycDocPath ? (
+  2185→                        <div className="relative group flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 border border-green-200">
+  2186→                          <FileText className="h-3.5 w-3.5 text-green-600" />
+  2187→                          <span className="text-xs text-green-700 max-w-[100px] truncate">Uploaded</span>
+  2188→                          <button type="button" className="h-4 w-4 rounded-full bg-green-600 text-white flex items-center justify-center" onClick={() => setEditForm({ ...editForm, kycDocPath: "" })}>
+  2189→                            <X className="h-2.5 w-2.5" />
+  2190→                          </button>
+  2191→                        </div>
+  2192→                      ) : (
+  2193→                        <span className="text-xs text-muted-foreground">No document</span>
+  2194→                      )}
+  2195→                      <label className="cursor-pointer">
+  2196→                        <span className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border bg-muted hover:bg-muted/80 transition-colors">
+  2197→                          <Upload className="h-3 w-3" />{editForm.kycDocPath ? "Change" : "Upload"}
+  2198→                        </span>
+  2199→                        <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" disabled={uploading === "kyc"} onChange={async (e) => {
+  2200→                          const f = e.target.files?.[0]; if (!f) return;
+  2201→                          setUploading("kyc");
+  2202→                          try { const path = await uploadFile(f, "kyc"); setEditForm({ ...editForm, kycDocPath: path }); toast.success("KYC document uploaded"); }
+  2203→                          catch (err: any) { toast.error(err.message || "Upload failed"); }
+  2204→                          finally { setUploading(null); e.target.value = ""; }
+  2205→                        }} />
+  2206→                      </label>
+  2207→                      {uploading === "kyc" && <span className="text-[10px] text-muted-foreground animate-pulse">Uploading...</span>}
+  2208→                    </div>
+  2209→                  </div>
+  2210→                </div>
+  2211→              </div>
+  2212→            </div>
+  2213→
+  2214→            {/* ═══ Address ═══ */}
+  2215→            <div className="rounded-lg border bg-card">
+  2216→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2217→                <MapPin className="h-4 w-4 text-primary" />
+  2218→                <span className="text-sm font-semibold">Address Details</span>
+  2219→              </div>
+  2220→              <div className="p-4 space-y-3">
+  2221→                <div className="space-y-1.5">
+  2222→                  <Label className="text-xs">Full Address</Label>
+  2223→                  <Textarea placeholder="House/flat no, street, locality..." value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} rows={2} className="text-sm" />
+  2224→                </div>
+  2225→                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+  2226→                  <div className="space-y-1.5">
+  2227→                    <Label className="text-xs">Area / Zone</Label>
+  2228→                    <Select value={editForm.areaId || "none"} onValueChange={(v) => setEditForm({ ...editForm, areaId: v === "none" ? "" : v })}>
+  2229→                      <SelectTrigger className="h-9"><SelectValue placeholder="Select area" /></SelectTrigger>
+  2230→                      <SelectContent>
+  2231→                        <SelectItem value="none">No Area</SelectItem>
+  2232→                        {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+  2233→                      </SelectContent>
+  2234→                    </Select>
+  2235→                  </div>
+  2236→                  <div className="space-y-1.5">
+  2237→                    <Label className="text-xs">Landmark</Label>
+  2238→                    <Input placeholder="Near..." value={editForm.landmark} onChange={(e) => setEditForm({ ...editForm, landmark: e.target.value })} className="h-9" />
+  2239→                  </div>
+  2240→                  <div className="space-y-1.5">
+  2241→                    <Label className="text-xs">Pincode</Label>
+  2242→                    <Input placeholder="6-digit" maxLength={6} className="h-9 font-mono" value={editForm.pincode} onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value.replace(/\D/g, "") })} />
+  2243→                  </div>
+  2244→                </div>
+  2245→              </div>
+  2246→            </div>
+  2247→
+  2248→            {/* ═══ Plan & Connection ═══ */}
+  2249→            <div className="rounded-lg border bg-card">
+  2250→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2251→                <Zap className="h-4 w-4 text-primary" />
+  2252→                <span className="text-sm font-semibold">Plan & Connection</span>
+  2253→              </div>
+  2254→              <div className="p-4 space-y-3">
+  2255→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2256→                  <div className="space-y-1.5">
+  2257→                    <Label className="text-xs">Status</Label>
+  2258→                    <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+  2259→                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2260→                      <SelectContent>
+  2261→                        <SelectItem value="ACTIVE"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-green-500" />Active</span></SelectItem>
+  2262→                        <SelectItem value="INACTIVE"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-gray-400" />Inactive</span></SelectItem>
+  2263→                        <SelectItem value="SUSPENDED"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-red-500" />Suspended</span></SelectItem>
+  2264→                        <SelectItem value="TRIAL"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-amber-500" />Trial</span></SelectItem>
+  2265→                      </SelectContent>
+  2266→                    </Select>
+  2267→                  </div>
+  2268→                  <div className="space-y-1.5">
+  2269→                    <Label className="text-xs">Plan</Label>
+  2270→                    <Select value={editForm.planId || "none"} onValueChange={(v) => setEditForm({ ...editForm, planId: v === "none" ? "" : v })}>
+  2271→                      <SelectTrigger className="h-9"><SelectValue placeholder="Select plan" /></SelectTrigger>
+  2272→                      <SelectContent>
+  2273→                        <SelectItem value="none">No Plan</SelectItem>
+  2274→                        {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}/mo</SelectItem>)}
+  2275→                      </SelectContent>
+  2276→                    </Select>
+  2277→                  </div>
+  2278→                </div>
+  2279→                <div className="space-y-1.5">
+  2280→                  <Label className="text-xs">Connection Type</Label>
+  2281→                  <Select value={editForm.connectionType} onValueChange={(v) => setEditForm({ ...editForm, connectionType: v })}>
+  2282→                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2283→                    <SelectContent>
+  2284→                      <SelectItem value="FTTH">FTTH (Fiber)</SelectItem>
+  2285→                      <SelectItem value="WIRELESS">Wireless</SelectItem>
+  2286→                      <SelectItem value="CABLE">Cable</SelectItem>
+  2287→                      <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
+  2288→                      <SelectItem value="ETHERNET">Ethernet</SelectItem>
+  2289→                    </SelectContent>
+  2290→                  </Select>
+  2291→                </div>
+  2292→              </div>
+  2293→            </div>
+  2294→
+  2295→            {/* ═══ Service & Network ═══ */}
+  2296→            <div className="rounded-lg border bg-card">
+  2297→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2298→                <KeyRound className="h-4 w-4 text-primary" />
+  2299→                <span className="text-sm font-semibold">Service & Network</span>
+  2300→                <Badge variant="outline" className="ml-auto text-[10px]">Technical</Badge>
+  2301→              </div>
+  2302→              <div className="p-4 space-y-3">
+  2303→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2304→                  <div className="space-y-1.5">
+  2305→                    <Label className="text-xs">Service Username</Label>
+  2306→                    <Input placeholder="service_username" className="font-mono text-sm h-9" value={editForm.serviceUsername} onChange={(e) => setEditForm({ ...editForm, serviceUsername: e.target.value })} />
+  2307→                  </div>
+  2308→                  <div className="space-y-1.5">
+  2309→                    <Label className="text-xs">Service Password <span className="text-[10px] text-muted-foreground font-normal">(leave blank to keep current)</span></Label>
+  2310→                    <Input type="password" placeholder="Enter new password" className="font-mono text-sm h-9" value={editForm.servicePassword} onChange={(e) => setEditForm({ ...editForm, servicePassword: e.target.value })} />
+  2311→                  </div>
+  2312→                </div>
+  2313→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2314→                  <div className="space-y-1.5">
+  2315→                    <Label className="text-xs">Session Timeout (s)</Label>
+  2316→                    <Input placeholder="e.g. 86400" type="number" min="0" className="h-9 font-mono" value={editForm.sessionTimeout} onChange={(e) => setEditForm({ ...editForm, sessionTimeout: e.target.value })} />
+  2317→                  </div>
+  2318→                  <div className="space-y-1.5">
+  2319→                    <Label className="text-xs">Idle Timeout (s)</Label>
+  2320→                    <Input placeholder="e.g. 300" type="number" min="0" className="h-9 font-mono" value={editForm.idleTimeout} onChange={(e) => setEditForm({ ...editForm, idleTimeout: e.target.value })} />
+  2321→                  </div>
+  2322→                </div>
+  2323→                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+  2324→                  <div className="space-y-1.5">
+  2325→                    <Label className="text-xs">IP Type</Label>
+  2326→                    <Select value={editForm.ipType} onValueChange={(v) => setEditForm({ ...editForm, ipType: v as "DYNAMIC" | "STATIC" })}>
+  2327→                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2328→                      <SelectContent>
+  2329→                        <SelectItem value="DYNAMIC">Dynamic (DHCP)</SelectItem>
+  2330→                        <SelectItem value="STATIC">Static</SelectItem>
+  2331→                      </SelectContent>
+  2332→                    </Select>
+  2333→                  </div>
+  2334→                  {editForm.ipType === "STATIC" && (
+  2335→                    <>
+  2336→                      <div className="space-y-1.5">
+  2337→                        <Label className="text-xs">IP Address</Label>
+  2338→                        <Input placeholder="192.168.1.100" className="font-mono text-sm h-9" value={editForm.ipAddress} onChange={(e) => setEditForm({ ...editForm, ipAddress: e.target.value })} />
+  2339→                      </div>
+  2340→                      <div className="space-y-1.5">
+  2341→                        <Label className="text-xs">MAC Address</Label>
+  2342→                        <Input placeholder="AA:BB:CC:DD:EE:FF" className="font-mono text-sm h-9" value={editForm.macAddress} onChange={(e) => setEditForm({ ...editForm, macAddress: e.target.value })} />
+  2343→                      </div>
+  2344→                    </>
+  2345→                  )}
+  2346→                </div>
+  2347→                {editForm.ipType === "DYNAMIC" && editForm.macAddress && (
+  2348→                  <div className="space-y-1.5">
+  2349→                    <Label className="text-xs">MAC Address</Label>
+  2350→                    <Input placeholder="AA:BB:CC:DD:EE:FF" className="font-mono text-sm h-9" value={editForm.macAddress} onChange={(e) => setEditForm({ ...editForm, macAddress: e.target.value })} />
+  2351→                  </div>
+  2352→                )}
+  2353→                {isModuleEnabled("ipv6") && (
+  2354→                  <div className="mt-3 pt-3 border-t">
+  2355→                    <div className="flex items-center gap-2 mb-3">
+  2356→                      <Globe className="h-4 w-4 text-primary" />
+  2357→                      <span className="text-xs font-semibold">IPv6 Configuration</span>
+  2358→                    </div>
+  2359→                    <div className="space-y-3">
+  2360→                      <div className="space-y-1.5">
+  2361→                        <Label className="text-xs">IP Stack Type</Label>
+  2362→                        <Select value={editForm.ipStackType} onValueChange={(v) => setEditForm({ ...editForm, ipStackType: v, ipv6Address: "", ipv6Prefix: "" })}>
+  2363→                          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2364→                          <SelectContent>
+  2365→                            <SelectItem value="IPV4_ONLY">IPv4 Only</SelectItem>
+  2366→                            <SelectItem value="DUAL_STACK">Dual Stack (IPv4 + IPv6)</SelectItem>
+  2367→                            <SelectItem value="IPV6_ONLY">IPv6 Only</SelectItem>
+  2368→                          </SelectContent>
+  2369→                        </Select>
+  2370→                      </div>
+  2371→                      {(editForm.ipStackType === "DUAL_STACK" || editForm.ipStackType === "IPV6_ONLY") && (
+  2372→                        <>
+  2373→                          <div className="space-y-1.5">
+  2374→                            <Label className="text-xs">IPv6 Assignment Mode</Label>
+  2375→                            <Select value={editForm.ipv6AssignmentMode} onValueChange={(v) => setEditForm({ ...editForm, ipv6AssignmentMode: v, ipv6Address: "" })}>
+  2376→                              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2377→                              <SelectContent>
+  2378→                                <SelectItem value="SLAAC">SLAAC (Auto-config)</SelectItem>
+  2379→                                <SelectItem value="DHCPV6">DHCPv6 (Server assigned)</SelectItem>
+  2380→                                <SelectItem value="STATIC">Static (Manual)</SelectItem>
+  2381→                                <SelectItem value="PD_ONLY">Prefix Delegation Only</SelectItem>
+  2382→                              </SelectContent>
+  2383→                            </Select>
+  2384→                          </div>
+  2385→                          {editForm.ipv6AssignmentMode === "STATIC" && (
+  2386→                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2387→                              <div className="space-y-1.5">
+  2388→                                <Label className="text-xs">IPv6 Address</Label>
+  2389→                                <Input placeholder="2001:db8::1" className="font-mono text-sm h-9" value={editForm.ipv6Address} onChange={(e) => setEditForm({ ...editForm, ipv6Address: e.target.value })} />
+  2390→                              </div>
+  2391→                              <div className="space-y-1.5">
+  2392→                                <Label className="text-xs">Prefix Length</Label>
+  2393→                                <Select value={String(editForm.ipv6PrefixLength)} onValueChange={(v) => setEditForm({ ...editForm, ipv6PrefixLength: Number(v) })}>
+  2394→                                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2395→                                  <SelectContent>
+  2396→                                    <SelectItem value="60">/60</SelectItem>
+  2397→                                    <SelectItem value="64">/64</SelectItem>
+  2398→                                    <SelectItem value="80">/80</SelectItem>
+  2399→                                    <SelectItem value="96">/96</SelectItem>
+  2400→                                    <SelectItem value="112">/112</SelectItem>
+  2401→                                    <SelectItem value="128">/128</SelectItem>
+  2402→                                  </SelectContent>
+  2403→                                </Select>
+  2404→                              </div>
+  2405→                            </div>
+  2406→                          )}
+  2407→                          {(editForm.ipStackType === "DUAL_STACK" || editForm.ipv6AssignmentMode === "PD_ONLY") && (
+  2408→                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2409→                              <div className="space-y-1.5">
+  2410→                                <Label className="text-xs">IPv6 Prefix (Delegated)</Label>
+  2411→                                <Input placeholder="2001:db8:42::" className="font-mono text-sm h-9" value={editForm.ipv6Prefix} onChange={(e) => setEditForm({ ...editForm, ipv6Prefix: e.target.value })} />
+  2412→                              </div>
+  2413→                              <div className="space-y-1.5">
+  2414→                                <Label className="text-xs">Prefix Length</Label>
+  2415→                                <Select value={String(editForm.ipv6PrefixLength)} onValueChange={(v) => setEditForm({ ...editForm, ipv6PrefixLength: Number(v) })}>
+  2416→                                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+  2417→                                  <SelectContent>
+  2418→                                    <SelectItem value="48">/48</SelectItem>
+  2419→                                    <SelectItem value="56">/56</SelectItem>
+  2420→                                    <SelectItem value="60">/60</SelectItem>
+  2421→                                    <SelectItem value="64">/64</SelectItem>
+  2422→                                  </SelectContent>
+  2423→                                </Select>
+  2424→                              </div>
+  2425→                            </div>
+  2426→                          )}
+  2427→                          <div className="space-y-1.5">
+  2428→                            <Label className="text-xs">DUID <span className="text-[10px] text-muted-foreground font-normal">(auto-detected)</span></Label>
+  2429→                            <Input placeholder="Auto-detected from client" className="font-mono text-sm h-9 bg-muted/50" value={editForm.ipv6Duid} readOnly />
+  2430→                          </div>
+  2431→                        </>
+  2432→                      )}
+  2433→                    </div>
+  2434→                  </div>
+  2435→                )}
+  2436→              </div>
+  2437→            </div>
+  2438→
+  2439→            {/* ═══ Device Assignment ═══ */}
+  2440→            <div className="rounded-lg border bg-card">
+  2441→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2442→                <Server className="h-4 w-4 text-primary" />
+  2443→                <span className="text-sm font-semibold">Device Assignment</span>
+  2444→              </div>
+  2445→              <div className="p-4">
+  2446→                <div className="space-y-1.5">
+  2447→                  <Label className="text-xs">Assign Network Device</Label>
+  2448→                  <Select value={editForm.assignedDeviceId || "none"} onValueChange={(v) => setEditForm({ ...editForm, assignedDeviceId: v === "none" ? "" : v })}>
+  2449→                    <SelectTrigger className="h-9"><SelectValue placeholder="Select device..." /></SelectTrigger>
+  2450→                    <SelectContent>
+  2451→                      <SelectItem value="none">No Device</SelectItem>
+  2452→                      {devices?.map?.((d) => (
+  2453→                        <SelectItem key={d.id} value={d.id}>
+  2454→                          <span className="flex items-center gap-2">
+  2455→                            <span>{d.name}</span>
+  2456→                            <span className="text-muted-foreground text-xs font-mono">({d.ipAddress})</span>
+  2457→                            <Badge variant="outline" className="text-[10px]">{d.type}</Badge>
+  2458→                          </span>
+  2459→                        </SelectItem>
+  2460→                      ))}
+  2461→                    </SelectContent>
+  2462→                  </Select>
+  2463→                </div>
+  2464→              </div>
+  2465→            </div>
+  2466→
+  2467→            {/* ═══ Equipment & Tax ═══ */}
+  2468→            <div className="rounded-lg border bg-card">
+  2469→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2470→                <Router className="h-4 w-4 text-primary" />
+  2471→                <span className="text-sm font-semibold">Equipment & Tax</span>
+  2472→              </div>
+  2473→              <div className="p-4 space-y-3">
+  2474→                <div className="flex items-center gap-2">
+  2475→                  <Checkbox id="edit-routerRented" checked={editForm.routerRented} onCheckedChange={(v) => setEditForm({ ...editForm, routerRented: v === true, routerSerial: "", routerDeposit: "" })} />
+  2476→                  <Label htmlFor="edit-routerRented" className="cursor-pointer text-xs">Router Provided by ISP (Rented)</Label>
+  2477→                </div>
+  2478→                {editForm.routerRented && (
+  2479→                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 ml-4 pl-4 border-l-2 border-primary/20">
+  2480→                    <div className="space-y-1.5">
+  2481→                      <Label className="text-xs">Serial Number <span className="text-red-500">*</span></Label>
+  2482→                      <Input placeholder="Enter serial number" className="font-mono text-sm h-9" value={editForm.routerSerial} onChange={(e) => setEditForm({ ...editForm, routerSerial: e.target.value })} />
+  2483→                    </div>
+  2484→                    <div className="space-y-1.5">
+  2485→                      <Label className="text-xs">Security Deposit (₹)</Label>
+  2486→                      <Input placeholder="0" type="number" min="0" className="h-9" value={editForm.routerDeposit} onChange={(e) => setEditForm({ ...editForm, routerDeposit: e.target.value })} />
+  2487→                    </div>
+  2488→                  </div>
+  2489→                )}
+  2490→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2491→                  <div className="space-y-1.5">
+  2492→                    <Label className="text-xs">GSTIN</Label>
+  2493→                    <Input placeholder="22AAAAA0000A1Z5" className="font-mono text-sm h-9 uppercase" value={editForm.gstin} onChange={(e) => setEditForm({ ...editForm, gstin: e.target.value.toUpperCase() })} />
+  2494→                  </div>
+  2495→                  <div className="space-y-1.5">
+  2496→                    <Label className="text-xs">PAN Number</Label>
+  2497→                    <Input placeholder="ABCDE1234F" className="font-mono text-sm h-9 uppercase" maxLength={10} value={editForm.panNumber} onChange={(e) => setEditForm({ ...editForm, panNumber: e.target.value.toUpperCase() })} />
+  2498→                  </div>
+  2499→                </div>
+  2500→              </div>
+  2501→            </div>
+  2502→
+  2503→            {/* ═══ Dates ═══ */}
+  2504→            <div className="rounded-lg border bg-card">
+  2505→              <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+  2506→                <Clock className="h-4 w-4 text-primary" />
+  2507→                <span className="text-sm font-semibold">Dates & Notes</span>
+  2508→              </div>
+  2509→              <div className="p-4 space-y-3">
+  2510→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  2511→                  <div className="space-y-1.5">
+  2512→                    <Label className="text-xs">Activation Date</Label>
+  2513→                    <Input type="date" className="h-9" value={editForm.activationDate} onChange={(e) => setEditForm({ ...editForm, activationDate: e.target.value })} />
+  2514→                  </div>
+  2515→                  <div className="space-y-1.5">
+  2516→                    <Label className="text-xs">Billing Start Date</Label>
+  2517→                    <Input type="date" className="h-9" value={editForm.billingStartDate} onChange={(e) => setEditForm({ ...editForm, billingStartDate: e.target.value })} />
+  2518→                  </div>
+  2519→                </div>
+  2520→                <div className="space-y-1.5">
+  2521→                  <Label className="text-xs">Customer Notes <span className="text-[10px] text-muted-foreground font-normal">(visible to subscriber)</span></Label>
+  2522→                  <Textarea placeholder="Special instructions, welcome note..." value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={2} className="text-sm" />
+  2523→                </div>
+  2524→                <div className="space-y-1.5">
+  2525→                  <Label className="text-xs">Internal Notes <span className="text-[10px] text-muted-foreground font-normal">(staff only)</span></Label>
+  2526→                  <Textarea placeholder="Internal observations, special handling..." value={editForm.internalNotes} onChange={(e) => setEditForm({ ...editForm, internalNotes: e.target.value })} rows={2} className="text-sm" />
+  2527→                </div>
+  2528→              </div>
+  2529→            </div>
+  2530→          </div>
+  2531→
+  2532→          <DialogFooter className="border-t pt-3 mt-1 shrink-0">
+  2533→            <div className="flex w-full items-center justify-between">
+  2534→              <Button variant="outline" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>
+  2535→              <Button onClick={handleUpdate} disabled={updateMutation.isPending} className="bg-red-600 hover:bg-red-700 text-white">
+  2536→                {updateMutation.isPending ? (
+  2537→                  <span className="flex items-center gap-1.5"><Timer className="h-3.5 w-3.5 animate-spin" /> Saving...</span>
+  2538→                ) : (
+  2539→                  <span className="flex items-center gap-1.5"><Pencil className="h-3.5 w-3.5" /> Save Changes</span>
+  2540→                )}
+  2541→              </Button>
+  2542→            </div>
+  2543→          </DialogFooter>
+  2544→        </DialogContent>
+  2545→      </Dialog>
+  2546→
+  2547→      {/* ─── Detail Dialog ─── */}
+  2548→      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+  2549→        <DialogContent className="sm:max-w-[900px] max-h-[85vh] flex flex-col overflow-hidden p-0 gap-0">
+  2550→          <DialogHeader className="px-6 pt-6 pb-0 shrink-0">
+  2551→            <DialogTitle className="flex items-center gap-2">Subscriber Details</DialogTitle>
+  2552→          </DialogHeader>
+  2553→          {!detail ? (
+  2554→            <div className="px-6 py-4 space-y-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}</div>
+  2555→          ) : (
+  2556→            <Tabs defaultValue="overview" className="flex flex-col flex-1 min-h-0 mt-2">
+  2557→              <div className="px-6 shrink-0 overflow-x-auto">
+  2558→                <TabsList className="w-full sm:w-auto">
+  2559→                  <TabsTrigger value="overview" className="gap-1.5 text-xs sm:text-sm"><User className="h-3.5 w-3.5" />Overview</TabsTrigger>
+  2560→                  <TabsTrigger value="billing" className="gap-1.5 text-xs sm:text-sm"><FileText className="h-3.5 w-3.5" />Billing</TabsTrigger>
+  2561→                  <TabsTrigger value="payments" className="gap-1.5 text-xs sm:text-sm"><Receipt className="h-3.5 w-3.5" />Payments</TabsTrigger>
+  2562→                  <TabsTrigger value="support" className="gap-1.5 text-xs sm:text-sm"><ClipboardList className="h-3.5 w-3.5" />Support</TabsTrigger>
+  2563→                  <TabsTrigger value="activity" className="gap-1.5 text-xs sm:text-sm"><Activity className="h-3.5 w-3.5" />Activity</TabsTrigger>
+  2564→                </TabsList>
+  2565→              </div>
+  2566→
+  2567→              {/* ── Tab: Overview ── */}
+  2568→              <TabsContent value="overview" className="flex-1 overflow-y-auto px-6 pb-6 mt-2 custom-scrollbar">
+  2569→                <div className="space-y-4">
+  2570→                  {/* Subscriber Info Card */}
+  2571→                  <div className="flex items-start gap-4 p-4 rounded-xl bg-muted/50 border">
+  2572→                    <div className="h-14 w-14 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-xl font-bold shrink-0 shadow-sm">
+  2573→                      {detail.name.charAt(0).toUpperCase()}
+  2574→                    </div>
+  2575→                    <div className="flex-1 min-w-0">
+  2576→                      <div className="flex items-center gap-2 flex-wrap">
+  2577→                        <h3 className="font-semibold text-lg">{detail.name}</h3>
+  2578→                        <Badge variant="outline" className={`text-[10px] px-2 py-0.5 gap-1 inline-flex items-center ${STATUS_MAP[detail.status]?.class || ""}`}>
+  2579→                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${STATUS_MAP[detail.status]?.dot || "bg-gray-400"}`} />
+  2580→                          {STATUS_MAP[detail.status]?.label || detail.status}
+  2581→                        </Badge>
+  2582→                        <Badge variant="outline" className="text-[10px] gap-1 inline-flex items-center">
+  2583→                          <ConnectionTypeIcon type={detail.connectionType} className="h-3 w-3" />
+  2584→                          {CONNECTION_LABELS[detail.connectionType] || detail.connectionType}
+  2585→                        </Badge>
+  2586→                      </div>
+  2587→                      <p className="text-sm text-muted-foreground font-mono mt-0.5">{detail.code}</p>
+  2588→                    </div>
+  2589→                  </div>
+  2590→
+  2591→                  {/* Contact & Address */}
+  2592→                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+  2593→                    <Card className="border shadow-sm">
+  2594→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Phone className="h-3.5 w-3.5" />Contact Information</CardTitle></CardHeader>
+  2595→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2596→                        <div>
+  2597→                          <p className="text-[11px] text-muted-foreground">Phone</p>
+  2598→                          {detail.phone ? (
+  2599→                            <a href={`tel:${detail.phone}`} className="text-sm font-medium text-foreground hover:text-red-600 transition-colors">{detail.phone}</a>
+  2600→                          ) : <p className="text-sm text-muted-foreground">N/A</p>}
+  2601→                        </div>
+  2602→                        <div>
+  2603→                          <p className="text-[11px] text-muted-foreground">Alt Phone</p>
+  2604→                          {detail.altPhone ? (
+  2605→                            <a href={`tel:${detail.altPhone}`} className="text-sm font-medium text-foreground hover:text-red-600 transition-colors">{detail.altPhone}</a>
+  2606→                          ) : <p className="text-sm text-muted-foreground">N/A</p>}
+  2607→                        </div>
+  2608→                        <div>
+  2609→                          <p className="text-[11px] text-muted-foreground">Email</p>
+  2610→                          {detail.email ? (
+  2611→                            <a href={`mailto:${detail.email}`} className="text-sm font-medium text-foreground hover:text-red-600 transition-colors">{detail.email}</a>
+  2612→                          ) : <p className="text-sm text-muted-foreground">N/A</p>}
+  2613→                        </div>
+  2614→                      </CardContent>
+  2615→                    </Card>
+  2616→                    <Card className="border shadow-sm">
+  2617→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><MapPin className="h-3.5 w-3.5" />Address</CardTitle></CardHeader>
+  2618→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2619→                        <div>
+  2620→                          <p className="text-[11px] text-muted-foreground">Address</p>
+  2621→                          <p className="text-sm font-medium">{detail.address || <span className="text-muted-foreground">N/A</span>}</p>
+  2622→                        </div>
+  2623→                        <div>
+  2624→                          <p className="text-[11px] text-muted-foreground">Area</p>
+  2625→                          <p className="text-sm font-medium">{detail.area?.name || <span className="text-muted-foreground">N/A</span>}</p>
+  2626→                        </div>
+  2627→                        <div>
+  2628→                          <p className="text-[11px] text-muted-foreground">Landmark</p>
+  2629→                          <p className="text-sm font-medium">{detail.landmark || <span className="text-muted-foreground">N/A</span>}</p>
+  2630→                        </div>
+  2631→                        <div>
+  2632→                          <p className="text-[11px] text-muted-foreground">Pincode</p>
+  2633→                          <p className="text-sm font-medium">{detail.pincode || <span className="text-muted-foreground">N/A</span>}</p>
+  2634→                        </div>
+  2635→                      </CardContent>
+  2636→                    </Card>
+  2637→                  </div>
+  2638→
+  2639→                  {/* Plan & Service & IP */}
+  2640→                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+  2641→                    <Card className="border shadow-sm">
+  2642→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Zap className="h-3.5 w-3.5" />Plan</CardTitle></CardHeader>
+  2643→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2644→                        <div>
+  2645→                          <p className="text-[11px] text-muted-foreground">Plan Name</p>
+  2646→                          <p className="text-sm font-medium">{detail.plan?.name || <span className="text-muted-foreground">N/A</span>}</p>
+  2647→                        </div>
+  2648→                        <div>
+  2649→                          <p className="text-[11px] text-muted-foreground">Speed</p>
+  2650→                          <p className="text-sm font-medium">{detail.plan?.name?.match(/[\d]+/)?.[0] ? `${detail.plan!.name!.match(/[\d]+/)![0]} Mbps` : <span className="text-muted-foreground">N/A</span>}</p>
+  2651→                        </div>
+  2652→                        <div>
+  2653→                          <p className="text-[11px] text-muted-foreground">Price</p>
+  2654→                          <p className="text-sm font-medium">{detail.plan ? formatINR(detail.plan.priceMonthly) + "/mo" : <span className="text-muted-foreground">N/A</span>}</p>
+  2655→                        </div>
+  2656→                      </CardContent>
+  2657→                    </Card>
+  2658→                    <Card className="border shadow-sm">
+  2659→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><KeyRound className="h-3.5 w-3.5" />Service</CardTitle></CardHeader>
+  2660→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2661→                        <div>
+  2662→                          <p className="text-[11px] text-muted-foreground">Username</p>
+  2663→                          {detail.serviceUsername ? (
+  2664→                            <div className="flex items-center gap-1.5">
+  2665→                              <p className="text-sm font-mono font-medium flex-1 truncate">{detail.serviceUsername}</p>
+  2666→                              <button onClick={() => { navigator.clipboard.writeText(detail.serviceUsername); toast.success("Username copied"); }} className="shrink-0 p-1 rounded hover:bg-muted transition-colors" aria-label="Copy username">
+  2667→                                <Copy className="h-3 w-3 text-muted-foreground" />
+  2668→                              </button>
+  2669→                            </div>
+  2670→                          ) : <p className="text-sm text-muted-foreground">N/A</p>}
+  2671→                        </div>
+  2672→                        <div>
+  2673→                          <p className="text-[11px] text-muted-foreground">Password</p>
+  2674→                          {detail.servicePassword ? (
+  2675→                            <div className="flex items-center gap-1.5">
+  2676→                              <p className="text-sm font-mono font-medium flex-1 truncate">{showPassword ? detail.servicePassword : "••••••••"}</p>
+  2677→                              <button onClick={() => { setShowPassword(!showPassword); }} className="shrink-0 p-1 rounded hover:bg-muted transition-colors" aria-label={showPassword ? "Hide password" : "Show password"}>
+  2678→                                {showPassword ? <EyeOff className="h-3 w-3 text-muted-foreground" /> : <Eye className="h-3 w-3 text-muted-foreground" />}
+  2679→                              </button>
+  2680→                              <button onClick={() => { navigator.clipboard.writeText(detail.servicePassword!); toast.success("Password copied"); }} className="shrink-0 p-1 rounded hover:bg-muted transition-colors" aria-label="Copy password">
+  2681→                                <Copy className="h-3 w-3 text-muted-foreground" />
+  2682→                              </button>
+  2683→                            </div>
+  2684→                          ) : <p className="text-sm text-muted-foreground">N/A</p>}
+  2685→                        </div>
+  2686→                      </CardContent>
+  2687→                    </Card>
+  2688→                    <Card className="border shadow-sm">
+  2689→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Globe className="h-3.5 w-3.5" />IP Info</CardTitle></CardHeader>
+  2690→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2691→                        <div>
+  2692→                          <p className="text-[11px] text-muted-foreground">Type</p>
+  2693→                          <Badge variant="outline" className="text-[10px]">{detail.ipType || "Dynamic"}</Badge>
+  2694→                        </div>
+  2695→                        <div>
+  2696→                          <p className="text-[11px] text-muted-foreground">IP Address</p>
+  2697→                          <p className="text-sm font-mono font-medium">{detail.ipAddress || <span className="text-muted-foreground">N/A</span>}</p>
+  2698→                        </div>
+  2699→                        <div>
+  2700→                          <p className="text-[11px] text-muted-foreground">MAC Address</p>
+  2701→                          <p className="text-sm font-mono font-medium">{detail.macAddress || <span className="text-muted-foreground">N/A</span>}</p>
+  2702→                        </div>
+  2703→                        {isModuleEnabled("ipv6") && detail.ipStackType !== "IPV4_ONLY" && (
+  2704→                          <div className="space-y-1.5">
+  2705→                            <p><span className="text-[11px] text-muted-foreground">IPv6:</span> <span className="text-sm font-mono font-medium">{detail.ipv6Address || "Not assigned"}</span></p>
+  2706→                            {detail.ipv6Prefix && (
+  2707→                              <p><span className="text-[11px] text-muted-foreground">IPv6 Prefix:</span> <span className="text-sm font-mono">{detail.ipv6Prefix}/{detail.ipv6PrefixLength}</span></p>
+  2708→                            )}
+  2709→                            {detail.ipv6Duid && (
+  2710→                              <p><span className="text-[11px] text-muted-foreground">DUID:</span> <span className="text-xs font-mono">{detail.ipv6Duid}</span></p>
+  2711→                            )}
+  2712→                          </div>
+  2713→                        )}
+  2714→                      </CardContent>
+  2715→                    </Card>
+  2716→                  </div>
+  2717→
+  2718→                  {/* Dates & Quick Stats */}
+  2719→                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+  2720→                    <Card className="border shadow-sm">
+  2721→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Calendar className="h-3.5 w-3.5" />Dates</CardTitle></CardHeader>
+  2722→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2723→                        <div className="flex justify-between text-sm">
+  2724→                          <span className="text-muted-foreground">Activation</span>
+  2725→                          <span className="font-medium">{detail.activationDate ? new Date(detail.activationDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "N/A"}</span>
+  2726→                        </div>
+  2727→                        <div className="flex justify-between text-sm">
+  2728→                          <span className="text-muted-foreground">Billing Start</span>
+  2729→                          <span className="font-medium">{detail.billingStartDate ? new Date(detail.billingStartDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "N/A"}</span>
+  2730→                        </div>
+  2731→                        <div className="flex justify-between text-sm">
+  2732→                          <span className="text-muted-foreground">Created</span>
+  2733→                          <span className="font-medium">{new Date(detail.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+  2734→                        </div>
+  2735→                      </CardContent>
+  2736→                    </Card>
+  2737→                    <Card className="border shadow-sm">
+  2738→                      <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><TrendingUp className="h-3.5 w-3.5" />Quick Stats</CardTitle></CardHeader>
+  2739→                      <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2740→                        <div className="flex justify-between text-sm">
+  2741→                          <span className="text-muted-foreground">Balance</span>
+  2742→                          <span className={`font-semibold ${detail.balance < 0 ? "text-red-600" : detail.balance > 0 ? "text-green-600" : ""}`}>{formatINR(detail.balance ?? 0)}</span>
+  2743→                        </div>
+  2744→                        <div className="flex justify-between text-sm">
+  2745→                          <span className="text-muted-foreground">Total Invoices</span>
+  2746→                          <span className="font-medium">{detail.invoices.length}</span>
+  2747→                        </div>
+  2748→                        <div className="flex justify-between text-sm">
+  2749→                          <span className="text-muted-foreground">Total Payments</span>
+  2750→                          <span className="font-medium">{detail.payments.length}</span>
+  2751→                        </div>
+  2752→                        <div className="flex justify-between text-sm">
+  2753→                          <span className="text-muted-foreground">Open Complaints</span>
+  2754→                          <span className={`font-medium ${detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length > 0 ? "text-amber-600" : ""}`}>{detail.complaints.filter(c => c.status === "OPEN" || c.status === "IN_PROGRESS" || c.status === "REOPENED").length}</span>
+  2755→                        </div>
+  2756→                      </CardContent>
+  2757→                    </Card>
+  2758→                  </div>
+  2759→                </div>
+  2760→              </TabsContent>
+  2761→
+  2762→              {/* ── Tab: Billing ── */}
+  2763→              <TabsContent value="billing" className="flex-1 overflow-y-auto px-6 pb-6 mt-2 custom-scrollbar">
+  2764→                <div className="space-y-4">
+  2765→                  {/* Outstanding Amount */}
+  2766→                  <div className="flex items-center justify-between p-4 rounded-xl bg-muted/50 border">
+  2767→                    <div>
+  2768→                      <p className="text-xs text-muted-foreground">Total Outstanding</p>
+  2769→                      <p className="text-xl font-bold">
+  2770→                        {formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal - inv.paidAmount, 0))}
+  2771→                      </p>
+  2772→                    </div>
+  2773→                    <div className="text-right">
+  2774→                      <p className="text-xs text-muted-foreground">{detail.invoices.length} Invoice{detail.invoices.length !== 1 ? "s" : ""}</p>
+  2775→                      <p className="text-sm font-medium">{formatINR(detail.invoices.reduce((sum, inv) => sum + inv.grandTotal, 0))} total</p>
+  2776→                    </div>
+  2777→                  </div>
+  2778→
+  2779→                  {/* Invoices Table */}
+  2780→                  {!detail.invoices.length ? (
+  2781→                    <div className="flex flex-col items-center justify-center py-12 text-center">
+  2782→                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+  2783→                        <FileText className="h-5 w-5 text-muted-foreground" />
+  2784→                      </div>
+  2785→                      <p className="text-sm font-medium text-muted-foreground">No invoices yet</p>
+  2786→                      <p className="text-xs text-muted-foreground mt-1">Invoices will appear here once generated.</p>
+  2787→                    </div>
+  2788→                  ) : (
+  2789→                    <div className="rounded-lg border overflow-hidden">
+  2790→                      <Table>
+  2791→                        <TableHeader>
+  2792→                          <TableRow className="bg-muted/50">
+  2793→                            <TableHead className="text-xs font-semibold">Invoice #</TableHead>
+  2794→                            <TableHead className="text-xs font-semibold text-right">Amount</TableHead>
+  2795→                            <TableHead className="text-xs font-semibold text-right">Paid</TableHead>
+  2796→                            <TableHead className="text-xs font-semibold">Status</TableHead>
+  2797→                            <TableHead className="text-xs font-semibold">Date</TableHead>
+  2798→                          </TableRow>
+  2799→                        </TableHeader>
+  2800→                        <TableBody>
+  2801→                          {detail.invoices.map((inv, idx) => (
+  2802→                            <TableRow key={inv.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
+  2803→                              <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{inv.invoiceNumber}</TableCell>
+  2804→                              <TableCell className="text-xs text-right font-medium">{formatINR(inv.grandTotal)}</TableCell>
+  2805→                              <TableCell className="text-xs text-right">{formatINR(inv.paidAmount)}</TableCell>
+  2806→                              <TableCell className="text-xs">
+  2807→                                <Badge variant="outline" className={`text-[10px] ${INVOICE_STATUS_MAP[inv.status]?.class || "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2808→                                  {INVOICE_STATUS_MAP[inv.status]?.label || inv.status}
+  2809→                                </Badge>
+  2810→                              </TableCell>
+  2811→                              <TableCell className="text-xs text-muted-foreground">{new Date(inv.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</TableCell>
+  2812→                            </TableRow>
+  2813→                          ))}
+  2814→                        </TableBody>
+  2815→                      </Table>
+  2816→                    </div>
+  2817→                  )}
+  2818→                </div>
+  2819→              </TabsContent>
+  2820→
+  2821→              {/* ── Tab: Payments ── */}
+  2822→              <TabsContent value="payments" className="flex-1 overflow-y-auto px-6 pb-6 mt-2 custom-scrollbar">
+  2823→                <div className="space-y-4">
+  2824→                  {/* Total Collected */}
+  2825→                  <div className="flex items-center justify-between p-4 rounded-xl bg-muted/50 border">
+  2826→                    <div>
+  2827→                      <p className="text-xs text-muted-foreground">Total Collected</p>
+  2828→                      <p className="text-xl font-bold text-green-600">
+  2829→                        {formatINR(detail.payments.reduce((sum, pay) => sum + pay.amount, 0))}
+  2830→                      </p>
+  2831→                    </div>
+  2832→                    <div className="text-right">
+  2833→                      <p className="text-xs text-muted-foreground">{detail.payments.length} Payment{detail.payments.length !== 1 ? "s" : ""}</p>
+  2834→                      <p className="text-sm font-medium">{detail.payments.filter(p => p.status === "VERIFIED").length} verified</p>
+  2835→                    </div>
+  2836→                  </div>
+  2837→
+  2838→                  {/* Payments Table */}
+  2839→                  {!detail.payments.length ? (
+  2840→                    <div className="flex flex-col items-center justify-center py-12 text-center">
+  2841→                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+  2842→                        <Receipt className="h-5 w-5 text-muted-foreground" />
+  2843→                      </div>
+  2844→                      <p className="text-sm font-medium text-muted-foreground">No payments yet</p>
+  2845→                      <p className="text-xs text-muted-foreground mt-1">Payments will appear here once recorded.</p>
+  2846→                    </div>
+  2847→                  ) : (
+  2848→                    <div className="rounded-lg border overflow-hidden">
+  2849→                      <Table>
+  2850→                        <TableHeader>
+  2851→                          <TableRow className="bg-muted/50">
+  2852→                            <TableHead className="text-xs font-semibold">Receipt #</TableHead>
+  2853→                            <TableHead className="text-xs font-semibold text-right">Amount</TableHead>
+  2854→                            <TableHead className="text-xs font-semibold">Mode</TableHead>
+  2855→                            <TableHead className="text-xs font-semibold">Status</TableHead>
+  2856→                            <TableHead className="text-xs font-semibold">Date</TableHead>
+  2857→                          </TableRow>
+  2858→                        </TableHeader>
+  2859→                        <TableBody>
+  2860→                          {detail.payments.map((pay, idx) => (
+  2861→                            <TableRow key={pay.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
+  2862→                              <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{pay.receiptNumber || "—"}</TableCell>
+  2863→                              <TableCell className="text-xs text-right font-medium">{formatINR(pay.amount)}</TableCell>
+  2864→                              <TableCell className="text-xs">
+  2865→                                <Badge variant="outline" className={`text-[10px] ${PAYMENT_MODE_MAP[pay.paymentMode]?.class || "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2866→                                  {PAYMENT_MODE_MAP[pay.paymentMode]?.label || pay.paymentMode}
+  2867→                                </Badge>
+  2868→                              </TableCell>
+  2869→                              <TableCell className="text-xs">
+  2870→                                <Badge variant="outline" className={`text-[10px] ${PAYMENT_STATUS_MAP[pay.status]?.class || "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2871→                                  {PAYMENT_STATUS_MAP[pay.status]?.label || pay.status}
+  2872→                                </Badge>
+  2873→                              </TableCell>
+  2874→                              <TableCell className="text-xs text-muted-foreground">{new Date(pay.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</TableCell>
+  2875→                            </TableRow>
+  2876→                          ))}
+  2877→                        </TableBody>
+  2878→                      </Table>
+  2879→                    </div>
+  2880→                  )}
+  2881→                </div>
+  2882→              </TabsContent>
+  2883→
+  2884→              {/* ── Tab: Support ── */}
+  2885→              <TabsContent value="support" className="flex-1 overflow-y-auto px-6 pb-6 mt-2 custom-scrollbar">
+  2886→                <div className="space-y-4">
+  2887→                  {/* Complaints Summary */}
+  2888→                  <div className="grid grid-cols-3 gap-3">
+  2889→                    <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200 text-center">
+  2890→                      <p className="text-lg font-bold text-yellow-700">{detail.complaints.filter(c => c.status === "OPEN").length}</p>
+  2891→                      <p className="text-[11px] text-yellow-600 font-medium">Open</p>
+  2892→                    </div>
+  2893→                    <div className="p-3 rounded-lg bg-orange-50 border border-orange-200 text-center">
+  2894→                      <p className="text-lg font-bold text-orange-700">{detail.complaints.filter(c => c.status === "IN_PROGRESS").length}</p>
+  2895→                      <p className="text-[11px] text-orange-600 font-medium">In Progress</p>
+  2896→                    </div>
+  2897→                    <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-center">
+  2898→                      <p className="text-lg font-bold text-green-700">{detail.complaints.filter(c => c.status === "RESOLVED" || c.status === "CLOSED").length}</p>
+  2899→                      <p className="text-[11px] text-green-600 font-medium">Resolved</p>
+  2900→                    </div>
+  2901→                  </div>
+  2902→
+  2903→                  {/* Complaints Table */}
+  2904→                  {!detail.complaints.length ? (
+  2905→                    <div className="flex flex-col items-center justify-center py-12 text-center">
+  2906→                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+  2907→                        <ClipboardList className="h-5 w-5 text-muted-foreground" />
+  2908→                      </div>
+  2909→                      <p className="text-sm font-medium text-muted-foreground">No complaints</p>
+  2910→                      <p className="text-xs text-muted-foreground mt-1">Support tickets will appear here once raised.</p>
+  2911→                    </div>
+  2912→                  ) : (
+  2913→                    <div className="rounded-lg border overflow-hidden">
+  2914→                      <Table>
+  2915→                        <TableHeader>
+  2916→                          <TableRow className="bg-muted/50">
+  2917→                            <TableHead className="text-xs font-semibold">Ticket #</TableHead>
+  2918→                            <TableHead className="text-xs font-semibold">Type</TableHead>
+  2919→                            <TableHead className="text-xs font-semibold">Priority</TableHead>
+  2920→                            <TableHead className="text-xs font-semibold">Status</TableHead>
+  2921→                            <TableHead className="text-xs font-semibold">Created</TableHead>
+  2922→                          </TableRow>
+  2923→                        </TableHeader>
+  2924→                        <TableBody>
+  2925→                          {detail.complaints.map((c, idx) => (
+  2926→                            <TableRow key={c.id} className={idx % 2 === 0 ? "" : "bg-muted/20"}>
+  2927→                              <TableCell className="text-xs font-mono text-red-600 cursor-pointer hover:underline">{c.ticketNumber}</TableCell>
+  2928→                              <TableCell className="text-xs">{COMPLAINT_TYPE_LABELS[c.type] || c.type}</TableCell>
+  2929→                              <TableCell className="text-xs">
+  2930→                                {c.priority ? (
+  2931→                                  <Badge variant="outline" className={`text-[10px] ${COMPLAINT_PRIORITY_MAP[c.priority]?.class || "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2932→                                    {COMPLAINT_PRIORITY_MAP[c.priority]?.label || c.priority}
+  2933→                                  </Badge>
+  2934→                                ) : <span className="text-muted-foreground">N/A</span>}
+  2935→                              </TableCell>
+  2936→                              <TableCell className="text-xs">
+  2937→                                <Badge variant="outline" className={`text-[10px] ${COMPLAINT_STATUS_MAP[c.status]?.class || "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2938→                                  {COMPLAINT_STATUS_MAP[c.status]?.label || c.status}
+  2939→                                </Badge>
+  2940→                              </TableCell>
+  2941→                              <TableCell className="text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</TableCell>
+  2942→                            </TableRow>
+  2943→                          ))}
+  2944→                        </TableBody>
+  2945→                      </Table>
+  2946→                    </div>
+  2947→                  )}
+  2948→                </div>
+  2949→              </TabsContent>
+  2950→
+  2951→              {/* ── Tab: Activity Log ── */}
+  2952→              <TabsContent value="activity" className="flex-1 overflow-y-auto px-6 pb-6 mt-2 custom-scrollbar">
+  2953→                <div className="space-y-4">
+  2954→                  {/* Registration Info */}
+  2955→                  <Card className="border shadow-sm">
+  2956→                    <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Calendar className="h-3.5 w-3.5" />Registration Info</CardTitle></CardHeader>
+  2957→                    <CardContent className="pt-0 px-4 pb-4">
+  2958→                      <div className="grid grid-cols-2 gap-4">
+  2959→                        <div>
+  2960→                          <p className="text-[11px] text-muted-foreground">Created</p>
+  2961→                          <p className="text-sm font-medium">{new Date(detail.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+  2962→                        </div>
+  2963→                        <div>
+  2964→                          <p className="text-[11px] text-muted-foreground">Last Updated</p>
+  2965→                          <p className="text-sm font-medium">{new Date(detail.updatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+  2966→                        </div>
+  2967→                      </div>
+  2968→                    </CardContent>
+  2969→                  </Card>
+  2970→
+  2971→                  {/* Network Info */}
+  2972→                  <Card className="border shadow-sm">
+  2973→                    <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Network className="h-3.5 w-3.5" />Network</CardTitle></CardHeader>
+  2974→                    <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2975→                      <div>
+  2976→                        <p className="text-[11px] text-muted-foreground">Assigned Device</p>
+  2977→                        <p className="text-sm font-medium">{detail.assignedDevice?.name || <span className="text-muted-foreground">N/A</span>}
+  2978→                          {detail.assignedDevice?.ipAddress && <span className="text-xs text-muted-foreground ml-1.5">({detail.assignedDevice.ipAddress})</span>}
+  2979→                        </p>
+  2980→                      </div>
+  2981→                      <div>
+  2982→                        <p className="text-[11px] text-muted-foreground">Login Restriction</p>
+  2983→                        <Badge variant="outline" className="text-[10px]">
+  2984→                          {detail.loginRestriction === "all" ? "No Restriction" : detail.loginRestriction === "subnet" ? "Subnet Only" : detail.loginRestriction === "specific" ? "Specific IP" : detail.loginRestriction || "N/A"}
+  2985→                        </Badge>
+  2986→                      </div>
+  2987→                    </CardContent>
+  2988→                  </Card>
+  2989→
+  2990→                  {/* Equipment */}
+  2991→                  <Card className="border shadow-sm">
+  2992→                    <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Router className="h-3.5 w-3.5" />Equipment</CardTitle></CardHeader>
+  2993→                    <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  2994→                      <div>
+  2995→                        <p className="text-[11px] text-muted-foreground">Router Rented</p>
+  2996→                        <Badge variant="outline" className={`text-[10px] ${detail.routerRented ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  2997→                          {detail.routerRented ? "Yes" : "No"}
+  2998→                        </Badge>
+  2999→                      </div>
+  3000→                      <div>
+  3001→                        <p className="text-[11px] text-muted-foreground">Serial Number</p>
+  3002→                        <p className="text-sm font-mono font-medium">{detail.routerSerial || <span className="text-muted-foreground">N/A</span>}</p>
+  3003→                      </div>
+  3004→                      <div>
+  3005→                        <p className="text-[11px] text-muted-foreground">Deposit</p>
+  3006→                        <p className="text-sm font-medium">{detail.routerDeposit ? formatINR(Number(detail.routerDeposit)) : <span className="text-muted-foreground">N/A</span>}</p>
+  3007→                      </div>
+  3008→                    </CardContent>
+  3009→                  </Card>
+  3010→
+  3011→                  {/* Tax & KYC */}
+  3012→                  <Card className="border shadow-sm">
+  3013→                    <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><Shield className="h-3.5 w-3.5" />Tax & KYC</CardTitle></CardHeader>
+  3014→                    <CardContent className="pt-0 px-4 pb-4 space-y-2.5">
+  3015→                      <div>
+  3016→                        <p className="text-[11px] text-muted-foreground">GSTIN</p>
+  3017→                        <p className="text-sm font-mono font-medium">{detail.gstin || <span className="text-muted-foreground">N/A</span>}</p>
+  3018→                      </div>
+  3019→                      <div>
+  3020→                        <p className="text-[11px] text-muted-foreground">PAN</p>
+  3021→                        <p className="text-sm font-mono font-medium">{detail.panNumber || <span className="text-muted-foreground">N/A</span>}</p>
+  3022→                      </div>
+  3023→                      <div>
+  3024→                        <p className="text-[11px] text-muted-foreground">KYC Aadhaar</p>
+  3025→                        <p className="text-sm font-mono font-medium">{detail.kycAadhaarNumber || <span className="text-muted-foreground">N/A</span>}</p>
+  3026→                      </div>
+  3027→                      <div>
+  3028→                        <p className="text-[11px] text-muted-foreground">KYC Verified</p>
+  3029→                        <Badge variant="outline" className={`text-[10px] ${detail.kycVerified ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-600 border-gray-200"}`}>
+  3030→                          {detail.kycVerified ? "Verified" : "Not Verified"}
+  3031→                        </Badge>
+  3032→                      </div>
+  3033→                    </CardContent>
+  3034→                  </Card>
+  3035→
+  3036→                  {/* Notes */}
+  3037→                  <Card className="border shadow-sm">
+  3038→                    <CardHeader className="pb-3 pt-4 px-4"><CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide"><MessageSquare className="h-3.5 w-3.5" />Notes</CardTitle></CardHeader>
+  3039→                    <CardContent className="pt-0 px-4 pb-4 space-y-3">
+  3040→                      <div>
+  3041→                        <p className="text-[11px] text-muted-foreground mb-1">Customer Notes</p>
+  3042→                        {detail.notes ? (
+  3043→                          <p className="text-sm leading-relaxed p-2 rounded bg-muted/50">{detail.notes}</p>
+  3044→                        ) : (
+  3045→                          <p className="text-sm text-muted-foreground italic">No customer notes</p>
+  3046→                        )}
+  3047→                      </div>
+  3048→                      <div>
+  3049→                        <p className="text-[11px] text-muted-foreground mb-1">Internal Notes</p>
+  3050→                        {detail.internalNotes ? (
+  3051→                          <p className="text-sm leading-relaxed p-2 rounded bg-amber-50 border border-amber-100 text-amber-900">{detail.internalNotes}</p>
+  3052→                        ) : (
+  3053→                          <p className="text-sm text-muted-foreground italic">No internal notes</p>
+  3054→                        )}
+  3055→                      </div>
+  3056→                    </CardContent>
+  3057→                  </Card>
+  3058→                </div>
+  3059→              </TabsContent>
+  3060→            </Tabs>
+  3061→          )}
+  3062→        </DialogContent>
+  3063→      </Dialog>
+  3064→
+  3065→      {/* ─── Delete Confirm Dialog ─── */}
+  3066→      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+  3067→        <DialogContent className="sm:max-w-[400px]">
+  3068→          <DialogHeader>
+  3069→            <DialogTitle>Delete Subscriber</DialogTitle>
+  3070→            <DialogDescription>
+  3071→              Are you sure you want to delete {selectedSub?.name || "this subscriber"}? This action cannot be undone.
+  3072→            </DialogDescription>
+  3073→          </DialogHeader>
+  3074→          <DialogFooter>
+  3075→            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+  3076→            <Button variant="destructive" onClick={() => selectedId && deleteMutation.mutate(selectedId)} disabled={deleteMutation.isPending}>
+  3077→              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+  3078→            </Button>
+  3079→          </DialogFooter>
+  3080→        </DialogContent>
+  3081→      </Dialog>
+  3082→
+  3083→      {/* ─── Subscriber Quick View Sheet ─── */}
+  3084→      <SubscriberQuickView
+  3085→        subscriberId={quickViewId}
+  3086→        open={!!quickViewId}
+  3087→        onOpenChange={(open) => {
+  3088→          if (!open) setQuickViewId(null);
+  3089→        }}
+  3090→      />
+  3091→    </div>
+  3092→  );
+  3093→}
+  3094→

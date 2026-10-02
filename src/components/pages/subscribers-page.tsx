@@ -8,7 +8,7 @@ import {
   Phone, Mail, MapPin, Wifi, X, Download, ChevronLeft, ChevronRight,
   IndianRupee, ArrowUpDown, ArrowUp, ArrowDown, Unplug, Cable, Zap, Plug,
   Server, MessageSquare, Filter, CircleDot, Upload, UserPlus, Clock,
-  MoreVertical, Activity, UserCheck, UserX, Timer, AlertTriangle, TrendingUp,
+  MoreVertical, Activity, Timer, AlertTriangle, TrendingUp,
   Copy, EyeOff, RefreshCw, KeyRound, Shield, CreditCard, Lock,
   User, Router, Globe, Network, ServerCrash,
   FileText, Calendar, Receipt, ClipboardList,
@@ -1044,18 +1044,21 @@ export default function SubscribersPage() {
           </CardContent>
         </Card>
 
-        <Card className="stat-gradient-red border-0 shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 rounded-xl">
+        <Card className="stat-gradient-red border-0 shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 rounded-xl" title="Subscribers created this month">
           <CardContent className="p-3 sm:p-4">
             <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-1.5 sm:p-2 rounded-lg bg-white/20 backdrop-blur-sm shrink-0">
                 <UserPlus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </div>
               <div className="min-w-0">
-                <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">New</p>
+                <p className="text-[9px] sm:text-[10px] font-medium uppercase tracking-wider opacity-80">New This Month</p>
                 <p className="text-base sm:text-xl font-bold tabular-nums leading-tight mt-0.5">
                   {statsData?.newThisMonth?.toLocaleString("en-IN") ?? "—"}
                 </p>
-                {statsData && (statsData.growthPercent > 0 || statsData.growthPercent < 0) && (
+                {/* Honest trend only: the stats API hardcodes growthPercent = 100 when newLastMonth
+                    is 0 (nothing to compare against) — that fake +100% must never render. A real %
+                    shows only when last month had signups; otherwise a muted "vs 0 last month". */}
+                {statsData && statsData.newLastMonth > 0 && statsData.growthPercent !== 0 && (
                   <p className={`text-[9px] sm:text-[10px] mt-0.5 inline-flex items-center gap-0.5 ${statsData.growthPercent >= 0 ? "text-green-200" : "text-red-200"}`}>
                     {statsData.growthPercent >= 0 ? (
                       <TrendingUp className="h-2.5 w-2.5" />
@@ -1064,6 +1067,9 @@ export default function SubscribersPage() {
                     )}
                     {statsData.growthPercent >= 0 ? "+" : ""}{statsData.growthPercent}%
                   </p>
+                )}
+                {statsData && statsData.newLastMonth === 0 && statsData.newThisMonth > 0 && (
+                  <p className="text-[9px] sm:text-[10px] mt-0.5 opacity-75">vs 0 last month</p>
                 )}
               </div>
             </div>
@@ -1088,42 +1094,52 @@ export default function SubscribersPage() {
 
       </div>
 
-      {/* Quick Stats Summary Bar */}
-      <div className="hidden md:grid md:grid-cols-4 gap-3 animate-slide-up" style={{ animationDelay: "30ms" }}>
+      {/* Quick Stats Summary Bar — deliberately DIFFERENT metrics from the tile row above
+          (renewal watchlist / live sessions / revenue quality / onboarding pipeline).
+          Every value comes from an endpoint this page already fetches — no duplication, no invented data. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-slide-up" style={{ animationDelay: "30ms" }}>
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-amber-500 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/30 shrink-0">
+            <Clock className="h-4 w-4 text-amber-600" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground leading-none">Expiring in 7 Days</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers whose billing cycle ends within 7 days">
+              {expiringData ? expiringList.length.toLocaleString("en-IN") : "—"}
+            </p>
+          </div>
+        </div>
         <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-green-500 bg-white dark:bg-card p-3 shadow-sm">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-50 dark:bg-green-950/30 shrink-0">
-            <UserCheck className="h-4 w-4 text-green-600" />
+            <Activity className="h-4 w-4 text-green-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Total Active</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.activeCount ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Online Now</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers with an active RADIUS session right now">
+              {onlineCountData?.onlineCount?.toLocaleString("en-IN") ?? "—"}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-sky-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-50 dark:bg-sky-950/30 shrink-0">
-            <Timer className="h-4 w-4 text-sky-600" />
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-emerald-500 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/30 shrink-0">
+            <IndianRupee className="h-4 w-4 text-emerald-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">New This Month</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.newThisMonth ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Avg ARPU</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Average monthly revenue per active subscriber with a plan (MRR ÷ active)">
+              {statsData ? formatINR(statsData.avgMonthlyRevenue) : "—"}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-red-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-50 dark:bg-red-950/30 shrink-0">
-            <UserX className="h-4 w-4 text-red-600" />
+        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-slate-400 bg-white dark:bg-card p-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-950/30 shrink-0">
+            <Timer className="h-4 w-4 text-slate-600 dark:text-slate-400" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Suspended</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.suspendedCount ?? "—"}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 rounded-lg border border-l-4 border-l-teal-500 bg-white dark:bg-card p-3 shadow-sm">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 dark:bg-teal-950/30 shrink-0">
-            <Clock className="h-4 w-4 text-teal-600" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground leading-none">Trial</p>
-            <p className="text-lg font-bold text-foreground leading-tight mt-0.5">{data?.stats?.trialCount ?? "—"}</p>
+            <p className="text-xs text-muted-foreground leading-none">Pending Activation</p>
+            <p className="text-lg font-bold text-foreground leading-tight mt-0.5 tabular-nums" title="Subscribers created but not yet activated">
+              {statsData?.pending?.toLocaleString("en-IN") ?? "—"}
+            </p>
           </div>
         </div>
       </div>
@@ -1131,8 +1147,8 @@ export default function SubscribersPage() {
       {/* Filters */}
       <Card className="border shadow-sm card-hover-lift animate-slide-up" style={{ animationDelay: "50ms" }}>
         <CardContent className="p-4">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative w-full sm:flex-1 sm:min-w-[200px] min-w-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
                 placeholder="Search by name, phone, email, code..."
@@ -1150,42 +1166,46 @@ export default function SubscribersPage() {
                 </button>
               )}
             </div>
-            <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="ACTIVE">Active</SelectItem>
-                <SelectItem value="SUSPENDED">Suspended</SelectItem>
-                <SelectItem value="DISCONNECTED">Disconnected</SelectItem>
-                <SelectItem value="TRIAL">Trial</SelectItem>
-                <SelectItem value="PENDING_ACTIVATION">Pending</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={areaFilter || "all"} onValueChange={(v) => { setAreaFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[160px]"><SelectValue placeholder="Area" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Areas</SelectItem>
-                {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={planFilter || "all"} onValueChange={(v) => { setPlanFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[170px]"><SelectValue placeholder="Plan" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Plans</SelectItem>
-                {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={connectionType || "all"} onValueChange={(v) => { setConnectionType(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Connection" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="FTTH">FTTH</SelectItem>
-                <SelectItem value="WIRELESS">Wireless</SelectItem>
-                <SelectItem value="CABLE">Cable</SelectItem>
-                <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
-                <SelectItem value="ETHERNET">Ethernet</SelectItem>
-              </SelectContent>
-            </Select>
+            {/* Selects sit in a 2-per-row grid on mobile; sm:contents dissolves this wrapper so they
+                rejoin the flex row with ONE uniform width + min-w-0 — nothing clips at any breakpoint. */}
+            <div className="grid grid-cols-2 gap-3 w-full sm:contents">
+              <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectItem value="SUSPENDED">Suspended</SelectItem>
+                  <SelectItem value="DISCONNECTED">Disconnected</SelectItem>
+                  <SelectItem value="TRIAL">Trial</SelectItem>
+                  <SelectItem value="PENDING_ACTIVATION">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={areaFilter || "all"} onValueChange={(v) => { setAreaFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Area" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Areas</SelectItem>
+                  {areas?.map?.((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={planFilter || "all"} onValueChange={(v) => { setPlanFilter(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Plan" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Plans</SelectItem>
+                  {plans?.map?.((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {formatINR(p.priceMonthly)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={connectionType || "all"} onValueChange={(v) => { setConnectionType(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full sm:w-[150px] min-w-0"><SelectValue placeholder="Connection" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="FTTH">FTTH</SelectItem>
+                  <SelectItem value="WIRELESS">Wireless</SelectItem>
+                  <SelectItem value="CABLE">Cable</SelectItem>
+                  <SelectItem value="LEASED_LINE">Leased Line</SelectItem>
+                  <SelectItem value="ETHERNET">Ethernet</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               variant={expiringOnly ? "default" : "outline"}
               size="sm"
@@ -1356,6 +1376,7 @@ export default function SubscribersPage() {
                       checked={subscribers.length > 0 && selectedRows.size === subscribers.length}
                       onCheckedChange={toggleAllRows}
                       className="h-4 w-4"
+                      aria-label="Select all subscribers on this page"
                     />
                   </TableHead>
                   <TableHead className="text-xs font-semibold cursor-pointer select-none" onClick={() => handleSort("code")}>
@@ -1435,6 +1456,7 @@ export default function SubscribersPage() {
                           checked={isSelected}
                           onCheckedChange={() => toggleRow(sub.id)}
                           className="h-4 w-4"
+                          aria-label={`Select ${sub.name || sub.code || "subscriber"}`}
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs font-medium">{sub.code}</TableCell>
@@ -1454,8 +1476,8 @@ export default function SubscribersPage() {
                             {sub.name.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.name}</p>
-                            {sub.email && <p className="text-xs text-muted-foreground hidden md:block truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" onClick={() => setQuickViewId(sub.id)}>{sub.email}</p>}
+                            <p className="text-sm font-medium truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" title={sub.name} onClick={() => setQuickViewId(sub.id)}>{sub.name}</p>
+                            {sub.email && <p className="text-xs text-muted-foreground hidden md:block truncate cursor-pointer hover:text-red-600 dark:hover:text-red-400 transition-colors" title={sub.email} onClick={() => setQuickViewId(sub.id)}>{sub.email}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -1555,7 +1577,7 @@ export default function SubscribersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity duration-150"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity duration-150" aria-label={`More actions for ${sub.name || sub.code || "subscriber"}`} title="More actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-48">
                             <DropdownMenuItem onClick={() => openDetail(sub.id)}><Eye className="h-4 w-4 mr-2" />View Details</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openEdit(sub)}><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
@@ -1599,7 +1621,7 @@ export default function SubscribersPage() {
             Showing <span className="font-medium text-foreground">{((page - 1) * 15) + 1}–{Math.min(page * 15, total)}</span> of <span className="font-medium text-foreground">{total}</span>
           </p>
           <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-8 w-8 p-0 rounded-md">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-8 w-8 p-0 rounded-md" aria-label="Previous page">
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <div className="flex items-center gap-1">
@@ -1628,7 +1650,7 @@ export default function SubscribersPage() {
               })}
             </div>
             <span className="text-xs text-muted-foreground px-1">of {totalPages}</span>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="h-8 w-8 p-0 rounded-md">
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)} className="h-8 w-8 p-0 rounded-md" aria-label="Next page">
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -1739,7 +1761,7 @@ export default function SubscribersPage() {
                           {form.profilePhotoPath ? (
                             <div className="relative group">
                               <img src={`/api/files?path=${encodeURIComponent(form.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
-                              <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setForm({ ...form, profilePhotoPath: "" })}>
+                              <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove profile photo" onClick={() => setForm({ ...form, profilePhotoPath: "" })}>
                                 <X className="h-2.5 w-2.5" />
                               </button>
                             </div>
@@ -1920,7 +1942,7 @@ export default function SubscribersPage() {
                         <Label className="text-xs">Service Username</Label>
                         <div className="flex gap-1.5">
                           <Input placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.serviceUsername} onChange={(e) => setForm({ ...form, serviceUsername: e.target.value })} />
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, serviceUsername: `service_${genId(6)}` })}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" aria-label="Regenerate service username" onClick={() => setForm({ ...form, serviceUsername: `service_${genId(6)}` })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -1929,10 +1951,10 @@ export default function SubscribersPage() {
                         <Label className="text-xs">Service Password</Label>
                         <div className="flex gap-1.5">
                           <Input type={showPassword ? "text" : "password"} placeholder="Auto-generated" className="font-mono text-sm h-9" value={form.servicePassword} onChange={(e) => setForm({ ...form, servicePassword: e.target.value })} />
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title={showPassword ? "Hide" : "Show"} onClick={() => setShowPassword(!showPassword)}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title={showPassword ? "Hide" : "Show"} aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword(!showPassword)}>
                             {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                           </Button>
-                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" onClick={() => setForm({ ...form, servicePassword: genId(10) })}>
+                          <Button type="button" variant="outline" size="icon" className="shrink-0 h-9 w-9" title="Regenerate" aria-label="Regenerate service password" onClick={() => setForm({ ...form, servicePassword: genId(10) })}>
                             <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -2333,7 +2355,7 @@ export default function SubscribersPage() {
               <Label className="text-xs text-muted-foreground">Service Username</Label>
               <div className="flex gap-2">
                 <Input readOnly value={createdSub?.serviceUsername || createdSub?.generatedUsername || ""} className="font-mono text-sm bg-muted" />
-                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.serviceUsername || createdSub?.generatedUsername || "")}>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" aria-label="Copy service username" onClick={() => navigator.clipboard.writeText(createdSub?.serviceUsername || createdSub?.generatedUsername || "")}>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -2342,7 +2364,7 @@ export default function SubscribersPage() {
               <Label className="text-xs text-muted-foreground">Service Password</Label>
               <div className="flex gap-2">
                 <Input readOnly value={createdSub?.servicePassword || createdSub?.generatedPassword || ""} className="font-mono text-sm bg-muted" />
-                <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={() => navigator.clipboard.writeText(createdSub?.servicePassword || createdSub?.generatedPassword || "")}>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" aria-label="Copy service password" onClick={() => navigator.clipboard.writeText(createdSub?.servicePassword || createdSub?.generatedPassword || "")}>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -2423,7 +2445,7 @@ export default function SubscribersPage() {
                       {editForm.profilePhotoPath ? (
                         <div className="relative group">
                           <img src={`/api/files?path=${encodeURIComponent(editForm.profilePhotoPath)}`} alt="Profile" className="h-12 w-12 rounded-full object-cover border" />
-                          <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setEditForm({ ...editForm, profilePhotoPath: "" })}>
+                          <button type="button" className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Remove profile photo" onClick={() => setEditForm({ ...editForm, profilePhotoPath: "" })}>
                             <X className="h-2.5 w-2.5" />
                           </button>
                         </div>

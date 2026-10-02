@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (!includeBuiltIn || includeBuiltIn !== 'true') {
       where.isBuiltIn = false;
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       name,
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     const template = await db.portalTemplate.create({
       data: {
-        tenantId,
+
         name,
         description,
         category,

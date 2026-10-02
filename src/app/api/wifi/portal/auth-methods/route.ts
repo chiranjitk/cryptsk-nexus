@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
 
-    const where: Record<string, unknown> = { tenantId: user.tenantId };
+    const where: Record<string, unknown> = { };
 
     if (partnerId) where.partnerId = partnerId;
     if (portalId) where.portalId = portalId;
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const tenantId = user.tenantId;
+    // tenantId removed (single-tenant)
 
     const {
       partnerId,
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     // Verify portal belongs to same tenant
     const portal = await db.captivePortal.findFirst({
-      where: { id: portalId, tenantId },
+      where: { id: portalId},
     });
     if (!portal) {
       return NextResponse.json(
@@ -110,12 +110,12 @@ export async function POST(request: NextRequest) {
 
     // Verify property belongs to tenant — if not found, try auto-resolving from tenant
     let property = await db.partner.findFirst({
-      where: { id: resolvedPropertyId, tenantId },
+      where: { id: resolvedPropertyId},
     });
     if (!property) {
       // Fallback: use portal's own partnerId (always correct since portal belongs to tenant)
       property = await db.partner.findFirst({
-        where: { id: portal.partnerId, tenantId },
+        where: { id: portal.partnerId},
       });
       if (!property) {
         console.error(`[auth-methods POST] Partner not found. body.partnerId=${partnerId}, portal.partnerId=${portal.partnerId}, tenantId=${tenantId}`);
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
 
     // Check for duplicate method on same portal (unique constraint)
     const existingAuth = await db.portalAuthentication.findFirst({
-      where: { portalId, method, tenantId },
+      where: { portalId, method},
     });
     if (existingAuth) {
       return NextResponse.json(
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
 
     const authMethod = await db.portalAuthentication.create({
       data: {
-        tenantId,
+
         partnerId: partner.id, // Use the verified property ID (may differ from body if fallback resolved)
         portalId,
         method,

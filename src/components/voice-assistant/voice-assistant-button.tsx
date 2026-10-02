@@ -92,14 +92,17 @@ export default function VoiceAssistantButton() {
 
   return (
     <>
-      {/* ── Floating Button ─────────────────────────────────── */}
+      {/* ── Floating Button (unified FAB stack — bottom slot) ──── */}
       <button
         onClick={togglePanel}
+        title={panelOpen ? "Close voice assistant" : "Voice assistant"}
         className={cn(
-          "fixed z-50 w-12 h-12 sm:w-14 sm:h-14 rounded-full shadow-lg",
+          // Stack-consistent: 44px mobile / 48px desktop, anchored right-5,
+          // z-40 shared with Quick Notes + Quick Actions in the same column.
+          "fixed z-40 h-11 w-11 sm:h-12 sm:w-12 rounded-full shadow-lg",
           "flex items-center justify-center transition-all duration-300",
-          // Mobile: bottom-right corner. Desktop: above help button.
-          "bottom-4 right-4 sm:bottom-6 sm:right-[5.5rem]",
+          // Bottom slot of the unified stack (mic at the bottom).
+          "bottom-5 right-5",
           panelOpen
             ? "bg-red-500 hover:bg-red-600"
             : "bg-primary hover:bg-primary/90",
@@ -130,16 +133,14 @@ export default function VoiceAssistantButton() {
         <div
           className={cn(
             "fixed z-50 bg-background border border-border shadow-2xl flex flex-col overflow-hidden",
-            // Mobile: full-width bottom sheet
-            "inset-x-0 bottom-0 sm:inset-auto",
-            "rounded-t-2xl sm:rounded-2xl",
-            "max-h-[80vh] sm:max-h-[520px]",
-            // iOS safe area padding at bottom
-            "pb-[env(safe-area-inset-bottom,0px)]",
-            // Desktop: positioned above the floating button
-            "sm:bottom-24 sm:right-[5.5rem] sm:w-[380px]",
+            // Opens to the LEFT of the FAB stack (bottom-aligned with the
+            // column) so it never covers the Quick Notes / Quick Actions
+            // buttons. right offset = right-5 + 48px button + 12px gap.
+            "bottom-5 left-4 right-[4.75rem] sm:left-auto sm:right-20 sm:w-[380px]",
+            "rounded-2xl",
+            "max-h-[calc(100vh-2.5rem)] sm:max-h-[min(520px,calc(100vh-2.5rem))]",
             // Animation
-            "animate-in slide-in-from-bottom sm:slide-in-from-bottom-4 fade-in duration-200",
+            "animate-in slide-in-from-bottom-4 fade-in duration-200",
           )}
           // Stop click propagation so backdrop doesn't close panel when clicking inside
           onClick={(e) => e.stopPropagation()}

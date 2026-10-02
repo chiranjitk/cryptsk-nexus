@@ -1,0 +1,1069 @@
+     1→"use client";
+     2→
+     3→import { useState, useMemo } from "react";
+     4→import { useQuery } from "@tanstack/react-query";
+     5→import { apiFetch, formatINR } from "@/lib/utils";
+     6→import {
+     7→  ArrowLeft, Search, Phone, Mail, MapPin, Globe, Router, Wifi, Shield,
+     8→  CreditCard, FileText, Clock, AlertTriangle, CheckCircle, XCircle,
+     9→  MessageSquare, User, Calendar, Activity, DollarSign, BadgeCheck,
+    10→  ChevronRight, RefreshCw, Eye, Download, Upload, UserCog, Package,
+    11→  Wrench, Hash, Network, Zap, Timer, UserPlus,
+    12→  TrendingUp, Camera, IdCard, Star, Heart, PhoneCall, X,
+    13→} from "lucide-react";
+    14→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    15→import { Badge } from "@/components/ui/badge";
+    16→import { Button } from "@/components/ui/button";
+    17→import { Input } from "@/components/ui/input";
+    18→import { Skeleton } from "@/components/ui/skeleton";
+    19→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    20→import { Separator } from "@/components/ui/separator";
+    21→import {
+    22→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    23→} from "@/components/ui/table";
+    24→import { toast } from "sonner";
+    25→import { useModuleStore } from "@/store/module-store";
+    26→
+    27→// ─── Types ───────────────────────────────────────────────────────
+    28→
+    29→interface SubscriberMini {
+    30→  id: string; code: string; name: string; phone: string; email: string;
+    31→  status: string; area?: { id: string; name: string } | null;
+    32→  plan?: { id: string; name: string; priceMonthly: number } | null;
+    33→  connectionType: string;
+    34→}
+    35→
+    36→interface SubscriberData {
+    37→  id: string;
+    38→  code: string;
+    39→  name: string;
+    40→  email: string;
+    41→  phone: string;
+    42→  altPhone?: string;
+    43→  address?: string;
+    44→  landmark?: string;
+    45→  pincode?: string;
+    46→  status: string;
+    47→  connectionType: string;
+    48→  area?: { id: string; name: string } | null;
+    49→  plan?: {
+    50→    id: string;
+    51→    name: string;
+    52→    priceMonthly: number;
+    53→    downloadSpeed?: number;
+    54→    uploadSpeed?: number;
+    55→    dataLimitGb?: number;
+    56→    ipv6Enabled?: boolean;
+    57→    ipv6PrefixDelegation?: boolean;
+    58→    ipv6AssignmentMode?: string;
+    59→  } | null;
+    60→  serviceUsername?: string;
+    61→  ipAddress?: string;
+    62→  ipType?: string;
+    63→  macAddress?: string;
+    64→  assignedDevice?: { id: string; name: string; type: string; ipAddress: string; status: string } | null;
+    65→  activationDate?: string | null;
+    66→  billingStartDate?: string | null;
+    67→  balance?: number;
+    68→  profilePhotoPath?: string;
+    69→  kycDocPath?: string;
+    70→  kycAadhaarNumber?: string;
+    71→  gstin?: string;
+    72→  panNumber?: string;
+    73→  routerRented?: boolean;
+    74→  routerSerial?: string;
+    75→  routerDeposit?: string;
+    76→  referredBy?: { name: string; phone: string } | null;
+    77→  notes?: string;
+    78→  internalNotes?: string;
+    79→  radiusEnabled?: boolean;
+    80→  radiusUser?: boolean;
+    81→  radiusGroup?: { name: string; speedLimitDown?: number; speedLimitUp?: number } | null;
+    82→  ipStackType?: string;
+    83→  ipv6Address?: string;
+    84→  ipv6Prefix?: string;
+    85→  ipv6PrefixLength?: number;
+    86→  ipv6Duid?: string;
+    87→  ipv6AssignmentMode?: string;
+    88→  ipv6PoolId?: string | null;
+    89→}
+    90→
+    91→interface View360 {
+    92→  subscriber: SubscriberData;
+    93→  billing: {
+    94→    totalBilled: number; totalPaid: number; outstandingBalance: number;
+    95→    overdueCount: number; totalInvoices: number; totalPayments: number;
+    96→    currentBalance: number; invoices: any[]; payments: any[];
+    97→  };
+    98→  support: {
+    99→    complaints: any[]; complaintStats: { status: string; count: number }[];
+   100→    openTicketCount: number;
+   101→  };
+   102→  communications: { notifications: any[]; followUps: any[]; leadSource: any };
+   103→  service: { installations: any[]; radiusSessions: any[] };
+   104→  churn: { tracking: any; atRisk: boolean };
+   105→  activity: { auditLogs: any[] };
+   106→  stats: {
+   107→    customerSince: string; daysActive: number; totalInvoices: number;
+   108→    totalPayments: number; totalBilled: number; totalPaid: number;
+   109→    lifetimeValue: number; avgMonthlyPayment: number; outstandingBalance: number;
+   110→    openTickets: number; totalComplaints: number; isKYCVerified: boolean;
+   111→  };
+   112→}
+   113→
+   114→// ─── Helpers ─────────────────────────────────────────────────────
+   115→
+   116→function timeAgo(dateStr: string | null | undefined): string {
+   117→  if (!dateStr) return "—";
+   118→  const diff = Date.now() - new Date(dateStr).getTime();
+   119→  if (diff < 60000) return "Just now";
+   120→  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+   121→  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+   122→  if (diff < 2592000000) return `${Math.floor(diff / 86400000)}d ago`;
+   123→  return `${Math.floor(diff / 2592000000)}mo ago`;
+   124→}
+   125→
+   126→function formatDate(dateStr: string | null | undefined): string {
+   127→  if (!dateStr) return "—";
+   128→  try { return new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+   129→  catch { return "—"; }
+   130→}
+   131→
+   132→function formatDateTime(dateStr: string | null | undefined): string {
+   133→  if (!dateStr) return "—";
+   134→  try { return new Date(dateStr).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+   135→  catch { return "—"; }
+   136→}
+   137→
+   138→function truncate(str: string | null | undefined, len: number = 60): string {
+   139→  if (!str) return "—";
+   140→  return str.length > len ? str.slice(0, len) + "…" : str;
+   141→}
+   142→
+   143→function getInitials(name: string): string {
+   144→  return name.split(" ").map(n => n[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+   145→}
+   146→
+   147→function fileUrl(path: string): string {
+   148→  if (!path) return "";
+   149→  return `/api/files?path=${encodeURIComponent(path)}`;
+   150→}
+   151→
+   152→// ─── Status Styles ───────────────────────────────────────────────
+   153→
+   154→const STATUS_STYLES: Record<string, string> = {
+   155→  ACTIVE: "bg-green-100 text-green-700 border-green-200",
+   156→  SUSPENDED: "bg-amber-100 text-amber-700 border-amber-200",
+   157→  DISCONNECTED: "bg-red-100 text-red-700 border-red-200",
+   158→  PENDING_ACTIVATION: "bg-blue-100 text-blue-700 border-blue-200",
+   159→  TRIAL: "bg-purple-100 text-purple-700 border-purple-200",
+   160→};
+   161→
+   162→const PRIORITY_STYLES: Record<string, string> = {
+   163→  P1_CRITICAL: "bg-red-100 text-red-700 border-red-200",
+   164→  P2_HIGH: "bg-orange-100 text-orange-700 border-orange-200",
+   165→  P3_MEDIUM: "bg-amber-100 text-amber-700 border-amber-200",
+   166→  P4_LOW: "bg-green-100 text-green-700 border-green-200",
+   167→};
+   168→
+   169→const COMPLAINT_STATUS_STYLES: Record<string, string> = {
+   170→  OPEN: "bg-red-100 text-red-700 border-red-200",
+   171→  ASSIGNED: "bg-blue-100 text-blue-700 border-blue-200",
+   172→  IN_PROGRESS: "bg-amber-100 text-amber-700 border-amber-200",
+   173→  RESOLVED: "bg-green-100 text-green-700 border-green-200",
+   174→  CLOSED: "bg-gray-100 text-gray-600 border-gray-200",
+   175→  REOPENED: "bg-orange-100 text-orange-700 border-orange-200",
+   176→};
+   177→
+   178→const INVOICE_STATUS_STYLES: Record<string, string> = {
+   179→  DRAFT: "bg-gray-100 text-gray-600 border-gray-200",
+   180→  SENT: "bg-blue-100 text-blue-700 border-blue-200",
+   181→  PAID: "bg-green-100 text-green-700 border-green-200",
+   182→  PARTIALLY_PAID: "bg-amber-100 text-amber-700 border-amber-200",
+   183→  OVERDUE: "bg-red-200 text-red-800 border-red-300",
+   184→  CANCELLED: "bg-gray-100 text-gray-500 border-gray-200",
+   185→  CREDIT_NOTE: "bg-purple-100 text-purple-700 border-purple-200",
+   186→};
+   187→
+   188→const PAYMENT_MODE_STYLES: Record<string, string> = {
+   189→  CASH: "bg-green-50 text-green-700", UPI: "bg-purple-50 text-purple-700",
+   190→  BANK_TRANSFER: "bg-blue-50 text-blue-700", CHEQUE: "bg-amber-50 text-amber-700",
+   191→  ONLINE: "bg-cyan-50 text-cyan-700", WALLET: "bg-orange-50 text-orange-700",
+   192→};
+   193→
+   194→// ─── Compact Stat Card ───────────────────────────────────────────
+   195→
+   196→function StatCard({ title, value, icon: Icon, color, sub }: {
+   197→  title: string; value: string; icon: React.ElementType; color: string; sub?: string;
+   198→}) {
+   199→  return (
+   200→    <Card className="border-0 shadow-sm bg-gradient-to-br from-card to-muted/30">
+   201→      <CardContent className="p-4">
+   202→        <div className="flex items-start justify-between">
+   203→          <div className="flex-1 min-w-0">
+   204→            <p className="text-[10px] font-semibold uppercase text-muted-foreground tracking-widest">{title}</p>
+   205→            <p className="text-xl font-bold mt-1 tracking-tight">{value}</p>
+   206→            {sub && <p className="text-[10px] text-muted-foreground mt-0.5">{sub}</p>}
+   207→          </div>
+   208→          <div className={`p-2.5 rounded-xl ${color}`}><Icon className="h-4 w-4" /></div>
+   209→        </div>
+   210→      </CardContent>
+   211→    </Card>
+   212→  );
+   213→}
+   214→
+   215→// ─── Info Row ────────────────────────────────────────────────────
+   216→
+   217→function InfoRow({ icon: Icon, label, value, sub, valueColor }: {
+   218→  icon: React.ElementType; label: string; value: string; sub?: string; valueColor?: string;
+   219→}) {
+   220→  if (!value || value === "—") return null;
+   221→  return (
+   222→    <div className="flex items-start gap-3 py-1.5">
+   223→      <div className="p-1.5 rounded-md bg-muted/60 shrink-0 mt-0.5"><Icon className="h-3.5 w-3.5 text-muted-foreground" /></div>
+   224→      <div className="min-w-0">
+   225→        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
+   226→        <p className={`text-sm font-medium ${valueColor || ""}`}>{value}</p>
+   227→        {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
+   228→      </div>
+   229→    </div>
+   230→  );
+   231→}
+   232→
+   233→// ─── ScrollTable wrapper ─────────────────────────────────────────
+   234→
+   235→function ScrollTable({ maxH = 400, children }: { maxH?: number; children: React.ReactNode }) {
+   236→  return <div className="max-h-[{maxH}px] overflow-y-auto rounded-md border" style={{ maxHeight: `${maxH}px` }}>{children}</div>;
+   237→}
+   238→
+   239→// ─── Section Header ─────────────────────────────────────────────
+   240→
+   241→function SectionHeader({ icon: Icon, title, count, className }: {
+   242→  icon: React.ElementType; title: string; count?: number; className?: string;
+   243→}) {
+   244→  return (
+   245→    <CardHeader className={`pb-2.5 ${className || ""}`}>
+   246→      <CardTitle className="text-sm font-semibold flex items-center gap-2">
+   247→        <div className="p-1 rounded-md bg-primary/10"><Icon className="h-3.5 w-3.5 text-primary" /></div>
+   248→        {title}
+   249→        {count !== undefined && <Badge variant="outline" className="text-[10px] font-normal ml-auto">{count}</Badge>}
+   250→      </CardTitle>
+   251→    </CardHeader>
+   252→  );
+   253→}
+   254→
+   255→// ═══════════════════════════════════════════════════════════════════
+   256→// MAIN COMPONENT
+   257→// ═══════════════════════════════════════════════════════════════════
+   258→
+   259→export default function Subscriber360Page() {
+   260→  const [selectedId, setSelectedId] = useState<string | null>(null);
+   261→  const [search, setSearch] = useState("");
+   262→  const [kycPreview, setKycPreview] = useState(false);
+   263→  const { isModuleEnabled } = useModuleStore();
+   264→
+   265→  // ─── Subscriber list query ─────────────────────────────────
+   266→  const { data: subsData, isLoading: subsLoading } = useQuery<{ subscribers: SubscriberMini[] }>({
+   267→    queryKey: ["360-subs-list"],
+   268→    queryFn: () => apiFetch("/api/subscribers?limit=100"),
+   269→  });
+   270→  const allSubs = subsData?.subscribers || [];
+   271→
+   272→  const filteredSubs = useMemo(() => {
+   273→    if (!search) return allSubs;
+   274→    const q = search.toLowerCase();
+   275→    return allSubs.filter(s =>
+   276→      s.name.toLowerCase().includes(q) ||
+   277→      s.phone.includes(q) ||
+   278→      (s.code || "").toLowerCase().includes(q) ||
+   279→      (s.email || "").toLowerCase().includes(q)
+   280→    );
+   281→  }, [allSubs, search]);
+   282→
+   283→  // ─── 360° data query ───────────────────────────────────────
+   284→  const { data: viewData, isLoading: viewLoading, error: viewError, refetch } = useQuery<View360>({
+   285→    queryKey: ["subscriber-360", selectedId],
+   286→    queryFn: () => apiFetch(`/api/subscribers/${selectedId}/360`),
+   287→    enabled: !!selectedId,
+   288→    refetchOnWindowFocus: false,
+   289→  });
+   290→
+   291→  const sub = viewData?.subscriber;
+   292→  const stats = viewData?.stats;
+   293→
+   294→  function handleSelect(id: string) {
+   295→    setSelectedId(id);
+   296→    setSearch("");
+   297→    setKycPreview(false);
+   298→  }
+   299→
+   300→  // ─── Loading State ─────────────────────────────────────────
+   301→  if (subsLoading && !selectedId) {
+   302→    return <div className="space-y-4"><Skeleton className="h-12 w-full" />{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>;
+   303→  }
+   304→
+   305→  // ═══════════════════════════════════════════════════════════
+   306→  // VIEW 1: Subscriber Selection
+   307→  // ═══════════════════════════════════════════════════════════
+   308→  if (!selectedId) {
+   309→    return (
+   310→      <div className="space-y-4">
+   311→        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+   312→          <div>
+   313→            <h2 className="text-lg font-bold flex items-center gap-2">
+   314→              <Eye className="h-5 w-5 text-emerald-500" /> 360° Customer View
+   315→            </h2>
+   316→            <p className="text-sm text-muted-foreground">Select a subscriber to see their complete profile</p>
+   317→          </div>
+   318→          <Badge variant="outline" className="text-xs">{filteredSubs.length} subscribers</Badge>
+   319→        </div>
+   320→
+   321→        <div className="relative">
+   322→          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   323→          <Input placeholder="Search by name, phone, code, or email…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+   324→        </div>
+   325→
+   326→        <Card className="border shadow-sm">
+   327→          <CardContent className="p-0">
+   328→            <ScrollTable maxH={550}>
+   329→              <Table>
+   330→                <TableHeader>
+   331→                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+   332→                    <TableHead className="text-xs font-medium uppercase">Code</TableHead>
+   333→                    <TableHead className="text-xs font-medium uppercase">Name</TableHead>
+   334→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">Phone</TableHead>
+   335→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Area</TableHead>
+   336→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Plan</TableHead>
+   337→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   338→                    <TableHead className="text-xs font-medium uppercase">Type</TableHead>
+   339→                    <TableHead className="w-8"></TableHead>
+   340→                  </TableRow>
+   341→                </TableHeader>
+   342→                <TableBody>
+   343→                  {filteredSubs.length === 0 ? (
+   344→                    <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground text-sm">No subscribers found</TableCell></TableRow>
+   345→                  ) : (
+   346→                    filteredSubs.slice(0, 50).map(s => (
+   347→                      <TableRow key={s.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleSelect(s.id)}>
+   348→                        <TableCell className="text-xs font-mono">{s.code}</TableCell>
+   349→                        <TableCell className="text-sm font-medium">{s.name}</TableCell>
+   350→                        <TableCell className="text-sm hidden sm:table-cell">{s.phone}</TableCell>
+   351→                        <TableCell className="text-sm hidden md:table-cell">{s.area?.name || "—"}</TableCell>
+   352→                        <TableCell className="text-sm hidden lg:table-cell">{s.plan?.name || "—"}</TableCell>
+   353→                        <TableCell><Badge variant="outline" className={`text-[10px] ${STATUS_STYLES[s.status] || ""}`}>{s.status}</Badge></TableCell>
+   354→                        <TableCell className="text-xs text-muted-foreground">{s.connectionType}</TableCell>
+   355→                        <TableCell><ChevronRight className="h-4 w-4 text-muted-foreground" /></TableCell>
+   356→                      </TableRow>
+   357→                    ))
+   358→                  )}
+   359→                </TableBody>
+   360→              </Table>
+   361→            </ScrollTable>
+   362→          </CardContent>
+   363→        </Card>
+   364→      </div>
+   365→    );
+   366→  }
+   367→
+   368→  // ═══════════════════════════════════════════════════════════
+   369→  // VIEW 2: 360° Customer View
+   370→  // ═══════════════════════════════════════════════════════════
+   371→  if (viewLoading) {
+   372→    return (
+   373→      <div className="space-y-4">
+   374→        <Skeleton className="h-10 w-32" />
+   375→        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
+   376→        <Skeleton className="h-64" /><Skeleton className="h-64" /><Skeleton className="h-64" />
+   377→      </div>
+   378→    );
+   379→  }
+   380→
+   381→  if (viewError || !viewData || !sub) {
+   382→    const errMsg = viewError?.message || "";
+   383→    const isAuthError = errMsg.includes("401") || errMsg.includes("auth") || errMsg.includes("log in");
+   384→    return (
+   385→      <div className="space-y-4">
+   386→        <Button variant="outline" size="sm" onClick={() => setSelectedId(null)}><ArrowLeft className="h-4 w-4 mr-1" />Back</Button>
+   387→        <Card className="border border-red-200 bg-red-50 dark:bg-red-950/20">
+   388→          <CardContent className="p-6 text-center">
+   389→            <AlertTriangle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+   390→            <p className="text-sm font-medium text-red-700">{isAuthError ? "Session expired — please log out and log in again" : "Failed to load subscriber data"}</p>
+   391→            <p className="text-xs text-red-500/70 mt-1">{errMsg}</p>
+   392→            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}><RefreshCw className="h-3 w-3 mr-1" />Retry</Button>
+   393→          </CardContent>
+   394→        </Card>
+   395→      </div>
+   396→    );
+   397→  }
+   398→
+   399→  const avatarUrl = sub.profilePhotoPath ? fileUrl(sub.profilePhotoPath) : null;
+   400→  const kycDocUrl = sub.kycDocPath ? fileUrl(sub.kycDocPath) : null;
+   401→  const kycIsPdf = sub.kycDocPath?.endsWith(".pdf") || false;
+   402→
+   403→  return (
+   404→    <div className="space-y-5">
+   405→      {/* ─── Header ─────────────────────────────────────────── */}
+   406→      <div className="flex items-center gap-3 flex-wrap">
+   407→        <Button variant="outline" size="sm" onClick={() => setSelectedId(null)} className="gap-1.5">
+   408→          <ArrowLeft className="h-4 w-4" /> Back
+   409→        </Button>
+   410→        <div className="flex-1 min-w-0" />
+   411→        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+   412→          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+   413→        </Button>
+   414→      </div>
+   415→
+   416→      {/* ─── Churn Risk Banner ─────────────────────────────── */}
+   417→      {viewData.churn.atRisk && (
+   418→        <Card className="border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-950/20 dark:to-amber-950/20 shadow-sm">
+   419→          <CardContent className="p-3 flex items-center gap-3">
+   420→            <div className="p-2 rounded-full bg-orange-100 dark:bg-orange-900/50"><AlertTriangle className="h-5 w-5 text-orange-600" /></div>
+   421→            <div className="flex-1 min-w-0">
+   422→              <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Churn Risk Detected</p>
+   423→              <p className="text-xs text-orange-600/80">{viewData.churn.tracking?.notes || "This subscriber has been flagged for potential churn."}</p>
+   424→            </div>
+   425→            {viewData.churn.tracking?.communications?.length > 0 && (
+   426→              <Badge variant="outline" className="text-[10px] shrink-0 border-orange-300">{viewData.churn.tracking.communications.length} retention actions</Badge>
+   427→            )}
+   428→          </CardContent>
+   429→        </Card>
+   430→      )}
+   431→
+   432→      {/* ═══════════════════════════════════════════════════ */}
+   433→      {/* HERO: Profile Header Card                        */}
+   434→      {/* ═══════════════════════════════════════════════════ */}
+   435→      <Card className="border shadow-sm overflow-hidden">
+   436→        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-6 py-6 relative">
+   437→          {/* Decorative circles */}
+   438→          <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/4" />
+   439→          <div className="absolute bottom-0 left-1/2 w-48 h-48 bg-primary/5 rounded-full blur-2xl translate-y-1/2" />
+   440→
+   441→          <div className="relative flex flex-col sm:flex-row items-center sm:items-start gap-5">
+   442→            {/* Avatar */}
+   443→            <div className="relative group shrink-0">
+   444→              {avatarUrl ? (
+   445→                <img src={avatarUrl} alt={sub.name} className="h-20 w-20 rounded-2xl object-cover border-2 border-white/20 shadow-lg" />
+   446→              ) : (
+   447→                <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg">
+   448→                  <span className="text-2xl font-bold text-white">{getInitials(sub.name)}</span>
+   449→                </div>
+   450→              )}
+   451→              <div className="absolute -bottom-1 -right-1 p-1 rounded-full bg-white shadow-md">
+   452→                <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${STATUS_STYLES[sub.status] || ""} border-0 shadow-sm`}>{sub.status.replace(/_/g, " ")}</Badge>
+   453→              </div>
+   454→            </div>
+   455→
+   456→            {/* Info */}
+   457→            <div className="flex-1 text-center sm:text-left min-w-0">
+   458→              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-2 sm:gap-3">
+   459→                <h2 className="text-xl font-bold text-white">{sub.name}</h2>
+   460→                <Badge variant="outline" className={`text-[10px] border-white/20 text-white/80 ${sub.connectionType === "FTTH" ? "bg-emerald-500/20" : sub.connectionType === "WIRELESS" ? "bg-amber-500/20" : "bg-blue-500/20"}`}>{sub.connectionType}</Badge>
+   461→              </div>
+   462→              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+   463→                <span className="font-mono">{sub.code}</span>
+   464→                <span className="hidden sm:inline">•</span>
+   465→                <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{sub.phone}</span>
+   466→                {sub.email && <><span className="hidden sm:inline">•</span><span className="flex items-center gap-1"><Mail className="h-3 w-3" />{sub.email}</span></>}
+   467→                {sub.area?.name && <><span className="hidden sm:inline">•</span><span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{sub.area.name}</span></>}
+   468→              </div>
+   469→              {sub.plan && (
+   470→                <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 backdrop-blur-sm text-xs text-white/90">
+   471→                  <Zap className="h-3 w-3 text-emerald-400" />
+   472→                  <span className="font-medium">{sub.plan.name}</span>
+   473→                  <span className="text-white/50">·</span>
+   474→                  <span>{formatINR(sub.plan.priceMonthly)}/mo</span>
+   475→                  {sub.plan.downloadSpeed && <><span className="text-white/50">·</span><span>↓{sub.plan.downloadSpeed}↑{sub.plan.uploadSpeed} Mbps</span></>}
+   476→                </div>
+   477→              )}
+   478→            </div>
+   479→
+   480→            {/* Quick Actions */}
+   481→            <div className="flex flex-col gap-2 shrink-0">
+   482→              <a href={`tel:${sub.phone}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium hover:bg-emerald-500/30 transition-colors">
+   483→                <PhoneCall className="h-3.5 w-3.5" /> Call
+   484→              </a>
+   485→              {stats?.isKYCVerified && (
+   486→                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-xs font-medium">
+   487→                  <BadgeCheck className="h-3.5 w-3.5" /> KYC Verified
+   488→                </div>
+   489→              )}
+   490→            </div>
+   491→          </div>
+   492→        </div>
+   493→
+   494→        {/* Quick Stats Strip */}
+   495→        <div className="grid grid-cols-3 sm:grid-cols-6 divide-x bg-card">
+   496→          {[
+   497→            { label: "Lifetime Value", value: formatINR(stats?.lifetimeValue || 0), icon: DollarSign, color: "text-emerald-600" },
+   498→            { label: "Outstanding", value: formatINR(stats?.outstandingBalance || 0), icon: CreditCard, color: stats?.outstandingBalance > 0 ? "text-red-600" : "text-muted-foreground" },
+   499→            { label: "Open Tickets", value: String(stats?.openTickets || 0), icon: AlertTriangle, color: "text-amber-600" },
+   500→            { label: "Days Active", value: `${stats?.daysActive || 0}`, icon: Calendar, color: "text-blue-600" },
+   501→            { label: "Invoices", value: String(stats?.totalInvoices || 0), icon: FileText, color: "text-violet-600" },
+   502→            { label: "Payments", value: String(stats?.totalPayments || 0), icon: CheckCircle, color: "text-green-600" },
+   503→          ].map(s => (
+   504→            <div key={s.label} className="px-3 py-3 text-center">
+   505→              <s.icon className={`h-3.5 w-3.5 ${s.color} mx-auto`} />
+   506→              <p className="text-sm font-bold mt-0.5">{s.value}</p>
+   507→              <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">{s.label}</p>
+   508→            </div>
+   509→          ))}
+   510→        </div>
+   511→      </Card>
+   512→
+   513→      {/* ─── Tabs ───────────────────────────────────────────── */}
+   514→      <Tabs defaultValue="overview" className="space-y-5">
+   515→        <TabsList className="w-full flex-wrap h-auto gap-1 bg-muted/60 p-1 rounded-xl">
+   516→          <TabsTrigger value="overview" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Overview</TabsTrigger>
+   517→          <TabsTrigger value="billing" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Billing & Payments</TabsTrigger>
+   518→          <TabsTrigger value="support" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Support</TabsTrigger>
+   519→          <TabsTrigger value="comms" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Communications</TabsTrigger>
+   520→          <TabsTrigger value="activity" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Activity</TabsTrigger>
+   521→          <TabsTrigger value="service" className="text-xs rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Service</TabsTrigger>
+   522→        </TabsList>
+   523→
+   524→        {/* ═══════════════════════════════════════════════════ */}
+   525→        {/* TAB: Overview                                     */}
+   526→        {/* ═══════════════════════════════════════════════════ */}
+   527→        <TabsContent value="overview" className="space-y-5">
+   528→
+   529→          {/* KYC & Documents Card */}
+   530→          <Card className="border shadow-sm">
+   531→            <SectionHeader icon={Shield} title="KYC & Documents" />
+   532→            <CardContent>
+   533→              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+   534→                {/* Profile Photo Preview */}
+   535→                <div className="flex flex-col items-center gap-2 p-4 rounded-xl bg-muted/30 border">
+   536→                  <div className="relative">
+   537→                    {avatarUrl ? (
+   538→                      <img src={avatarUrl} alt="Profile" className="h-24 w-24 rounded-xl object-cover border shadow-sm" />
+   539→                    ) : (
+   540→                      <div className="h-24 w-24 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-md">
+   541→                        <span className="text-3xl font-bold text-white">{getInitials(sub.name)}</span>
+   542→                      </div>
+   543→                    )}
+   544→                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-white shadow-sm border text-[9px] font-medium">
+   545→                      <Camera className="h-2.5 w-2.5 inline mr-0.5" /> Photo
+   546→                    </div>
+   547→                  </div>
+   548→                  <span className="text-xs font-medium">{avatarUrl ? "Photo on file" : "No photo uploaded"}</span>
+   549→                </div>
+   550→
+   551→                {/* KYC Document */}
+   552→                <div className="flex flex-col items-center gap-2 p-4 rounded-xl bg-muted/30 border">
+   553→                  {kycDocUrl && !kycIsPdf ? (
+   554→                    <div className="relative">
+   555→                      <img src={kycDocUrl} alt="KYC" className="h-24 w-24 rounded-xl object-cover border shadow-sm cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setKycPreview(true)} />
+   556→                      <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-white shadow-sm border text-[9px] font-medium">
+   557→                        <IdCard className="h-2.5 w-2.5 inline mr-0.5" /> KYC
+   558→                      </div>
+   559→                    </div>
+   560→                  ) : kycDocUrl && kycIsPdf ? (
+   561→                    <div className="relative">
+   562→                      <div className="h-24 w-24 rounded-xl bg-red-50 border flex flex-col items-center justify-center text-red-500 cursor-pointer hover:bg-red-100 transition-colors" onClick={() => window.open(kycDocUrl, "_blank")}>
+   563→                        <FileText className="h-8 w-8" />
+   564→                        <span className="text-[9px] font-medium mt-1">PDF</span>
+   565→                      </div>
+   566→                      <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-white shadow-sm border text-[9px] font-medium">
+   567→                        <IdCard className="h-2.5 w-2.5 inline mr-0.5" /> KYC
+   568→                      </div>
+   569→                    </div>
+   570→                  ) : (
+   571→                    <div className="h-24 w-24 rounded-xl bg-muted border-2 border-dashed flex flex-col items-center justify-center text-muted-foreground">
+   572→                      <Upload className="h-6 w-6" />
+   573→                      <span className="text-[9px] mt-1">No KYC doc</span>
+   574→                    </div>
+   575→                  )}
+   576→                  <span className="text-xs font-medium">{kycDocUrl ? "Document on file" : "No document uploaded"}</span>
+   577→                </div>
+   578→
+   579→                {/* KYC Status */}
+   580→                <div className="flex flex-col items-center gap-2 p-4 rounded-xl bg-muted/30 border">
+   581→                  <div className={`h-24 w-24 rounded-xl flex flex-col items-center justify-center border shadow-sm ${stats?.isKYCVerified ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`}>
+   582→                    {stats?.isKYCVerified ? (
+   583→                      <>
+   584→                        <BadgeCheck className="h-10 w-10 text-green-500" />
+   585→                        <span className="text-xs font-semibold text-green-700 mt-1">Verified</span>
+   586→                      </>
+   587→                    ) : (
+   588→                      <>
+   589→                        <Shield className="h-10 w-10 text-amber-500" />
+   590→                        <span className="text-xs font-semibold text-amber-700 mt-1">Pending</span>
+   591→                      </>
+   592→                    )}
+   593→                  </div>
+   594→                  <div className="text-center">
+   595→                    <span className="text-xs font-medium">{sub.kycAadhaarNumber ? `Aadhaar: ${sub.kycAadhaarNumber}` : "No Aadhaar on file"}</span>
+   596→                    {sub.gstin && <p className="text-[10px] text-muted-foreground mt-0.5">GSTIN: {sub.gstin}</p>}
+   597→                    {sub.panNumber && <p className="text-[10px] text-muted-foreground">PAN: {sub.panNumber}</p>}
+   598→                  </div>
+   599→                </div>
+   600→              </div>
+   601→            </CardContent>
+   602→          </Card>
+   603→
+   604→          {/* Profile Details */}
+   605→          <Card className="border shadow-sm">
+   606→            <SectionHeader icon={User} title="Profile Details" />
+   607→            <CardContent>
+   608→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
+   609→                <InfoRow icon={Hash} label="Code" value={sub.code} />
+   610→                <InfoRow icon={User} label="Name" value={sub.name} />
+   611→                <InfoRow icon={Phone} label="Phone" value={sub.phone} sub={sub.altPhone} />
+   612→                <InfoRow icon={Mail} label="Email" value={sub.email || "—"} />
+   613→                <InfoRow icon={MapPin} label="Address" value={[sub.address, sub.landmark, sub.pincode].filter(Boolean).join(", ") || "—"} />
+   614→                <InfoRow icon={Globe} label="Service User" value={sub.serviceUsername || "—"} />
+   615→                <InfoRow icon={Globe} label="IP Address" value={`${sub.ipAddress || "—"} (${sub.ipType || "—"})`} />
+   616→                <InfoRow icon={Router} label="MAC Address" value={sub.macAddress || "—"} />
+   617→                <InfoRow icon={Router} label="Device" value={sub.assignedDevice?.name || "—"} sub={sub.assignedDevice?.ipAddress} />
+   618→                <InfoRow icon={Clock} label="Activated" value={formatDate(sub.activationDate)} />
+   619→                <InfoRow icon={Calendar} label="Billing Start" value={formatDate(sub.billingStartDate)} />
+   620→                {sub.routerRented && <InfoRow icon={Package} label="Router" value={`Rented · ${sub.routerSerial || "—"}`} sub={sub.routerDeposit ? `Deposit: ₹${sub.routerDeposit}` : undefined} />}
+   621→                {sub.referredBy && <InfoRow icon={UserPlus} label="Referred By" value={sub.referredBy.name} sub={sub.referredBy.phone} />}
+   622→              </div>
+   623→
+   624→              {/* IPv6 Configuration (gated by ipv6 module) */}
+   625→              {isModuleEnabled("ipv6") && (
+   626→                <div className="space-y-2 pt-3 border-t border-border mt-3">
+   627→                  <div className="flex items-center gap-2">
+   628→                    <Globe className="h-4 w-4 text-cyan-600" />
+   629→                    <span className="text-sm font-semibold">IPv6 Configuration</span>
+   630→                    <Badge variant={sub.ipStackType === "DUAL_STACK" ? "default" : sub.ipStackType === "IPV6_ONLY" ? "secondary" : "outline"} className="text-xs">
+   631→                      {sub.ipStackType === "IPV4_ONLY" ? "IPv4 Only" : sub.ipStackType === "DUAL_STACK" ? "Dual Stack" : "IPv6 Only"}
+   632→                    </Badge>
+   633→                  </div>
+   634→
+   635→                  {sub.ipStackType !== "IPV4_ONLY" && (
+   636→                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+   637→                      <div>
+   638→                        <span className="text-muted-foreground">IPv6 Address:</span>
+   639→                        <p className="font-mono">{sub.ipv6Address || "Not assigned"}</p>
+   640→                      </div>
+   641→                      <div>
+   642→                        <span className="text-muted-foreground">Assignment Mode:</span>
+   643→                        <p className="capitalize">{sub.ipv6AssignmentMode || "SLAAC"}</p>
+   644→                      </div>
+   645→                      {sub.ipv6Prefix && (
+   646→                        <div>
+   647→                          <span className="text-muted-foreground">IPv6 Prefix (Delegated):</span>
+   648→                          <p className="font-mono">{sub.ipv6Prefix}/{sub.ipv6PrefixLength}</p>
+   649→                        </div>
+   650→                      )}
+   651→                      {sub.ipv6Duid && (
+   652→                        <div>
+   653→                          <span className="text-muted-foreground">DUID:</span>
+   654→                          <p className="font-mono text-xs break-all">{sub.ipv6Duid}</p>
+   655→                        </div>
+   656→                      )}
+   657→                    </div>
+   658→                  )}
+   659→
+   660→                  {sub.ipStackType === "IPV4_ONLY" && (
+   661→                    <p className="text-xs text-muted-foreground">IPv6 is not configured for this subscriber</p>
+   662→                  )}
+   663→                </div>
+   664→              )}
+   665→
+   666→              {(sub.notes || sub.internalNotes) && (
+   667→                <div className="mt-3 pt-3 border-t">
+   668→                  {sub.notes && <p className="text-xs text-muted-foreground"><span className="font-medium">Notes:</span> {sub.notes}</p>}
+   669→                  {sub.internalNotes && <p className="text-xs text-muted-foreground mt-1"><span className="font-medium">Internal:</span> {sub.internalNotes}</p>}
+   670→                </div>
+   671→              )}
+   672→            </CardContent>
+   673→          </Card>
+   674→
+   675→          {/* Service & RADIUS */}
+   676→          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+   677→            <Card className="border shadow-sm">
+   678→              <SectionHeader icon={Zap} title="Service Details" />
+   679→              <CardContent className="space-y-2.5 text-sm">
+   680→                <div className="flex justify-between"><span className="text-muted-foreground">Plan</span><span className="font-medium">{sub.plan?.name || "—"}</span></div>
+   681→                <Separator />
+   682→                <div className="flex justify-between"><span className="text-muted-foreground">Speed</span><span>↓{sub.plan?.downloadSpeed || 0} / ↑{sub.plan?.uploadSpeed || 0} Mbps</span></div>
+   683→                <Separator />
+   684→                <div className="flex justify-between"><span className="text-muted-foreground">Data Limit</span><span>{sub.plan?.dataLimitGb ? `${sub.plan.dataLimitGb} GB` : "Unlimited"}</span></div>
+   685→                <Separator />
+   686→                <div className="flex justify-between"><span className="text-muted-foreground">Connection</span><span>{sub.connectionType}</span></div>
+   687→                <Separator />
+   688→                <div className="flex justify-between"><span className="text-muted-foreground">Balance</span><span className={sub.balance > 0 ? "text-green-600 font-medium" : sub.balance < 0 ? "text-red-600 font-medium" : ""}>{formatINR(sub.balance)}</span></div>
+   689→
+   690→                {/* IPv6 override warning */}
+   691→                {isModuleEnabled("ipv6") && sub.ipStackType !== "IPV4_ONLY" && sub.plan && !sub.plan.ipv6Enabled && (
+   692→                  <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs mt-2">
+   693→                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+   694→                    <span>Plan "{sub.plan.name}" doesn't include IPv6. IPv6 is custom-assigned.</span>
+   695→                  </div>
+   696→                )}
+   697→              </CardContent>
+   698→            </Card>
+   699→            <Card className="border shadow-sm">
+   700→              <SectionHeader icon={Shield} title="RADIUS / Auth" />
+   701→              <CardContent className="space-y-2.5 text-sm">
+   702→                <div className="flex justify-between items-center"><span className="text-muted-foreground">RADIUS</span>
+   703→                  <Badge variant={sub.radiusEnabled ? "default" : "outline"} className="text-[10px]">{sub.radiusEnabled ? "Enabled" : "Disabled"}</Badge>
+   704→                </div>
+   705→                <Separator />
+   706→                <div className="flex justify-between"><span className="text-muted-foreground">User Record</span><span>{sub.radiusUser ? "Created" : "Not Created"}</span></div>
+   707→                <Separator />
+   708→                <div className="flex justify-between"><span className="text-muted-foreground">Group</span><span>{sub.radiusGroup?.name || "—"}</span></div>
+   709→                {sub.radiusGroup && <>
+   710→                  <Separator />
+   711→                  <div className="flex justify-between"><span className="text-muted-foreground">Limit ↓</span><span>{sub.radiusGroup.speedLimitDown || "—"} Mbps</span></div>
+   712→                  <Separator />
+   713→                  <div className="flex justify-between"><span className="text-muted-foreground">Limit ↑</span><span>{sub.radiusGroup.speedLimitUp || "—"} Mbps</span></div>
+   714→                </>}
+   715→              </CardContent>
+   716→            </Card>
+   717→          </div>
+   718→        </TabsContent>
+   719→
+   720→        {/* ═══════════════════════════════════════════════════ */}
+   721→        {/* TAB: Billing & Payments                            */}
+   722→        {/* ═══════════════════════════════════════════════════ */}
+   723→        <TabsContent value="billing" className="space-y-5">
+   724→          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   725→            <StatCard title="Total Billed" value={formatINR(viewData.billing.totalBilled)} icon={FileText} color="bg-blue-100 text-blue-600" sub={`${viewData.billing.totalInvoices} invoices`} />
+   726→            <StatCard title="Total Paid" value={formatINR(viewData.billing.totalPaid)} icon={CheckCircle} color="bg-green-100 text-green-600" sub={`${viewData.billing.totalPayments} payments`} />
+   727→            <StatCard title="Outstanding" value={formatINR(viewData.billing.outstandingBalance)} icon={CreditCard} color="bg-red-100 text-red-600" sub={`${viewData.billing.overdueCount} overdue`} />
+   728→            <StatCard title="Avg Monthly" value={formatINR(stats?.avgMonthlyPayment || 0)} icon={TrendingUp} color="bg-purple-100 text-purple-600" />
+   729→          </div>
+   730→
+   731→          <Card className="border shadow-sm">
+   732→            <SectionHeader icon={FileText} title="Invoices" count={viewData.billing.invoices.length} />
+   733→            <CardContent className="p-0">
+   734→              <ScrollTable maxH={400}>
+   735→                <Table>
+   736→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   737→                    <TableHead className="text-xs font-medium uppercase">Invoice #</TableHead>
+   738→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">Issue</TableHead>
+   739→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">Due</TableHead>
+   740→                    <TableHead className="text-xs font-medium uppercase">Amount</TableHead>
+   741→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   742→                  </TableRow></TableHeader>
+   743→                  <TableBody>
+   744→                    {viewData.billing.invoices.length === 0 ? (
+   745→                      <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-sm">No invoices</TableCell></TableRow>
+   746→                    ) : viewData.billing.invoices.map(inv => (
+   747→                      <TableRow key={inv.id}>
+   748→                        <TableCell className="text-xs font-mono">{inv.invoiceNumber}</TableCell>
+   749→                        <TableCell className="text-xs hidden sm:table-cell">{formatDate(inv.issueDate)}</TableCell>
+   750→                        <TableCell className="text-xs hidden sm:table-cell">{formatDate(inv.dueDate)}</TableCell>
+   751→                        <TableCell className="text-sm font-medium">{formatINR(inv.totalAmount)}</TableCell>
+   752→                        <TableCell><Badge variant="outline" className={`text-[10px] ${INVOICE_STATUS_STYLES[inv.status] || ""}`}>{inv.status.replace(/_/g, " ")}</Badge></TableCell>
+   753→                      </TableRow>
+   754→                    ))}
+   755→                  </TableBody>
+   756→                </Table>
+   757→              </ScrollTable>
+   758→            </CardContent>
+   759→          </Card>
+   760→
+   761→          <Card className="border shadow-sm">
+   762→            <SectionHeader icon={CreditCard} title="Payments" count={viewData.billing.payments.length} />
+   763→            <CardContent className="p-0">
+   764→              <ScrollTable maxH={400}>
+   765→                <Table>
+   766→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   767→                    <TableHead className="text-xs font-medium uppercase">Amount</TableHead>
+   768→                    <TableHead className="text-xs font-medium uppercase">Mode</TableHead>
+   769→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   770→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Receipt</TableHead>
+   771→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Collected By</TableHead>
+   772→                    <TableHead className="text-xs font-medium uppercase">Date</TableHead>
+   773→                  </TableRow></TableHeader>
+   774→                  <TableBody>
+   775→                    {viewData.billing.payments.length === 0 ? (
+   776→                      <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground text-sm">No payments</TableCell></TableRow>
+   777→                    ) : viewData.billing.payments.map(p => (
+   778→                      <TableRow key={p.id}>
+   779→                        <TableCell className="text-sm font-medium">{formatINR(p.amount)}</TableCell>
+   780→                        <TableCell><Badge variant="outline" className={`text-[10px] ${PAYMENT_MODE_STYLES[p.paymentMode] || ""}`}>{p.paymentMode}</Badge></TableCell>
+   781→                        <TableCell><Badge variant={p.status === "VERIFIED" ? "default" : "outline"} className="text-[10px]">{p.status}</Badge></TableCell>
+   782→                        <TableCell className="text-xs font-mono hidden md:table-cell">{p.receiptNumber || "—"}</TableCell>
+   783→                        <TableCell className="text-xs hidden lg:table-cell">{p.collectedBy?.name || "—"}</TableCell>
+   784→                        <TableCell className="text-xs">{formatDate(p.createdAt)}</TableCell>
+   785→                      </TableRow>
+   786→                    ))}
+   787→                  </TableBody>
+   788→                </Table>
+   789→              </ScrollTable>
+   790→            </CardContent>
+   791→          </Card>
+   792→        </TabsContent>
+   793→
+   794→        {/* ═══════════════════════════════════════════════════ */}
+   795→        {/* TAB: Support                                       */}
+   796→        {/* ═══════════════════════════════════════════════════ */}
+   797→        <TabsContent value="support" className="space-y-5">
+   798→          {viewData.support.complaintStats.length > 0 && (
+   799→            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+   800→              {viewData.support.complaintStats.map(cs => (
+   801→                <StatCard key={cs.status} title={cs.status.replace(/_/g, " ")} value={String(cs.count)} icon={cs.status === "OPEN" ? AlertTriangle : cs.status === "RESOLVED" ? CheckCircle : Clock} color={cs.status === "OPEN" ? "bg-red-100 text-red-600" : cs.status === "RESOLVED" ? "bg-green-100 text-green-600" : "bg-blue-100 text-blue-600"} />
+   802→              ))}
+   803→            </div>
+   804→          )}
+   805→
+   806→          <Card className="border shadow-sm">
+   807→            <SectionHeader icon={AlertTriangle} title="Tickets / Complaints" count={viewData.support.complaints.length} />
+   808→            <CardContent className="p-0">
+   809→              <ScrollTable maxH={500}>
+   810→                <Table>
+   811→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   812→                    <TableHead className="text-xs font-medium uppercase">Ticket #</TableHead>
+   813→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">Type</TableHead>
+   814→                    <TableHead className="text-xs font-medium uppercase">Priority</TableHead>
+   815→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   816→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Description</TableHead>
+   817→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Assigned</TableHead>
+   818→                    <TableHead className="text-xs font-medium uppercase">Created</TableHead>
+   819→                  </TableRow></TableHeader>
+   820→                  <TableBody>
+   821→                    {viewData.support.complaints.length === 0 ? (
+   822→                      <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground text-sm">No complaints</TableCell></TableRow>
+   823→                    ) : viewData.support.complaints.map(c => (
+   824→                      <TableRow key={c.id}>
+   825→                        <TableCell className="text-xs font-mono">{c.ticketNumber}</TableCell>
+   826→                        <TableCell className="text-xs hidden sm:table-cell">{c.type?.replace(/_/g, " ")}</TableCell>
+   827→                        <TableCell><Badge variant="outline" className={`text-[10px] ${PRIORITY_STYLES[c.priority] || ""}`}>{c.priority?.replace(/_/g, " ")}</Badge></TableCell>
+   828→                        <TableCell><Badge variant="outline" className={`text-[10px] ${COMPLAINT_STATUS_STYLES[c.status] || ""}`}>{c.status?.replace(/_/g, " ")}</Badge></TableCell>
+   829→                        <TableCell className="text-xs hidden md:table-cell max-w-[200px] truncate">{truncate(c.description, 50)}</TableCell>
+   830→                        <TableCell className="text-xs hidden lg:table-cell">{c.assignedTo?.name || "—"}</TableCell>
+   831→                        <TableCell className="text-xs">{formatDate(c.createdAt)}</TableCell>
+   832→                      </TableRow>
+   833→                    ))}
+   834→                  </TableBody>
+   835→                </Table>
+   836→              </ScrollTable>
+   837→            </CardContent>
+   838→          </Card>
+   839→        </TabsContent>
+   840→
+   841→        {/* ═══════════════════════════════════════════════════ */}
+   842→        {/* TAB: Communications                                */}
+   843→        {/* ═══════════════════════════════════════════════════ */}
+   844→        <TabsContent value="comms" className="space-y-5">
+   845→          <Card className="border shadow-sm">
+   846→            <SectionHeader icon={MessageSquare} title="Notifications" count={viewData.communications.notifications.length} />
+   847→            <CardContent className="p-0">
+   848→              <ScrollTable maxH={350}>
+   849→                <Table>
+   850→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   851→                    <TableHead className="text-xs font-medium uppercase">Type</TableHead>
+   852→                    <TableHead className="text-xs font-medium uppercase">Category</TableHead>
+   853→                    <TableHead className="text-xs font-medium uppercase">Title</TableHead>
+   854→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Message</TableHead>
+   855→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   856→                    <TableHead className="text-xs font-medium uppercase">Date</TableHead>
+   857→                  </TableRow></TableHeader>
+   858→                  <TableBody>
+   859→                    {viewData.communications.notifications.length === 0 ? (
+   860→                      <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground text-sm">No notifications</TableCell></TableRow>
+   861→                    ) : viewData.communications.notifications.map(n => (
+   862→                      <TableRow key={n.id}>
+   863→                        <TableCell><Badge variant="outline" className="text-[10px]">{n.type}</Badge></TableCell>
+   864→                        <TableCell className="text-xs">{n.category?.replace(/_/g, " ")}</TableCell>
+   865→                        <TableCell className="text-xs font-medium">{n.title}</TableCell>
+   866→                        <TableCell className="text-xs text-muted-foreground hidden md:table-cell max-w-[200px] truncate">{truncate(n.message, 50)}</TableCell>
+   867→                        <TableCell><Badge variant={n.status === "DELIVERED" || n.status === "READ" ? "default" : n.status === "FAILED" ? "destructive" : "outline"} className="text-[10px]">{n.status}</Badge></TableCell>
+   868→                        <TableCell className="text-xs">{formatDate(n.sentAt || n.createdAt)}</TableCell>
+   869→                      </TableRow>
+   870→                    ))}
+   871→                  </TableBody>
+   872→                </Table>
+   873→              </ScrollTable>
+   874→            </CardContent>
+   875→          </Card>
+   876→
+   877→          <Card className="border shadow-sm">
+   878→            <SectionHeader icon={UserCog} title="Agent Follow-ups" count={viewData.communications.followUps.length} />
+   879→            <CardContent className="p-0">
+   880→              <ScrollTable maxH={300}>
+   881→                <Table>
+   882→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   883→                    <TableHead className="text-xs font-medium uppercase">Type</TableHead>
+   884→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Notes</TableHead>
+   885→                    <TableHead className="text-xs font-medium uppercase">Due</TableHead>
+   886→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   887→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Agent</TableHead>
+   888→                  </TableRow></TableHeader>
+   889→                  <TableBody>
+   890→                    {viewData.communications.followUps.length === 0 ? (
+   891→                      <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-sm">No follow-ups</TableCell></TableRow>
+   892→                    ) : viewData.communications.followUps.map(f => (
+   893→                      <TableRow key={f.id}>
+   894→                        <TableCell className="text-xs">{f.type}</TableCell>
+   895→                        <TableCell className="text-xs hidden md:table-cell max-w-[200px] truncate">{truncate(f.notes, 50)}</TableCell>
+   896→                        <TableCell className="text-xs">{formatDate(f.dueDate)}</TableCell>
+   897→                        <TableCell><Badge variant={f.status === "COMPLETED" ? "default" : f.status === "PENDING" ? "outline" : "secondary"} className="text-[10px]">{f.status}</Badge></TableCell>
+   898→                        <TableCell className="text-xs hidden lg:table-cell">{f.agent?.name || "—"}</TableCell>
+   899→                      </TableRow>
+   900→                    ))}
+   901→                  </TableBody>
+   902→                </Table>
+   903→              </ScrollTable>
+   904→            </CardContent>
+   905→          </Card>
+   906→
+   907→          {viewData.communications.leadSource && (
+   908→            <Card className="border shadow-sm">
+   909→              <SectionHeader icon={UserPlus} title="Lead History" />
+   910→              <CardContent>
+   911→                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm mb-3">
+   912→                  <div><span className="text-muted-foreground">Source:</span> <Badge variant="outline" className="text-[10px] ml-1">{viewData.communications.leadSource.source}</Badge></div>
+   913→                  <div><span className="text-muted-foreground">Score:</span> <span className="font-medium ml-1">{viewData.communications.leadSource.score || "—"}</span></div>
+   914→                  <div><span className="text-muted-foreground">Assigned:</span> <span className="ml-1">{viewData.communications.leadSource.assignedTo?.name || "—"}</span></div>
+   915→                </div>
+   916→                {viewData.communications.leadSource.communications?.length > 0 && (
+   917→                  <ScrollTable maxH={200}>
+   918→                    <Table>
+   919→                      <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   920→                        <TableHead className="text-xs font-medium uppercase">Type</TableHead>
+   921→                        <TableHead className="text-xs font-medium uppercase">Notes</TableHead>
+   922→                        <TableHead className="text-xs font-medium uppercase">Outcome</TableHead>
+   923→                        <TableHead className="text-xs font-medium uppercase">Date</TableHead>
+   924→                      </TableRow></TableHeader>
+   925→                      <TableBody>
+   926→                        {viewData.communications.leadSource.communications.map((c: any, i: number) => (
+   927→                          <TableRow key={i}>
+   928→                            <TableCell className="text-xs">{c.type}</TableCell>
+   929→                            <TableCell className="text-xs max-w-[200px] truncate">{truncate(c.notes, 50)}</TableCell>
+   930→                            <TableCell className="text-xs">{c.outcome || "—"}</TableCell>
+   931→                            <TableCell className="text-xs">{formatDate(c.date)}</TableCell>
+   932→                          </TableRow>
+   933→                        ))}
+   934→                      </TableBody>
+   935→                    </Table>
+   936→                  </ScrollTable>
+   937→                )}
+   938→              </CardContent>
+   939→            </Card>
+   940→          )}
+   941→        </TabsContent>
+   942→
+   943→        {/* ═══════════════════════════════════════════════════ */}
+   944→        {/* TAB: Activity Log                                  */}
+   945→        {/* ═══════════════════════════════════════════════════ */}
+   946→        <TabsContent value="activity" className="space-y-5">
+   947→          <Card className="border shadow-sm">
+   948→            <SectionHeader icon={Activity} title="Audit Trail" count={viewData.activity.auditLogs.length} />
+   949→            <CardContent className="p-0">
+   950→              <ScrollTable maxH={500}>
+   951→                <Table>
+   952→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   953→                    <TableHead className="text-xs font-medium uppercase">Timestamp</TableHead>
+   954→                    <TableHead className="text-xs font-medium uppercase">Action</TableHead>
+   955→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">User</TableHead>
+   956→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Details</TableHead>
+   957→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">IP</TableHead>
+   958→                  </TableRow></TableHeader>
+   959→                  <TableBody>
+   960→                    {viewData.activity.auditLogs.length === 0 ? (
+   961→                      <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-sm">No activity logs</TableCell></TableRow>
+   962→                    ) : viewData.activity.auditLogs.map(log => (
+   963→                      <TableRow key={log.id}>
+   964→                        <TableCell className="text-xs whitespace-nowrap">{formatDateTime(log.timestamp)}</TableCell>
+   965→                        <TableCell className="text-xs font-medium">{log.action}</TableCell>
+   966→                        <TableCell className="text-xs hidden sm:table-cell">{log.userName || "System"}</TableCell>
+   967→                        <TableCell className="text-xs text-muted-foreground hidden md:table-cell max-w-[200px] truncate">{truncate(log.details, 40)}</TableCell>
+   968→                        <TableCell className="text-xs text-muted-foreground hidden lg:table-cell font-mono">{log.ipAddress || "—"}</TableCell>
+   969→                      </TableRow>
+   970→                    ))}
+   971→                  </TableBody>
+   972→                </Table>
+   973→              </ScrollTable>
+   974→            </CardContent>
+   975→          </Card>
+   976→        </TabsContent>
+   977→
+   978→        {/* ═══════════════════════════════════════════════════ */}
+   979→        {/* TAB: Service & Installation                        */}
+   980→        {/* ═══════════════════════════════════════════════════ */}
+   981→        <TabsContent value="service" className="space-y-5">
+   982→          <Card className="border shadow-sm">
+   983→            <SectionHeader icon={Wrench} title="Installations" count={viewData.service.installations.length} />
+   984→            <CardContent className="p-0">
+   985→              <ScrollTable maxH={400}>
+   986→                <Table>
+   987→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+   988→                    <TableHead className="text-xs font-medium uppercase">ID</TableHead>
+   989→                    <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+   990→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">Technician</TableHead>
+   991→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Scheduled</TableHead>
+   992→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Completed</TableHead>
+   993→                  </TableRow></TableHeader>
+   994→                  <TableBody>
+   995→                    {viewData.service.installations.length === 0 ? (
+   996→                      <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-sm">No installations</TableCell></TableRow>
+   997→                    ) : viewData.service.installations.map(inst => (
+   998→                      <TableRow key={inst.id}>
+   999→                        <TableCell className="text-xs font-mono">{inst.id.slice(-6)}</TableCell>
+  1000→                        <TableCell><Badge variant={inst.status === "COMPLETED" ? "default" : "outline"} className="text-[10px]">{inst.status}</Badge></TableCell>
+  1001→                        <TableCell className="text-xs hidden sm:table-cell">{inst.technician?.name || "—"}</TableCell>
+  1002→                        <TableCell className="text-xs hidden md:table-cell">{formatDate(inst.scheduledDate)}</TableCell>
+  1003→                        <TableCell className="text-xs hidden lg:table-cell">{formatDate(inst.completedAt)}</TableCell>
+  1004→                      </TableRow>
+  1005→                    ))}
+  1006→                  </TableBody>
+  1007→                </Table>
+  1008→              </ScrollTable>
+  1009→            </CardContent>
+  1010→          </Card>
+  1011→
+  1012→          <Card className="border shadow-sm">
+  1013→            <SectionHeader icon={Activity} title="RADIUS Sessions" count={viewData.service.radiusSessions.length} />
+  1014→            <CardContent className="p-0">
+  1015→              <ScrollTable maxH={350}>
+  1016→                <Table>
+  1017→                  <TableHeader><TableRow className="bg-muted/50 hover:bg-muted/50">
+  1018→                    <TableHead className="text-xs font-medium uppercase">Session ID</TableHead>
+  1019→                    <TableHead className="text-xs font-medium uppercase hidden sm:table-cell">NAS IP</TableHead>
+  1020→                    <TableHead className="text-xs font-medium uppercase hidden md:table-cell">Framed IP</TableHead>
+  1021→                    {isModuleEnabled("ipv6") && (
+  1022→                      <TableHead className="text-xs hidden md:table-cell">IPv6 Address</TableHead>
+  1023→                    )}
+  1024→                    <TableHead className="text-xs font-medium uppercase">Duration</TableHead>
+  1025→                    <TableHead className="text-xs font-medium uppercase hidden lg:table-cell">Start</TableHead>
+  1026→                  </TableRow></TableHeader>
+  1027→                  <TableBody>
+  1028→                    {viewData.service.radiusSessions.length === 0 ? (
+  1029→                      <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-sm">No RADIUS sessions</TableCell></TableRow>
+  1030→                    ) : viewData.service.radiusSessions.map(s => {
+  1031→                      const duration = s.acctSessionTime ? `${Math.floor(s.acctSessionTime / 3600)}h ${Math.floor((s.acctSessionTime % 3600) / 60)}m` : "—";
+  1032→                      return (
+  1033→                        <TableRow key={s.id}>
+  1034→                          <TableCell className="text-xs font-mono">{s.sessionId || s.id.slice(-8)}</TableCell>
+  1035→                          <TableCell className="text-xs font-mono hidden sm:table-cell">{s.nasIp || "—"}</TableCell>
+  1036→                          <TableCell className="text-xs font-mono hidden md:table-cell">{s.framedIp || "—"}</TableCell>
+  1037→                          {isModuleEnabled("ipv6") && (
+  1038→                            <TableCell className="hidden md:table-cell font-mono text-xs">
+  1039→                              {s.framedIpv6 || "—"}
+  1040→                            </TableCell>
+  1041→                          )}
+  1042→                          <TableCell className="text-xs">{duration}</TableCell>
+  1043→                          <TableCell className="text-xs hidden lg:table-cell">{formatDateTime(s.startTime)}</TableCell>
+  1044→                        </TableRow>
+  1045→                      );
+  1046→                    })}
+  1047→                  </TableBody>
+  1048→                </Table>
+  1049→              </ScrollTable>
+  1050→            </CardContent>
+  1051→          </Card>
+  1052→        </TabsContent>
+  1053→      </Tabs>
+  1054→
+  1055→      {/* ─── KYC Document Preview Modal ──────────────────────── */}
+  1056→      {kycPreview && kycDocUrl && (
+  1057→        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setKycPreview(false)}>
+  1058→          <div className="relative max-w-2xl w-full max-h-[90vh] bg-white rounded-xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+  1059→            <button className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors" onClick={() => setKycPreview(false)}>
+  1060→              <X className="h-4 w-4" />
+  1061→            </button>
+  1062→            <img src={kycDocUrl} alt="KYC Document" className="w-full h-full object-contain" />
+  1063→          </div>
+  1064→        </div>
+  1065→      )}
+  1066→    </div>
+  1067→  );
+  1068→}
+  1069→
