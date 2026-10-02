@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching portal instances:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch portal instances' } },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: error.message || 'Failed to fetch portal instances' } },
       { status: 500 }
     );
   }
