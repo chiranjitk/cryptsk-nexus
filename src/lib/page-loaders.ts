@@ -44,6 +44,11 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   // POLICY — Bandwidth, firewall, security
   // ══════════════════════════════════════════════════════════════
   'Bandwidth Mgmt': () => import('@/components/pages/bandwidth-mgmt-page'),
+  'Surfing Quota': () => import('@/components/pages/policies/surfing-quota-policy-page'),
+  'Access Time': () => import('@/components/pages/policies/access-time-policy-page'),
+  'Bandwidth Policy': () => import('@/components/pages/policies/bandwidth-policy-page'),
+  'Data Transfer Policy': () => import('@/components/pages/policies/data-transfer-policy-page'),
+  'Fair Access Policy': () => import('@/components/pages/policies/fair-access-policy-page'),
   'Time Access': () => import('@/components/pages/time-access-page'),
   'QoS Monitor': () => import('@/components/pages/qos-monitor-page'),
   'Firewall Rules': () => import('@/components/pages/firewall-page'),

@@ -72,6 +72,9 @@ import {
   ClipboardList,
   ScanEye,
   Timer,
+  Hourglass,
+  ArrowDownUp,
+  Scale,
   Target,
   GitCompare,
   ShieldCheck as ShieldCheckIcon,
@@ -158,8 +161,14 @@ export const navGroups: NavGroup[] = [
     label: "POLICY",
     defaultOpen: true,
     items: [
+      // ── Policy Engine (POL-ENGINE-1, 24online-parity) ──
+      { label: "Surfing Quota", href: "/surfing-quota", icon: Hourglass },
+      { label: "Access Time", href: "/access-time", icon: CalendarClockIcon },
+      { label: "Bandwidth Policy", href: "/bandwidth-policy", icon: Gauge },
+      { label: "Data Transfer Policy", href: "/data-transfer-policy", icon: ArrowDownUp },
+      { label: "Fair Access Policy", href: "/fair-access-policy", icon: Scale },
+      // ── Infrastructure policy ──
       { label: "Bandwidth Mgmt", href: "/bandwidth-mgmt", icon: Gauge },
-      { label: "Time Access", href: "/time-access", icon: Timer },
       { label: "QoS Monitor", href: "/qos-monitor", icon: Gauge },
       { label: "Firewall Rules", href: "/firewall", icon: ShieldAlert },
       { label: "IPS / Anomaly Detection", href: "/ips", icon: ScanEye },

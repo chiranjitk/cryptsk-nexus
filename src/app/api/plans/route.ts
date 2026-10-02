@@ -44,6 +44,11 @@ export async function GET(req: NextRequest) {
         include: {
           _count: { select: { Subscriber: true } },
           RadiusGroup: true,
+          SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true } },
+          AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true } },
+          BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true } },
+          DataTransferPolicy: { select: { id: true, name: true, totalLimitMb: true } },
+          FairAccessPolicy: { select: { id: true, name: true, limitMb: true } },
         },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
         skip: (page - 1) * limit,
@@ -64,7 +69,7 @@ export async function POST(req: NextRequest) {
   try {
     let userId: string | undefined;
     try {
-      userId = await requireAuth(req);
+      ({ userId } = await requireAuth(req));
     } catch (e) {
       if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
       throw e;
@@ -81,6 +86,7 @@ export async function POST(req: NextRequest) {
       burstSpeed, burstDuration, maxConcurrentSessions,
       freeTrialDays, slaUptime,
       ipv6Enabled, ipv6PrefixDelegation, ipv6DefaultPoolId, ipv6AssignmentMode,
+      surfingQuotaPolicyId, accessTimePolicyId, bandwidthPolicyId, dataTransferPolicyId, fairAccessPolicyId,
     } = body;
 
     if (!name) {
@@ -137,6 +143,11 @@ export async function POST(req: NextRequest) {
         ipv6PrefixDelegation: ipv6PrefixDelegation || false,
         ipv6DefaultPoolId: ipv6DefaultPoolId || null,
         ipv6AssignmentMode: ipv6AssignmentMode || "SLAAC",
+        surfingQuotaPolicyId: surfingQuotaPolicyId || null,
+        accessTimePolicyId: accessTimePolicyId || null,
+        bandwidthPolicyId: bandwidthPolicyId || null,
+        dataTransferPolicyId: dataTransferPolicyId || null,
+        fairAccessPolicyId: fairAccessPolicyId || null,
       },
       include: {
         _count: { select: { Subscriber: true } },
@@ -190,7 +201,7 @@ export async function POST(req: NextRequest) {
           ipv6DefaultPoolId: ipv6DefaultPoolId || null,
         });
 
-        await auditCreate(req, "Plan", updatedPlan.id, { name, priceMonthly, speed: `${downloadSpeed} ${speedUnit}`, autoGroup: group.name }, { userId });
+        await auditCreate(req, "Plan", updatedPlan.id, { name, priceMonthly, speed: `${downloadSpeed} ${speedUnit}`, autoGroup: group.name, policies: { surfingQuotaPolicyId, accessTimePolicyId, bandwidthPolicyId, dataTransferPolicyId, fairAccessPolicyId } }, { userId });
         return NextResponse.json(updatedPlan, { status: 201 });
       } catch (groupError: any) {
         // If group name already exists (unique constraint), return plan without group

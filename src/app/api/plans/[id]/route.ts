@@ -37,7 +37,7 @@ export async function PUT(
   try {
     let userId: string | undefined;
     try {
-      userId = await requireAuth(req);
+      ({ userId } = await requireAuth(req));
     } catch (e) {
       if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
       throw e;
@@ -87,9 +87,20 @@ export async function PUT(
         ...(body.ipv6PrefixDelegation !== undefined && { ipv6PrefixDelegation: body.ipv6PrefixDelegation }),
         ...(body.ipv6DefaultPoolId !== undefined && { ipv6DefaultPoolId: body.ipv6DefaultPoolId }),
         ...(body.ipv6AssignmentMode !== undefined && { ipv6AssignmentMode: body.ipv6AssignmentMode }),
+        // POL-ENGINE-1 policy bindings (empty string / null unbinds)
+        ...(body.surfingQuotaPolicyId !== undefined && { surfingQuotaPolicyId: body.surfingQuotaPolicyId || null }),
+        ...(body.accessTimePolicyId !== undefined && { accessTimePolicyId: body.accessTimePolicyId || null }),
+        ...(body.bandwidthPolicyId !== undefined && { bandwidthPolicyId: body.bandwidthPolicyId || null }),
+        ...(body.dataTransferPolicyId !== undefined && { dataTransferPolicyId: body.dataTransferPolicyId || null }),
+        ...(body.fairAccessPolicyId !== undefined && { fairAccessPolicyId: body.fairAccessPolicyId || null }),
       },
       include: {
         _count: { select: { Subscriber: true } },
+        SurfingQuotaPolicy: { select: { id: true, name: true, quotaType: true } },
+        AccessTimePolicy: { select: { id: true, name: true, defaultStrategy: true } },
+        BandwidthPolicy: { select: { id: true, name: true, downloadKbps: true, uploadKbps: true } },
+        DataTransferPolicy: { select: { id: true, name: true, totalLimitMb: true } },
+        FairAccessPolicy: { select: { id: true, name: true, limitMb: true } },
       },
     });
 
@@ -172,7 +183,7 @@ export async function DELETE(
   try {
     let userId: string | undefined;
     try {
-      userId = await requireAuth(req);
+      ({ userId } = await requireAuth(req));
     } catch (e) {
       if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
       throw e;

@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
   experimental: {
     // 256 OOM-crash-looped during cold compile of the full page-loaders
     // graph; 1536 fits the 4GB sandbox alongside the mini-services.
-    turbopackMemoryLimit: 1536,
+    turbopackMemoryLimit: 1152,
   },
   // ─── Treat native/binary Node modules as externals ───
   // ssh2 / net-snmp / ros-client / pg ship binary assets that bundlers

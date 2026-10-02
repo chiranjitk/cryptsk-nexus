@@ -8,7 +8,7 @@ import {
   BarChart3, GitCompare, ArrowRightLeft, ChevronLeft, ChevronRight, Users, DollarSign,
   PieChart as PieChartIcon, TrendingUp, GripVertical,
   ArrowDown, ArrowUp, Home, Briefcase, Building2, Wifi, Cable, Radio, Layers,
-  Info, Settings, Tag, Gauge, Sparkles, Globe,
+  Info, Settings, Tag, Gauge, Sparkles, Globe, Link2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { useModuleStore } from "@/store/module-store";
+import PlanPolicyBindingTab from "@/components/pages/policies/plan-policy-binding-tab";
 import PageHeader from "@/components/page-header";
 
 // ─── Types ──────────────────────────────────────────────
@@ -428,6 +429,7 @@ export default function PlansPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="plans" className="gap-1.5"><Zap className="h-3.5 w-3.5" />Plans</TabsTrigger>
+          <TabsTrigger value="policies" className="gap-1.5"><Link2 className="h-3.5 w-3.5" />Policy Binding</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="h-3.5 w-3.5" />Analytics</TabsTrigger>
         </TabsList>
 
@@ -825,6 +827,11 @@ export default function PlansPage() {
               )}
             </div>
           )}
+        </TabsContent>
+
+        {/* ═══════ POLICY BINDING TAB (POL-ENGINE-1) ═══════ */}
+        <TabsContent value="policies" className="space-y-6 animate-in fade-in duration-200">
+          <PlanPolicyBindingTab />
         </TabsContent>
 
         {/* ═══════ ANALYTICS TAB ═══════ */}

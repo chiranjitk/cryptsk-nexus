@@ -429,9 +429,16 @@ model BandwidthPolicy {
   fapUploadKbps       Int?
   fapDataLimitMb      Int?
   hardDataLimitMb     Int?
+  // POL-ENGINE-1: 24online-parity bandwidth policy attributes
+  policyFor           BwPolicyFor   @default(USER)
+  policyType          BwPolicyType  @default(STRICT)
+  totalKbps           Int?
+  shared              Boolean       @default(false)
   enabled             Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt DateTime @updatedAt
+  FairAccessPolicy    FairAccessPolicy[]
+  Plan                Plan[]
 
   @@index([enabled])
   @@index([interfaceId])
@@ -2697,6 +2704,12 @@ model Plan {
   isPopular                Boolean                    @default(false)
   sortOrder                Int                        @default(0)
   groupId                  String?
+  // POL-ENGINE-1: 24online-parity policy bindings (each ≤1 per family)
+  surfingQuotaPolicyId     String?
+  accessTimePolicyId       String?
+  bandwidthPolicyId        String?
+  dataTransferPolicyId     String?
+  fairAccessPolicyId       String?
   ipv6Enabled              Boolean                    @default(false)
   ipv6PrefixDelegation     Boolean                    @default(false)
   ipv6DefaultPoolId        String?
@@ -2713,6 +2726,11 @@ model Plan {
   Subscriber               Subscriber[]
   Voucher                  Voucher[]
   ProvisioningTemplate     ProvisioningTemplate[]
+  SurfingQuotaPolicy       SurfingQuotaPolicy?        @relation(fields: [surfingQuotaPolicyId], references: [id], onDelete: SetNull)
+  AccessTimePolicy         AccessTimePolicy?          @relation(fields: [accessTimePolicyId], references: [id], onDelete: SetNull)
+  BandwidthPolicy          BandwidthPolicy?           @relation(fields: [bandwidthPolicyId], references: [id], onDelete: SetNull)
+  DataTransferPolicy       DataTransferPolicy?        @relation(fields: [dataTransferPolicyId], references: [id], onDelete: SetNull)
+  FairAccessPolicy         FairAccessPolicy?          @relation(fields: [fairAccessPolicyId], references: [id], onDelete: SetNull)
 
   @@index([category])
   @@index([groupId])
@@ -4471,6 +4489,7 @@ model UserRadiusAttribute {
 model UserSession {
   id        String    @id @default(uuid())
   userId    String
+  tokenHash String    @unique // POL-ENGINE-1: synced from live DB — session-store.ts looks sessions up by hashed token
   ipAddress String    @default("")
   userAgent String    @default("")
   device    String    @default("")
@@ -6091,5 +6110,143 @@ model PortalWalledGarden {
   @@unique([domain, path])
   @@index([partnerId])
   @@index([domain])
+  @@index([enabled])
+}
+
+// ══════════════════════════════════════════════════════════════════
+// POLICY ENGINE (POL-ENGINE-1) — 24online-parity ISP policy types.
+// Five policy families bind to Plans; each plan ≤1 policy per family.
+// ══════════════════════════════════════════════════════════════════
+
+enum QuotaType {
+  ABSOLUTE
+  RATEBASED
+}
+
+enum PolicyCycleType {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum AccessStrategy {
+  ALLOW
+  DISALLOW
+}
+
+enum BwPolicyFor {
+  POOL
+  USER
+}
+
+enum BwPolicyType {
+  STRICT
+  COMMITTED
+}
+
+enum DataRatesOn {
+  TOTAL
+  INDIVIDUAL
+}
+
+enum FapType {
+  RESET
+  NON_RESET
+}
+
+enum FapDataOn {
+  UPLOAD
+  DOWNLOAD
+  TOTAL
+}
+
+// ── 1. Surfing Quota — time quota with expiry window + cycle reset ──
+model SurfingQuotaPolicy {
+  id                   String          @id @default(uuid())
+  name                 String          @unique
+  quotaType            QuotaType       @default(ABSOLUTE)
+  allottedMinutes      Int?            // null = unlimited time
+  sessionPulseMin      Int             @default(1)
+  expiryDays           Int?            // null = unlimited validity
+  cycleType            PolicyCycleType @default(NONE)
+  cycleAllottedMinutes Int?            // per-cycle time when cycleType != NONE
+  description          String          @default("")
+  enabled              Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  Plan                 Plan[]
+
+  @@index([enabled])
+}
+
+// ── 2. Access Time — weekday slots; outside slots → default strategy ──
+model AccessTimePolicy {
+  id              String         @id @default(uuid())
+  name            String         @unique
+  defaultStrategy AccessStrategy @default(ALLOW)
+  description     String         @default("")
+  enabled         Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  slots           AccessTimeSlot[]
+  Plan            Plan[]
+
+  @@index([enabled])
+}
+
+model AccessTimeSlot {
+  id               String   @id @default(uuid())
+  policyId         String
+  dayOfWeek        Int      // 0=Sunday .. 6=Saturday
+  fromMin          Int      // minutes from midnight
+  tillMin          Int      // minutes from midnight
+  disallow         Boolean  @default(true) // true = block login in slot; false = pricing factor applies
+  pricingFactorPct Float?   // % price factor when disallow=false
+  createdAt        DateTime @default(now())
+  AccessTimePolicy AccessTimePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId])
+}
+
+// ── 3. Data Transfer — volume quota, prepaid cap or postpaid rate ──
+model DataTransferPolicy {
+  id              String          @id @default(uuid())
+  name            String          @unique
+  scheme          QuotaType       @default(ABSOLUTE)
+  ratesOn         DataRatesOn     @default(TOTAL)
+  uploadLimitMb   Int?
+  downloadLimitMb Int?
+  totalLimitMb    Int?
+  cycleType       PolicyCycleType @default(NONE)
+  cycleLimitMb    Int?
+  expiryDays      Int?
+  description     String          @default("")
+  enabled         Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  Plan            Plan[]
+
+  @@index([enabled])
+}
+
+// ── 4. Fair Access — after data cap, throttle via switch-over BW policy ──
+model FairAccessPolicy {
+  id                          String          @id @default(uuid())
+  name                        String          @unique
+  fapType                     FapType         @default(RESET)
+  resetType                   PolicyCycleType @default(MONTHLY)
+  resetMultiplier             Int             @default(1)
+  resetTime                   String          @default("23:59:59")
+  dataOn                      FapDataOn       @default(TOTAL)
+  limitMb                     Int             @default(0)
+  switchOverBandwidthPolicyId String?
+  switchOverBandwidthPolicy   BandwidthPolicy? @relation(fields: [switchOverBandwidthPolicyId], references: [id], onDelete: SetNull)
+  description                 String          @default("")
+  enabled                     Boolean         @default(true)
+  createdAt                   DateTime        @default(now())
+  updatedAt                   DateTime        @updatedAt
+  Plan                        Plan[]
+
   @@index([enabled])
 }

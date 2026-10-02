@@ -95,7 +95,12 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Network Health", section: "NETWORK" },
       { label: "RADIUS Proxy", section: "SERVICES" },
       { label: "Zone Budgets", section: "MONITORING" },
-      { label: "Time Access", section: "POLICY" },
+      // POL-ENGINE-1: 24online-parity policy engine pages (Time Access superseded)
+      { label: "Surfing Quota", section: "POLICY" },
+      { label: "Access Time", section: "POLICY" },
+      { label: "Bandwidth Policy", section: "POLICY" },
+      { label: "Data Transfer Policy", section: "POLICY" },
+      { label: "Fair Access Policy", section: "POLICY" },
       { label: "IP-MAC History", section: "MONITORING" },
     ],
     dependencies: ["core"],
