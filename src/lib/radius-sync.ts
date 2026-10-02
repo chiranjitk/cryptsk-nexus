@@ -155,7 +155,6 @@ export async function syncGroupToFreeRADIUS(
     idleTimeoutSeconds?: number;  // default 3600 (1 hour)
   }
 ) {
-<<<<<<< HEAD
   const grp = groupName.replace(/'/g, "''");
   const {
     downloadSpeed, uploadSpeed, burstSpeed, burstDuration,
@@ -242,7 +241,6 @@ export async function syncGroupToFreeRADIUS(
   // radgroupcheck — attributes checked/enforced at auth time
   // ════════════════════════════════════════════════════════════════
   const checkAttrs: [string, string][] = [];
-=======
   const { downloadSpeed, uploadSpeed, dataLimitMb, maxSessions } = options;
 
   // Clear existing attributes for this group
@@ -265,11 +263,9 @@ export async function syncGroupToFreeRADIUS(
       INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'ChilliSpot-Max-Total-Octets', ':=', ${bytes})
     `;
   }
->>>>>>> origin/main
 
   // 1. Simultaneous-Use (login limit)
   if (maxSessions && maxSessions > 0) {
-<<<<<<< HEAD
     checkAttrs.push(["Simultaneous-Use", String(maxSessions)]);
   }
 
@@ -309,11 +305,9 @@ export async function syncGroupToFreeRADIUS(
     await db.$executeRawUnsafe(`
       INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES ('${grp}', '${attr}', ':=', '${escapedVal}')
     `);
-=======
     await db.$executeRaw`
       INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (${groupName}, 'Simultaneous-Use', ':=', ${maxSessions})
     `;
->>>>>>> origin/main
   }
 }
 
