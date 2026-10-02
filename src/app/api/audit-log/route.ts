@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
       return GET_retention_info(request);
     }
 
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const where = buildWhereClause(searchParams);
     const { page, limit, skip } = parsePagination(
       searchParams.get("page"),
@@ -534,7 +534,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const userId = await requirePermission(request, "settings.update");
+    const { userId } = await requirePermission(request, "settings.update");
 
     const body = await request.json();
     const { action, ids } = body;
@@ -629,7 +629,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     const body = await request.json();
     const { beforeDate, entity, ids, action } = body;

@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 // POST /api/integrations/logs - Retry a failed log entry
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { action, logId } = body;
 

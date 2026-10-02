@@ -6,7 +6,7 @@ import { auditBulk } from "@/lib/services/audit-service";
 // POST /api/technicians/bulk - Bulk operations on technicians
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { action, ids, status: newStatus } = body;
 

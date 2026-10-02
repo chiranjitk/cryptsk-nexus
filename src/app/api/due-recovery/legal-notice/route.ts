@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { invoiceId, subscriberName, subscriberCode, invoiceNumber, balanceAmount, area } = body;
     const isp = await db.ispSettings.findFirst();

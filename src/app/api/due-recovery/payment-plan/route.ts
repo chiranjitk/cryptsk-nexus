@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { invoiceId, totalAmount, installments, frequency, startDate } = body;
     if (!invoiceId || !totalAmount || !installments) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });

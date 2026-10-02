@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
 // POST /api/billing — generate invoices, send, record payment, bulk send
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { subscriberId, action } = body;
 

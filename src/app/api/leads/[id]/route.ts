@@ -112,7 +112,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { id } = await params;
 
     if (!id) {
@@ -179,7 +179,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { id } = await params;
 
     if (!id) {

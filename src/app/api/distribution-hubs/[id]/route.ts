@@ -68,7 +68,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id } = await params;
     const body = await request.json();
 
@@ -108,7 +108,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id } = await params;
 
     const existing = await db.distributionHub.findUnique({ where: { id } });

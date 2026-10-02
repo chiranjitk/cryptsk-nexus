@@ -33,7 +33,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { id } = await params;
     const body = await req.json();
     const { message } = body;

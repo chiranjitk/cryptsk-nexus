@@ -219,7 +219,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const userId = await requirePermission(request, "settings.read");
+    const { userId } = await requirePermission(request, "settings.read");
 
     const reveal = request.nextUrl.searchParams.get("reveal") === "true";
     if (reveal) {
@@ -258,7 +258,7 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const userId = await requirePermission(request, "settings.update");
+    const { userId } = await requirePermission(request, "settings.update");
 
     const body = await request.json();
 

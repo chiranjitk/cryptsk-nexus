@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     // Rate limiting
     const { success: rateLimitOk, retryAfterMs } = rateLimit(`password-change:${userId}`, { maxRequests: 5, windowMs: 15 * 60 * 1000 });

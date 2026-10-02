@@ -193,7 +193,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id: rawId } = await params;
     const nasId = parseInt(rawId, 10);
 
@@ -403,7 +403,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id: rawId } = await params;
     const nasId = parseInt(rawId, 10);
 

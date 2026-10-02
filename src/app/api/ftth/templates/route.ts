@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 // POST /api/ftth/templates - Create template
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { name, description, vendor, ponType, config } = body;
 
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 // PUT /api/ftth/templates - Update template
 export async function PUT(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { id, name, description, vendor, ponType, config } = body;
 
@@ -82,7 +82,7 @@ export async function PUT(request: NextRequest) {
 // DELETE /api/ftth/templates?id=xxx
 export async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) return NextResponse.json({ error: "ID is required" }, { status: 400 });

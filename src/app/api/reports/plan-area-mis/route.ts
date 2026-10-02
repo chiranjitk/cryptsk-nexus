@@ -72,7 +72,7 @@ function newAgg(): DimAgg {
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     const { searchParams } = new URL(request.url);
     const now = new Date();

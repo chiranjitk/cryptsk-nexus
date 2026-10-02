@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requirePermission(req, "payments.update"); // [AUDIT-FIX F-20] refunds move money out — AGENT (payments.create only) must not
+    const { userId } = await requirePermission(req, "payments.update"); // [AUDIT-FIX F-20] refunds move money out — AGENT (payments.create only) must not
     const { id } = await params;
     const body = await req.json();
 

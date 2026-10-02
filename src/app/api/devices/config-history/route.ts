@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 // POST /api/devices/config-history - Create a config history entry (manual)
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { deviceId, field, oldValue, newValue } = body;
 

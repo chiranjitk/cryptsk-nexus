@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 // otherwise creates a rule
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
 
     // ─── Test-fire a rule through its configured channel ───────────

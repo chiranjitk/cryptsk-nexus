@@ -26,7 +26,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const { id } = await params;
     const body = await request.json();
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     const existing = await db.whatsAppTemplate.findUnique({ where: { id } });
     if (!existing) {

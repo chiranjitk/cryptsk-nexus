@@ -367,7 +367,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const now = new Date();
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { action, invoiceIds, method, subscriberId, amount, note } = body;
 

@@ -49,7 +49,7 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
 
     const settings = await db.ispSettings.upsert({

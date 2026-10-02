@@ -37,7 +37,7 @@ function fmtDate(d: Date | string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     await permissionFor(userId, "payments.create");
 
     const body = await req.json();

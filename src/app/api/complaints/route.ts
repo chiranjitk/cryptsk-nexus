@@ -217,7 +217,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     // [AUDIT-FIX F-20] Ticket creation is staff+ workflow — CUSTOMER role excluded here
     await permissionFor(userId, "complaints.create");
     const body = await req.json();

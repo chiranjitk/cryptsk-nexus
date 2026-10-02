@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const userId = await requirePermission(request, "users.create");
+    const { userId } = await requirePermission(request, "users.create");
     const body = await request.json();
     const { name, email, phone, role, password } = body;
 

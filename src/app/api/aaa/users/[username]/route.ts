@@ -276,7 +276,7 @@ export async function PUT(
   { params }: { params: Promise<{ username: string }> }
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { username: rawUsername } = await params;
     const username = decodeURIComponent(rawUsername);
 
@@ -580,7 +580,7 @@ export async function DELETE(
   { params }: { params: Promise<{ username: string }> }
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { username: rawUsername } = await params;
     const username = decodeURIComponent(rawUsername);
 

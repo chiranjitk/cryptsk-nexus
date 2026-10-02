@@ -15,7 +15,7 @@ function nextSeverity(current: string): string {
 // POST /api/alerts/auto-escalate — Process auto-escalation for unacknowledged alerts
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     // Find all rules that have auto-escalation enabled
     const autoEscalateRules = await db.alertRule.findMany({

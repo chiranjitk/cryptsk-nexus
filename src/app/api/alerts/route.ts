@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action } = body;
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     switch (action) {
       case "create-rule": {

@@ -243,7 +243,7 @@ interface CreateGroupBody {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const rawBody: Record<string, unknown> = await req.json();
 
     // Accept both 'name' and 'groupname', 'checkAttributes' and 'checkAttrs', etc.

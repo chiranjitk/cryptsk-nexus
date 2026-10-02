@@ -4,7 +4,7 @@ import { requireAuth, AuthError } from "@/lib/api-auth";
 
 export async function POST(request: Request) {
   try {
-    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    const { userId } = await requireAuth(request as unknown as import("next/server").NextRequest);
 
     const body = await request.json();
     const { announcementId } = body;

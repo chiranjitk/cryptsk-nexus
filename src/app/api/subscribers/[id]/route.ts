@@ -362,7 +362,7 @@ export async function DELETE(
 ) {
   try {
     // [AUDIT-FIX F-20] Destructive action — requires explicit subscribers.delete.
-    const userId = await requirePermission(req, "subscribers.delete");
+    const { userId } = await requirePermission(req, "subscribers.delete");
     const { id } = await params;
     const subscriber = await db.subscriber.findUnique({
       where: { id },

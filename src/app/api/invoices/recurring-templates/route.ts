@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { name, subscriberId, planId, areaId, schedule, notes } = body;
 
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { id, ...body } = await req.json();
 
     if (!id) {
@@ -95,7 +95,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { searchParams } = req.nextUrl;
     const id = searchParams.get("id");
 

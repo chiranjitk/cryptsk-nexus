@@ -68,11 +68,11 @@ export async function GET(req: NextRequest) {
     });
 
     const result = subnets.map((sn) => {
-      const totalIps = sn.ipAddresses.length;
-      const freeIps = sn.ipAddresses.filter(
+      const totalIps = sn.IpAddress.length;
+      const freeIps = sn.IpAddress.filter(
         (ip) => ip.status === "free",
       ).length;
-      const usedIps = sn.ipAddresses.filter(
+      const usedIps = sn.IpAddress.filter(
         (ip) => ip.status === "used" || ip.status === "reserved",
       ).length;
 
@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
         cidr: sn.cidr || sn.network || "",
         gateway: sn.gateway,
         description: sn.description,
-        vlanName: sn.vlan?.name ?? null,
+        vlanName: sn.Vlan?.name ?? null,
         totalIps,
         freeIps,
         usedIps,

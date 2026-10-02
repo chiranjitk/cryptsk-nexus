@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = await requirePermission(request, "users.update");
+    const { userId } = await requirePermission(request, "users.update");
     const body = await request.json();
     const { userIds, action } = body as { userIds?: string[]; action?: string };
 

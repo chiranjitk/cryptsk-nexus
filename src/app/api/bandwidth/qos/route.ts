@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 // POST /api/bandwidth/qos - Create or update QoS config
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { id, name, priority, targetPlanId, targetIpRange, maxBandwidthMbps, minBandwidthMbps, enabled } = body;
 
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 // DELETE /api/bandwidth/qos - Delete QoS config
 export async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {

@@ -49,7 +49,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    const { userId } = await requireAuth(request as unknown as import("next/server").NextRequest);
 
     const body = await request.json();
     const { title, message, type = "INFO", priority = 0, target = "ALL", channels = "IN_APP", expiresAt } = body;

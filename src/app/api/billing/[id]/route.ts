@@ -41,7 +41,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req as unknown as import("next/server").NextRequest); // [SECURITY-FIX] was swallow-and-continue
+    const { userId } = await requireAuth(req as unknown as import("next/server").NextRequest); // [SECURITY-FIX] was swallow-and-continue
     const { id } = await params;
     const body = await req.json();
 

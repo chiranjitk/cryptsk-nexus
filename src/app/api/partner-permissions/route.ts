@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 // POST /api/partner-permissions — create a new permission (key, description, category)
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { key, description, category } = body;
 

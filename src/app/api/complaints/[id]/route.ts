@@ -100,7 +100,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     // [AUDIT-FIX F-20] Complaint workflow changes require complaints.update
     await permissionFor(userId, "complaints.update");
     const { id } = await params;

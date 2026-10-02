@@ -232,7 +232,7 @@ async function settlePayment(opts: {
 
 export async function GET(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     await permissionFor(userId, "payments.read");
     const invoiceId = new URL(req.url).searchParams.get("invoiceId");
     if (!invoiceId) return NextResponse.json({ error: "invoiceId is required" }, { status: 400 });
@@ -276,7 +276,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     await permissionFor(userId, "payments.create");
     const body = await req.json();
 
@@ -509,7 +509,7 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     await permissionFor(userId, "payments.create");
     const body = await req.json();
     const { paymentId } = body;

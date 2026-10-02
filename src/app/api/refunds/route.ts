@@ -6,7 +6,7 @@ import { requirePermission } from "@/lib/api-auth";
 // [AUDIT F-20] refunds surface money-movement data — requires payments.read
 export async function GET(req: NextRequest) {
   try {
-    const userId = await requirePermission(req, "payments.read");
+    const { userId } = await requirePermission(req, "payments.read");
 
     const searchParams = req.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));

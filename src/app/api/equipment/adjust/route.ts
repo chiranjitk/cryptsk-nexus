@@ -5,7 +5,7 @@ import { auditCreate } from "@/lib/services/audit-service";
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { equipmentId, newQty, reason, notes } = body;
 

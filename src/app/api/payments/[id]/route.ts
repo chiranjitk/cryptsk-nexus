@@ -59,7 +59,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const { id } = await params;
     const body = await req.json();
 
@@ -208,7 +208,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requirePermission(req, "payments.delete"); // [AUDIT-FIX F-20]
+    const { userId } = await requirePermission(req, "payments.delete"); // [AUDIT-FIX F-20]
     const { id } = await params;
 
     const payment = await db.payment.findUnique({

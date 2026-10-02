@@ -43,7 +43,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const userId = await requirePermission(_request, "users.update");
+    const { userId } = await requirePermission(_request, "users.update");
     const { id } = await params;
 
     // Verify user exists

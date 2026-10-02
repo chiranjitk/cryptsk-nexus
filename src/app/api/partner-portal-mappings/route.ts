@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
 // POST /api/partner-portal-mappings — create portal mapping
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { partnerId, captivePortalId, portalTemplate } = body;
 

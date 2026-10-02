@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
 // POST /api/bandwidth/thresholds - Create bandwidth alert rule
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const body = await request.json();
     const { name, deviceId, metric, thresholdValue, direction, notifyChannels, severity } = body;
 
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
 // DELETE /api/bandwidth/thresholds - Delete a threshold rule
 export async function DELETE(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {

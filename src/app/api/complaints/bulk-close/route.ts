@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/api-auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { ids } = body as { ids: string[] };
 

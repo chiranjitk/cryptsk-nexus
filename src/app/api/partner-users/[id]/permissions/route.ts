@@ -58,7 +58,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id } = await params;
     const body = await request.json();
     const { partnerPermissionId } = body;
@@ -119,7 +119,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const partnerPermissionId = searchParams.get("partnerPermissionId");

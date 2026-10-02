@@ -11,7 +11,7 @@ const VALID_PAYMENT_MODES = ["CASH", "UPI", "ONLINE", "BANK_TRANSFER", "CHEQUE",
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    const { userId } = await requireAuth(request as unknown as import("next/server").NextRequest);
     // [AUDIT-FIX F-20] Bulk operations mutate subscriber state en masse (renew,
     // change-plan, change-status, RADIUS block/unblock) — need subscribers.update.
     // A plain AuthError return is preserved for shape compatibility.

@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id } = await params;
     const body = await request.json();
     const { status, inspectionNotes, condition } = body;

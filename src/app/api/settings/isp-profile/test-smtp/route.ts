@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const userId = await requirePermission(request, "settings.update");
+    const { userId } = await requirePermission(request, "settings.update");
 
     let targetEmail: string | undefined;
 

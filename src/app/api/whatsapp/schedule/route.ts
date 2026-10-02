@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { templateId, recipientId, recipientName, recipientPhone, message, mediaType, mediaUrl, scheduledAt } = await request.json();
 
     if (!recipientId || !message || !scheduledAt) {
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
     const { id, action } = await request.json();
 
     if (!id) {

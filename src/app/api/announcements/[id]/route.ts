@@ -31,7 +31,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    const { userId } = await requireAuth(request as unknown as import("next/server").NextRequest);
     const { id } = await params;
 
     const existing = await db.announcement.findUnique({ where: { id } });
@@ -86,7 +86,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+    const { userId } = await requireAuth(request as unknown as import("next/server").NextRequest);
     const { id } = await params;
 
     const existing = await db.announcement.findUnique({ where: { id } });

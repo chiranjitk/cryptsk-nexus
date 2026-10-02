@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
     let userId: string | undefined;
     try {
       try {
-        userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+        ({ userId } = await requireAuth(request as unknown as import("next/server").NextRequest));
       } catch (e) {
         if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
         throw e;
@@ -284,7 +284,7 @@ export async function POST(request: NextRequest) {
     let userId: string | undefined;
     try {
       try {
-        userId = await requireAuth(request as unknown as import("next/server").NextRequest);
+        ({ userId } = await requireAuth(request as unknown as import("next/server").NextRequest));
       } catch (e) {
         if (e instanceof AuthError) return NextResponse.json({ success: false, error: e.message }, { status: e.statusCode });
         throw e;

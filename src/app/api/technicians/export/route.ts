@@ -6,7 +6,7 @@ import { auditExport } from "@/lib/services/audit-service";
 // GET /api/technicians/export - Export technicians as CSV
 export async function GET(request: NextRequest) {
   try {
-    const userId = await requireAuth(request);
+    const { userId } = await requireAuth(request);
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") || "";

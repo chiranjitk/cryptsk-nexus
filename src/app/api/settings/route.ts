@@ -235,7 +235,7 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = await requirePermission(request, "settings.update");
+    const { userId } = await requirePermission(request, "settings.update");
 
     const body = await request.json();
 

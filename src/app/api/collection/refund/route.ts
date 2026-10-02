@@ -15,7 +15,7 @@ import { auditLog } from "@/lib/services/audit-service";
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await requireAuth(req);
+    const { userId } = await requireAuth(req);
     const body = await req.json();
     const { paymentId, amount, reason, mode, notes } = body;
     if (!paymentId || !amount || Number(amount) <= 0) {
