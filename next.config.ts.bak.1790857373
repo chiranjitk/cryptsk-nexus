@@ -1,0 +1,3 @@
+import type { NextConfig } from "next";
+const nextConfig: NextConfig = { allowedDevOrigins: ["nexus.cryptsk.com","localhost","127.0.0.1","103.244.7.221"], output: "standalone", experimental: { serverActions: { bodySizeLimit: "2mb" } } };
+export default nextConfig;

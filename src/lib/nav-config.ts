@@ -42,7 +42,6 @@ import {
   Server,
   Shield,
   ShieldAlert,
-  CalendarClock as CalendarClockIcon,
   FileSpreadsheet,
   Gauge,
   Cable,
@@ -63,12 +62,6 @@ import {
   Scroll,
   MonitorSmartphone,
   FileSearch,
-  Smartphone,
-  Mail,
-  MessageSquare,
-  Webhook,
-  BellRing,
-  PauseCircle,
   ClipboardList,
   ScanEye,
   Timer,
@@ -117,7 +110,6 @@ export const navGroups: NavGroup[] = [
     label: "SUBSCRIBERS",
     defaultOpen: true,
     items: [
-      { label: "Active Sessions", href: "/active-sessions", icon: MonitorDot },
       { label: "Subscribers", href: "/subscribers", icon: Users },
       { label: "Plans", href: "/plans", icon: CreditCard },
       { label: "360° Customer View", href: "/subscriber-360", icon: Eye },
@@ -135,7 +127,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "NAS Clients", href: "/nas-clients", icon: RadioTower },
       { label: "NAS Devices", href: "/nas-devices", icon: Server },
-      { label: "Subnets (IPAM)", href: "/ipam", icon: MapPinned },
+      { label: "IP Pool Management", href: "/ipam", icon: MapPinned },
       { label: "System Interfaces", href: "/system-interfaces", icon: Cable },
       { label: "DHCP Server", href: "/dhcp", icon: Server },
       { label: "DNS Server", href: "/dns", icon: Globe },
@@ -144,7 +136,6 @@ export const navGroups: NavGroup[] = [
       { label: "MultiWAN", href: "/multiwan", icon: Globe },
       { label: "Dynamic Routing", href: "/dynamic-routing", icon: Network },
       { label: "FTTH/GPON", href: "/ftth-gpon", icon: Network },
-      { label: "VPP Gateway", href: "/vpp-gateway", icon: Server },
       { label: "Network Health", href: "/network-health", icon: Heart },
       { label: "DHCPv6 Server", href: "/dhcpv6", icon: Globe },
     ],
@@ -179,6 +170,7 @@ export const navGroups: NavGroup[] = [
     label: "MONITORING",
     defaultOpen: false,
     items: [
+      { label: "Active Sessions", href: "/sessions", icon: MonitorDot },
       { label: "Session History", href: "/session-history", icon: History },
       { label: "Authentication Log", href: "/auth-log", icon: Shield },
       { label: "Bandwidth", href: "/bandwidth", icon: Activity },
@@ -193,6 +185,7 @@ export const navGroups: NavGroup[] = [
       { label: "IP-MAC History", href: "/ip-mac-history", icon: FileSearch },
       { label: "Zone Budgets", href: "/zone-budgets", icon: PieChart },
       { label: "NAT Logs", href: "/nat-logs", icon: FileSearch },
+      { label: "Network Alerts", href: "/network-alerts", icon: Siren },
       { label: "Grafana Dashboards", href: "/grafana-dashboards", icon: BarChart3 },
     ],
   },
@@ -323,45 +316,11 @@ export const navGroups: NavGroup[] = [
       { label: "Notifications", href: "/notifications", icon: Bell, badgeVariant: "secondary" },
       { label: "API Keys", href: "/api-keys", icon: KeyRound },
       { label: "Audit Log", href: "/audit-log", icon: ScrollText },
-      { label: "Automation Jobs", href: "/automation-jobs", icon: CalendarClockIcon },
       { label: "Backup", href: "/backup", icon: DatabaseBackup },
+      { label: "Integrations", href: "/integrations", icon: Plug },
       { label: "Knowledge Base", href: "/knowledge-base", icon: BookOpen },
       { label: "Module Manager", href: "/module-manager", icon: Layers },
       { label: "System Health", href: "/system-health", icon: Heart },
-    ],
-  },
-
-  // ════════════════════════════════════════════════════════════
-  // INTEGRATIONS
-  // ════════════════════════════════════════════════════════════
-  {
-    id: "INTEGRATIONS",
-    label: "INTEGRATIONS",
-    defaultOpen: false,
-    items: [
-      { label: "Payment Gateways", href: "/payment-gateways", icon: CreditCard },
-      { label: "SMS Gateway", href: "/sms-gateway", icon: Smartphone },
-      { label: "Email Gateway", href: "/email-gateway", icon: Mail },
-      { label: "WhatsApp & Push", href: "/whatsapp-push", icon: MessageSquare },
-      { label: "Webhooks", href: "/webhooks", icon: Webhook },
-      { label: "Integration Logs", href: "/integration-logs", icon: FileText },
-    ],
-  },
-
-  // ════════════════════════════════════════════════════════════
-  // ALERT MANAGEMENT
-  // ════════════════════════════════════════════════════════════
-  {
-    id: "ALERT MANAGEMENT",
-    label: "ALERT MANAGEMENT",
-    defaultOpen: false,
-    items: [
-      { label: "Alert Center", href: "/alert-center", icon: BellRing },
-      { label: "Live Alerts", href: "/network-alerts", icon: Siren, badgeVariant: "destructive" },
-      { label: "Alert Rules", href: "/alert-rules", icon: ClipboardList },
-      { label: "Suppressions", href: "/alert-suppressions", icon: PauseCircle },
-      { label: "Alert History", href: "/alert-history", icon: History },
-      { label: "Notification Rules", href: "/notification-rules", icon: Bell },
     ],
   },
 ];

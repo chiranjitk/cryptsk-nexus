@@ -1,0 +1,62 @@
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  output: "standalone",
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  reactStrictMode: false,
+  allowedDevOrigins: ["*.space-z.ai"],
+  // ─── Treat native/binary Node modules as externals ───────────
+  // ssh2 / net-snmp / ros-client / pg use binary assets that
+  // bundlers cannot place in ESM chunks. Marking them as server
+  // external keeps them as require()'d Node modules in the
+  // standalone server bundle.
+  serverExternalPackages: [
+    "ssh2",
+    "net-snmp",
+    "ros-client",
+    "pg",
+    "pg-native",
+    "bcryptjs",
+    "bcrypt",
+    "nodemailer",
+    "@prisma/client",
+    "canvas",
+    "jsdom",
+  ],
+  // ─── Webpack fallback for native .node files ────────────────
+  // Defense-in-depth: even if a `require()` call slips past
+  // serverExternalPackages (e.g. a transitive dependency pulls
+  // in a .node binary), tell webpack to NOT parse .node files as
+  // JavaScript source. Without this, webpack tries to read the
+  // binary .node file as text → "Unexpected character" build error.
+  // noParse is built-in to webpack 5 (no extra loader needed).
+  webpack: (config, { isServer }) => {
+    config.module = config.module || {};
+    config.module.noParse = config.module.noParse || [];
+    if (Array.isArray(config.module.noParse)) {
+      config.module.noParse.push(/\.node$/);
+    } else if (typeof config.module.noParse === 'string' || config.module.noParse instanceof RegExp) {
+      config.module.noParse = [config.module.noParse, /\.node$/];
+    }
+
+    // On the server, also explicitly externalize ssh2 so its
+    // .node binary never enters the bundle graph at all
+    if (isServer) {
+      config.externals = config.externals || [];
+      // Function form catches ALL ssh2/* subpaths (keyParser, crypto, etc.)
+      if (Array.isArray(config.externals)) {
+        config.externals.push((context: string, request: string, callback: (err?: Error | null, result?: string) => void) => {
+          if (request === 'ssh2' || request.startsWith('ssh2/')) {
+            return callback(null, 'commonjs ' + request);
+          }
+          callback();
+        });
+      }
+    }
+    return config;
+  },
+};
+
+export default nextConfig;

@@ -355,6 +355,282 @@ function formatDurationCron(seconds: number): string {
 
 logger.info("Auto-enforcement cron started (every 30s)", {});
 
+// ═══════════════════════════════════════════════════════════════
+// ─── EVENT-DRIVEN TRIGGER: PostgreSQL LISTEN/NOTIFY ─────────────
+// Per: docs/architecture/02_ENTERPRISE_GATEWAY_ARCHITECTURE.md §10
+//
+// PRIMARY trigger (instant, <1ms): listens for radacct changes via
+// PostgreSQL pub/sub. When FreeRADIUS writes Accounting-Start/Stop
+// to radacct, the trigger fires pg_notify() which this listener
+// receives IMMEDIATELY — no 30s polling delay.
+//
+// On session_start: program VPP (NAT + policer + classify) instantly
+// On session_stop:  cleanup VPP instantly
+// On session_interim: update in-memory counters
+//
+// The 30s enforcement cron above is a SAFETY NET for limit enforcement.
+// The 60s reconciliation below is a FALLBACK for crash recovery.
+// ═══════════════════════════════════════════════════════════════
+
+import pg from "pg";
+const { Client: PgClient } = pg;
+
+const VPP_ADAPTER_URL = process.env.VPP_ADAPTER_URL || "http://localhost:3015";
+const VPP_EPOCH = SERVICE_START; // changes on every restart — lets VPP detect stale sessions
+const DB_URL = process.env.DATABASE_URL || "postgresql://cryptsknexus:CryptskNexus2026@127.0.0.1:5432/cryptsknexus";
+
+// Event stats
+let eventStats = {
+  notificationsReceived: 0,
+  sessionStartEvents: 0,
+  sessionStopEvents: 0,
+  sessionInterimEvents: 0,
+  vppProgrammed: 0,
+  vppFailed: 0,
+  vppCleaned: 0,
+  lastEventAt: 0,
+};
+
+// ─── Resolve subscriber policy (Plan → speeds, data limit) ─────
+async function resolveSubscriberPolicy(username: string) {
+  try {
+    // Prisma field names are capitalized: Plan, RadiusGroup (not plan, radiusGroup)
+    // Plan's relation to its group is also "RadiusGroup" (not "group")
+    const subscriber = await db.subscriber.findFirst({
+      where: { serviceUsername: username },
+      include: {
+        Plan: {
+          include: {
+            RadiusGroup: true,  // Plan → RadiusGroup (the plan's linked group)
+          },
+        },
+        RadiusGroup: true,     // Subscriber → RadiusGroup (direct override)
+      },
+    });
+
+    if (!subscriber) {
+      return { planName: "unknown", speedDownKbps: 0, speedUpKbps: 0, publicIp: "203.0.113.100" };
+    }
+
+    // Map Prisma's capitalized fields to the resolveSpeedsKbps function's expected shape
+    // resolveSpeedsKbps expects: { radiusGroup, plan: { downloadSpeed, uploadSpeed, group }, currentSpeedDown, currentSpeedUp }
+    const speeds = resolveSpeedsKbps({
+      radiusGroup: subscriber.RadiusGroup as any,
+      plan: {
+        downloadSpeed: subscriber.Plan?.downloadSpeed || 0,
+        uploadSpeed: subscriber.Plan?.uploadSpeed || 0,
+        // Map Plan.RadiusGroup → plan.group (the plan's linked group)
+        group: subscriber.Plan?.RadiusGroup as any,
+      } as any,
+      currentSpeedDown: subscriber.currentSpeedDown || 0,
+      currentSpeedUp: subscriber.currentSpeedUp || 0,
+    });
+
+    return {
+      planName: subscriber.Plan?.name || "unknown",
+      speedDownKbps: speeds.speedDown,
+      speedUpKbps: speeds.speedUp,
+      publicIp: "203.0.113.100", // TODO: resolve from NAS config
+    };
+  } catch (err: any) {
+    logger.error("Policy resolution failed", { username, error: err.message });
+    return { planName: "unknown", speedDownKbps: 0, speedUpKbps: 0, publicIp: "203.0.113.100" };
+  }
+}
+
+// ─── §8 Program VPP for a session (instant, synchronous) ────────
+async function programVppForRadAcctSession(data: {
+  acctsessionid: string;
+  username: string;
+  framedipaddress: string;
+  nasipaddress: string;
+  callingstationid: string;
+}) {
+  try {
+    const policy = await resolveSubscriberPolicy(data.username);
+
+    const downBps = policy.speedDownKbps > 0 ? Math.round(policy.speedDownKbps / 1024) * 1000000 : 0;
+    const upBps = policy.speedUpKbps > 0 ? Math.round(policy.speedUpKbps / 1024) * 1000000 : 0;
+
+    const response = await fetch(`${VPP_ADAPTER_URL}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "session",
+        subscriber: data.username,
+        subscriberIP: data.framedipaddress,
+        nasIP: data.nasipaddress,
+        mac: data.callingstationid,
+        plan: policy.planName,
+        speedDownKbps: policy.speedDownKbps,
+        speedUpKbps: policy.speedUpKbps,
+        vppEpoch: VPP_EPOCH,
+        config: {
+          nat: `nat44 add static address ${data.framedipaddress} -> ${policy.publicIp}`,
+          policer: `policer add name sub-${data.username} cir ${downBps} eir ${downBps} conform-action transmit violate-action drop`,
+          classify: `classify add session table-index 0 match ip4 src ${data.framedipaddress} action policer sub-${data.username}`,
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (response.ok) {
+      eventStats.vppProgrammed++;
+      logger.info("VPP programmed for session (event-driven)", {
+        username: data.username,
+        ip: data.framedipaddress,
+        plan: policy.planName,
+        speedDown: policy.speedDownKbps,
+      });
+      return true;
+    } else {
+      eventStats.vppFailed++;
+      logger.error("VPP programming failed", { username: data.username, status: response.status });
+      return false;
+    }
+  } catch (err: any) {
+    eventStats.vppFailed++;
+    logger.error("VPP adapter error", { username: data.username, error: err.message });
+    return false;
+  }
+}
+
+// ─── §9 Cleanup VPP for a session (instant) ─────────────────────
+async function cleanupVppForRadAcctSession(data: {
+  acctsessionid: string;
+  username: string;
+  framedipaddress: string;
+}) {
+  try {
+    await fetch(`${VPP_ADAPTER_URL}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "session-delete",
+        subscriber: data.username,
+        subscriberIP: data.framedipaddress,
+        vppEpoch: VPP_EPOCH,
+        config: {
+          nat: `nat44 del static address ${data.framedipaddress}`,
+          policer: `policer del name sub-${data.username}`,
+          classify: `classify del session table-index 0 match ip4 src ${data.framedipaddress}`,
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    eventStats.vppCleaned++;
+    logger.info("VPP cleaned for session (event-driven)", {
+      username: data.username,
+      ip: data.framedipaddress,
+    });
+  } catch (err: any) {
+    logger.error("VPP cleanup error", { username: data.username, error: err.message });
+  }
+}
+
+// ─── LISTEN/NOTIFY client (dedicated connection, stays open) ────
+let listenClient: any = null;
+
+async function startEventListener() {
+  listenClient = new PgClient({ connectionString: DB_URL });
+  await listenClient.connect();
+
+  // Listen on all 3 channels
+  await listenClient.query("LISTEN session_start");
+  await listenClient.query("LISTEN session_stop");
+  await listenClient.query("LISTEN session_interim");
+
+  listenClient.on("notification", async (msg: any) => {
+    try {
+      const data = JSON.parse(msg.payload);
+      eventStats.notificationsReceived++;
+      eventStats.lastEventAt = Date.now();
+
+      if (msg.channel === "session_start") {
+        eventStats.sessionStartEvents++;
+        logger.info("Event: session_start received", { username: data.username, ip: data.framedipaddress });
+        // §8: Program VPP INSTANTLY (not 30s later)
+        await programVppForRadAcctSession({
+          acctsessionid: data.acctsessionid,
+          username: data.username,
+          framedipaddress: data.framedipaddress,
+          nasipaddress: data.nasipaddress,
+          callingstationid: data.callingstationid,
+        });
+        broadcastWs("session_start", data);
+      } else if (msg.channel === "session_stop") {
+        eventStats.sessionStopEvents++;
+        logger.info("Event: session_stop received", { username: data.username });
+        // §9: Cleanup VPP INSTANTLY
+        await cleanupVppForRadAcctSession({
+          acctsessionid: data.acctsessionid,
+          username: data.username,
+          framedipaddress: data.framedipaddress,
+        });
+        broadcastWs("session_stop", data);
+      } else if (msg.channel === "session_interim") {
+        eventStats.sessionInterimEvents++;
+        broadcastWs("session_interim", data);
+      }
+    } catch (err: any) {
+      logger.error("Event listener error", { channel: msg.channel, error: err.message });
+    }
+  });
+
+  listenClient.on("error", (err: any) => {
+    logger.error("LISTEN connection error", { error: err.message });
+    setTimeout(() => {
+      logger.info("LISTEN reconnecting...", {});
+      startEventListener().catch(e => logger.error("LISTEN reconnect failed", { error: e.message }));
+    }, 2000);
+  });
+
+  logger.info("LISTEN/NOTIFY active (event-driven, <1ms trigger)", {
+    channels: ["session_start", "session_stop", "session_interim"],
+    vppEpoch: VPP_EPOCH,
+  });
+}
+
+// ─── FALLBACK: 60s reconciliation with radacct (crash recovery) ─
+async function reconcileWithRadAcct() {
+  const client = new PgClient({ connectionString: DB_URL });
+  try {
+    await client.connect();
+    // Find radacct sessions that don't have a corresponding NasSession
+    const result = await client.query(`
+      SELECT r.acctsessionid, r.username, r.framedipaddress, r.nasipaddress, r.callingstationid
+      FROM radacct r
+      LEFT JOIN "NasSession" ns ON ns."sessionId" = r.acctsessionid
+      WHERE r.acctstoptime IS NULL AND ns.id IS NULL
+      LIMIT 100
+    `);
+
+    for (const row of result.rows) {
+      logger.info("Reconcile: discovered missed session", { username: row.username });
+      await programVppForRadAcctSession({
+        acctsessionid: row.acctsessionid,
+        username: row.username,
+        framedipaddress: row.framedipaddress,
+        nasipaddress: row.nasipaddress,
+        callingstationid: row.callingstationid,
+      });
+    }
+
+    if (result.rows.length > 0) {
+      logger.info("Reconciliation completed", { recovered: result.rows.length, scope: "SCHEDULED" });
+    }
+  } catch (err: any) {
+    logger.error("Reconciliation error", { error: err.message });
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+// Start the event listener + reconciliation fallback
+startEventListener().catch(err => logger.error("Failed to start event listener", { error: err.message }));
+setInterval(reconcileWithRadAcct, 60_000); // 60s — fallback ONLY
+logger.info("Reconciliation fallback registered (every 60s)", {});
+
 // ─── Request Router ──────────────────────────────────────────
 
 async function handleRequest(req: Request, path: string, url: URL) {
@@ -368,245 +644,28 @@ async function handleRequest(req: Request, path: string, url: URL) {
       uptime: process.uptime(),
       activeSessions,
       wsClients: wsClients.size,
+      trigger: "LISTEN/NOTIFY (event-driven, <1ms)",
+      fallback: "reconciliation every 60s",
+      vppEpoch: VPP_EPOCH,
+      eventStats,
       timestamp: new Date().toISOString(),
+    });
+  }
+
+  // ── Event stats (event-driven trigger metrics) ──
+  if (path === "/api/events/stats" && req.method === "GET") {
+    return json({
+      trigger: "LISTEN/NOTIFY",
+      vppEpoch: VPP_EPOCH,
+      vppAdapterUrl: VPP_ADAPTER_URL,
+      eventStats,
+      uptime: process.uptime(),
     });
   }
 
   // Root (no auth)
   if (path === "/" && req.method === "GET") {
     return json({ status: "ok", service: "session-engine", health: "/api/health" });
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // §7/§8 RADIUS MACHINE-TO-MACHINE ENDPOINT (no session cookie)
-  // FreeRADIUS rlm_rest calls this endpoint on every Access-Request.
-  // Auth is via shared secret. Accepted via:
-  //   1. X-RADIUS-Secret header
-  //   2. _radiusSecret URL query param
-  //   3. _radiusSecret field in JSON body
-  // Body accepts both camelCase AND RADIUS attribute names:
-  //   User-Name, User-Password, NAS-IP-Address, NAS-Port,
-  //   Calling-Station-Id, Called-Station-Id, Packet-Src-IP-Address
-  // Response includes Cryptsk VSA attributes (vendor 64179) in radius.reply.
-  // ══════════════════════════════════════════════════════════
-  const RADIUS_API_SECRET = process.env.RADIUS_API_SECRET || "cryptsk-radius-shared-secret-2026";
-
-  if (path === "/api/radius/auth" && req.method === "POST") {
-    const rawBody = await req.text().catch(() => "");
-    let providedSecret = req.headers.get("x-radius-secret") || url.searchParams.get("_radiusSecret") || "";
-    if (!providedSecret) {
-      try { const parsed = JSON.parse(rawBody); providedSecret = parsed._radiusSecret || ""; } catch {}
-    }
-    if (providedSecret !== RADIUS_API_SECRET) {
-      logger.warn("RADIUS /api/radius/auth — bad shared secret", { provided: providedSecret.slice(0, 8) + "..." });
-      return json({ error: "Invalid shared secret", authResult: "REJECT" }, 403);
-    }
-
-    let body: any = {};
-    try { body = JSON.parse(rawBody); } catch {}
-    const username = body.username || body["User-Name"] || body.serviceUsername || "";
-    const password = body.password || body["User-Password"] || body.servicePassword || "";
-    const nasIp = body.nasIp || body["NAS-IP-Address"] || "127.0.0.1";
-    const nasPort = body.nasPort || body["NAS-Port"] || "0";
-    const mac = body.callingStationId || body["Calling-Station-Id"] || body.macAddress || "";
-    const calledStationId = body.calledStationId || body["Called-Station-Id"] || "";
-    const vlanId = body.vlanId || "";
-    const circuitId = body.circuitId || "";
-    const remoteId = body.remoteId || "";
-    const pppoeSessionId = body.pppoeSessionId || "";
-    const dhcpClientId = body.dhcpClientId || "";
-
-    if (!username || !password) {
-      return json({ error: "username and password are required", authResult: "REJECT" }, 400);
-    }
-
-    // ═══ 1. AUTHENTICATE ═══
-    const subscriberRaw = await db.subscriber.findUnique({
-      where: { serviceUsername: username },
-      include: {
-        Plan: { select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, dataLimitGb: true, maxConcurrentSessions: true, RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } } } },
-        RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true } },
-      },
-    }) as any;
-
-    if (!subscriberRaw || subscriberRaw.status !== "ACTIVE") {
-      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
-    }
-
-    // Verify password — support bcrypt hash AND plaintext
-    const storedPass = subscriberRaw.password || subscriberRaw.servicePassword || "";
-    let passwordValid = false;
-    if (storedPass.startsWith("$2a$") || storedPass.startsWith("$2b$") || storedPass.startsWith("$2y$")) {
-      try { const bcrypt = await import("bcryptjs").then(m => m.default || m); passwordValid = await bcrypt.compare(password, storedPass); } catch { passwordValid = false; }
-    } else {
-      passwordValid = (storedPass === password);
-    }
-    if (!passwordValid) {
-      return json({ error: "Invalid credentials", authResult: "REJECT" }, 401);
-    }
-
-    // ═══ 2. AUTHORIZE — resolve speeds / data / timeouts from Plan + RadiusGroup ═══
-    const subscriber: any = { ...subscriberRaw, plan: subscriberRaw.Plan ? { ...subscriberRaw.Plan, group: subscriberRaw.Plan.RadiusGroup } : null, radiusGroup: subscriberRaw.RadiusGroup };
-    const speeds = resolveSpeedsKbps(subscriber);
-    const dataLimitMb = resolveDataLimitMb(subscriber);
-    const sessionTimeoutSec = resolveSessionTimeout(subscriber) || 2592000;
-    const idleTimeoutSec = subscriber.idleTimeout || 3600;
-    const planName = subscriberRaw.Plan?.name || "";
-    const radiusGroupName = subscriberRaw.RadiusGroup?.name || subscriberRaw.Plan?.RadiusGroup?.name || "";
-
-    // ═══ 3. ALLOCATE IP ═══
-    const framedIp = body.framedIp || `10.0.${Math.abs(username.charCodeAt(0) * 31 + username.length) % 200}.${(Math.abs(username.charCodeAt(username.length - 1) * 7) % 250) + 1}`;
-
-    // ═══ 4. CREATE SESSION (status=ACTIVE, vppRecoveryState=FRESH) ═══
-    const sessionId = `CRYPTSK-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    const session = await db.nasSession.create({
-      data: {
-        sessionId, subscriberId: subscriberRaw.id, username,
-        nasIp, nasPort: String(nasPort), framedIp, callingStationId: mac, calledStationId,
-        status: "ACTIVE" as any,
-        planId: subscriberRaw.planId, planName,
-        radiusGroupId: subscriberRaw.RadiusGroup?.id || subscriberRaw.Plan?.RadiusGroup?.id || null,
-        radiusGroupName,
-        speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
-        dataLimitMb, sessionTimeoutSec, idleTimeoutSec,
-        vlanId, circuitId, remoteId, pppoeSessionId, dhcpClientId,
-        vppRecoveryState: "FRESH",
-      },
-    });
-
-    // ═══ 5. §8 PROGRAM VPP — call vpp-adapter (port 3015) ═══
-    const VPP_ADAPTER = "http://127.0.0.1:3015";
-    let vppProgrammed = false;
-    let vppEpoch = 0;
-    let vppError = "";
-
-    try {
-      const programResp = await fetch(`${VPP_ADAPTER}/subscriber/program`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId, subscriberId: subscriberRaw.id, username,
-          framedIp, mac, nasIp, vlanId, vrf: "",
-          speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
-          timeoutSec: sessionTimeoutSec, circuitId, remoteId, pppoeSessionId, dhcpClientId,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      const programData = await programResp.json().catch(() => ({} as any));
-
-      if (!programResp.ok || !programData.success) {
-        vppError = programData.error || `VPP adapter HTTP ${programResp.status}`;
-        logger.error("VPP programming failed", { sessionId, username, vppError });
-      } else {
-        // ═══ 6. §8 VERIFY VPP ═══
-        const verifyResp = await fetch(`${VPP_ADAPTER}/subscriber/verify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-          signal: AbortSignal.timeout(5000),
-        });
-        const verifyData = await verifyResp.json().catch(() => ({} as any));
-
-        if (!verifyResp.ok || !verifyData.verified) {
-          vppError = verifyData.error || "VPP verification returned false";
-          logger.error("VPP verification failed", { sessionId, username, vppError });
-        } else {
-          vppProgrammed = true;
-          vppEpoch = programData.vppEpoch || verifyData.vppEpoch || 1;
-          logger.info("VPP programmed + verified", { sessionId, username, framedIp, vppEpoch });
-
-          await db.nasSession.update({
-            where: { id: session.id },
-            data: { vppEpoch, vppProgrammedAt: new Date(), vppVerifiedAt: new Date(), vppRecoveryState: "VERIFIED" },
-          });
-
-          // ═══ 7. §42 PERSIST SESSION SNAPSHOT ═══
-          try {
-            await db.sessionSnapshot.upsert({
-              where: { sessionId },
-              create: {
-                sessionId, subscriberId: subscriberRaw.id, username,
-                nasIp, nasPort: String(nasPort), framedIp, mac,
-                vlan: vlanId, vrf: "",
-                speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
-                timeoutSec: sessionTimeoutSec,
-                vppEpoch, vppProgrammedAt: new Date(), vppRecoveryState: "VERIFIED",
-                configJson: JSON.stringify(programData),
-              },
-              update: {
-                vppEpoch, vppProgrammedAt: new Date(), vppRecoveryState: "VERIFIED",
-                configJson: JSON.stringify(programData),
-              },
-            });
-          } catch (e) { logger.warn("SessionSnapshot persist failed", { error: String(e) }); }
-        }
-      }
-    } catch (err: any) {
-      vppError = `VPP adapter unreachable: ${String(err?.message || err)}`;
-      logger.error("VPP adapter unreachable", { sessionId, username, vppError });
-    }
-
-    // ═══ ROLLBACK if VPP programming failed (no ghost sessions) ═══
-    if (!vppProgrammed) {
-      try {
-        await fetch(`${VPP_ADAPTER}/subscriber/remove`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-          signal: AbortSignal.timeout(3000),
-        });
-      } catch {}
-      await db.nasSession.delete({ where: { id: session.id } }).catch(() => {});
-      return json({ error: "VPP programming failed — session not established", authResult: "REJECT", vppError }, 500);
-    }
-
-    // ═══ 8. UPDATE SUBSCRIBER LAST AUTH ═══
-    await db.subscriber.update({ where: { id: subscriberRaw.id }, data: { lastAuthAt: new Date(), lastAuthResult: "Access-Accept" } });
-
-    // ═══ 9. LOG + BROADCAST ═══
-    await logEvent({ nasSessionId: session.id, sessionId, subscriberId: subscriberRaw.id, username, eventType: "SESSION_START", authResult: "Access-Accept", context: { speeds, dataLimitMb, vppEpoch, framedIp, planName, radiusGroupName }, source: "radius", triggeredBy: "radius-rlm-rest" });
-    broadcastWs("session_start", { sessionId, username, framedIp, speeds, planName, vppEpoch });
-
-    // ═══ 10. BUILD CRYPTSK VSA REPLY ═══
-    const downMbps = Math.round(speeds.speedDown / 1000);
-    const upMbps = Math.round(speeds.speedUp / 1000);
-    const rateLimitStr = `${downMbps}M/${upMbps}M`;
-    const bwDownBps = speeds.speedDown * 1000;
-    const bwUpBps = speeds.speedUp * 1000;
-    const maxInputBytes = dataLimitMb ? Math.round(dataLimitMb * 1024 * 1024 / 2) : 0;
-    const maxOutputBytes = dataLimitMb ? Math.round(dataLimitMb * 1024 * 1024 / 2) : 0;
-
-    logger.info("Session authenticated (RADIUS -> VPP transactional)", { sessionId, username, speeds, framedIp, vppEpoch, planName });
-
-    return json({
-      success: true,
-      authResult: "Access-Accept",
-      sessionId, framedIp,
-      subscriberId: subscriberRaw.id, username,
-      speedDownKbps: speeds.speedDown, speedUpKbps: speeds.speedUp,
-      vppEpoch, vppProgrammedAt: new Date().toISOString(), vppVerifiedAt: new Date().toISOString(),
-      radius: {
-        control: { "Auth-Type": "Accept" },
-        reply: {
-          "Framed-IP-Address": framedIp,
-          "Session-Timeout": sessionTimeoutSec,
-          "Idle-Timeout": idleTimeoutSec,
-          "Cryptsk-Rate-Limit": rateLimitStr,
-          "Cryptsk-Bandwidth-Max-Down": bwDownBps,
-          "Cryptsk-Bandwidth-Max-Up": bwUpBps,
-          "Cryptsk-Session-Timeout": sessionTimeoutSec,
-          "Cryptsk-Idle-Timeout": idleTimeoutSec,
-          "Cryptsk-Max-Sessions": 1,
-          "Cryptsk-Plan-Name": planName,
-          "Cryptsk-User-Profile": radiusGroupName,
-          ...(radiusGroupName ? { "Cryptsk-Filter-Id": radiusGroupName } : {}),
-          ...(dataLimitMb ? {
-            "Cryptsk-Total-Limit": Math.round(dataLimitMb * 1024 * 1024),
-            "Cryptsk-Max-Input-Octets": maxInputBytes,
-            "Cryptsk-Max-Output-Octets": maxOutputBytes,
-          } : {}),
-        },
-      },
-    }, 200);
   }
 
   // ── All remaining endpoints require auth ──
@@ -648,14 +707,16 @@ async function handleRequest(req: Request, path: string, url: URL) {
     const subscriber = await db.subscriber.findUnique({
       where: { serviceUsername },
       include: {
-        Plan: { select: {
+        plan: {
+          select: {
             id: true,
             name: true,
             downloadSpeed: true,
             uploadSpeed: true,
             dataLimitGb: true,
             maxConcurrentSessions: true,
-            RadiusGroup: { select: {
+            group: {
+              select: {
                 id: true,
                 name: true,
                 speedLimitDown: true,
@@ -666,7 +727,8 @@ async function handleRequest(req: Request, path: string, url: URL) {
             },
           },
         },
-        RadiusGroup: { select: {
+        radiusGroup: {
+          select: {
             id: true,
             name: true,
             speedLimitDown: true,
@@ -969,23 +1031,24 @@ async function handleRequest(req: Request, path: string, url: URL) {
       where.OR = [
         { username: { contains: search, mode: "insensitive" } },
         { sessionId: { contains: search, mode: "insensitive" } },
-        { Subscriber: { name: { contains: search, mode: "insensitive" } } },
-        { Subscriber: { phone: { contains: search } } },
-        { Subscriber: { code: { contains: search, mode: "insensitive" } } },
+        { subscriber: { name: { contains: search, mode: "insensitive" } } },
+        { subscriber: { phone: { contains: search } } },
+        { subscriber: { code: { contains: search, mode: "insensitive" } } },
       ];
     }
 
     const [sessions, total] = await Promise.all([
       db.nasSession.findMany({
         where,
-        include: { Subscriber: {
+        include: {
+          subscriber: {
             select: {
               id: true,
               name: true,
               phone: true,
               code: true,
               status: true,
-              Plan: { select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, dataLimitGb: true } },
+              plan: { select: { id: true, name: true, downloadSpeed: true, uploadSpeed: true, dataLimitGb: true } },
             },
           },
         },
@@ -1008,10 +1071,10 @@ async function handleRequest(req: Request, path: string, url: URL) {
           username: s.username,
           status: s.status,
           subscriberId: s.subscriberId,
-          subscriberName: s.Subscriber?.name,
-          subscriberPhone: s.Subscriber?.phone,
-          subscriberCode: s.Subscriber?.code,
-          subscriberStatus: s.Subscriber?.status,
+          subscriberName: s.subscriber.name,
+          subscriberPhone: s.subscriber.phone,
+          subscriberCode: s.subscriber.code,
+          subscriberStatus: s.subscriber.status,
           planId: s.planId,
           planName: s.planName,
           speedDownKbps: s.speedDownKbps,
@@ -1051,7 +1114,8 @@ async function handleRequest(req: Request, path: string, url: URL) {
           { sessionId: sid },
         ],
       },
-      include: { Subscriber: {
+      include: {
+        subscriber: {
           select: {
             id: true,
             name: true,
@@ -1062,7 +1126,8 @@ async function handleRequest(req: Request, path: string, url: URL) {
             status: true,
             serviceUsername: true,
             connectionType: true,
-            Plan: { select: {
+            plan: {
+              select: {
                 id: true,
                 name: true,
                 category: true,
@@ -1072,11 +1137,13 @@ async function handleRequest(req: Request, path: string, url: URL) {
                 priceMonthly: true,
                 validityDays: true,
                 maxConcurrentSessions: true,
-                RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+                group: {
+                  select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
                 },
               },
             },
-            RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+            radiusGroup: {
+              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
             },
           },
         },
@@ -1262,7 +1329,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
       const newPlan = await db.plan.findUnique({
         where: { id: newPlanId },
         include: {
-          RadiusGroup: { select: { speedLimitDown: true, speedLimitUp: true } },
+          group: { select: { speedLimitDown: true, speedLimitUp: true } },
         },
       });
       if (!newPlan) return jsonErr("Plan not found", 404);
@@ -1348,18 +1415,21 @@ async function handleRequest(req: Request, path: string, url: URL) {
     const subscriber = await db.subscriber.findUnique({
       where: { id: subscriberId },
       include: {
-        Plan: { select: {
+        plan: {
+          select: {
             id: true,
             name: true,
             downloadSpeed: true,
             uploadSpeed: true,
             dataLimitGb: true,
             maxConcurrentSessions: true,
-            RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+            group: {
+              select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
             },
           },
         },
-        RadiusGroup: { select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
+        radiusGroup: {
+          select: { id: true, name: true, speedLimitDown: true, speedLimitUp: true, dataLimit: true, sessionTimeout: true },
         },
       },
     });
@@ -1436,11 +1506,12 @@ async function handleRequest(req: Request, path: string, url: URL) {
 
     const activeSessions = await db.nasSession.findMany({
       where: { status: "ACTIVE" },
-      include: { Subscriber: {
+      include: {
+        subscriber: {
           select: {
             id: true,
             name: true,
-            Plan: { select: { name: true, dataLimitGb: true } },
+            plan: { select: { name: true, dataLimitGb: true } },
           },
         },
       },
@@ -1629,7 +1700,7 @@ async function handleRequest(req: Request, path: string, url: URL) {
       select: {
         subscriberId: true,
         username: true,
-        Subscriber: { select: { name: true, Plan: { select: { name: true } } } },
+        subscriber: { select: { name: true, plan: { select: { name: true } } } },
         inputOctets: true,
         outputOctets: true,
       },
@@ -1648,8 +1719,8 @@ async function handleRequest(req: Request, path: string, url: URL) {
       return {
         subscriberId: s.subscriberId,
         username: s.username,
-        subscriberName: s.Subscriber?.name,
-        planName: s.Subscriber?.plan?.name,
+        subscriberName: s.subscriber.name,
+        planName: s.subscriber.plan?.name,
         downloadBytes: dl,
         uploadBytes: ul,
         totalBytes: dl + ul,
@@ -1808,105 +1879,3 @@ async function handleRequest(req: Request, path: string, url: URL) {
 
   return json({ error: "Not Found", path }, 404);
 }
-
-// ─── VPP ENFORCEMENT: Monitor radacct for new active sessions ───
-// Every 5s, check for new radacct rows (acctstoptime IS NULL) that don't have
-// a VPP policer yet. Create policer + NAT + classify for each.
-let lastRadacctCheck = new Date();
-
-setInterval(async () => {
-  try {
-    // Find new active sessions in radacct that started since last check
-    const newSessions = await db.$queryRawUnsafe(
-      "SELECT acctsessionid, username, nasipaddress, framedipaddress, callingstationid, acctstarttime FROM radacct WHERE acctstoptime IS NULL AND acctstarttime >= $1::timestamptz ORDER BY acctstarttime ASC",
-      lastRadacctCheck
-    ) as any[];
-
-    for (const sess of newSessions) {
-      // Check if VPP policer already exists for this session (by IP)
-      const policerName = "pol_" + (sess.framedipaddress || "").replace(/\./g, "_");
-      try {
-        // Resolve speeds from radgroupcheck via radusergroup
-        const groupData = await db.$queryRawUnsafe(
-          "SELECT rgc.attribute, rgc.value FROM radgroupcheck rgc JOIN radusergroup rug ON rug.groupname = rgc.groupname WHERE rug.username = $1 AND rgc.attribute IN ('Cryptsk-Bandwidth-Max-Down', 'Cryptsk-Bandwidth-Max-Up') ORDER BY rgc.priority",
-          sess.username
-        ) as any[];
-
-        let speedDownKbps = 30000; // default 30 Mbps
-        let speedUpKbps = 15000;   // default 15 Mbps
-
-        for (const attr of groupData) {
-          if (attr.attribute === 'Cryptsk-Bandwidth-Max-Down') {
-            speedDownKbps = Math.round(parseInt(attr.value) / 1000); // bps → kbps
-          } else if (attr.attribute === 'Cryptsk-Bandwidth-Max-Up') {
-            speedUpKbps = Math.round(parseInt(attr.value) / 1000);
-          }
-        }
-
-        // Call VPP adapter to program this session
-        const programResp = await fetch("http://127.0.0.1:3015/subscriber/program", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: sess.acctsessionid,
-            subscriberId: sess.username,
-            username: sess.username,
-            framedIp: sess.framedipaddress,
-            mac: sess.callingstationid,
-            nasIp: sess.nasipaddress,
-            speedDownKbps,
-            speedUpKbps,
-            swIfIndex: 2,
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (programResp.ok) {
-          const result = await programResp.json();
-          if (result.success) {
-            logger.info("VPP policer created for radacct session", {
-              acctSessionId: sess.acctsessionid,
-              username: sess.username,
-              ip: sess.framedipaddress,
-              speeds: { speedDownKbps, speedUpKbps },
-            });
-            broadcastWs("vpp_enforce", { sessionId: sess.acctsessionid, username: sess.username, ip: sess.framedipaddress, speeds: { speedDownKbps, speedUpKbps } });
-          }
-        }
-      } catch (err) {
-        // VPP programming failed — non-fatal, session continues with NAS-side enforcement
-        logger.warn("VPP enforcement failed for radacct session", {
-          acctSessionId: sess.acctsessionid,
-          error: String(err),
-        });
-      }
-    }
-
-    // Also check for stopped sessions (acctstoptime IS NOT NULL since last check)
-    const stoppedSessions = await db.$queryRawUnsafe(
-      "SELECT acctsessionid, username, framedipaddress FROM radacct WHERE acctstoptime IS NOT NULL AND acctstoptime >= $1::timestamptz",
-      lastRadacctCheck
-    ) as any[];
-
-    for (const sess of stoppedSessions) {
-      try {
-        await fetch("http://127.0.0.1:3015/subscriber/remove", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId: sess.acctsessionid }),
-          signal: AbortSignal.timeout(3000),
-        });
-        logger.info("VPP policer removed for stopped radacct session", {
-          acctSessionId: sess.acctsessionid,
-          username: sess.username,
-        });
-        broadcastWs("vpp_remove", { sessionId: sess.acctsessionid, username: sess.username });
-      } catch {}
-    }
-
-    lastRadacctCheck = new Date();
-  } catch (err) {
-    logger.error("VPP radacct monitor error", { error: String(err) });
-  }
-}, 5000); // Check every 5 seconds
-
