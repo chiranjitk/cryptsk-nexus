@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_ROWS = 2000;
@@ -112,6 +113,7 @@ export async function GET(request: NextRequest) {
       buckets[bucket].total += balance;
 
       return {
+        subscriberId: inv.subscriberId,
         invoiceNumber: inv.invoiceNumber,
         subscriberCode: inv.Subscriber?.code ?? "",
         subscriberName: inv.Subscriber?.name ?? "",
@@ -215,6 +217,47 @@ export async function GET(request: NextRequest) {
       ]);
       await auditExport(request, "Invoice", "xlsx", rows.length);
       return xlsxResponse(headers, rows, generateExportFilename("ar-aging", "xlsx"));
+    }
+
+    // PDF export branch (Phase 3, RPT-P3-A) — mirrors the CSV branch above
+    if (format === "pdf") {
+      const headers = [
+        "Invoice #",
+        "Subscriber Code",
+        "Subscriber Name",
+        "Phone",
+        "Area",
+        "Plan",
+        "Issue Date",
+        "Due Date",
+        "Days Overdue",
+        "Grand Total",
+        "Paid",
+        "Balance",
+        "Bucket",
+        "Status",
+      ];
+      const rows = mapped.map((r) => [
+        r.invoiceNumber,
+        r.subscriberCode,
+        r.subscriberName,
+        r.phone,
+        r.area,
+        r.plan,
+        ymd(new Date(r.issueDate)),
+        ymd(new Date(r.dueDate)),
+        r.daysOverdue,
+        r.grandTotal,
+        r.paidAmount,
+        r.balanceAmount,
+        r.bucket,
+        r.status,
+      ]);
+      await auditExport(request, "Invoice", "pdf", rows.length);
+      return pdfResponse(headers, rows, generateExportFilename("ar-aging", "pdf"), {
+        title: "AR Aging",
+        subtitle: `As of ${asOf}`,
+      });
     }
 
     return NextResponse.json({

@@ -20,6 +20,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const INVOICE_SCAN_CAP = 5000; // documented cap: JS aggregation over invoice scan
@@ -262,8 +263,8 @@ export async function GET(request: NextRequest) {
       areaCount: areas.length,
     };
 
-    // CSV / XLSX export branch — exports the `dimension` rowset
-    if (format === "csv" || format === "xlsx") {
+    // CSV / XLSX / PDF export branch — exports the `dimension` rowset
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       let headers: string[];
       let exportRows: (string | number)[][];
       if (dimension === "area") {
@@ -321,7 +322,12 @@ export async function GET(request: NextRequest) {
       const filename = generateExportFilename(`plan-area-mis-${dimension}`, format);
       return format === "xlsx"
         ? xlsxResponse(headers, exportRows, filename)
-        : csvResponse(headers, exportRows, filename);
+        : format === "pdf"
+          ? pdfResponse(headers, exportRows, filename, {
+              title: `Plan & Area MIS — By ${dimension === "area" ? "Area" : "Plan"}`,
+              subtitle: `Period ${ymd(from)} → ${ymd(to)}`,
+            })
+          : csvResponse(headers, exportRows, filename);
     }
 
     return NextResponse.json({

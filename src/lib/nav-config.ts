@@ -91,6 +91,7 @@ import {
   Globe,
   MapPinned,
   Wifi,
+  Camera,
 } from "lucide-react";
 
 import type { NavGroup } from "@/types";
@@ -309,6 +310,7 @@ export const navGroups: NavGroup[] = [
       { label: "Expiry & Renewal", href: "/expiry-renewal", icon: Timer },
       { label: "Side Revenue", href: "/side-revenue", icon: PlusCircle },
       { label: "Plan & Area MIS", href: "/plan-area-mis", icon: PieChart },
+      { label: "Report Snapshots", href: "/report-snapshots", icon: Camera },
       { label: "Revenue Reports", href: "/revenue-reports", icon: TrendingUp },
       { label: "Revenue Forecast", href: "/revenue-forecast", icon: BarChart3 },
       { label: "Collection", href: "/collection", icon: HandCoins },

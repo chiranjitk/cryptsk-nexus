@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Wallet, FileText, Users, AlertTriangle, Download, Printer, RefreshCw, CalendarDays,
+  Wallet, FileText, Users, AlertTriangle, Download, Printer, RefreshCw, CalendarDays, Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/utils";
@@ -16,8 +16,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { downloadCsv, printReport, fmtINRDisplay } from "@/lib/report-export";
+import { downloadCsv, printReport, fmtINRDisplay, downloadServerFormat } from "@/lib/report-export";
 import type { ReportColumn } from "@/lib/report-export";
+import { openSubscriber360 } from "@/store/report-drill-store";
 
 // ─── Types ──────────────────────────────────────────────
 type BucketStat = { count: number; total: number };
@@ -31,7 +32,8 @@ type ArAgingSummary = {
 };
 
 type ArAgingRow = {
-  invoiceNumber: string; subscriberCode: string; subscriberName: string; phone: string;
+  invoiceNumber: string; subscriberId: string | null;
+  subscriberCode: string; subscriberName: string; phone: string;
   area: string; plan: string; issueDate: string; dueDate: string;
   daysOverdue: number; grandTotal: number; paidAmount: number; balanceAmount: number;
   bucket: string; status: string;
@@ -109,11 +111,16 @@ const EXPORT_COLUMNS: ReportColumn<ArAgingRow>[] = [
 export default function ArAgingPage() {
   const [asOf, setAsOf] = useState(toISO(new Date()));
 
+  const buildFilterParams = () => {
+    const params = new URLSearchParams();
+    if (asOf) params.set("asOf", asOf);
+    return params;
+  };
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<ArAgingData>({
     queryKey: ["ar-aging", asOf],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (asOf) params.set("asOf", asOf);
+      const params = buildFilterParams();
       return apiFetch<{ success: boolean; data: ArAgingData }>(`/api/reports/ar-aging?${params}`).then((j) => j.data);
     },
   });
@@ -125,6 +132,20 @@ export default function ArAgingPage() {
     if (rows.length === 0) return;
     downloadCsv("ar-aging", EXPORT_COLUMNS, rows);
     toast.success("AR aging report exported as CSV");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      await downloadServerFormat({
+        basePath: "/api/reports/ar-aging",
+        params: Object.fromEntries(buildFilterParams()),
+        format: "pdf",
+        baseName: "ar-aging",
+      });
+      toast.success("PDF exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF export failed");
+    }
   };
 
   const handlePrint = () => {
@@ -201,6 +222,9 @@ export default function ArAgingPage() {
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={rows.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export CSV
           </Button>
+          <Button variant="outline" size="sm" disabled={rows.length === 0} onClick={handleExportPdf}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
+          </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={rows.length === 0}>
             <Printer className="h-3.5 w-3.5 mr-1" />Print / PDF
           </Button>
@@ -261,12 +285,13 @@ export default function ArAgingPage() {
                   <TableHead className="text-xs font-medium uppercase text-right">Balance</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Bucket</TableHead>
                   <TableHead className="text-xs font-medium uppercase">Status</TableHead>
+                  <TableHead className="text-xs font-medium uppercase">360°</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
+                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">No data for the selected filters</TableCell>
                   </TableRow>
                 ) : rows.map((r) => (
                   <TableRow key={r.invoiceNumber} className="hover:bg-muted/50 transition-colors duration-150">
@@ -283,6 +308,13 @@ export default function ArAgingPage() {
                     <TableCell className="text-right tabular-nums text-sm font-semibold text-red-600">{fmtINRDisplay(r.balanceAmount)}</TableCell>
                     <TableCell><Badge variant="outline" className={`text-[10px] ${bucketCls(r.daysOverdue)}`}>{bucketLabel(r.bucket)}</Badge></TableCell>
                     <TableCell><StatusBadge status={r.status} /></TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View 360° Customer View"
+                        onClick={() => openSubscriber360(r.subscriberId)} disabled={!r.subscriberId}>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="sr-only">View 360°</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const VALID_STATUSES: InvoiceStatus[] = [
@@ -216,12 +217,56 @@ export async function GET(request: NextRequest) {
       return xlsxResponse(headers, rows, generateExportFilename("invoice-register", "xlsx"));
     }
 
+    // PDF export branch (Phase 3, RPT-P3-A) — mirrors the CSV branch above
+    if (format === "pdf") {
+      const headers = [
+        "Invoice #",
+        "Issue Date",
+        "Due Date",
+        "Subscriber Code",
+        "Subscriber Name",
+        "Phone",
+        "Area",
+        "Plan",
+        "Subtotal",
+        "CGST",
+        "SGST",
+        "Grand Total",
+        "Paid",
+        "Balance",
+        "Status",
+      ];
+      const rows = invoices.map((inv) => [
+        inv.invoiceNumber,
+        ymd(new Date(inv.issueDate)),
+        ymd(new Date(inv.dueDate)),
+        inv.Subscriber?.code ?? "",
+        inv.Subscriber?.name ?? "",
+        inv.Subscriber?.phone ?? "",
+        inv.Subscriber?.Area?.name ?? "",
+        inv.Plan?.name ?? "",
+        round2(num(inv.subtotal)),
+        round2(num(inv.cgstAmount)),
+        round2(num(inv.sgstAmount)),
+        round2(num(inv.grandTotal)),
+        round2(num(inv.paidAmount)),
+        round2(num(inv.balanceAmount)),
+        inv.status,
+      ]);
+      await auditExport(request, "Invoice", "pdf", rows.length);
+      return pdfResponse(headers, rows, generateExportFilename("invoice-register", "pdf"), {
+        title: "Invoice Register",
+        subtitle: `Period ${ymd(from)} → ${ymd(to)}${statuses.length ? ` · Status: ${statuses.join(", ")}` : ""}`,
+      });
+    }
+
     // JSON response — dates as ISO strings
     return NextResponse.json({
       success: true,
       data: {
         summary,
         rows: invoices.map((inv) => ({
+          subscriberId: inv.subscriberId,
           invoiceNumber: inv.invoiceNumber,
           issueDate: new Date(inv.issueDate).toISOString(),
           dueDate: new Date(inv.dueDate).toISOString(),

@@ -22,6 +22,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_AUDIT_ROWS = 2000; // scan cap for disconnection counting (documented limitation)
@@ -263,6 +264,7 @@ export async function GET(request: NextRequest) {
     const events = latest.map((e) => {
       const sub = subMap.get(e.entityId);
       return {
+        subscriberId: sub?.id ?? null,
         timestamp: new Date(e.timestamp).toISOString(),
         action: e.action,
         event: e.event,
@@ -275,9 +277,9 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // ── CSV export branch (events) ──────────────────────────────────
+    // ── CSV / PDF export branch (events) ──────────────────────────
     const format = (searchParams.get("format") || "").toLowerCase();
-    if (format === "csv") {
+    if (format === "csv" || format === "pdf") {
       const headers = [
         "Timestamp",
         "Event",
@@ -300,8 +302,15 @@ export async function GET(request: NextRequest) {
         e.userName,
         e.details,
       ]);
-      await auditExport(request, "Subscriber", "csv", rows.length);
-      return csvResponse(headers, rows, generateExportFilename("subscriber-lifecycle"));
+      await auditExport(request, "Subscriber", format, rows.length);
+      const filename = generateExportFilename("subscriber-lifecycle", format);
+      if (format === "pdf") {
+        return pdfResponse(headers, rows, filename, {
+          title: "Subscriber Lifecycle Report",
+          subtitle: `Period ${from.toISOString().slice(0, 10)} → ${to.toISOString().slice(0, 10)} · ${events.length} events`,
+        });
+      }
+      return csvResponse(headers, rows, filename);
     }
 
     return NextResponse.json({

@@ -80,6 +80,12 @@ export async function createSessionToken(userId: string): Promise<string> {
     type: 'admin',
     iat: now,
     exp: now + SESSION_MAX_AGE_SECONDS,
+    // [RPT-P3-A] Unique token id — iat has only second resolution, so two tokens
+    // minted for the same user within the same second were byte-identical and
+    // collided on the UserSession.tokenHash unique index (the report-snapshot
+    // engine's rapid internal service sessions + same-second re-logins).
+    // verifySessionToken ignores unknown payload fields, so this is additive.
+    jti: crypto.randomUUID(),
   })
 
   // base64url encode the payload

@@ -158,6 +158,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   'Expiry & Renewal': () => import('@/components/pages/expiry-renewal-page'),
   'Side Revenue': () => import('@/components/pages/side-revenue-page'),
   'Plan & Area MIS': () => import('@/components/pages/plan-area-mis-page'),
+  'Report Snapshots': () => import('@/components/pages/report-snapshots-page'),
 
   // ══════════════════════════════════════════════════════════════
   // SETTINGS

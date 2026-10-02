@@ -334,6 +334,7 @@ export const MODULES: ModuleDefinition[] = [
       { label: "Expiry & Renewal", section: "REPORTS" },
       { label: "Side Revenue", section: "REPORTS" },
       { label: "Plan & Area MIS", section: "REPORTS" },
+      { label: "Report Snapshots", section: "REPORTS" },
       { label: "Charge Override", section: "FINANCE" },
       { label: "Cyclic Billing", section: "FINANCE" },
       { label: "Grace Periods", section: "FINANCE" },

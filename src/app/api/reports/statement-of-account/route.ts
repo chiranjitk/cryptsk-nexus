@@ -21,6 +21,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_ROWS = 2000;
@@ -222,8 +223,8 @@ export async function GET(request: NextRequest) {
         balance: e.balance,
       }));
 
-      // CSV / XLSX export branch (ledger view)
-      if (format === "csv" || format === "xlsx") {
+      // CSV / XLSX / PDF export branch (ledger view)
+      if (format === "csv" || format === "xlsx" || format === "pdf") {
         const headers = ["Date", "Type", "Reference", "Description", "Debit", "Credit", "Balance"];
         const rows: (string | number)[][] = capped.map((e) => [
           ymd(e.date),
@@ -238,7 +239,12 @@ export async function GET(request: NextRequest) {
         const filename = generateExportFilename("statement-of-account", format);
         return format === "xlsx"
           ? xlsxResponse(headers, rows, filename)
-          : csvResponse(headers, rows, filename);
+          : format === "pdf"
+            ? pdfResponse(headers, rows, filename, {
+                title: "Statement of Account — Ledger",
+                subtitle: `${subscriber.code} · ${subscriber.name} · ${summary.allTime ? "All time" : `${summary.from ?? ""} → ${summary.to ?? ""}`}`,
+              })
+            : csvResponse(headers, rows, filename);
       }
 
       return NextResponse.json({
@@ -393,8 +399,8 @@ export async function GET(request: NextRequest) {
       totalOutstanding: round2(rows.reduce((s, r) => s + r.totalOutstanding, 0)),
     };
 
-    // CSV / XLSX export branch (register view)
-    if (format === "csv" || format === "xlsx") {
+    // CSV / XLSX / PDF export branch (register view)
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       const headers = [
         "Subscriber Code",
         "Name",
@@ -425,7 +431,12 @@ export async function GET(request: NextRequest) {
       const filename = generateExportFilename("statement-of-account", format);
       return format === "xlsx"
         ? xlsxResponse(headers, exportRows, filename)
-        : csvResponse(headers, exportRows, filename);
+        : format === "pdf"
+          ? pdfResponse(headers, exportRows, filename, {
+              title: "Statement of Account",
+              subtitle: `Period ${ymd(from)} → ${ymd(to)}`,
+            })
+          : csvResponse(headers, exportRows, filename);
     }
 
     return NextResponse.json({

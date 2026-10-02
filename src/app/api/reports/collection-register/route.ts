@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
 import { csvResponse, generateExportFilename } from "@/lib/export-utils";
 import { xlsxResponse } from "@/lib/xlsx-export";
+import { pdfResponse } from "@/lib/pdf-export";
 import { auditExport } from "@/lib/services/audit-service";
 
 const MAX_ROWS = 2000;
@@ -114,6 +115,7 @@ export async function GET(request: NextRequest) {
     });
 
     const rows = payments.map((p) => ({
+      subscriberId: p.subscriberId,
       receiptNumber: p.receiptNumber,
       paymentDate: new Date(p.createdAt).toISOString(),
       subscriberCode: p.Subscriber?.code ?? "",
@@ -156,9 +158,9 @@ export async function GET(request: NextRequest) {
       byStatus,
     };
 
-    // CSV / XLSX export branch
+    // CSV / XLSX / PDF export branch
     const format = (searchParams.get("format") || "").toLowerCase();
-    if (format === "csv" || format === "xlsx") {
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       const headers = [
         "Receipt #",
         "Date",
@@ -191,7 +193,12 @@ export async function GET(request: NextRequest) {
       const filename = generateExportFilename("collection-register", format);
       return format === "xlsx"
         ? xlsxResponse(headers, exportRows, filename)
-        : csvResponse(headers, exportRows, filename);
+        : format === "pdf"
+          ? pdfResponse(headers, exportRows, filename, {
+              title: "Collection Register",
+              subtitle: `Period ${ymd(from)} → ${ymd(to)}${mode ? ` · Mode: ${mode}` : ""} · Status: ${statuses.length ? statuses.join(", ") : "ALL"}`,
+            })
+          : csvResponse(headers, exportRows, filename);
     }
 
     return NextResponse.json({

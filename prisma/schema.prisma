@@ -3458,6 +3458,33 @@ model RepairRecord {
   @@index([status])
 }
 
+// ============================================================
+// Reports Phase 3 (RPT-P3-A) — scheduled report snapshots.
+// The snapshot engine (src/lib/report-snapshot-engine.ts) captures the
+// row payload of snapshotable reports (invoice-register, ar-aging,
+// collection-register, expiry-renewal, side-revenue, plan-area-mis)
+// per frequency/period, idempotently keyed by (reportKey, frequency, periodKey).
+// ============================================================
+model ReportSnapshot {
+  id           String   @id @default(cuid())
+  reportKey    String
+  label        String
+  frequency    String   // DAILY | WEEKLY | MONTHLY
+  periodKey    String   // DAILY: YYYY-MM-DD (UTC), WEEKLY: YYYY-Www, MONTHLY: YYYY-MM
+  rowCount     Int      @default(0)
+  status       String   @default("OK") // OK | EMPTY | FAILED
+  error        String?
+  paramsJson   String   @default("{}")
+  summaryJson  String   @default("{}")
+  payloadJson  String   @default("{}")
+  generatedBy  String   @default("system")
+  createdAt    DateTime @default(now())
+
+  @@unique([reportKey, frequency, periodKey])
+  @@index([reportKey, createdAt])
+  @@index([createdAt])
+}
+
 model Reseller {
   id                          String                     @id @default(uuid())
   name                        String

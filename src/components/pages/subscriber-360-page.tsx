@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, formatINR } from "@/lib/utils";
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { useModuleStore } from "@/store/module-store";
+import { useReportDrillStore } from "@/store/report-drill-store";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -261,6 +262,19 @@ export default function Subscriber360Page() {
   const [search, setSearch] = useState("");
   const [kycPreview, setKycPreview] = useState(false);
   const { isModuleEnabled } = useModuleStore();
+
+  // ─── Cross-page drill-down focus (report rows → 360°) ──────
+  // Report pages call openSubscriber360(id) which sets the focus pair and
+  // navigates here; we consume it once (same pattern as pendingSubscriberAction).
+  const focusId = useReportDrillStore((s) => s.focusSubscriberId);
+  const focusSeq = useReportDrillStore((s) => s.focusSeq);
+  useEffect(() => {
+    if (!focusId) return;
+    setSelectedId(focusId);
+    setSearch("");
+    setKycPreview(false);
+    useReportDrillStore.getState().clearFocus();
+  }, [focusId, focusSeq]);
 
   // ─── Subscriber list query ─────────────────────────────────
   const { data: subsData, isLoading: subsLoading } = useQuery<{ subscribers: SubscriberMini[] }>({
