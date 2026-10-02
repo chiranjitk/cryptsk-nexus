@@ -125,13 +125,13 @@ export async function POST(request: NextRequest) {
     // Resolve partnerId: if 'default' or invalid UUID, use tenant's first property
     let resolvedPropertyId = partnerId;
     if (partnerId === 'default' || partnerId.length !== 36) {
-      console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" for tenant ${tenantId}`);
+      console.log(`[PortalInstances POST] Resolving partnerId from "${partnerId}" `);
       const firstPartner = await db.partner.findFirst({
         where: {},
         select: { id: true },
       });
       if (!firstPartner) {
-        console.error(`[PortalInstances POST] 404: No property found for tenant ${tenantId}`);
+        console.error(`[PortalInstances POST] 404: No property found `);
         return NextResponse.json(
           { success: false, error: { code: 'NOT_FOUND', message: 'No property found for this tenant' } },
           { status: 404 }
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!property) {
-      console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found for tenant ${tenantId}`);
+      console.error(`[PortalInstances POST] 404: Partner ${resolvedPropertyId} not found `);
       return NextResponse.json(
         { success: false, error: { code: 'NOT_FOUND', message: 'Partner not found' } },
         { status: 404 }
