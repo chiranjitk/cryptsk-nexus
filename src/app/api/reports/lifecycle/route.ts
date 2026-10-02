@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
+import { xlsxResponse } from "@/lib/xlsx-export";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireAuth, AuthError } from "@/lib/api-auth";
@@ -277,9 +278,9 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // ── CSV / PDF export branch (events) ──────────────────────────
+    // ── CSV / XLSX / PDF export branch (events) ───────────────────
     const format = (searchParams.get("format") || "").toLowerCase();
-    if (format === "csv" || format === "pdf") {
+    if (format === "csv" || format === "xlsx" || format === "pdf") {
       const headers = [
         "Timestamp",
         "Event",
@@ -309,6 +310,9 @@ export async function GET(request: NextRequest) {
           title: "Subscriber Lifecycle Report",
           subtitle: `Period ${from.toISOString().slice(0, 10)} → ${to.toISOString().slice(0, 10)} · ${events.length} events`,
         });
+      }
+      if (format === "xlsx") {
+        return xlsxResponse(headers, rows, filename);
       }
       return csvResponse(headers, rows, filename);
     }

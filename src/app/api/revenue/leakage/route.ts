@@ -343,7 +343,7 @@ export async function GET(request: NextRequest) {
 
     for (const sub of activeSubscribers) {
       if (!sub.Plan || sub.Plan.priceMonthly <= 0) continue;
-      const latestInv = sub.invoices[0];
+      const latestInv = sub.Invoice[0];
       if (!latestInv) continue;
 
       const halfPlan = sub.Plan.priceMonthly * 0.5;

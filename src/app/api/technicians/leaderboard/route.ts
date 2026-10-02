@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
         id: true,
         assignedToId: true,
         status: true,
+        createdAt: true,
         resolvedAt: true,
         customerRating: true,
       },

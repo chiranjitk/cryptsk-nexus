@@ -244,7 +244,7 @@ export async function GET(request: NextRequest) {
         reason: true,
         status: true,
         createdAt: true,
-        payment: { select: { Subscriber: { select: { name: true } } } },
+        Payment: { select: { Subscriber: { select: { name: true } } } },
       },
       orderBy: { createdAt: "desc" },
       take: 10000,

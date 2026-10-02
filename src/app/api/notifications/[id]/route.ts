@@ -74,7 +74,7 @@ export async function PUT(
       },
     });
 
-    auditCreate(request, "Notification", id, { updatedFields: Object.keys(updateData), oldStatus: notification.status, newStatus: body.status }, { userId: session }).catch(() => {});
+    auditCreate(request, "Notification", id, { updatedFields: Object.keys(updateData), oldStatus: notification.status, newStatus: body.status }, { userId: session?.userId }).catch(() => {});
     return NextResponse.json({ notification: updated });
   } catch (error) {
     if (error instanceof AuthError) {
@@ -99,7 +99,7 @@ export async function DELETE(
     }
 
     await db.notification.delete({ where: { id } });
-    auditCreate(request, "Notification", id, { action: "delete", title: notification.title, subscriberId: notification.subscriberId }, { userId: session }).catch(() => {});
+    auditCreate(request, "Notification", id, { action: "delete", title: notification.title, subscriberId: notification.subscriberId }, { userId: session?.userId }).catch(() => {});
     return NextResponse.json({ success: true, message: "Notification deleted successfully" });
   } catch (error) {
     if (error instanceof AuthError) {

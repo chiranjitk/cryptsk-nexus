@@ -76,6 +76,7 @@ function getBestChannel(modeCounts: Record<string, number>): { channel: string; 
   };
 
   const sortedModes = Object.entries(modeCounts).sort(([, a], [, b]) => b - a);
+  if (sortedModes.length === 0) return { channel: "SMS", label: "SMS" };
   const topMode = sortedModes[0][0];
 
   // If UPI or WALLET is the most used, they probably have WhatsApp
@@ -91,7 +92,7 @@ function getBestChannel(modeCounts: Record<string, number>): { channel: string; 
 
 // ── Helper: Determine best contact time ────────────────────────────
 
-function getBestTime(Payment: { createdAt: Date }[]): string {
+function getBestTime(payments: { createdAt: Date }[]): string {
   if (payments.length === 0) return "10:00 AM";
 
   // Count by hour of day
@@ -244,7 +245,7 @@ export async function GET(request: NextRequest) {
       let avgDaysToPay = 30; // default
       if (paymentsWithIssue.length > 0) {
         const totalDays = paymentsWithIssue.reduce((sum, p) => {
-          const issueDate = new Date(p.invoice!.issueDate);
+          const issueDate = new Date(p.Invoice!.issueDate);
           const payDate = new Date(p.createdAt);
           const days = Math.max(0, Math.floor((payDate.getTime() - issueDate.getTime()) / (1000 * 60 * 60 * 24)));
           return sum + days;
