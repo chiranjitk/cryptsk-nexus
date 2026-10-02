@@ -130,6 +130,105 @@ const PIE_COLORS = ["#22c55e", "#3b82f6", "#f97316", "#a855f7", "#06b6d4", "#ef4
 
 const defaultForm = planFormDefaults;
 
+// ─── DB plan row → form state (single source used by edit + duplicate) ───
+function planToFormState(plan: Plan, overrides?: Partial<PlanFormState>): PlanFormState {
+  // dataLimitGb is stored in GB; surface exact TB multiples as TB (lossless round-trip)
+  const exactTb = plan.dataLimitGb != null && plan.dataLimitGb > 0 && plan.dataLimitGb % 1024 === 0;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const d = plan.fixedExpiryAt ? new Date(plan.fixedExpiryAt) : null;
+  return {
+    ...defaultForm,
+    name: plan.name,
+    description: plan.description,
+    category: plan.category,
+    status: plan.status,
+    downloadSpeed: plan.downloadSpeed,
+    uploadSpeed: plan.uploadSpeed,
+    speedUnit: plan.speedUnit || "MBPS",
+    downloadSpeedFup: plan.downloadSpeedFup,
+    uploadSpeedFup: plan.uploadSpeedFup,
+    dataLimitGb: exactTb ? plan.dataLimitGb / 1024 : plan.dataLimitGb,
+    dataLimitUnit: plan.dataLimitGb == null ? "UNLIMITED" : exactTb ? "TB" : "GB",
+    priceMonthly: plan.priceMonthly,
+    priceQuarterly: plan.priceQuarterly,
+    priceHalfYearly: plan.priceHalfYearly,
+    priceYearly: plan.priceYearly,
+    installationCharge: plan.installationCharge,
+    securityDeposit: plan.securityDeposit,
+    routerRental: plan.routerRental,
+    validityDays: plan.validityDays,
+    cgstPercent: plan.cgstPercent,
+    sgstPercent: plan.sgstPercent,
+    igstPercent: plan.igstPercent,
+    contentionRatio: plan.contentionRatio,
+    isPopular: plan.isPopular,
+    sortOrder: plan.sortOrder,
+    burstSpeed: plan.burstSpeed,
+    burstDuration: plan.burstDuration,
+    maxConcurrentSessions: plan.maxConcurrentSessions,
+    freeTrialDays: plan.freeTrialDays,
+    slaUptime: plan.slaUptime,
+    ipv6Enabled: plan.ipv6Enabled ?? false,
+    ipv6PrefixDelegation: plan.ipv6PrefixDelegation ?? false,
+    ipv6DefaultPoolId: plan.ipv6DefaultPoolId ?? null,
+    ipv6AssignmentMode: plan.ipv6AssignmentMode || "SLAAC",
+    // POL-ENGINE-2: package form fields
+    billingScheme: plan.billingScheme || "PREPAID",
+    availableFor: (plan.availableFor || "REGISTRATION,RENEWAL").split(",").map((t) => t.trim()).filter(Boolean),
+    onlinePurchaseable: plan.onlinePurchaseable ?? true,
+    discountAmount: plan.discountAmount ?? 0,
+    discountIsPercent: plan.discountIsPercent ?? false,
+    macBinding: plan.macBinding ?? false,
+    priority: plan.priority ?? null,
+    idleTimeoutType: plan.idleTimeoutType || "NONE",
+    idleTimeoutMin: plan.idleTimeoutMin ?? null,
+    expiryBasis: plan.expiryBasis || "GLOBAL",
+    // datetime-local needs LOCAL time — toISOString() would shift by the TZ offset
+    fixedExpiryAt: d
+      ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      : "",
+    expireTimeOfDay: plan.expireTimeOfDay || "23:59:59",
+    surfingQuotaPolicyId: plan.SurfingQuotaPolicy?.id || "",
+    accessTimePolicyId: plan.AccessTimePolicy?.id || "",
+    bandwidthPolicyId: plan.BandwidthPolicy?.id || "",
+    dataTransferPolicyId: plan.DataTransferPolicy?.id || "",
+    fairAccessPolicyId: plan.FairAccessPolicy?.id || "",
+    ipPoolId: plan.IpPool?.id || "",
+    cycleType: plan.cycleType || "NONE",
+    billingDay: plan.billingDay ?? null,
+    cycleMultiplier: plan.cycleMultiplier ?? null,
+    cycleAmountBasis: plan.cycleAmountBasis || "ACTUAL_DAYS",
+    quotaChargeBasis: plan.quotaChargeBasis || "ACTUAL_DAYS",
+    cyclePrice: plan.cyclePrice ?? null,
+    cycleDays: plan.cycleDays ?? null,
+    ...overrides,
+  };
+}
+
+// ─── Form state → API payload ─────────────────────────────────────
+function buildPlanPayload(f: PlanFormState) {
+  return {
+    ...f,
+    // The unit selector is display-only — the column stores GB
+    dataLimitGb:
+      f.dataLimitUnit === "TB" && f.dataLimitGb != null
+        ? +(f.dataLimitGb * 1024).toFixed(2)
+        : f.dataLimitGb,
+    expireTimeOfDay: (f.expireTimeOfDay || "").trim() || "23:59:59",
+  };
+}
+
+// ─── Shared create/edit validation ────────────────────────────────
+function validatePlanForm(f: PlanFormState): string | null {
+  if (!f.name.trim()) return "Plan name is required";
+  // Speed comes from the bandwidth policy when one is mapped — only demand
+  // manual speeds when no policy governs them
+  if (!f.bandwidthPolicyId && f.downloadSpeed <= 0) return "Enter a download speed, or map a bandwidth policy to govern speeds";
+  if (f.expireTimeOfDay && !/^\d{1,2}:\d{2}(:\d{2})?$/.test(f.expireTimeOfDay.trim())) return "Expire time of day must be HH:MM or HH:MM:SS (e.g. 23:59)";
+  if (f.dataLimitGb != null && f.dataLimitUnit === "TB" && f.dataLimitGb * 1024 > 1024 * 1024 * 1024) return "Data limit is unrealistically large";
+  return null;
+}
+
 export default function PlansPage() {
   const queryClient = useQueryClient();
   const { isModuleEnabled } = useModuleStore();
@@ -257,107 +356,18 @@ export default function PlansPage() {
 
   const openEdit = (plan: Plan) => {
     setSelectedId(plan.id);
-    setEditForm({
-      name: plan.name, description: plan.description, category: plan.category,
-      status: plan.status,
-      downloadSpeed: plan.downloadSpeed, uploadSpeed: plan.uploadSpeed, speedUnit: plan.speedUnit,
-      downloadSpeedFup: plan.downloadSpeedFup, uploadSpeedFup: plan.uploadSpeedFup,
-      dataLimitGb: plan.dataLimitGb, dataLimitUnit: plan.dataLimitGb ? "GB" : "UNLIMITED",
-      priceMonthly: plan.priceMonthly, priceQuarterly: plan.priceQuarterly,
-      priceHalfYearly: plan.priceHalfYearly, priceYearly: plan.priceYearly,
-      installationCharge: plan.installationCharge,
-      securityDeposit: plan.securityDeposit, routerRental: plan.routerRental,
-      validityDays: plan.validityDays, cgstPercent: plan.cgstPercent,
-      sgstPercent: plan.sgstPercent, igstPercent: plan.igstPercent,
-      contentionRatio: plan.contentionRatio,
-      isPopular: plan.isPopular, sortOrder: plan.sortOrder,
-      burstSpeed: plan.burstSpeed, burstDuration: plan.burstDuration,
-      maxConcurrentSessions: plan.maxConcurrentSessions,
-      freeTrialDays: plan.freeTrialDays, slaUptime: plan.slaUptime,
-      ipv6Enabled: plan.ipv6Enabled ?? false,
-      ipv6PrefixDelegation: plan.ipv6PrefixDelegation ?? false,
-      ipv6DefaultPoolId: plan.ipv6DefaultPoolId ?? null,
-      ipv6AssignmentMode: plan.ipv6AssignmentMode || "SLAAC",
-      // POL-ENGINE-2: package form fields
-      billingScheme: plan.billingScheme || "PREPAID",
-      availableFor: (plan.availableFor || "REGISTRATION,RENEWAL").split(",").map((t) => t.trim()).filter(Boolean),
-      onlinePurchaseable: plan.onlinePurchaseable ?? true,
-      discountAmount: plan.discountAmount ?? 0,
-      discountIsPercent: plan.discountIsPercent ?? false,
-      macBinding: plan.macBinding ?? false,
-      priority: plan.priority ?? null,
-      idleTimeoutType: plan.idleTimeoutType || "NONE",
-      idleTimeoutMin: plan.idleTimeoutMin ?? null,
-      expiryBasis: plan.expiryBasis || "GLOBAL",
-      fixedExpiryAt: plan.fixedExpiryAt ? new Date(plan.fixedExpiryAt).toISOString().slice(0, 16) : "",
-      expireTimeOfDay: plan.expireTimeOfDay || "23:59:59",
-      surfingQuotaPolicyId: plan.SurfingQuotaPolicy?.id || "",
-      accessTimePolicyId: plan.AccessTimePolicy?.id || "",
-      bandwidthPolicyId: plan.BandwidthPolicy?.id || "",
-      dataTransferPolicyId: plan.DataTransferPolicy?.id || "",
-      fairAccessPolicyId: plan.FairAccessPolicy?.id || "",
-      ipPoolId: plan.IpPool?.id || "",
-      cycleType: plan.cycleType || "NONE",
-      billingDay: plan.billingDay ?? null,
-      cycleMultiplier: plan.cycleMultiplier ?? null,
-      cycleAmountBasis: plan.cycleAmountBasis || "ACTUAL_DAYS",
-      quotaChargeBasis: plan.quotaChargeBasis || "ACTUAL_DAYS",
-      cyclePrice: plan.cyclePrice ?? null,
-      cycleDays: plan.cycleDays ?? null,
-    });
+    setEditForm(planToFormState(plan));
     setEditOpen(true);
   };
 
   const handleDuplicate = (plan: Plan) => {
     setSelectedId(null);
-    setForm({
-      name: `${plan.name} (Copy)`, description: plan.description, category: plan.category,
+    setForm(planToFormState(plan, {
+      name: `${plan.name} (Copy)`,
       status: "ACTIVE",
-      downloadSpeed: plan.downloadSpeed, uploadSpeed: plan.uploadSpeed, speedUnit: plan.speedUnit,
-      downloadSpeedFup: plan.downloadSpeedFup, uploadSpeedFup: plan.uploadSpeedFup,
-      dataLimitGb: plan.dataLimitGb, dataLimitUnit: plan.dataLimitGb ? "GB" : "UNLIMITED",
-      priceMonthly: plan.priceMonthly, priceQuarterly: plan.priceQuarterly,
-      priceHalfYearly: plan.priceHalfYearly, priceYearly: plan.priceYearly,
-      installationCharge: plan.installationCharge,
-      securityDeposit: plan.securityDeposit, routerRental: plan.routerRental,
-      validityDays: plan.validityDays, cgstPercent: plan.cgstPercent,
-      sgstPercent: plan.sgstPercent, igstPercent: plan.igstPercent,
-      contentionRatio: plan.contentionRatio,
-      isPopular: false, sortOrder: plan.sortOrder + 1,
-      burstSpeed: plan.burstSpeed, burstDuration: plan.burstDuration,
-      maxConcurrentSessions: plan.maxConcurrentSessions,
-      freeTrialDays: plan.freeTrialDays, slaUptime: plan.slaUptime,
-      ipv6Enabled: plan.ipv6Enabled ?? false,
-      ipv6PrefixDelegation: plan.ipv6PrefixDelegation ?? false,
-      ipv6DefaultPoolId: plan.ipv6DefaultPoolId ?? null,
-      ipv6AssignmentMode: plan.ipv6AssignmentMode || "SLAAC",
-      // POL-ENGINE-2: package form fields
-      billingScheme: plan.billingScheme || "PREPAID",
-      availableFor: (plan.availableFor || "REGISTRATION,RENEWAL").split(",").map((t) => t.trim()).filter(Boolean),
-      onlinePurchaseable: plan.onlinePurchaseable ?? true,
-      discountAmount: plan.discountAmount ?? 0,
-      discountIsPercent: plan.discountIsPercent ?? false,
-      macBinding: plan.macBinding ?? false,
-      priority: plan.priority ?? null,
-      idleTimeoutType: plan.idleTimeoutType || "NONE",
-      idleTimeoutMin: plan.idleTimeoutMin ?? null,
-      expiryBasis: plan.expiryBasis || "GLOBAL",
-      fixedExpiryAt: plan.fixedExpiryAt ? new Date(plan.fixedExpiryAt).toISOString().slice(0, 16) : "",
-      expireTimeOfDay: plan.expireTimeOfDay || "23:59:59",
-      surfingQuotaPolicyId: plan.SurfingQuotaPolicy?.id || "",
-      accessTimePolicyId: plan.AccessTimePolicy?.id || "",
-      bandwidthPolicyId: plan.BandwidthPolicy?.id || "",
-      dataTransferPolicyId: plan.DataTransferPolicy?.id || "",
-      fairAccessPolicyId: plan.FairAccessPolicy?.id || "",
-      ipPoolId: plan.IpPool?.id || "",
-      cycleType: plan.cycleType || "NONE",
-      billingDay: plan.billingDay ?? null,
-      cycleMultiplier: plan.cycleMultiplier ?? null,
-      cycleAmountBasis: plan.cycleAmountBasis || "ACTUAL_DAYS",
-      quotaChargeBasis: plan.quotaChargeBasis || "ACTUAL_DAYS",
-      cyclePrice: plan.cyclePrice ?? null,
-      cycleDays: plan.cycleDays ?? null,
-    });
+      isPopular: false,
+      sortOrder: plan.sortOrder + 1,
+    }));
     setAddOpen(true);
     toast.info(`Duplicated "${plan.name}" — edit and save to create`);
   };
@@ -390,14 +400,15 @@ export default function PlansPage() {
   };
 
   const handleCreate = () => {
-    if (!form.name.trim()) { toast.error("Plan name is required"); return; }
-    if (form.downloadSpeed <= 0) { toast.error("Download speed must be greater than 0"); return; }
-    createMutation.mutate(form);
+    const err = validatePlanForm(form);
+    if (err) { toast.error(err); return; }
+    createMutation.mutate(buildPlanPayload(form));
   };
 
   const handleUpdate = () => {
-    if (!editForm.name.trim()) { toast.error("Plan name is required"); return; }
-    updateMutation.mutate({ id: selectedId!, body: editForm });
+    const err = validatePlanForm(editForm);
+    if (err) { toast.error(err); return; }
+    updateMutation.mutate({ id: selectedId!, body: buildPlanPayload(editForm) });
   };
 
   const handleMigrate = () => {

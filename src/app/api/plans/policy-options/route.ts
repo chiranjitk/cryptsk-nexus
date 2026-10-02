@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
       db.bandwidthPolicy.findMany({
         where: { enabled: true },
         orderBy: { name: "asc" },
-        select: { id: true, name: true, downloadKbps: true, uploadKbps: true, policyType: true, policyFor: true, priority: true },
+        select: { id: true, name: true, downloadKbps: true, uploadKbps: true, policyType: true, policyFor: true, priority: true, burstDownloadKbps: true, burstUploadKbps: true, burstDurationSec: true },
       }),
       db.dataTransferPolicy.findMany({
         where: { enabled: true },
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
       db.fairAccessPolicy.findMany({
         where: { enabled: true },
         orderBy: { name: "asc" },
-        select: { id: true, name: true, fapType: true, dataOn: true, limitMb: true, resetType: true, switchOverBandwidthPolicy: { select: { name: true, downloadKbps: true } } },
+        select: { id: true, name: true, fapType: true, dataOn: true, limitMb: true, resetType: true, switchOverBandwidthPolicy: { select: { name: true, downloadKbps: true, uploadKbps: true } } },
       }),
       db.subnet.findMany({
         orderBy: { name: "asc" },

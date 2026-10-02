@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import {
   Timer, CalendarClock, Gauge, ArrowDownUp, Hourglass, Network, ChevronRight,
-  Info, Wallet, ShieldCheck, Settings, Globe, WalletCards, Landmark, Link2, Loader2,
+  Info, Wallet, ShieldCheck, Settings, Globe, WalletCards, Landmark, Link2, Loader2, Lock,
 } from "lucide-react";
 
 // ─── Form state ────────────────────────────────────────────────────
@@ -77,10 +77,52 @@ export type PlanFormState = typeof planFormDefaults;
 export interface PolicyOptions {
   surfingQuota: { id: string; name: string; quotaType: string; allottedMinutes: number | null; expiryDays: number | null; cycleType: string; summary: string }[];
   accessTime: { id: string; name: string; defaultStrategy: string; slotCount: number; summary: string }[];
-  bandwidth: { id: string; name: string; downloadKbps: number; uploadKbps: number; policyType: string; policyFor: string; priority: number; summary: string }[];
+  bandwidth: { id: string; name: string; downloadKbps: number; uploadKbps: number; policyType: string; policyFor: string; priority: number; burstDownloadKbps: number; burstUploadKbps: number; burstDurationSec: number; summary: string }[];
   dataTransfer: { id: string; name: string; scheme: string; totalLimitMb: number | null; cycleType: string; expiryDays: number | null; summary: string }[];
-  fairAccess: { id: string; name: string; fapType: string; dataOn: string; limitMb: number; resetType: string; summary: string }[];
+  fairAccess: { id: string; name: string; fapType: string; dataOn: string; limitMb: number; resetType: string; switchOverBandwidthPolicy?: { name: string; downloadKbps: number; uploadKbps: number } | null; summary: string }[];
   ipPools: { id: string; name: string; cidr: string; frPoolName: string; allocationStrategy: string; summary: string }[];
+}
+
+// ─── Unit helpers ──────────────────────────────────────────────────
+// Policy speeds are stored in Kbps; plan speed fields use the plan's
+// speed unit. Mirrors the Mbps conversion used across the policy pages.
+export function kbpsToSpeedUnit(kbps: number, unit: string): number {
+  if (unit === "KBPS") return kbps;
+  if (unit === "GBPS") return +(kbps / (1024 * 1024)).toFixed(2);
+  return +(kbps / 1024).toFixed(kbps % 1024 === 0 ? 0 : 1);
+}
+
+function mbToGbDisplay(mb: number | null | undefined): { value: number | null; unit: "GB" | "TB" } {
+  if (mb == null) return { value: null, unit: "GB" };
+  if (mb >= 1024 * 1024 && mb % (1024 * 1024) === 0) return { value: mb / (1024 * 1024), unit: "TB" };
+  return { value: +(mb / 1024).toFixed(2), unit: "GB" };
+}
+
+// ─── Read-only "managed by policy" chip ────────────────────────────
+function ManagedField({ text, title }: { text: string; title?: string }) {
+  return (
+    <div
+      className="h-9 rounded-md border bg-muted/40 px-3 flex items-center gap-1.5 text-xs text-muted-foreground min-w-0"
+      title={title || text}
+    >
+      <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">{text}</span>
+    </div>
+  );
+}
+
+// ─── Inline notice: values now owned by a mapped policy ────────────
+function ManagedNotice({ lines }: { lines: string[] }) {
+  return (
+    <div className="p-2.5 rounded-md border border-emerald-500/25 bg-emerald-500/5 flex items-start gap-2">
+      <Link2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
+      <div className="min-w-0">
+        {lines.map((l, i) => (
+          <p key={i} className={`text-xs leading-snug ${i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}`}>{l}</p>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ─── Collapsible section header ────────────────────────────────────
@@ -191,6 +233,55 @@ export function PlanFormDialog({
     .filter((k) => (form as unknown as Record<string, unknown>)[k]).length;
 
   const set = (patch: Partial<PlanFormState>) => setForm((f) => ({ ...f, ...patch }));
+
+  // ── Policy-bound flags: when a family is mapped, its dedicated inputs below
+  //    become redundant (the policy is the single source of truth) and are
+  //    replaced by read-only "managed by policy" displays.
+  const bwBound = !!form.bandwidthPolicyId;
+  const dtBound = !!form.dataTransferPolicyId;
+  const fapBound = !!form.fairAccessPolicyId;
+  const selectedBw = opts?.bandwidth.find((p) => p.id === form.bandwidthPolicyId);
+  const selectedDt = opts?.dataTransfer.find((p) => p.id === form.dataTransferPolicyId);
+  const selectedFap = opts?.fairAccess.find((p) => p.id === form.fairAccessPolicyId);
+
+  // Selecting a policy syncs the matching standalone fields from it, so the
+  // saved plan row stays consistent even though those inputs stay hidden.
+  const applyBandwidthPolicy = (v: string) => {
+    const p = opts?.bandwidth.find((o) => o.id === v);
+    if (!v || !p) { set({ bandwidthPolicyId: v }); return; }
+    set({
+      bandwidthPolicyId: v,
+      downloadSpeed: kbpsToSpeedUnit(p.downloadKbps, form.speedUnit),
+      uploadSpeed: kbpsToSpeedUnit(p.uploadKbps, form.speedUnit),
+      burstSpeed: p.burstDownloadKbps ? kbpsToSpeedUnit(p.burstDownloadKbps, form.speedUnit) : null,
+      burstDuration: p.burstDurationSec || null,
+      priority: p.priority ?? null,
+    });
+  };
+
+  const applyDataTransferPolicy = (v: string) => {
+    const p = opts?.dataTransfer.find((o) => o.id === v);
+    if (!v || !p) { set({ dataTransferPolicyId: v }); return; }
+    const dl = mbToGbDisplay(p.totalLimitMb);
+    set({ dataTransferPolicyId: v, dataLimitGb: dl.value, dataLimitUnit: dl.value != null ? dl.unit : form.dataLimitUnit });
+  };
+
+  const applyFairAccessPolicy = (v: string) => {
+    const p = opts?.fairAccess.find((o) => o.id === v);
+    if (!v || !p) { set({ fairAccessPolicyId: v }); return; }
+    const sw = p.switchOverBandwidthPolicy;
+    // The data cap stays owned by the data-transfer policy when one is mapped;
+    // FAP only fills the cap when it is the sole cap definition
+    const cap = form.dataTransferPolicyId ? { value: form.dataLimitGb, unit: form.dataLimitUnit } : mbToGbDisplay(p.limitMb);
+    set({
+      fairAccessPolicyId: v,
+      dataLimitGb: cap.value,
+      dataLimitUnit: cap.value != null ? (cap.unit as string) : form.dataLimitUnit,
+      downloadSpeedFup: sw ? kbpsToSpeedUnit(sw.downloadKbps, form.speedUnit) : null,
+      uploadSpeedFup: sw?.uploadKbps ? Math.max(1, Math.round(kbpsToSpeedUnit(sw.uploadKbps, form.speedUnit))) : null,
+    });
+  };
+
   const setAvail = (tag: string, checked: boolean) => {
     const next = new Set(form.availableFor);
     if (checked) next.add(tag);
@@ -330,19 +421,19 @@ export function PlanFormDialog({
                 />
                 <PolicySelectCard
                   icon={Gauge} label="Bandwidth Policy" hint="Speed cap applied to the plan"
-                  value={form.bandwidthPolicyId} onChange={(v) => set({ bandwidthPolicyId: v })}
+                  value={form.bandwidthPolicyId} onChange={applyBandwidthPolicy}
                   options={opts?.bandwidth ?? []} loading={optsLoading}
                   accent="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
                 />
                 <PolicySelectCard
                   icon={ArrowDownUp} label="Data Transfer Policy" hint="Volume quota / postpaid metering"
-                  value={form.dataTransferPolicyId} onChange={(v) => set({ dataTransferPolicyId: v })}
+                  value={form.dataTransferPolicyId} onChange={applyDataTransferPolicy}
                   options={opts?.dataTransfer ?? []} loading={optsLoading}
                   accent="bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
                 />
                 <PolicySelectCard
                   icon={Hourglass} label="Fair Access Policy" hint="Throttle after data limit (optional)"
-                  value={form.fairAccessPolicyId} onChange={(v) => set({ fairAccessPolicyId: v })}
+                  value={form.fairAccessPolicyId} onChange={applyFairAccessPolicy}
                   options={opts?.fairAccess ?? []} loading={optsLoading}
                   accent="bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400"
                 />
@@ -362,61 +453,104 @@ export function PlanFormDialog({
           <SectionHeader id="speed" label="Speed & Data" icon={Gauge} expanded={expanded.has("speed")} onToggle={toggle} />
           {expanded.has("speed") && (
             <div className="space-y-3 pl-1 pb-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Download Speed *</Label>
-                  <Input type="number" value={form.downloadSpeed} onChange={(e) => set({ downloadSpeed: parseInt(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Upload Speed</Label>
-                  <Input type="number" value={form.uploadSpeed} onChange={(e) => set({ uploadSpeed: parseInt(e.target.value) || 0 })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Speed Unit</Label>
-                  <Select value={form.speedUnit} onValueChange={(v) => set({ speedUnit: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MBPS">Mbps</SelectItem>
-                      <SelectItem value="KBPS">Kbps</SelectItem>
-                      <SelectItem value="GBPS">Gbps</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Data Limit</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Unlimited"
-                      value={form.dataLimitUnit === "UNLIMITED" ? "" : (form.dataLimitGb ?? "")}
-                      onChange={(e) => set({ dataLimitGb: e.target.value ? parseFloat(e.target.value) : null, dataLimitUnit: e.target.value ? form.dataLimitUnit : "UNLIMITED" })}
-                      className="flex-1"
-                    />
-                    <Select value={form.dataLimitUnit} onValueChange={(v) => set({ dataLimitUnit: v })}>
-                      <SelectTrigger className="w-[70px]"><SelectValue /></SelectTrigger>
+              {bwBound ? (
+                /* Bandwidth policy mapped → its speeds ARE the plan speeds */
+                <ManagedNotice
+                  lines={[
+                    `Speeds are governed by bandwidth policy${selectedBw ? ` "${selectedBw.name}"` : ""} — no separate speed inputs needed.`,
+                    selectedBw
+                      ? `${(selectedBw.downloadKbps / 1024).toFixed(selectedBw.downloadKbps % 1024 === 0 ? 0 : 1)} Mbps down · ${(selectedBw.uploadKbps / 1024).toFixed(selectedBw.uploadKbps % 1024 === 0 ? 0 : 1)} Mbps up · ${selectedBw.policyType.toLowerCase()} · priority ${selectedBw.priority}${selectedBw.burstDownloadKbps ? ` · burst ${(selectedBw.burstDownloadKbps / 1024).toFixed(0)} Mbps × ${selectedBw.burstDurationSec}s` : ""}. Change values in the policy itself.`
+                      : "Edit the mapped policy to change speed values.",
+                  ]}
+                />
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Download Speed *</Label>
+                    <Input type="number" value={form.downloadSpeed} onChange={(e) => set({ downloadSpeed: parseInt(e.target.value) || 0 })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Upload Speed</Label>
+                    <Input type="number" value={form.uploadSpeed} onChange={(e) => set({ uploadSpeed: parseInt(e.target.value) || 0 })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Speed Unit</Label>
+                    <Select value={form.speedUnit} onValueChange={(v) => set({ speedUnit: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="GB">GB</SelectItem>
-                        <SelectItem value="TB">TB</SelectItem>
-                        <SelectItem value="UNLIMITED">∞</SelectItem>
+                        <SelectItem value="MBPS">Mbps</SelectItem>
+                        <SelectItem value="KBPS">Kbps</SelectItem>
+                        <SelectItem value="GBPS">Gbps</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-              </div>
+              )}
 
-              <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-xs font-medium text-muted-foreground mb-2">FUP Speed (after data limit)</p>
-                <div className="grid grid-cols-2 gap-3">
+              {dtBound || fapBound ? (
+                /* Data cap owned by Data Transfer policy (volume) or Fair Access (pre-throttle cap) */
+                <ManagedNotice
+                  lines={[
+                    `Data limit is governed by ${dtBound ? `data transfer policy${selectedDt ? ` "${selectedDt.name}"` : ""}` : `fair access policy${selectedFap ? ` "${selectedFap.name}"` : ""}`} — no separate data cap needed.`,
+                    form.dataLimitGb != null
+                      ? `Resolved cap: ${form.dataLimitUnit === "TB" ? `${form.dataLimitGb} TB (${+(form.dataLimitGb * 1024).toFixed(0)} GB)` : `${form.dataLimitGb} GB`}.`
+                      : "Resolved cap: unlimited volume.",
+                  ]}
+                />
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">FUP Download Speed</Label>
-                    <Input type="number" placeholder="Post-FUP download" value={form.downloadSpeedFup ?? ""} onChange={(e) => set({ downloadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">FUP Upload Speed</Label>
-                    <Input type="number" placeholder="Post-FUP upload" value={form.uploadSpeedFup ?? ""} onChange={(e) => set({ uploadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
+                    <Label>Data Limit</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        placeholder="Unlimited"
+                        value={form.dataLimitUnit === "UNLIMITED" ? "" : (form.dataLimitGb ?? "")}
+                        onChange={(e) => set({ dataLimitGb: e.target.value ? parseFloat(e.target.value) : null, dataLimitUnit: e.target.value ? form.dataLimitUnit : "UNLIMITED" })}
+                        className="flex-1"
+                      />
+                      <Select value={form.dataLimitUnit} onValueChange={(v) => set({ dataLimitUnit: v })}>
+                        <SelectTrigger className="w-[70px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="GB">GB</SelectItem>
+                          <SelectItem value="TB">TB</SelectItem>
+                          <SelectItem value="UNLIMITED">∞</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Leave blank for unlimited data</p>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {fapBound ? (
+                /* Fair Access policy mapped → its switch-over throttle IS the post-limit speed */
+                <ManagedNotice
+                  lines={[
+                    `Post-limit throttling is governed by fair access policy${selectedFap ? ` "${selectedFap.name}"` : ""} — no separate FUP speeds needed.`,
+                    selectedFap?.switchOverBandwidthPolicy
+                      ? `Once the cap is reached, throughput switches to ${(selectedFap.switchOverBandwidthPolicy.downloadKbps / 1024).toFixed(selectedFap.switchOverBandwidthPolicy.downloadKbps % 1024 === 0 ? 0 : 1)} Mbps ↓ / ${(selectedFap.switchOverBandwidthPolicy.uploadKbps / 1024).toFixed(selectedFap.switchOverBandwidthPolicy.uploadKbps % 1024 === 0 ? 0 : 1)} Mbps ↑.`
+                      : "No switch-over target configured on the policy yet — subscribers keep full speed after the cap.",
+                  ]}
+                />
+              ) : (
+                <div className="p-2.5 rounded-md bg-muted/50">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">FUP Speed (after data limit)</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">FUP Download Speed</Label>
+                      <Input type="number" placeholder="Post-FUP download" value={form.downloadSpeedFup ?? ""} onChange={(e) => set({ downloadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">FUP Upload Speed</Label>
+                      <Input type="number" placeholder="Post-FUP upload" value={form.uploadSpeedFup ?? ""} onChange={(e) => set({ uploadSpeedFup: e.target.value ? parseInt(e.target.value) : null })} />
+                    </div>
+                  </div>
+                  {!dtBound && (
+                    <p className="text-[10px] text-muted-foreground mt-2">Tip: map a Fair Access Policy above to manage the cap + throttle together instead of these fields.</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -628,15 +762,23 @@ export function PlanFormDialog({
                 </div>
                 <div className="space-y-1.5">
                   <Label>Priority</Label>
-                  <Select value={form.priority != null ? String(form.priority) : "inherit"} onValueChange={(v) => set({ priority: v === "inherit" ? null : parseInt(v) })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="inherit">Inherit</SelectItem>
-                      {[0, 1, 2, 3, 4, 5, 6, 7].map((p) => (
-                        <SelectItem key={p} value={String(p)}>{p} {p === 0 ? "(highest)" : p === 7 ? "(lowest)" : ""}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {bwBound ? (
+                    /* Bandwidth policy carries its own priority — avoid a second conflicting value */
+                    <ManagedField
+                      text={selectedBw ? `From policy — ${selectedBw.priority} (${selectedBw.priority === 0 ? "highest" : selectedBw.priority === 7 ? "lowest" : "level " + selectedBw.priority})` : "From bandwidth policy"}
+                      title="Priority is inherited from the mapped bandwidth policy"
+                    />
+                  ) : (
+                    <Select value={form.priority != null ? String(form.priority) : "inherit"} onValueChange={(v) => set({ priority: v === "inherit" ? null : parseInt(v) })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="inherit">Inherit</SelectItem>
+                        {[0, 1, 2, 3, 4, 5, 6, 7].map((p) => (
+                          <SelectItem key={p} value={String(p)}>{p} {p === 0 ? "(highest)" : p === 7 ? "(lowest)" : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 pb-2">
                   <Switch id="online-purchase" checked={form.onlinePurchaseable} onCheckedChange={(v) => set({ onlinePurchaseable: v })} />
@@ -733,14 +875,27 @@ export function PlanFormDialog({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Burst Speed ({form.speedUnit})</Label>
-                  <Input type="number" placeholder="Optional" value={form.burstSpeed ?? ""} onChange={(e) => set({ burstSpeed: e.target.value ? parseInt(e.target.value) : null })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Burst Duration (seconds)</Label>
-                  <Input type="number" placeholder="Optional" value={form.burstDuration ?? ""} onChange={(e) => set({ burstDuration: e.target.value ? parseInt(e.target.value) : null })} />
-                </div>
+                {bwBound ? (
+                  /* Burst is a bandwidth-policy attribute — hidden while a policy is mapped */
+                  <div className="space-y-1.5">
+                    <Label>Burst</Label>
+                    <ManagedField
+                      text={selectedBw?.burstDownloadKbps ? `From policy — ${(selectedBw.burstDownloadKbps / 1024).toFixed(selectedBw.burstDownloadKbps % 1024 === 0 ? 0 : 1)} Mbps × ${selectedBw.burstDurationSec}s` : "From bandwidth policy"}
+                      title="Burst behaviour is inherited from the mapped bandwidth policy"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>Burst Speed ({form.speedUnit})</Label>
+                      <Input type="number" placeholder="Optional" value={form.burstSpeed ?? ""} onChange={(e) => set({ burstSpeed: e.target.value ? parseInt(e.target.value) : null })} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Burst Duration (seconds)</Label>
+                      <Input type="number" placeholder="Optional" value={form.burstDuration ?? ""} onChange={(e) => set({ burstDuration: e.target.value ? parseInt(e.target.value) : null })} />
+                    </div>
+                  </>
+                )}
                 <div className="space-y-1.5">
                   <Label>Free Trial Days</Label>
                   <Input type="number" value={form.freeTrialDays} onChange={(e) => set({ freeTrialDays: parseInt(e.target.value) || 0 })} />

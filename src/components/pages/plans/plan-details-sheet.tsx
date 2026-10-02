@@ -211,13 +211,37 @@ export function PlanDetailsSheet({
               />
             </DetailSection>
 
-            {/* Speed & data */}
+            {/* Speed & data — rows governed by a mapped policy are shown as
+                policy-managed here (the mapping section above carries the
+                details) instead of repeating the same values twice */}
             <DetailSection icon={Gauge} title="Speed & Data">
-              <Row label="Download / Upload" value={`${plan.downloadSpeed} / ${plan.uploadSpeed} ${plan.speedUnit}`} />
-              <Row label="FUP Speed" value={(plan.downloadSpeedFup || plan.uploadSpeedFup) ? `${plan.downloadSpeedFup ?? "—"}/${plan.uploadSpeedFup ?? "—"} ${plan.speedUnit}` : "Not set"} />
-              <Row label="Data Limit" value={plan.dataLimitGb ? `${plan.dataLimitGb} GB` : "Unlimited"} />
+              <Row
+                label="Download / Upload"
+                value={plan.BandwidthPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.BandwidthPolicy.name}”</span>
+                ) : `${plan.downloadSpeed} / ${plan.uploadSpeed} ${plan.speedUnit}`}
+              />
+              <Row
+                label="FUP Speed"
+                value={plan.FairAccessPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.FairAccessPolicy.name}”</span>
+                ) : (plan.downloadSpeedFup || plan.uploadSpeedFup) ? `${plan.downloadSpeedFup ?? "—"}/${plan.uploadSpeedFup ?? "—"} ${plan.speedUnit}` : "Not set"}
+              />
+              <Row
+                label="Data Limit"
+                value={plan.DataTransferPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.DataTransferPolicy.name}”</span>
+                ) : plan.FairAccessPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.FairAccessPolicy.name}” (pre-throttle cap)</span>
+                ) : plan.dataLimitGb ? `${plan.dataLimitGb} GB` : "Unlimited"}
+              />
               <Row label="Contention Ratio" value={plan.contentionRatio} />
-              <Row label="Burst" value={plan.burstSpeed ? `${plan.burstSpeed} ${plan.speedUnit}${plan.burstDuration ? ` × ${plan.burstDuration}s` : ""}` : "—"} />
+              <Row
+                label="Burst"
+                value={plan.BandwidthPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.BandwidthPolicy.name}”</span>
+                ) : plan.burstSpeed ? `${plan.burstSpeed} ${plan.speedUnit}${plan.burstDuration ? ` × ${plan.burstDuration}s` : ""}` : "—"}
+              />
             </DetailSection>
 
             {/* Pricing */}
@@ -246,7 +270,12 @@ export function PlanDetailsSheet({
             <DetailSection icon={ShieldCheck} title="Access & Session Control">
               <Row label="Login Limit" value={`${plan.maxConcurrentSessions} concurrent session${plan.maxConcurrentSessions === 1 ? "" : "s"}`} />
               <Row label="MAC Binding" value={plan.macBinding ? "Enabled" : "Disabled"} />
-              <Row label="Priority" value={plan.priority != null ? `${plan.priority}` : "Inherit"} />
+              <Row
+                label="Priority"
+                value={plan.BandwidthPolicy ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><Link2 className="h-3 w-3" />Via “{plan.BandwidthPolicy.name}”</span>
+                ) : plan.priority != null ? `${plan.priority}` : "Inherit"}
+              />
               <Row label="Idle Timeout" value={plan.idleTimeoutType === "NONE" ? "None" : `${plan.idleTimeoutMin ?? "—"} min (${plan.idleTimeoutType === "LIVE_REQUEST" ? "live request" : "data transfer"} based)`} />
             </DetailSection>
 
