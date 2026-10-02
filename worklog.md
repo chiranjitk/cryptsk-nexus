@@ -4281,3 +4281,63 @@ Work Log:
 
 Stage Summary:
 - next.config.ts is now TRACKED in GitHub → survives future sandbox resets via git pull. Production domain absent from the repo (verified by history grep). ecosystem.config.cjs remains gitignored (secrets policy) with tracked template.
+---
+Task ID: RPT-C
+Agent: Explore (menu mechanics + data models)
+Task: Map nav/registry/hash mechanics + Prisma reporting models
+
+Work Log:
+- Read worklog tail (~100 lines) for context: audit waves (A-I), reset-recovery doctrine, 241-table DB, no source modifications policy.
+- Part 1 read fully: src/lib/nav-config.ts (13 sections, 95 items, NavItem = label/href/icon/badge?/badgeVariant? — NO shortcut field), src/lib/page-loaders.ts (Record<label, () => import()>), src/lib/modules/registry.ts at src/lib/modules/registry.ts NOT components/modules (MODULES[] with pages[{label,section,required?}]), src/types/index.ts NavGroup shape, client-app.tsx (HASH_PAGE_INDEX built from navGroups: label-lower + kebab-label + kebab-href; single-level slugs only — inner "/" never indexed), keyboard-shortcuts-help.tsx (PAGE_SHORTCUT_MAP Ctrl+1-6 is a HARDCODED map at :113-120, not auto-numbered).
+- Verified consumers: sidebar.tsx:63-67 + mobile-sidebar.tsx:51-55 filter navGroups items by isPageEnabled(label, enabledModules) → a new page MUST also be registered in MODULES[].pages or it is silently hidden; page-shell.tsx:41-48 lazy-loads PAGE_LOADERS[label] with per-label cache.
+- Part 2: grepped all model/enum declarations (schema.prisma, 5933 lines) and read ~25 model bodies: Invoice/LineItem/Payment/Refund/CreditNote/RecoveryEscalation/RecoverySla, Subscriber family (AddOn/ChargeOverride/GracePeriod/TopUp/TimeAccess), Plan, Voucher(+Template), TopUpProduct, AddOnService, Complaint/Installation/Technician, NasSession/RadiusSession/RadiusAccountingLog/radacct/NasConfig/SessionEvent, Reseller/ResellerCommissionPayout/CommissionPayout/CollectionAgent, AuditLog/UserSession/UserActionHistory, Equipment/Warehouse/StockAdjustment/StockTransfer, DataUsage/UsageLog/BwSample/UserBillingCycle, CgnatPool, ReconciliationLog.
+- ABSENCE confirmed by grep (0 hits): Kyc*, Lifecycle/StatusHistory, PaymentReconciliation, TaxReport, DunningLog, SpeedTest, PlanGroup (RadiusGroup fills plan-group role). ReconciliationLog = VPP session reconciliation (NOT payment recon). "Reports" label already used by FINANCE section (nav-config:255, loader :112) — collision risk for new section.
+
+Stage Summary:
+- Adding a Reports section = 3-file pattern: nav-config.ts section + MODULES[] pages entries (label exact) + PAGE_LOADERS[label] entry; hash deep-link is label/kebab-auto-derived, 1-level only; shortcuts are hardcoded Ctrl+1-6, extend PAGE_SHORTCUT_MAP manually.
+- Reporting-grade models exist for billing (Invoice paidAmount/balanceAmount/status, Payment status VERIFIED, Refund), usage (NasSession inputOctets/outputOctets BigInt, radacct, DataUsage daily, UserBillingCycle per-cycle), side revenue (SubscriberTopUp, Voucher.denomination/usedAt, SubscriberAddOn) — but NO subscriber lifecycle log, NO KYC doc model, NO payment-vs-gateway reconciliation, NO TaxReport rollup, NO SpeedTest persistence.
+---
+Task ID: RPT-B
+Agent: Explore (export infrastructure inventory)
+Task: Map CSV/PDF/Excel/print export capabilities
+
+Work Log:
+- Read worklog tail + package.json: only xlsx@^0.18.5 (SheetJS) present; ZERO imports of it in src (dead dep). No jspdf/pdfmake/react-pdf/exceljs/file-saver/html2canvas/papaparse anywhere.
+- Enumerated 24 server export routes (all CSV, all requireAuth): /api/export/{subscribers,payments,invoices,complaints} use shared lib/export-utils.csvResponse; ~20 others (subscribers, payments, invoices, invoices/export-all, billing, complaints, devices, technicians, agents, users, alerts, incidents, sessions, radius-users, hotspot, bandwidth, ipam, multiwan, ftth/olts, due-recovery/sla-export, equipment/purchase-orders, reports/custom?format=csv, leads?export=csv, audit-log?type=export-all) hand-roll identical CSV logic copy-paste-style. Plus /api/backup (octet-stream DB dump) and speed-test synthetic .bin.
+- Client side: src/components/export-manager.tsx = header Export Manager (12 category cards, window.open) with 4 broken targets (/api/plans=JSON, /api/reports has no export=csv handler, /api/audit-log real param is type=export-all, /api/collection/export route MISSING→404); data-export-page.tsx = filterable fetch+blob via /api/export/*; ~25 page components copy-paste new Blob([csv])+anchor CSV builders; PDF = browser print only (window.open+document.write+print() in revenue-reports/collection/vouchers/payments/inventory/audit-log/ai-diagnosis; plain window.print() in invoices/due-recovery/complaints); plain-text/JSON exports in firewall/vpp/selfcare/ai-advisor/compliance-sla.
+- Shared helpers: lib/export-utils.ts (escapeCsvValue/buildCsvString/generateExportFilename/csvResponseHeaders/csvResponse/fmtDate/fmtDateTime/fmtINR) used ONLY by /api/export/* family + subscribers-page client; audit-service.auditExport() used only by reports/custom + leads (not by the 20 hand-rolled routes). Hand-rolled routes mostly omit UTF-8 BOM (export-utils adds it) → Excel mojibake inconsistency.
+- No source files modified; no pm2/git/build/tsc run.
+
+Stage Summary:
+- Export layer today = CSV-only, server has 2 rival implementations (export-utils vs hand-rolled), client has 3 (export-manager registry, data-export-page fetch+blob, ~25 per-page copy-paste blobs); zero PDF lib (print-only), zero real Excel.
+- Top risks for unified Reports export layer: broken Export Manager registry URLs, no streaming/pagination (in-memory strings, OOM discipline in worklog), auditExport inconsistently applied, xlsx dep installed-but-unused.
+---
+Task ID: RPT-A
+Agent: Explore (report-surface inventory)
+Task: Inventory existing report-like UI surfaces + APIs
+
+Work Log:
+- Inventoried 5 dedicated report pages (reports-page 1506L w/ 9 tabs incl. custom report builder + per-tab client CSV; revenue-reports 1095L print-window; partner-reports 601L; bw-reports 1824L no real export; data-export 692L server CSV via /api/export/*) and 13 adjacent analytics pages (revenue-leakage, revenue-forecast, gst-tax, reseller-analytics, churn-prediction, competitor-analysis/intel, technician-performance, compliance-sla, collection, smart-collections, due-recovery, audit-log) with their fetch URLs + export handlers.
+- Dashboard: "Download Report" button builds multi-section CSV client-side from /api/dashboard?range= (overdue invoices, top revenue customers, renewals); "Advanced Insights" collapsible = 16 lazy /api/dashboard/* widgets (invoice-aging, churn-risk/prediction, payment-analytics, subscriber-lifecycle, revenue-forecast, collection-performance, security-posture, isp-health-score etc.).
+- Tabbed report surfaces: payments-page 5 tabs incl. "Aging & Collectors" (uses /api/payments/analytics buckets/topDebtors); subscriber-360 6 tabs (statement-ish per-subscriber view via /api/subscribers/[id]/360); invoices-page exports via /api/invoices/export-all; billing-page has no tabs but has /api/billing/export.
+- Catalogued dedicated API families: /api/reports(+custom,revenue,tds-tcs,kpi-targets,expenses), /api/revenue/{leakage,forecast,cashflow,audit,aging-enhanced}, /api/export/{subscribers,invoices,payments,complaints}, /api/partner-reports/[id], /api/distribution-hub-reports/[id], /api/installations/daily-report, /api/compliance/{sla,regulatory,audit-report}, /api/collections/{smart,analytics,schedule}, 17x /api/dashboard/* analytics, /api/bw-reports, /api/gst*; verified all read Prisma db directly (REAL, no mocks) except bw-reports (unused Math.random demo generators remain).
+- Found /api/revenue/aging-enhanced (274L) has ZERO UI consumers; payments aging tab uses /api/payments/analytics instead. Export logic duplicated ~6x client-side (reports/gst/churn/due-recovery/dashboard/invoices each roll their own CSV builder); lib/export-utils.ts shared only by /api/export/* routes + subscribers-page.
+
+Stage Summary:
+- ~18 report-like surfaces exist, all REAL (Prisma-backed) — no mock report pages found; biggest issue is fragmentation: 5 separate nav entries (Reports, Revenue Reports, Partner Reports, BW Reports, Data Export) + analytics pages scattered across 6+ nav groups.
+- Export capability is inconsistent: 6 different client-side CSV builders, 1 print window, 1 JSON export, server CSV only for the /api/export/* + invoices/billing/payments families; bw-reports/partner-reports/revenue-leakage/reseller-analytics/competitor-analysis have no export at all.
+- Orphaned backend: /api/revenue/aging-enhanced unused by any page; no per-subscriber account statement, no AR aging standalone report page (aging only as dashboard widget + payments tab), no scheduled/emailed reports (only installations daily-report).
+
+---
+Task ID: RPT-MAIN (Task 1 — analysis + plan)
+Agent: Z.ai Code (coordinator)
+Task: Reports section analysis & plan (user: "report section must be solid... all exportable CSV/PDF... 1 analysis and then plan")
+
+Work Log:
+- Dispatched 3 parallel read-only agents: RPT-A (17 report surfaces inventoried w/ maturity+export status), RPT-B (export infra: 24 CSV routes, 0 PDF, xlsx dead dep, 25x copy-paste, export-manager 4/12 broken), RPT-C (4-touchpoint page checklist, single-level hash constraint, model inventory incl. lifecycle-log ABSENT).
+- Synthesized REPORTS_SECTION_ANALYSIS_AND_PLAN.md: gap matrix vs standard ISP MIS suite (Invoice Register, AR Aging, Statement of Account, Lifecycle, Collection Register, Expiry/Renewal, Side Revenue, Plan/Area MIS missing or scattered), target IA (REPORTS sidebar section after DASHBOARD; re-home 17 pages; 8 new pages), unified export layer (report-export.ts client + requireAuth/auditExport/?format=csv server + print-to-PDF default), 3 phases.
+
+Stage Summary:
+- Deliverable committed: REPORTS_SECTION_ANALYSIS_AND_PLAN.md
+- Phase 1 scope locked: report-export.ts + REPORTS nav section + Invoice Register + AR Aging + Subscriber Lifecycle Report (pages+APIs, all authed/audited/exportable) + registry/loaders + globals.css discipline + browser verification.
+- Key architecture decisions: single-level slugs (distinct labels, no nesting), CANCELLED excluded from totals, side-revenue union-of-sources, BigInt->Number at edge, no new heavy client deps (print-to-PDF).
