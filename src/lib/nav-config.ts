@@ -135,7 +135,6 @@ export const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { label: "NAS Clients", href: "/nas-clients", icon: RadioTower },
-      { label: "NAS Devices", href: "/nas-devices", icon: Server },
       { label: "IP Pool Management", href: "/ipam", icon: MapPinned },
       { label: "System Interfaces", href: "/system-interfaces", icon: Cable },
       { label: "DHCP Server", href: "/dhcp", icon: Server },
@@ -180,6 +179,7 @@ export const navGroups: NavGroup[] = [
     label: "MONITORING",
     defaultOpen: false,
     items: [
+      { label: "Network Devices", href: "/nas-devices", icon: Server },
       { label: "Session History", href: "/session-history", icon: History },
       { label: "Authentication Log", href: "/auth-log", icon: Shield },
       { label: "Bandwidth", href: "/bandwidth", icon: Activity },

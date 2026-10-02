@@ -130,7 +130,7 @@ const PAGE_REGISTRY: Record<string, PageEntry[]> = {
   ],
   NETWORK: [
     { label: "NAS Clients", section: "NETWORK", icon: Radio, keywords: ["radius", "nas", "auth", "server"] },
-    { label: "NAS Devices", section: "NETWORK", icon: Router, keywords: ["routers", "switches", "hardware", "equipment", "devices"] },
+    { label: "Network Devices", section: "NETWORK", icon: Router, keywords: ["routers", "switches", "hardware", "equipment", "devices"] },
     { label: "IP Pool Management", section: "NETWORK", icon: MapPinned, keywords: ["ip", "addresses", "subnets", "dns", "ipam", "allocation"] },
     { label: "System Interfaces", section: "NETWORK", icon: Router, keywords: ["ethernet", "vlan", "interface", "port"] },
     { label: "DHCP Server", section: "NETWORK", icon: Server, keywords: ["dhcp", "ip", "lease", "pool"] },
