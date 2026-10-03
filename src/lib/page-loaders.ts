@@ -98,6 +98,7 @@ export const PAGE_LOADERS: Record<string, () => Promise<{default: React.Componen
   // ══════════════════════════════════════════════════════════════
   'Billing': () => import('@/components/pages/billing-page'),
   'Invoices': () => import('@/components/pages/invoices-page'),
+  'Invoice Templates': () => import('@/components/pages/invoice-templates-page'),
   'Payments': () => import('@/components/pages/payments-page'),
   'Vouchers': () => import('@/components/pages/vouchers-page'),
   'Complaints': () => import('@/components/pages/complaints-page'),

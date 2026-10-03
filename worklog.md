@@ -5081,3 +5081,24 @@ Stage Summary:
 - 3 real product bugs fixed (₹0 registration invoices; systemic requireAuth object→Prisma 500s in 101 routes; /api/subnets alias crash) — the requireAuth sweep eliminated an entire latent-500 family in money-touching routes.
 - Gotchas for future agents: (1) requireAuth ALWAYS returns { userId, role } — destructure it, never pass whole; grep `const userId = await requireAuth` should stay empty; (2) login rate limit 10/15min/IP — harness now backs off; (3) credit-note autoApply is the only API path that credits the prepaid wallet (invoice must be PAID/OVERDUE/PARTIALLY_PAID); (4) in-service renewals start at the next cycle boundary (billing anchor = start + cycleDays×(months−1) + one full cycle ahead); (5) PARTIALLY_PAID is transient — settle → PAID.
 - Test assets (gitignored, documented here): .zscripts/lifecycle-e2e.ts, lct-cleanup.ts, lct-audit.ts.
+
+---
+Task ID: INV-TPL-1
+Agent: Z.ai Code (main orchestrator)
+Task: Build Invoice Template Management (Zone mapped to Partner; types USER/PARTNER/CUSTOM) + full sandbox environment restore + git reconciliation with origin
+
+Work Log:
+- Environment rebuilt from scratch after sandbox restart: portable PostgreSQL 16.4 (Zonky binaries at /home/z/pgdist — apt blocked, no root), cluster /home/z/pgdata, role+db cryptsknexus recreated; helper .zscripts/pg-start.sh; .env DATABASE_URL fixed (stale sqlite URL ALSO exported in shell env — always prefix DB commands); all seeds re-run (10 users / 8 plans / 15 subscribers / 11 invoices); app now managed by pm2 (cryptsk-isp → .zscripts/start-dev.sh) after two silent dev-server deaths
+- Prisma: model InvoiceTemplate + 3 @unique FK columns on IspSettings pushed; GOTCHA: client accessor is db.ispSettings (full camelCase), and one-to-one relations need @unique on FK side
+- src/lib/invoice-merge.ts: ~45 merge tokens in 6 groups, Indian amount-in-words (Crore/Lakh/Paise), INR/DD-MMM-YYYY formatters, line-items/payment-history/tax-summary block renderers, renderTemplate() (unknown tokens → ""), 3 docTemplate() starters (USER emerald/PARTNER amber/MINIMAL teal)
+- APIs (all requireAuth + AuthError → status envelope): /api/invoice-templates CRUD+bulk (isSystem delete protection), /preview (sample render), /render (real invoice → template HTML, schema-tolerant field picking; resolution: ?templateId → settings default by invoice type → first system template → built-in), /api/settings/invoice-template-config GET/PUT (3 type defaults)
+- Page src/components/pages/invoice-templates-page.tsx: list w/ type badges + System + ★Default + bulk select; editor w/ grouped merge-field palette (insert at cursor), dirty tracking, debounced sandboxed live preview; duplicate; per-type default binding card. Registered in nav-config (LayoutTemplate icon, OPERATIONS), page-loaders, registry (Finance Suite), command-palette
+- Seed .zscripts/seed-invoice-templates.ts: Classic Service Invoice/USER, Partner Billing Statement/PARTNER, Minimal Custom Invoice/CUSTOM (isSystem) + defaults bound
+- Browser E2E verified twice (before AND after git sync): login → #/Invoice%20Templates → sidebar ✓, 3 templates w/ badges ✓, editor loads (6138 chars, system type locked, delete disabled) ✓, {IspGstIn} insert + dirty ✓, save "Template updated" ✓, create+delete lifecycle ✓, zero page errors
+- Git reconciliation: local main had stale duplicate commits (old InvoiceTemplate schema 8678d27, dev.pid UUID commits, old reports Phase-1 398c273) vs origin far ahead (reports Phase 1-3, LIFE-E2E battery, requireAuth sweep of 101 routes, qrcode dep). Rebase aborted; main reset to origin/main; ONLY additive files re-applied from ffbf709; registrations re-applied on origin's file versions; schema re-patched (origin's 5 "InvoiceTemplate" grep hits were RecurringInvoiceTemplate substrings — model never existed on origin); bun install pulled missing origin deps (qrcode etc.)
+
+Stage Summary:
+- Invoice Template Management SHIPPED end-to-end (Zone=Partner honored: PARTNER type + partner default binding; zero zone wording)
+- Render API ready for print integration; wiring invoices-page print view intentionally deferred (needs safe read of 2300-line file)
+- Env playbook: pg-start.sh + pm2 cryptsk-isp; explicit DATABASE_URL everywhere; bun install after any origin sync (new deps)
+- Next candidates: print-view integration, subscriber-facing template variables, PDF export of rendered template

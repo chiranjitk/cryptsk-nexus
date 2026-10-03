@@ -1753,6 +1753,19 @@ model Invoice {
   @@index([subscriberId, status])
 }
 
+model InvoiceTemplate {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  type      String   @default("USER")
+  bodyHtml  String   @default("")
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  defaultUserSetting    IspSettings? @relation("DefaultUserInvoiceTemplate")
+  defaultPartnerSetting IspSettings? @relation("DefaultPartnerInvoiceTemplate")
+  defaultCustomSetting  IspSettings? @relation("DefaultCustomInvoiceTemplate")
+}
+
 model InvoiceLineItem {
   id          String   @id @default(uuid())
   invoiceId   String
@@ -1916,6 +1929,13 @@ model IpsDetectionRule {
 }
 
 model IspSettings {
+  defaultUserInvoiceTemplateId     String? @unique
+  defaultUserInvoiceTemplate       InvoiceTemplate? @relation("DefaultUserInvoiceTemplate", fields: [defaultUserInvoiceTemplateId], references: [id], onDelete: SetNull)
+  defaultPartnerInvoiceTemplateId  String? @unique
+  defaultPartnerInvoiceTemplate    InvoiceTemplate? @relation("DefaultPartnerInvoiceTemplate", fields: [defaultPartnerInvoiceTemplateId], references: [id], onDelete: SetNull)
+  defaultCustomInvoiceTemplateId   String? @unique
+  defaultCustomInvoiceTemplate     InvoiceTemplate? @relation("DefaultCustomInvoiceTemplate", fields: [defaultCustomInvoiceTemplateId], references: [id], onDelete: SetNull)
+
   id                               String      @id @default("default")
   companyName                      String      @default("My ISP")
   tagline                          String      @default("")

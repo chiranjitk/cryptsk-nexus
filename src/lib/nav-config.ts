@@ -22,6 +22,7 @@ import {
   PackagePlus,
   Boxes,
   FileText,
+  LayoutTemplate,
   Ticket,
   TrendingUp,
   HandCoins,
@@ -237,6 +238,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Invoices", href: "/invoices", icon: FileText },
+      { label: "Invoice Templates", href: "/invoice-templates", icon: LayoutTemplate },
       { label: "Payments", href: "/payments", icon: Wallet },
       { label: "Vouchers", href: "/vouchers", icon: Ticket },
       { label: "Complaints", href: "/complaints", icon: AlertTriangle, badgeVariant: "destructive" },

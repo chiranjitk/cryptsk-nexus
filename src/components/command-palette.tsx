@@ -198,6 +198,7 @@ const PAGE_REGISTRY: Record<string, PageEntry[]> = {
     { label: "Technicians", section: "OPERATIONS", icon: Wrench, keywords: ["engineers", "staff", "field", "workers"] },
     { label: "Billing", section: "OPERATIONS", icon: Receipt, keywords: ["bills", "billing", "charges", "cycle"] },
     { label: "Invoices", section: "OPERATIONS", icon: FileText, keywords: ["invoices", "bills", "receipts", "generate"] },
+    { label: "Invoice Templates", section: "OPERATIONS", icon: FileText, keywords: ["templates", "invoice design", "branding", "layout", "merge fields"] },
     { label: "Payments", section: "OPERATIONS", icon: Wallet, keywords: ["payments", "transactions", "receipts", "money", "collect"] },
     { label: "Vouchers", section: "OPERATIONS", icon: Ticket, keywords: ["vouchers", "coupons", "codes", "topup", "recharge"] },
     { label: "Reseller", section: "OPERATIONS", icon: Handshake, keywords: ["reseller", "partners", "distributors", "wholesale"] },

@@ -320,6 +320,7 @@ export const MODULES: ModuleDefinition[] = [
     defaultEnabled: true,
     pages: [
       { label: "Invoices", section: "OPERATIONS" },
+      { label: "Invoice Templates", section: "OPERATIONS" },
       { label: "Vouchers", section: "OPERATIONS" },
       { label: "Announcements", section: "OPERATIONS" },
       { label: "Revenue Reports", section: "REPORTS" },
